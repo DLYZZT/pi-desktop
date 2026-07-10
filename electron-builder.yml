@@ -1,0 +1,76 @@
+# Pi Agent Desktop v2 — pure Electron (no Next sidecar, no bundled Node)
+appId: app.dlyzzt.pi-agent-desktop
+productName: Pi Agent Desktop
+copyright: Copyright © DLYZZT
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+  - "!out/**/*.map"
+  - "!**/*.{md,ts,tsx}"
+  - "!scripts/**"
+  - "!src/**"
+  - "!dist/**"
+  - "!build/**"
+  - "!tsconfig*.json"
+  - "!tsup.config.ts"
+  - "!vite.config.ts"
+  - "!electron-builder.yml"
+
+asar: true
+
+mac:
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  artifactName: Pi-Agent-Desktop-${version}-${arch}.${ext}
+  identity: null
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: Pi-Agent-Desktop-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Pi Agent Desktop
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Development
+  artifactName: Pi-Agent-Desktop-${version}-${arch}.${ext}
+  synopsis: Local desktop UI for the pi coding agent
+
+protocols:
+  - name: Pi Agent Desktop
+    schemes:
+      - pi-agent-desktop
+
+publish:
+  provider: github
+  owner: DLYZZT
+  repo: pi-desktop
+  releaseType: draft
