@@ -1,4 +1,4 @@
-import { readdirSync } from "fs";
+import { readdirSync, realpathSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 import { getAdditionalAllowedRoots, normalizeSlashes } from "../shared/allowed-roots";
@@ -51,13 +51,33 @@ export async function getAllowedFileRoots(): Promise<Set<string>> {
   return roots;
 }
 
+/**
+ * ISSUE-017: resolve realpath when possible so symlink escapes cannot leave roots.
+ * Non-existent paths fall back to lexical resolve of parent + basename.
+ */
+function canonicalPath(filePath: string, useWin: boolean): string {
+  const resolver = useWin ? path.win32 : path;
+  const real = realpathSync.native ?? realpathSync;
+  try {
+    return resolver.normalize(real(filePath));
+  } catch {
+    try {
+      const parent = resolver.dirname(filePath);
+      const base = resolver.basename(filePath);
+      const realParent = real(parent);
+      return resolver.normalize(resolver.join(realParent, base));
+    } catch {
+      return resolver.resolve(filePath);
+    }
+  }
+}
+
 export function isFilePathAllowed(target: string, allowedRoots: Set<string>): boolean {
   for (const root of allowedRoots) {
     const useWindowsRules = isWindowsAbsolutePath(target) || isWindowsAbsolutePath(root);
-    const resolver = useWindowsRules ? path.win32 : path;
     const sep = useWindowsRules ? "\\" : path.sep;
-    const normalized = resolver.resolve(target);
-    const normalizedRoot = resolver.resolve(root);
+    const normalized = canonicalPath(target, useWindowsRules);
+    const normalizedRoot = canonicalPath(root, useWindowsRules);
     const comparable = useWindowsRules ? normalized.toLowerCase() : normalized;
     const comparableRoot = useWindowsRules ? normalizedRoot.toLowerCase() : normalizedRoot;
     const rootWithSep = comparableRoot.endsWith(sep) ? comparableRoot : comparableRoot + sep;

@@ -236,10 +236,11 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
     }
 
     if (segs[0] === "file-index" && method === "GET") {
+      // ISSUE-005: pass through Host contract { files, truncated, matches }
       const root = u.searchParams.get("cwd") ?? u.searchParams.get("root") ?? "";
       const query = u.searchParams.get("q") ?? undefined;
       const result = await fileIndex(root, query);
-      return jsonResponse(result.matches ?? result);
+      return jsonResponse(result);
     }
 
     if (segs[0] === "worktrees" && method === "GET") {
@@ -309,7 +310,10 @@ export class ApiEventSource {
     void this.connect(url);
   }
 
-  private dispatchNamed(type: string, data: unknown) {
+  private generation = 0;
+
+  /** ISSUE-008: named listeners only; do NOT also fire onmessage (avoids double open). */
+  private dispatchNamed(type: string, data: unknown, alsoOnMessage = false) {
     const me = { data: typeof data === "string" ? data : JSON.stringify(data) } as MessageEvent;
     this.named.get(type)?.forEach((cb) => {
       try {
@@ -318,11 +322,11 @@ export class ApiEventSource {
         /* ignore */
       }
     });
-    // Also fire onmessage with envelope for generic listeners
-    this.onmessage?.(me);
+    if (alsoOnMessage) this.onmessage?.(me);
   }
 
   private async connect(url: string) {
+    const gen = ++this.generation;
     try {
       const u = new URL(url, "http://local");
       const segs = u.pathname.replace(/^\/api\//, "").split("/").filter(Boolean);
@@ -330,21 +334,31 @@ export class ApiEventSource {
       if (segs[0] === "agent" && segs[2] === "events") {
         const sessionId = decodeURIComponent(segs[1]);
         this.unsub = await subscribeAgentEvents(sessionId, (event) => {
+          if (this.closed || gen !== this.generation) return;
           this.readyState = ApiEventSource.OPEN;
-          this.dispatchNamed(String((event as { type?: string }).type ?? "message"), event);
+          // Agent events use onmessage only (useAgentSession)
           this.onmessage?.({ data: JSON.stringify(event) } as MessageEvent);
         });
+        if (this.closed || gen !== this.generation) {
+          this.unsub?.();
+          return;
+        }
         this.readyState = ApiEventSource.OPEN;
         this.onopen?.(new Event("open"));
-        this.dispatchNamed("connected", { type: "connected" });
+        this.onmessage?.({ data: JSON.stringify({ type: "connected" }) } as MessageEvent);
         return;
       }
 
       if (segs[0] === "agent" && segs[1] === "running" && segs[2] === "events") {
         this.unsub = await subscribeRunning((event) => {
+          if (this.closed || gen !== this.generation) return;
           this.readyState = ApiEventSource.OPEN;
           this.onmessage?.({ data: JSON.stringify(event) } as MessageEvent);
         });
+        if (this.closed || gen !== this.generation) {
+          this.unsub?.();
+          return;
+        }
         this.readyState = ApiEventSource.OPEN;
         this.onopen?.(new Event("open"));
         return;
@@ -353,21 +367,23 @@ export class ApiEventSource {
       if (segs[0] === "auth" && segs[1] === "login") {
         const provider = decodeURIComponent(segs[2] ?? "");
         this.unsub = await subscribeAuthLogin(provider, (event) => {
+          if (this.closed || gen !== this.generation) return;
           this.readyState = ApiEventSource.OPEN;
           const type = String((event as { type?: string }).type ?? "message");
-          this.dispatchNamed(type, event);
+          // Single path: onmessage only — ModelsConfig handles openExternal
           this.onmessage?.({ data: JSON.stringify(event) } as MessageEvent);
-          // Open browser for OAuth URL
-          if (type === "auth" && (event as { url?: string }).url) {
-            void window.piBridge?.openExternal((event as { url: string }).url);
-          }
-          if (type === "device_code" && (event as { verificationUri?: string }).verificationUri) {
-            void window.piBridge?.openExternal(
-              (event as { verificationUri: string }).verificationUri,
-            );
-          }
+          void type;
         });
+        if (this.closed || gen !== this.generation) {
+          this.unsub?.();
+          void call("auth.loginCancel", { provider }).catch(() => {});
+          return;
+        }
         await call("auth.loginStart", { provider });
+        if (this.closed || gen !== this.generation) {
+          void call("auth.loginCancel", { provider }).catch(() => {});
+          return;
+        }
         this.readyState = ApiEventSource.OPEN;
         this.onopen?.(new Event("open"));
         return;
@@ -380,6 +396,7 @@ export class ApiEventSource {
         this.filePath = filePath;
 
         this.unsub = await subscribe("files.changed", filePath, (ev) => {
+          if (this.closed || gen !== this.generation) return;
           this.readyState = ApiEventSource.OPEN;
           const eventName = ev.event ?? "change";
           this.dispatchNamed(eventName, {
@@ -389,7 +406,15 @@ export class ApiEventSource {
             filePath: ev.path,
           });
         });
+        if (this.closed || gen !== this.generation) {
+          this.unsub?.();
+          return;
+        }
         await call("files.watchStart", { path: filePath, sourceSessionId });
+        if (this.closed || gen !== this.generation) {
+          void call("files.watchStop", { path: filePath }).catch(() => {});
+          return;
+        }
         this.readyState = ApiEventSource.OPEN;
         this.onopen?.(new Event("open"));
         return;
@@ -398,17 +423,22 @@ export class ApiEventSource {
       this.readyState = ApiEventSource.CLOSED;
       this.onerror?.(new Event("error"));
     } catch {
-      this.readyState = ApiEventSource.CLOSED;
-      this.onerror?.(new Event("error"));
+      if (!this.closed) {
+        this.readyState = ApiEventSource.CLOSED;
+        this.onerror?.(new Event("error"));
+      }
     }
   }
 
   close() {
     if (this.closed) return;
     this.closed = true;
+    this.generation += 1;
     this.readyState = ApiEventSource.CLOSED;
     this.unsub?.();
     this.unsub = null;
+    // ISSUE-008: cancel OAuth if this was a login stream — best-effort via URL parse is hard;
+    // ModelsConfig must call auth.loginCancel. Still stop file watches.
     if (this.filePath) {
       void call("files.watchStop", { path: this.filePath }).catch(() => {});
       this.filePath = null;

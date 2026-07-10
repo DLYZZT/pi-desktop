@@ -43,7 +43,29 @@ export type PiBridge = {
 ipcRenderer.on("desktop:host-port", (event) => {
   const port = event.ports[0];
   if (!port) return;
-  window.postMessage({ channel: "pi-desktop-host-port" }, "*", [port]);
+  // preload: MessagePort transfer to the page
+  const g = globalThis as unknown as {
+    postMessage: (message: unknown, targetOrigin: string, transfer?: unknown[]) => void;
+  };
+  g.postMessage({ channel: "pi-desktop-host-port" }, "*", [port]);
+});
+
+// ISSUE-016: buffer deep-link until renderer subscribes
+let pendingDeepLinkSession: string | null = null;
+const deepLinkListeners = new Set<(sessionId: string) => void>();
+
+ipcRenderer.on("deep-link:session", (_e, sessionId: string) => {
+  if (deepLinkListeners.size === 0) {
+    pendingDeepLinkSession = sessionId;
+    return;
+  }
+  for (const cb of deepLinkListeners) {
+    try {
+      cb(sessionId);
+    } catch {
+      /* ignore */
+    }
+  }
 });
 
 const bridge: PiBridge = {
@@ -90,9 +112,19 @@ const bridge: PiBridge = {
     return () => ipcRenderer.removeListener("host:crashed", handler);
   },
   onDeepLinkSession: (cb) => {
-    const handler = (_: Electron.IpcRendererEvent, sessionId: string) => cb(sessionId);
-    ipcRenderer.on("deep-link:session", handler);
-    return () => ipcRenderer.removeListener("deep-link:session", handler);
+    deepLinkListeners.add(cb);
+    if (pendingDeepLinkSession) {
+      const id = pendingDeepLinkSession;
+      pendingDeepLinkSession = null;
+      try {
+        cb(id);
+      } catch {
+        /* ignore */
+      }
+    }
+    return () => {
+      deepLinkListeners.delete(cb);
+    };
   },
   onMenu: (event, cb) => {
     const channel = `menu:${event}`;

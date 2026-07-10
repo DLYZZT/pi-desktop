@@ -374,6 +374,18 @@ export function createRpcServer(): RpcServer {
         void onPortMessage(port, data);
       });
       portUnlisten.set(port, unlisten);
+      // ISSUE-013: drop port when remote closes
+      const onClose = () => {
+        ports.delete(port);
+        portSubs.delete(port);
+        portUnlisten.get(port)?.();
+        portUnlisten.delete(port);
+      };
+      if (typeof port.addEventListener === "function") {
+        port.addEventListener("close", onClose as (ev: { data: unknown }) => void);
+      } else if (typeof port.on === "function") {
+        port.on("close", onClose);
+      }
     },
 
     detachPort(port) {

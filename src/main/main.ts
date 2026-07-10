@@ -18,7 +18,7 @@ import { appendMainLog, getMainLogPath } from "./logger";
 import { installAppMenu } from "./menu";
 import { handleAppProtocol, registerAppProtocol, rendererRootPath } from "./protocol";
 import { acquireSingleInstanceLock } from "./single-instance";
-import { applyWindowBounds, loadUiState, saveUiState, trackWindowState } from "./window-state";
+import { applyWindowBounds, loadUiState, saveUiState, shouldMaximize, trackWindowState } from "./window-state";
 import { createTray, destroyTray, setTrayRunningCount } from "./tray";
 import { exportDiagnostics } from "./diagnostics";
 
@@ -110,6 +110,9 @@ function createWindow(): BrowserWindow {
 
   mainWindow = win;
   trackWindowState(win);
+  if (shouldMaximize(ui) && !win.isDestroyed()) {
+    win.maximize();
+  }
 
   const showWin = () => {
     if (!win.isDestroyed() && !win.isVisible()) {

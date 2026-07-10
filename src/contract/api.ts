@@ -40,7 +40,7 @@ export interface Api {
     params: { id: string; format?: "md" | "json" };
     result: { content: string; suggestedName: string };
   };
-  "sessions.delete": { params: { id: string }; result: { ok: true } };
+  "sessions.delete": { params: { id: string; force?: boolean }; result: { ok: true } };
   "sessions.rename": {
     params: { id: string; name: string };
     result: { ok: true };
@@ -86,7 +86,10 @@ export interface Api {
   "files.list": { params: { path: string }; result: { entries: DirEntry[] } };
   "files.read": {
     params: { path: string; sourceSessionId?: string };
-    result: FileContent;
+    result: FileContent & {
+      encoding?: "utf8" | "base64" | "too_large";
+      mime?: string;
+    };
   };
   "files.meta": {
     params: { path: string; sourceSessionId?: string };
@@ -98,7 +101,11 @@ export interface Api {
   };
   "files.index": {
     params: { root: string; query?: string };
-    result: { matches: FuzzyMatch[] };
+    result: {
+      files: string[];
+      truncated: boolean;
+      matches?: Array<{ path: string; isDir?: boolean; score?: number }>;
+    };
   };
   "files.watchStart": {
     params: { path: string; sourceSessionId?: string };
@@ -117,7 +124,12 @@ export interface Api {
   "modelsConfig.get": { params: void; result: ModelsConfig };
   "modelsConfig.set": { params: ModelsConfig; result: { ok: true } };
   "modelsConfig.test": {
-    params: { provider: string; [key: string]: unknown };
+    params: {
+      providerName?: string;
+      provider?: Record<string, unknown>;
+      model?: Record<string, unknown>;
+      [key: string]: unknown;
+    };
     result: TestResult;
   };
 

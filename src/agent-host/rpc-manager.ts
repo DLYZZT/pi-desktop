@@ -220,7 +220,14 @@ export class AgentSessionWrapper {
 
   private resetIdleTimer(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => this.destroy(), 10 * 60 * 1000);
+    this.idleTimer = setTimeout(() => {
+      // Never idle-evict a still-running agent (ISSUE-003)
+      if (this.isRunning()) {
+        this.resetIdleTimer();
+        return;
+      }
+      this.destroy();
+    }, 10 * 60 * 1000);
   }
 
   onEvent(listener: EventListener): () => void {
@@ -491,15 +498,38 @@ export class AgentSessionWrapper {
     }
   }
 
+  /**
+   * Stop the underlying agent and release resources (ISSUE-001).
+   * Prefer dispose() for full teardown after abort.
+   */
+  async abortAndDispose(): Promise<void> {
+    if (!this._alive) return;
+    try {
+      await this.inner.abort();
+    } catch {
+      /* already stopped */
+    }
+    try {
+      const agent = this.inner.agent as { waitForIdle?: () => Promise<void>; dispose?: () => void | Promise<void> };
+      await agent.waitForIdle?.();
+      await agent.dispose?.();
+    } catch {
+      /* best-effort */
+    }
+    this.destroy();
+  }
+
   destroy(): void {
     if (!this._alive) return;
     this._alive = false;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.unsubscribe?.();
+    this.unsubscribe = null;
     for (const pending of this.pendingUiResponses.values()) pending.cancel();
     for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
+    this.listeners = [];
     this.onDestroyCallback?.();
     notifyRunningChange();
   }

@@ -194,10 +194,17 @@ export function AppShell() {
     const offSettings = window.piBridge?.onMenu?.("settings", () => {
       setModelsConfigOpen(true);
     });
+    // ISSUE-016: Switch Session palette — focus sidebar / open project list
+    const offSwitch = window.piBridge?.onMenu?.("switch-session", () => {
+      setSidebarOpen(true);
+      // Nudge sidebar to refresh sessions
+      setRefreshKey((k) => k + 1);
+    });
     return () => {
       offDeep?.();
       offNew?.();
       offSettings?.();
+      offSwitch?.();
     };
   }, [activeCwd, router]);
 
@@ -1082,6 +1089,7 @@ export function AppShell() {
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeFileTab?.filePath ? (
             <FileViewer
+              key={activeFileTab.id ?? activeFileTab.filePath}
               filePath={activeFileTab.filePath}
               cwd={activeCwd ?? undefined}
               sourceSessionId={activeFileTab.sourceSessionId}

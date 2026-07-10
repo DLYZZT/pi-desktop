@@ -72,3 +72,7 @@ export function applyWindowBounds(defaults: Rectangle, state: UiState): Rectangl
     height: Math.max(600, w.height || defaults.height),
   };
 }
+
+export function shouldMaximize(state: UiState): boolean {
+  return Boolean(state.window?.isMaximized);
+}

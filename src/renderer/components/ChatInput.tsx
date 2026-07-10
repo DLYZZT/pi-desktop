@@ -391,6 +391,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!msg && !attachedImages.length) return;
     if (isStreaming) return;
     onAudioUnlock?.();
+    // ISSUE-006: snapshot draft before clear; restore on failure
+    const snapshot = {
+      value,
+      images: attachedImages.map((img) => ({ ...img })),
+    };
     if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
       const result = await onBuiltinCommand(msg);
       if (result.handled) {
@@ -398,8 +403,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return;
       }
     }
-    onSend(msg, attachedImages.length ? attachedImages : undefined);
-    clearInput();
+    try {
+      const result = onSend(msg, attachedImages.length ? attachedImages : undefined) as
+        | void
+        | Promise<unknown>
+        | { ok?: boolean };
+      const settled = result instanceof Promise ? await result : result;
+      if (settled && typeof settled === "object" && "ok" in settled && settled.ok === false) {
+        setValue(snapshot.value);
+        setAttachedImages(snapshot.images);
+        return;
+      }
+      clearInput();
+    } catch {
+      setValue(snapshot.value);
+      setAttachedImages(snapshot.images);
+    }
   }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
@@ -594,23 +613,30 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     });
   }, []);
 
-  const sendQueued = useCallback((mode: "steer" | "followup") => {
+  const sendQueued = useCallback(async (mode: "steer" | "followup") => {
     const msg = value.trim();
     if (!msg && !attachedImages.length) return;
     if (attachedImages.length) return;
     onAudioUnlock?.();
+    const snapshot = value;
     const streamingBehavior = mode === "steer" ? "steer" : "followUp";
-    if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
-      onPromptWithStreamingBehavior(msg, streamingBehavior, attachedImages.length ? attachedImages : undefined);
+    try {
+      if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
+        await Promise.resolve(
+          onPromptWithStreamingBehavior(msg, streamingBehavior, undefined),
+        );
+        clearInput();
+        return;
+      }
+      if (mode === "steer" && onSteer) {
+        await Promise.resolve(onSteer(msg, undefined));
+      } else if (mode === "followup" && onFollowUp) {
+        await Promise.resolve(onFollowUp(msg, undefined));
+      }
       clearInput();
-      return;
+    } catch {
+      setValue(snapshot);
     }
-    if (mode === "steer" && onSteer) {
-      onSteer(msg, attachedImages.length ? attachedImages : undefined);
-    } else if (mode === "followup" && onFollowUp) {
-      onFollowUp(msg, attachedImages.length ? attachedImages : undefined);
-    }
-    clearInput();
   }, [value, attachedImages, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {

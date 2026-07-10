@@ -24,7 +24,7 @@ export function splitFinalAssistantBlocks(
   options: DisplayOptions = {},
 ): { answerBlocks: AssistantContentBlock[]; processBlocks: AssistantContentBlock[] } {
   const blocks = getDisplayableAssistantBlocks(message, options);
-  const lastProcessIndex = blocks.findLastIndex((block) => !isFinalAnswerBlock(block));
+  const lastProcessIndex = blocks.findLastIndex((block: AssistantContentBlock) => !isFinalAnswerBlock(block));
   if (lastProcessIndex === -1) {
     return { answerBlocks: blocks, processBlocks: [] };
   }

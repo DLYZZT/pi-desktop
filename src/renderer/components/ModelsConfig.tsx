@@ -715,20 +715,36 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
     }
   }, [loginState.phase]);
 
-  // Reset state when provider changes
+  // Reset state when provider changes — ISSUE-008: cancel Host login
   useEffect(() => {
     setLoginState({ phase: "idle" });
     setInputValue("");
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
+    void fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: `${provider.id}-cancel`, code: "" }),
+    }).catch(() => {});
+    void import("@/lib/api-client").then(({ call }) =>
+      call("auth.loginCancel", { provider: provider.id }).catch(() => {}),
+    );
   }, [provider.id]);
 
   useEffect(() => {
-    return () => { eventSourceRef.current?.close(); };
-  }, []);
+    return () => {
+      eventSourceRef.current?.close();
+      void import("@/lib/api-client").then(({ call }) =>
+        call("auth.loginCancel", { provider: provider.id }).catch(() => {}),
+      );
+    };
+  }, [provider.id]);
 
   const handleLogin = useCallback(() => {
     eventSourceRef.current?.close();
+    void import("@/lib/api-client").then(({ call }) =>
+      call("auth.loginCancel", { provider: provider.id }).catch(() => {}),
+    );
     setLoginState({ phase: "connecting" });
     setInputValue("");
 
@@ -744,7 +760,11 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
       };
       if (data.type === "auth") {
         setLoginState({ phase: "auth", url: data.url!, instructions: data.instructions ?? null, token: data.token! });
-        window.open(data.url!, "_blank", "noopener,noreferrer");
+        // Single open path (ISSUE-008): prefer desktop openExternal
+        if (data.url) {
+          void (window.piBridge?.openExternal(data.url) ??
+            Promise.resolve(window.open(data.url, "_blank", "noopener,noreferrer")));
+        }
       } else if (data.type === "device_code") {
         setLoginState({
           phase: "device_code",
@@ -753,7 +773,10 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
           intervalSeconds: data.intervalSeconds ?? null,
           expiresInSeconds: data.expiresInSeconds ?? null,
         });
-        window.open(data.verificationUri!, "_blank", "noopener,noreferrer");
+        if (data.verificationUri) {
+          void (window.piBridge?.openExternal(data.verificationUri) ??
+            Promise.resolve(window.open(data.verificationUri, "_blank", "noopener,noreferrer")));
+        }
       } else if (data.type === "prompt_request") {
         setLoginState({ phase: "prompt", message: data.message!, placeholder: data.placeholder ?? null, token: data.token! });
       } else if (data.type === "select_request") {
@@ -1294,16 +1317,34 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
       .catch(() => {});
   }, []);
 
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
+
   useEffect(() => {
+    setLoadFailed(false);
+    setConfigLoaded(false);
     fetch("/api/models-config")
-      .then((r) => r.json())
-      .then((d: ModelsJson) => {
+      .then(async (r) => {
+        // ISSUE-009: only accept successful loads
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({})) as { error?: string };
+          throw new Error(body.error ?? `HTTP ${r.status}`);
+        }
+        return r.json() as Promise<ModelsJson & { error?: string }>;
+      })
+      .then((d) => {
+        if (d.error) throw new Error(d.error);
         const normalized = d.providers ? d : { ...d, providers: {} };
         setConfig(normalized);
+        setConfigLoaded(true);
         const keys = Object.keys(normalized.providers ?? {});
         if (keys.length > 0) setSelection({ type: "provider", name: keys[0] });
       })
-      .catch(() => setConfig({ providers: {} }))
+      .catch((e) => {
+        setLoadFailed(true);
+        setSaveError(e instanceof Error ? e.message : String(e));
+        // Do NOT reset to empty providers — keep prior state / block save
+      })
       .finally(() => setLoading(false));
     loadOAuthProviders();
     loadApiKeyProviders();
@@ -1607,14 +1648,18 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
           <button onClick={onClose} style={{ padding: "6px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: "pointer", fontSize: 13 }}>
             Cancel
           </button>
-          <button onClick={handleSave} disabled={saving || savedOk} style={{
+          <button
+            onClick={handleSave}
+            disabled={saving || savedOk || loading || loadFailed || !configLoaded}
+            title={loadFailed ? "Cannot save until config loads successfully" : undefined}
+            style={{
             position: "relative",
             padding: "6px 16px",
             minWidth: 92,
-            background: savedOk ? "#16a34a" : saving ? "var(--bg-panel)" : "var(--accent)",
+            background: savedOk ? "#16a34a" : (saving || loadFailed || !configLoaded) ? "var(--bg-panel)" : "var(--accent)",
             border: "none", borderRadius: 6,
-            color: savedOk ? "#fff" : saving ? "var(--text-muted)" : "#fff",
-            cursor: (saving || savedOk) ? "default" : "pointer", fontSize: 13, fontWeight: 600,
+            color: savedOk ? "#fff" : (saving || loadFailed || !configLoaded) ? "var(--text-muted)" : "#fff",
+            cursor: (saving || savedOk || loading || loadFailed || !configLoaded) ? "default" : "pointer", fontSize: 13, fontWeight: 600,
             display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
             transition: "background-color 0.2s ease, color 0.2s ease",
             animation: savedOk ? "saved-pop 0.45s ease" : undefined,

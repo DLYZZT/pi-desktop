@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022"],
+    "lib": ["ES2023"],
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -24,5 +24,10 @@
     "src/agent-host/**/*",
     "src/shared/**/*"
   ],
-  "exclude": ["node_modules", "out", "dist"]
+  "exclude": [
+    "node_modules",
+    "out",
+    "dist",
+    "src/shared/clipboard.ts"
+  ]
 }

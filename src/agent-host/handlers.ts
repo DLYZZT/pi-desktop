@@ -2,7 +2,18 @@
  * Register all Api handlers on the RPC server.
  * Ports logic from the old Next.js API routes onto the Host process.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { homedir, tmpdir } from "os";
@@ -104,15 +115,39 @@ function readModelsJson(): Record<string, unknown> {
   if (!existsSync(p)) return { providers: {} };
   try {
     return JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
-  } catch {
-    return { providers: {} };
+  } catch (e) {
+    // ISSUE-009: never silently return empty and allow overwrite of corrupt file
+    throw new RpcError({
+      code: "PARSE_ERROR",
+      message: `Failed to parse models.json: ${e instanceof Error ? e.message : String(e)}`,
+    });
   }
 }
 
 function writeModelsJson(data: Record<string, unknown>): void {
   const p = getModelsPath();
   mkdirSync(path.dirname(p), { recursive: true });
-  writeFileSync(p, JSON.stringify(data, null, 2), "utf8");
+  // ISSUE-009: atomic write via temp + rename; keep .bak of previous good file
+  const tmp = `${p}.${process.pid}.tmp`;
+  const bak = `${p}.bak`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+  try {
+    if (existsSync(p)) {
+      try {
+        writeFileSync(bak, readFileSync(p));
+      } catch {
+        /* ignore bak failure */
+      }
+    }
+    renameSync(tmp, p);
+  } catch (e) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  }
 }
 
 const THINKING_SUFFIXES = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
@@ -288,12 +323,29 @@ export function registerHandlers(server: RpcServer): void {
     },
 
     "sessions.delete": async (params) => {
-      const { id } = params as { id: string };
+      const { id, force } = params as { id: string; force?: boolean };
       const filePath = await resolveSessionPath(id);
       if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
       const existing = getRpcSession(id);
-      existing?.destroy();
-      unlinkSync(filePath);
+      if (existing?.isAlive()) {
+        if (existing.isRunning() && !force) {
+          throw new RpcError({
+            code: "CONFLICT",
+            message: "Session is still running. Stop it before deleting.",
+          });
+        }
+        // ISSUE-001: fully stop agent before unlinking session file
+        await existing.abortAndDispose();
+        clearSessionEventBinding(existing.sessionId || id);
+      }
+      try {
+        unlinkSync(filePath);
+      } catch (e) {
+        throw new RpcError({
+          code: "INTERNAL",
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
       invalidateSessionPathCache(id);
       server.emit("sessions.changed", "*", { cwd: null });
       return { ok: true as const };
@@ -301,14 +353,18 @@ export function registerHandlers(server: RpcServer): void {
 
     "sessions.rename": async (params) => {
       const { id, name } = params as { id: string; name: string };
+      if (!name?.trim()) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "name is required" });
+      }
       const existing = getRpcSession(id);
       if (existing?.isAlive()) {
-        await existing.send({ type: "set_session_name", name });
+        await existing.send({ type: "set_session_name", name: name.trim() });
       } else {
         const filePath = await resolveSessionPath(id);
         if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
         const sm = SessionManager.open(filePath);
-        sm.setSessionName?.(name);
+        // ISSUE-014: SDK uses appendSessionInfo, not setSessionName
+        sm.appendSessionInfo(name.trim());
       }
       server.emit("sessions.changed", "*", { cwd: null });
       return { ok: true as const };
@@ -383,13 +439,8 @@ export function registerHandlers(server: RpcServer): void {
       const { session, realSessionId } = await startRpcSession(tempKey, "", cwd, toolNames);
       allowFileRoot(cwd);
 
-      // Subscribe session events to stream
-      session.onEvent((event) => {
-        server.emit("agent.events", realSessionId, event as never);
-        if (event.type === "agent_end" || event.type === "prompt_done") {
-          // Host can't call Notification API — renderer/main handles via badge hooks
-        }
-      });
+      // ISSUE-003: single event-binding entry only (ensureSessionEvents)
+      ensureSessionEvents(server, session, realSessionId);
 
       if (provider && modelId) {
         await session.send({ type: "set_model", provider, modelId });
@@ -476,20 +527,58 @@ export function registerHandlers(server: RpcServer): void {
       };
       await assertPathAllowed(filePath, sourceSessionId);
       const st = statSync(filePath);
-      if (st.size > TEXT_PREVIEW_MAX_BYTES) {
+      if (!st.isFile()) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "Not a file" });
+      }
+
+      const imageMime = getImageMime(filePath);
+      const audioMime = getAudioMime(filePath);
+      const documentMime = getDocumentMime(filePath);
+      const binaryMime = imageMime || audioMime || documentMime;
+
+      // ISSUE-004: binary as base64+mime; never UTF-8 corrupt
+      if (binaryMime) {
+        const limit = imageMime
+          ? IMAGE_PREVIEW_MAX_BYTES
+          : documentMime
+            ? DOCX_PREVIEW_MAX_BYTES
+            : 50 * 1024 * 1024;
+        if (st.size > limit) {
+          return {
+            content: "",
+            encoding: "too_large" as const,
+            mime: binaryMime,
+            language: getLanguage(filePath),
+            size: st.size,
+            truncated: true,
+          };
+        }
         return {
-          content: readFileSync(filePath, "utf8").slice(0, TEXT_PREVIEW_MAX_BYTES),
+          content: readFileSync(filePath).toString("base64"),
+          encoding: "base64" as const,
+          mime: binaryMime,
           language: getLanguage(filePath),
           size: st.size,
-          truncated: true,
+          truncated: false,
         };
       }
-      return {
-        content: readFileSync(filePath, "utf8"),
-        language: getLanguage(filePath),
-        size: st.size,
-        truncated: false,
-      };
+
+      // Text: only read up to limit
+      const fd = await import("fs").then((fs) => fs.openSync(filePath, "r"));
+      try {
+        const max = Math.min(st.size, TEXT_PREVIEW_MAX_BYTES);
+        const buf = Buffer.alloc(max);
+        const n = (await import("fs")).readSync(fd, buf, 0, max, 0);
+        return {
+          content: buf.slice(0, n).toString("utf8"),
+          encoding: "utf8" as const,
+          language: getLanguage(filePath),
+          size: st.size,
+          truncated: st.size > TEXT_PREVIEW_MAX_BYTES,
+        };
+      } finally {
+        (await import("fs")).closeSync(fd);
+      }
     },
 
     "files.meta": async (params) => {
@@ -499,12 +588,15 @@ export function registerHandlers(server: RpcServer): void {
       };
       await assertPathAllowed(filePath, sourceSessionId);
       const st = statSync(filePath);
+      const imageMime = getImageMime(filePath);
+      const audioMime = getAudioMime(filePath);
+      const documentMime = getDocumentMime(filePath);
       return {
         size: st.size,
         mtime: st.mtimeMs,
         language: getLanguage(filePath),
-        kind: documentPreviewKind(filePath) ?? getImageMime(filePath) ? "image" : "file",
-        mime: getImageMime(filePath) ?? getDocumentMime(filePath) ?? getAudioMime(filePath),
+        kind: documentPreviewKind(filePath) ?? (imageMime ? "image" : "file"),
+        mime: imageMime ?? audioMime ?? documentMime ?? "text/plain",
       };
     },
 
@@ -516,7 +608,10 @@ export function registerHandlers(server: RpcServer): void {
       await assertPathAllowed(filePath, sourceSessionId);
       const st = statSync(filePath);
       const imgMime = getImageMime(filePath);
-      if (imgMime && st.size <= IMAGE_PREVIEW_MAX_BYTES) {
+      if (imgMime) {
+        if (st.size > IMAGE_PREVIEW_MAX_BYTES) {
+          return { kind: "too_large", mime: imgMime, size: st.size };
+        }
         return {
           kind: "image",
           mime: imgMime,
@@ -524,42 +619,61 @@ export function registerHandlers(server: RpcServer): void {
         };
       }
       const docKind = documentPreviewKind(filePath);
-      if (docKind === "docx" && st.size <= DOCX_PREVIEW_MAX_BYTES) {
+      if (docKind === "docx") {
+        if (st.size > DOCX_PREVIEW_MAX_BYTES) {
+          return { kind: "too_large", mime: getDocumentMime(filePath) ?? undefined, size: st.size };
+        }
         return {
           kind: "docx",
-          mime: getDocumentMime(filePath),
-          // Renderer loads mammoth; send base64 for conversion
+          mime: getDocumentMime(filePath) ?? undefined,
           base64: readFileSync(filePath).toString("base64"),
+        };
+      }
+      if (st.size > TEXT_PREVIEW_MAX_BYTES) {
+        return {
+          kind: "text",
+          content: readFileSync(filePath, "utf8").slice(0, TEXT_PREVIEW_MAX_BYTES),
+          language: getLanguage(filePath),
+          truncated: true,
         };
       }
       return {
         kind: "text",
-        content: readFileSync(filePath, "utf8").slice(0, TEXT_PREVIEW_MAX_BYTES),
+        content: readFileSync(filePath, "utf8"),
         language: getLanguage(filePath),
       };
     },
 
     "files.index": async (params) => {
+      // ISSUE-005: return relative POSIX paths + { files, truncated, matches }
       const { root, query } = params as { root: string; query?: string };
       await assertPathAllowed(root);
-      let files: string[] = [];
+      let relFiles: string[] = [];
+      let hardTruncated = false;
 
-      // Prefer git ls-files when available (respects .gitignore like the TUI)
       try {
         const { stdout } = await execFileAsync(
           "git",
           ["-C", root, "ls-files", "--cached", "--others", "--exclude-standard"],
           { maxBuffer: 20 * 1024 * 1024, timeout: 15_000 },
         );
-        files = stdout
+        const all = stdout
           .split("\n")
-          .map((l) => l.trim())
-          .filter(Boolean)
-          .slice(0, 50_000)
-          .map((rel) => path.join(root, rel));
+          .map((l) => l.trim().replace(/\\/g, "/"))
+          .filter(Boolean);
+        if (all.length > 50_000) {
+          hardTruncated = true;
+          relFiles = all.slice(0, 50_000);
+        } else {
+          relFiles = all;
+        }
       } catch {
+        const abs: string[] = [];
         const walk = (dir: string, depth: number) => {
-          if (depth > 8 || files.length >= 5000) return;
+          if (depth > 8 || abs.length >= 5000) {
+            if (abs.length >= 5000) hardTruncated = true;
+            return;
+          }
           let names: string[];
           try {
             names = readdirSync(dir);
@@ -572,23 +686,49 @@ export function registerHandlers(server: RpcServer): void {
             try {
               const st = statSync(full);
               if (st.isDirectory()) walk(full, depth + 1);
-              else files.push(full);
+              else abs.push(full);
             } catch {
               /* skip */
             }
-            if (files.length >= 5000) return;
+            if (abs.length >= 5000) {
+              hardTruncated = true;
+              return;
+            }
           }
         };
         walk(root, 0);
+        const rootNorm = root.replace(/\\/g, "/").replace(/\/$/, "");
+        relFiles = abs.map((f) => {
+          const n = f.replace(/\\/g, "/");
+          return n.startsWith(rootNorm + "/") ? n.slice(rootNorm.length + 1) : n;
+        });
       }
 
-      const entries = buildEntriesFromFiles(files, root);
-      const matches = query ? filterFileEntries(entries, query).slice(0, 50) : entries.slice(0, 100);
+      const CLIENT_CAP = 5000;
+      const filesForClient = relFiles.slice(0, CLIENT_CAP);
+      const truncated = hardTruncated || relFiles.length > CLIENT_CAP;
+      const entries = buildEntriesFromFiles(filesForClient);
+
+      if (query?.trim()) {
+        const matches = filterFileEntries(entries, query.trim()).slice(0, 50);
+        return {
+          files: filesForClient,
+          truncated,
+          matches: matches.map((m) => ({
+            path: m.path,
+            isDir: m.isDir,
+            score: "score" in m ? Number((m as { score?: number }).score ?? 0) : 0,
+          })),
+        };
+      }
+
       return {
-        matches: matches.map((m) => ({
-          path: typeof m === "string" ? m : (m as { path?: string }).path ?? String(m),
-          score: typeof m === "object" && m && "score" in m ? Number((m as { score: number }).score) : 0,
-          ...(typeof m === "object" ? m : {}),
+        files: filesForClient,
+        truncated,
+        matches: entries.slice(0, 100).map((m) => ({
+          path: m.path,
+          isDir: m.isDir,
+          score: 0,
         })),
       };
     },
@@ -642,11 +782,16 @@ export function registerHandlers(server: RpcServer): void {
 
     "modelsConfig.get": () => readModelsJson() as never,
     "modelsConfig.set": (params) => {
-      writeModelsJson(params as Record<string, unknown>);
+      const body = params as Record<string, unknown>;
+      // ISSUE-009: refuse to persist empty overwrite without explicit providers key from a real load
+      if (!body || typeof body !== "object" || !("providers" in body)) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "Invalid models config payload" });
+      }
+      writeModelsJson(body);
       return { ok: true as const };
     },
     "modelsConfig.test": async (params) => {
-      const body = params as {
+      const body = params as unknown as {
         providerName?: string;
         provider?: Record<string, unknown>;
         model?: Record<string, unknown>;
@@ -810,15 +955,19 @@ export function registerHandlers(server: RpcServer): void {
 
     "auth.setApiKey": async (params) => {
       const { provider, key } = params as { provider: string; key: string };
+      if (!provider || !key?.trim()) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "provider and key required" });
+      }
+      // ISSUE-002: SDK requires AuthCredential object, not bare string
       const authStorage = AuthStorage.create();
-      if (typeof (authStorage as { set?: (p: string, k: string) => void }).set === "function") {
-        (authStorage as { set: (p: string, k: string) => void }).set(provider, key);
-      } else {
-        const models = readModelsJson();
-        const providers = (models.providers as Record<string, unknown>) ?? {};
-        providers[provider] = { ...(providers[provider] as object), apiKey: key };
-        models.providers = providers;
-        writeModelsJson(models);
+      authStorage.set(provider, { type: "api_key", key: key.trim() });
+      // Verify read-back so UI "Saved" is honest
+      const verify = AuthStorage.create();
+      if (!verify.has(provider)) {
+        throw new RpcError({
+          code: "INTERNAL",
+          message: `Key for ${provider} was written but not readable back`,
+        });
       }
       return { ok: true as const };
     },
@@ -860,7 +1009,8 @@ export function registerHandlers(server: RpcServer): void {
 
     "auth.loginStart": async (params) => {
       const { provider } = params as { provider: string };
-      return authLogin.start(provider);
+      const result = await authLogin.start(provider);
+      return { ok: true as const, started: result.started };
     },
 
     "auth.loginCancel": async (params) => {
@@ -991,19 +1141,42 @@ export function registerHandlers(server: RpcServer): void {
   });
 }
 
-const eventAttached = new Set<string>();
+/** ISSUE-003: track bindings per wrapper instance, not permanent sessionId set */
+const eventBoundWrappers = new WeakSet<object>();
+const eventUnsubsBySession = new Map<string, () => void>();
+
+function clearSessionEventBinding(sessionId: string): void {
+  const unsub = eventUnsubsBySession.get(sessionId);
+  if (unsub) {
+    try {
+      unsub();
+    } catch {
+      /* ignore */
+    }
+    eventUnsubsBySession.delete(sessionId);
+  }
+}
 
 function ensureSessionEvents(
   server: RpcServer,
-  session: { sessionId: string; onEvent: (l: (e: { type: string; [k: string]: unknown }) => void) => () => void },
+  session: {
+    sessionId: string;
+    onEvent: (l: (e: { type: string; [k: string]: unknown }) => void) => () => void;
+    onDestroy?: (cb: () => void) => void;
+  },
   sessionId: string,
 ): void {
+  if (eventBoundWrappers.has(session as object)) return;
+  eventBoundWrappers.add(session as object);
+
   const key = session.sessionId || sessionId;
-  if (eventAttached.has(key)) return;
-  eventAttached.add(key);
-  session.onEvent((event) => {
+  // Replace any stale binding for this session id (re-opened after idle destroy)
+  clearSessionEventBinding(key);
+
+  const unsub = session.onEvent((event) => {
     server.emit("agent.events", key, event as never);
-    if (event.type === "agent_end" || event.type === "prompt_done") {
+    // ISSUE-015: only agent_end (not synthetic prompt_done) for system notifications
+    if (event.type === "agent_end") {
       try {
         process.parentPort?.postMessage({
           type: "agent-end",
@@ -1015,16 +1188,10 @@ function ensureSessionEvents(
       }
     }
   });
-}
-
-// Notify main when a session ends with no renderer interest (desktop §6.1)
-export function wireAgentEndNotifications(
-  server: RpcServer,
-  sessionId: string,
-): void {
-  // Handled via ensureSessionEvents + parentPort in start path when needed
-  void server;
-  void sessionId;
+  eventUnsubsBySession.set(key, unsub);
+  session.onDestroy?.(() => {
+    clearSessionEventBinding(key);
+  });
 }
 
 // silence unused imports in some builds

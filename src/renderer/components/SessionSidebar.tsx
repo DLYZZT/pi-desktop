@@ -1055,7 +1055,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               )}
 
               {/* Native directory picker (desktop) */}
-              {!customPathOpen && typeof window !== "undefined" && window.piBridge?.selectDirectory && (
+              {!customPathOpen && typeof window !== "undefined" && !!window.piBridge && (
                 <button
                   onClick={(e) => { e.stopPropagation(); void handlePickDirectory(); }}
                   style={{
@@ -1831,33 +1831,57 @@ function SessionItem({
     setRenaming(false);
     if (name === (session.name ?? "")) return;
     try {
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        console.error("rename failed", body.error ?? res.status);
+        return;
+      }
       onRenamed?.();
-    } catch {
-      // ignore
+    } catch (e) {
+      console.error("rename failed", e);
     }
   }, [renameValue, session.id, session.name, onRenamed]);
 
   const handleDeleteClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
+    // ISSUE-001: block delete while agent is running
+    if (isRunning) {
+      window.alert("This session is still running. Stop it before deleting.");
+      return;
+    }
     setConfirmDelete(true);
-  }, []);
+  }, [isRunning]);
 
   const handleDeleteConfirm = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (isRunning) {
+      window.alert("This session is still running. Stop it before deleting.");
+      setConfirmDelete(false);
+      return;
+    }
     setConfirmDelete(false);
     setDeleting(true);
     try {
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        window.alert(body.error ?? `Delete failed (${res.status})`);
+        setDeleting(false);
+        return;
+      }
       onDeleted?.(session.id);
-    } catch {
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err));
       setDeleting(false);
     }
-  }, [session.id, onDeleted]);
+  }, [session.id, onDeleted, isRunning]);
 
   const handleDeleteCancel = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

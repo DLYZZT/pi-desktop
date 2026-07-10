@@ -481,12 +481,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, []);
 
+  const contextGenRef = useRef(0);
+
   const loadContext = useCallback(async (sid: string, leafId: string | null) => {
+    // ISSUE-007: only apply the latest navigation result
+    const gen = ++contextGenRef.current;
     try {
       const d = await getSessionContext(sid, leafId ?? undefined);
+      if (gen !== contextGenRef.current) return;
       setMessages(d.context.messages as AgentMessage[]);
       setEntryIds(d.context.entryIds ?? []);
     } catch (e) {
+      if (gen !== contextGenRef.current) return;
       console.error("Failed to load context:", e);
     }
   }, []);
@@ -768,7 +774,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // and the user already started the next one while this request was in
       // flight) — everything in it is stale, drop it.
       if (promptRunIdRef.current !== runId) return;
-      const state = data.state;
+      const state = (data.state ?? undefined) as AgentStateResponse | undefined;
       // Mirror compaction state unconditionally: a missed compaction_end
       // would otherwise leave the "Stop compaction" UI stuck. No state
       // (wrapper destroyed) means nothing is compacting.
@@ -1029,23 +1035,26 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch (e) {
       console.error("Failed to send message:", e);
-      if (e instanceof EventStreamConnectionError) {
-        const optimisticKey = optimisticUserMessageKeyRef.current;
-        if (optimisticKey) {
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            return last?.role === "user" && userMessageKey(last) === optimisticKey
-              ? prev.slice(0, -1)
-              : prev;
-          });
-        }
-        addNotice({ type: "error", message: e.message });
+      const optimisticKey = optimisticUserMessageKeyRef.current;
+      if (optimisticKey) {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          return last?.role === "user" && userMessageKey(last) === optimisticKey
+            ? prev.slice(0, -1)
+            : prev;
+        });
       }
+      addNotice({
+        type: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
       optimisticUserMessageKeyRef.current = null;
       agentRunningRef.current = false;
       setAgentRunning(false);
       setAgentPhase(null);
       dispatch({ type: "end" });
+      // ISSUE-006: rethrow so ChatInput restores the draft
+      throw e;
     }
   }, [isNew, newSessionCwd, newSessionModel, session, agentRunning, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice]);
 
@@ -1082,19 +1091,34 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleNavigate = useCallback(async (entryId: string) => {
     const sid = sessionIdRef.current;
     if (!sid) return;
-    sendAgentCommand(sid, { type: "navigate_tree", targetId: entryId }).catch(() => {});
+    // ISSUE-007: navigate first, then load context for that leaf
+    try {
+      await sendAgentCommand(sid, { type: "navigate_tree", targetId: entryId });
+    } catch (e) {
+      console.error("navigate_tree failed:", e);
+      return;
+    }
     setActiveLeafId(entryId);
     await loadContext(sid, entryId);
   }, [loadContext]);
 
   const handleLeafChange = useCallback(async (leafId: string | null) => {
-    setActiveLeafId(leafId);
     const sid = sessionIdRef.current;
     if (!sid) return;
-    await loadContext(sid, leafId);
+    const gen = ++contextGenRef.current;
     if (leafId) {
-      sendAgentCommand(sid, { type: "navigate_tree", targetId: leafId }).catch(() => {});
+      try {
+        await sendAgentCommand(sid, { type: "navigate_tree", targetId: leafId });
+      } catch (e) {
+        console.error("navigate_tree failed:", e);
+        return;
+      }
     }
+    if (gen !== contextGenRef.current) return;
+    setActiveLeafId(leafId);
+    // loadContext bumps gen again — pass through by reusing after navigate
+    contextGenRef.current = gen;
+    await loadContext(sid, leafId);
   }, [loadContext]);
 
   const handleModelChange = useCallback(async (provider: string, modelId: string) => {
@@ -1141,28 +1165,28 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const loadModels = useCallback(async (signal?: AbortSignal) => {
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
     if (signal?.aborted) return;
-    const d = await listModels(modelCwd || undefined) as ModelsResponse & {
-      models?: ModelsResponse["models"];
-      modelList?: ModelsResponse["modelList"];
-    };
+    const d = await listModels(modelCwd || undefined);
     if (signal?.aborted) return;
-    // Host returns { models, defaultModel, thinkingLevels, ... }
-    const modelList = (d as { models?: Array<{ id: string; name: string; provider: string }> }).models
-      ?? d.modelList
-      ?? [];
-    setModelNames(d.nameMap ? Object.entries(d.nameMap as Record<string, string>).map(([k, name]) => {
-      const [provider, id] = k.split(":");
-      return { id, name, provider };
-    }) : modelList);
+    const nextList: ModelEntry[] = d.models ?? [];
+    const nameMap = d.nameMap ?? {};
+    setModelNames(
+      Object.keys(nameMap).length > 0
+        ? nameMap
+        : Object.fromEntries(nextList.map((m) => [`${m.provider}:${m.id}`, m.name])),
+    );
     setModelThinkingLevels(d.thinkingLevels ?? {});
     setModelThinkingLevelMaps(d.thinkingLevelMaps ?? {});
-    setModelList(modelList);
+    setModelList(nextList);
     if (isNew) {
       const match = d.defaultModel
-        ? modelList.find((m) => m.id === d.defaultModel?.modelId && m.provider === d.defaultModel?.provider)
+        ? nextList.find(
+            (m) => m.id === d.defaultModel?.modelId && m.provider === d.defaultModel?.provider,
+          )
         : undefined;
-      const displayModel = match ?? modelList[0];
-      setNewSessionDefaultModel(displayModel ? { provider: displayModel.provider, modelId: displayModel.id } : null);
+      const displayModel = match ?? nextList[0];
+      setNewSessionDefaultModel(
+        displayModel ? { provider: displayModel.provider, modelId: displayModel.id } : null,
+      );
     }
   }, [isNew, newSessionCwd, session?.cwd]);
 

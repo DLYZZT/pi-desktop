@@ -16,9 +16,11 @@
     "test": "node --test src/shared/*.test.mjs",
     "check:contract": "node scripts/check-contract-coverage.mjs",
     "smoke": "node scripts/smoke-electron.mjs",
+    "verify": "node scripts/verify.mjs",
     "start": "electron .",
-    "pack": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
-    "dist": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --publish never"
+    "pack": "npm run verify && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
+    "dist": "npm run verify && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --publish never",
+    "engines-note": "Use Node 20+ for dev; Electron ships its own runtime"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.80.3",

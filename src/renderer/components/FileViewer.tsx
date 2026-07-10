@@ -42,11 +42,21 @@ function getFileApiUrl(
 }
 
 function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceSessionId?: string | null }) {
+  const [busy, setBusy] = useState(false);
   return (
-    <a
-      href={getFileApiUrl(filePath, "download", sourceSessionId)}
-      download={getFileName(filePath)}
+    <button
+      type="button"
       title="Download file"
+      disabled={busy}
+      onClick={() => {
+        setBusy(true);
+        void import("@/lib/file-blob")
+          .then(({ downloadFileViaRpc }) =>
+            downloadFileViaRpc(filePath, getFileName(filePath), sourceSessionId),
+          )
+          .catch((e) => console.error("download failed", e))
+          .finally(() => setBusy(false));
+      }}
       style={{
         display: "flex",
         alignItems: "center",
@@ -57,9 +67,8 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
         border: "1px solid var(--border)",
         borderRadius: 4,
         color: "var(--text-muted)",
-        cursor: "pointer",
+        cursor: busy ? "wait" : "pointer",
         flexShrink: 0,
-        textDecoration: "none",
       }}
     >
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -67,7 +76,7 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
         <polyline points="7 10 12 15 17 10" />
         <line x1="12" y1="15" x2="12" y2="3" />
       </svg>
-    </a>
+    </button>
   );
 }
 
@@ -306,49 +315,80 @@ function DiffView({ oldContent, newContent }: { oldContent: string; newContent: 
   );
 }
 
-function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
-  const [watching, setWatching] = useState(false);
-  const [bust, setBust] = useState(0);
+/** ISSUE-004: load media via RPC → Blob URL (not bare /api img src) */
+function useBlobSrc(filePath: string, sourceSessionId?: string | null, bust = 0) {
+  const [src, setSrc] = useState<string | null>(null);
   const [size, setSize] = useState<number | null>(null);
-  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
-
-  const ext = getFileName(filePath).toLowerCase().split(".").pop() ?? "";
+  const revokeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    setBust(0);
-    setSize(null);
-    setNaturalSize(null);
+    let cancelled = false;
     setError(null);
+    revokeRef.current?.();
+    revokeRef.current = null;
+    setSrc(null);
+    void import("@/lib/file-blob")
+      .then(({ fileToObjectUrl }) => fileToObjectUrl(filePath, sourceSessionId))
+      .then((r) => {
+        if (cancelled) {
+          r.revoke();
+          return;
+        }
+        revokeRef.current = r.revoke;
+        setSrc(r.url);
+        setSize(r.size);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+      revokeRef.current?.();
+      revokeRef.current = null;
+    };
+  }, [filePath, sourceSessionId, bust]);
+
+  return { src, size, error, setError, setSize };
+}
+
+function useFileWatch(
+  filePath: string,
+  sourceSessionId: string | null | undefined,
+  onChange: (size?: number) => void,
+) {
+  const [watching, setWatching] = useState(false);
+  useEffect(() => {
     setWatching(false);
-
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-
     const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
-    esRef.current = es;
-
     es.addEventListener("connected", () => setWatching(true));
     es.addEventListener("change", (e) => {
       try {
         const d = JSON.parse((e as MessageEvent).data) as { size?: number };
-        if (typeof d.size === "number") setSize(d.size);
-      } catch { /* ignore */ }
-      setBust((b) => b + 1);
+        onChange(typeof d.size === "number" ? d.size : undefined);
+      } catch {
+        onChange();
+      }
     });
     es.addEventListener("error", () => setWatching(false));
     es.onerror = () => setWatching(false);
+    return () => es.close();
+  }, [filePath, sourceSessionId, onChange]);
+  return watching;
+}
 
-    return () => {
-      es.close();
-      esRef.current = null;
-    };
-  }, [filePath, sourceSessionId]);
+function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
+  const [bust, setBust] = useState(0);
+  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  const { src, size, error, setError, setSize } = useBlobSrc(filePath, sourceSessionId, bust);
+  const onChange = useCallback((s?: number) => {
+    if (typeof s === "number") setSize(s);
+    setNaturalSize(null);
+    setBust((b) => b + 1);
+  }, [setSize]);
+  const watching = useFileWatch(filePath, sourceSessionId, onChange);
 
-  const src = getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined);
+  const ext = getFileName(filePath).toLowerCase().split(".").pop() ?? "";
 
   const formatSizeStr = size != null ? formatSize(size) : null;
 
@@ -408,6 +448,8 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
       >
         {error ? (
           <div style={{ color: "#f87171", fontSize: 13 }}>{error}</div>
+        ) : !src ? (
+          <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -440,50 +482,18 @@ function formatDuration(seconds: number): string {
 }
 
 function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
-  const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
-  const [size, setSize] = useState<number | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
-
-  const ext = getFileName(filePath).toLowerCase().split(".").pop() ?? "";
-
-  useEffect(() => {
-    setBust(0);
-    setSize(null);
+  const { src, size, error, setError, setSize } = useBlobSrc(filePath, sourceSessionId, bust);
+  const onChange = useCallback((s?: number) => {
+    if (typeof s === "number") setSize(s);
     setDuration(null);
     setError(null);
-    setWatching(false);
+    setBust((b) => b + 1);
+  }, [setSize, setError]);
+  const watching = useFileWatch(filePath, sourceSessionId, onChange);
 
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-
-    const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
-    esRef.current = es;
-
-    es.addEventListener("connected", () => setWatching(true));
-    es.addEventListener("change", (e) => {
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number };
-        if (typeof d.size === "number") setSize(d.size);
-      } catch { /* ignore */ }
-      setDuration(null);
-      setError(null);
-      setBust((b) => b + 1);
-    });
-    es.addEventListener("error", () => setWatching(false));
-    es.onerror = () => setWatching(false);
-
-    return () => {
-      es.close();
-      esRef.current = null;
-    };
-  }, [filePath, sourceSessionId]);
-
-  const src = getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined);
+  const ext = getFileName(filePath).toLowerCase().split(".").pop() ?? "";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -540,15 +550,17 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
               {error}
             </div>
           )}
-          <audio
-            key={src}
-            controls
-            preload="metadata"
-            src={src}
-            onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-            onError={() => setError("Failed to load audio")}
-            style={{ width: "100%" }}
-          />
+          {src && (
+            <audio
+              key={src}
+              controls
+              preload="metadata"
+              src={src}
+              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+              onError={() => setError("Failed to load audio")}
+              style={{ width: "100%" }}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -556,68 +568,91 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
 }
 
 function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
-  const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const revokeRef = useRef<(() => void) | null>(null);
 
   const ext = getFileExt(filePath);
   const isPdf = ext === "pdf";
-  const previewUrl = isPdf
-    ? getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined)
-    : getFileApiUrl(filePath, "preview", sourceSessionId, bust ? { v: bust } : undefined);
 
   useEffect(() => {
-    setBust(0);
-    setSize(null);
+    let cancelled = false;
     setError(null);
-    setWatching(false);
+    setSize(null);
+    revokeRef.current?.();
+    revokeRef.current = null;
+    setPreviewUrl(null);
 
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-
-    fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
-      .then((r) => r.json())
-      .then((d: { size?: number; error?: string }) => {
-        if (d.error) setError(d.error);
-        if (typeof d.size === "number") {
-          setSize(d.size);
-          if (!isPdf && d.size > DOCX_PREVIEW_MAX_BYTES) {
-            setError("DOCX too large for preview (>10MB)");
-          }
-        }
-      })
-      .catch((e) => setError(String(e)));
-
-    const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
-    esRef.current = es;
-
-    es.addEventListener("connected", () => setWatching(true));
-    es.addEventListener("change", (e) => {
+    void (async () => {
       try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number };
-        if (typeof d.size === "number") {
-          setSize(d.size);
-          if (!isPdf && d.size > DOCX_PREVIEW_MAX_BYTES) {
-            setError("DOCX too large for preview (>10MB)");
+        if (isPdf) {
+          const { fileToObjectUrl } = await import("@/lib/file-blob");
+          const r = await fileToObjectUrl(filePath, sourceSessionId);
+          if (cancelled) {
+            r.revoke();
             return;
           }
+          revokeRef.current = r.revoke;
+          setPreviewUrl(r.url);
+          setSize(r.size);
+          return;
         }
-      } catch { /* ignore */ }
-      setError(null);
-      setBust((b) => b + 1);
-    });
-    es.addEventListener("error", () => setWatching(false));
-    es.onerror = () => setWatching(false);
+        // DOCX: load base64, convert with mammoth client-side
+        const { call } = await import("@/lib/api-client");
+        const preview = await call("files.preview", {
+          path: filePath,
+          sourceSessionId: sourceSessionId ?? undefined,
+        });
+        if (cancelled) return;
+        if (preview.kind === "too_large") {
+          setError("DOCX too large for preview (>10MB)");
+          return;
+        }
+        if (preview.kind === "docx" && preview.base64) {
+          const mammoth = await import("mammoth");
+          const binary = Uint8Array.from(atob(preview.base64), (c) => c.charCodeAt(0));
+          const result = await mammoth.convertToHtml(
+            { arrayBuffer: binary.buffer },
+            { convertImage: mammoth.images.dataUri },
+          );
+          if (cancelled) return;
+          const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>
+            body{font-family:system-ui,sans-serif;padding:24px;line-height:1.5;color:#1c1a17;background:#fff}
+            img{max-width:100%}
+          </style></head><body>${result.value}</body></html>`;
+          const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          revokeRef.current = () => URL.revokeObjectURL(url);
+          setPreviewUrl(url);
+        } else {
+          setError("Preview not available");
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
 
     return () => {
-      es.close();
-      esRef.current = null;
+      cancelled = true;
+      revokeRef.current?.();
+      revokeRef.current = null;
     };
-  }, [filePath, isPdf, sourceSessionId]);
+  }, [filePath, isPdf, sourceSessionId, bust]);
+
+  const onChange = useCallback((s?: number) => {
+    if (typeof s === "number") {
+      setSize(s);
+      if (!isPdf && s > DOCX_PREVIEW_MAX_BYTES) {
+        setError("DOCX too large for preview (>10MB)");
+        return;
+      }
+    }
+    setError(null);
+    setBust((b) => b + 1);
+  }, [isPdf]);
+  const watching = useFileWatch(filePath, sourceSessionId, onChange);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -662,6 +697,10 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
           <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: "#f87171", fontSize: 13, textAlign: "center" }}>
             {error}
           </div>
+        ) : !previewUrl ? (
+          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 13 }}>
+            Loading…
+          </div>
         ) : (
           <iframe
             key={previewUrl}
@@ -702,32 +741,50 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
   const [changeCount, setChangeCount] = useState(0);
   const esRef = useRef<EventSource | null>(null);
 
-  const fetchContent = useCallback((filePath: string, isRefresh = false) => {
-    return fetch(getFileApiUrl(filePath, "read", sourceSessionId))
-      .then((r) => r.json())
-      .then((d: FileData & { error?: string }) => {
+  const loadGen = useRef(0);
+
+  const fetchContent = useCallback((targetPath: string, isRefresh = false) => {
+    const gen = ++loadGen.current;
+    return import("@/lib/file-blob")
+      .then(({ readFilePayload }) => readFilePayload(targetPath, sourceSessionId))
+      .then((d) => {
+        if (gen !== loadGen.current) return null; // ISSUE-019: stale response
         if (d.error) {
           setError(d.error);
           return null;
         }
+        if (d.encoding === "too_large") {
+          setError("File too large for preview");
+          return null;
+        }
+        if (d.encoding === "base64") {
+          setError("Binary file cannot be shown as text");
+          return null;
+        }
+        const payload: FileData = {
+          content: d.content,
+          language: d.language ?? "text",
+          size: d.size ?? d.content.length,
+        };
         if (isRefresh) {
           setData((prev) => {
             if (prev) setPrevContent(prev.content);
-            return d;
+            return payload;
           });
           setChangeCount((c) => c + 1);
         } else {
-          setData(d);
+          setData(payload);
         }
-        return d;
+        return payload;
       })
       .catch((e) => {
+        if (gen !== loadGen.current) return null;
         setError(String(e));
         return null;
       });
   }, [sourceSessionId]);
 
-  // Initial load + SSE watch setup
+  // Initial load + watch setup
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -748,7 +805,6 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
       if (d?.language === "markdown") setPreviewMode(true);
     }).finally(() => setLoading(false));
 
-    // Set up SSE watch
     const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
     esRef.current = es;
 
@@ -769,6 +825,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
     };
 
     return () => {
+      loadGen.current += 1;
       es.close();
       esRef.current = null;
     };

@@ -25,9 +25,13 @@ interface Props {
   onAtMention?: (relativePath: string, isDir: boolean) => void;
 }
 
+let fetchGen = 0;
+
 async function fetchEntries(dirPath: string): Promise<FileNode[]> {
+  const gen = ++fetchGen;
   const encoded = encodeFilePathForApi(dirPath);
   const res = await fetch(`/api/files/${encoded}?type=list`);
+  if (gen !== fetchGen) return []; // ISSUE-019: stale
   if (!res.ok) {
     let message = `Failed to load files (HTTP ${res.status})`;
     try {
@@ -39,6 +43,7 @@ async function fetchEntries(dirPath: string): Promise<FileNode[]> {
     throw new Error(message);
   }
   const data = await res.json() as { entries?: FileEntry[] };
+  if (gen !== fetchGen) return [];
   return (data.entries ?? []).map((e) => ({
     name: e.name,
     fullPath: joinFilePath(dirPath, e.name),
