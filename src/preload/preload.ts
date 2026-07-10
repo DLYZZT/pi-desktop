@@ -30,7 +30,11 @@ export type PiBridge = {
   getThemeSource: () => Promise<"system" | "light" | "dark">;
   setThemeSource: (source: "system" | "light" | "dark") => Promise<void>;
   openLogs: () => Promise<void>;
+  exportDiagnostics: () => Promise<string | null>;
+  clearBadge: () => void;
   onHostStatus: (cb: (s: { status: HostStatus; detail?: string }) => void) => () => void;
+  onHostRestarted: (cb: (payload: { reason: string }) => void) => () => void;
+  onHostCrashed: (cb: (payload: { detail?: string }) => void) => () => void;
   onDeepLinkSession: (cb: (sessionId: string) => void) => () => void;
   onMenu: (event: string, cb: () => void) => () => void;
 };
@@ -65,11 +69,25 @@ const bridge: PiBridge = {
   getThemeSource: () => ipcRenderer.invoke("desktop:get-theme-source"),
   setThemeSource: (source) => ipcRenderer.invoke("desktop:set-theme-source", source),
   openLogs: () => ipcRenderer.invoke("desktop:open-logs"),
+  exportDiagnostics: () => ipcRenderer.invoke("desktop:export-diagnostics"),
+  clearBadge: () => {
+    ipcRenderer.send("desktop:set-badge-count", 0);
+  },
   onHostStatus: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, data: { status: HostStatus; detail?: string }) =>
       cb(data);
     ipcRenderer.on("host:status", handler);
     return () => ipcRenderer.removeListener("host:status", handler);
+  },
+  onHostRestarted: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { reason: string }) => cb(data);
+    ipcRenderer.on("host:restarted", handler);
+    return () => ipcRenderer.removeListener("host:restarted", handler);
+  },
+  onHostCrashed: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { detail?: string }) => cb(data);
+    ipcRenderer.on("host:crashed", handler);
+    return () => ipcRenderer.removeListener("host:crashed", handler);
   },
   onDeepLinkSession: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, sessionId: string) => cb(sessionId);

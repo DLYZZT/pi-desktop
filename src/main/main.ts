@@ -19,6 +19,8 @@ import { installAppMenu } from "./menu";
 import { handleAppProtocol, registerAppProtocol, rendererRootPath } from "./protocol";
 import { acquireSingleInstanceLock } from "./single-instance";
 import { applyWindowBounds, loadUiState, saveUiState, trackWindowState } from "./window-state";
+import { createTray, destroyTray, setTrayRunningCount } from "./tray";
+import { exportDiagnostics } from "./diagnostics";
 
 // Must run before app ready
 registerAppProtocol();
@@ -278,6 +280,16 @@ function installIpc(): void {
   ipcMain.handle("desktop:open-logs", () => {
     shell.showItemInFolder(getMainLogPath());
   });
+
+  ipcMain.handle("desktop:export-diagnostics", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return exportDiagnostics(win);
+  });
+
+  ipcMain.handle("desktop:clear-badge", () => {
+    unreadBadge = 0;
+    app.setBadgeCount(0);
+  });
 }
 
 app.whenReady().then(() => {
@@ -290,11 +302,27 @@ app.whenReady().then(() => {
   installIpc();
   installAppMenu(getMainWindow);
 
+  if (process.env.PI_SMOKE_TEST !== "1") {
+    createTray(getMainWindow);
+  }
+
+  // Apply persisted theme preference
+  const ui = loadUiState();
+  if (ui.theme === "light" || ui.theme === "dark" || ui.theme === "system") {
+    nativeTheme.themeSource = ui.theme;
+  }
+
   hostManager = new HostManager(resolveHostEntry());
   hostManager.setStatusListener((status, detail) => {
     appendMainLog(`host status=${status} ${detail ?? ""}`);
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send("host:status", { status, detail });
+      if (status === "ready" && detail?.includes("restart")) {
+        win.webContents.send("host:restarted", { reason: detail });
+      }
+      if (status === "crashed") {
+        win.webContents.send("host:crashed", { detail });
+      }
     }
     if (process.env.PI_SMOKE_TEST === "1" && status === "ready") {
       appendMainLog("smoke: host ready — exiting 0");
@@ -309,6 +337,40 @@ app.whenReady().then(() => {
       app.exit(1);
     }
   });
+
+  hostManager.setMessageListener((msg) => {
+    if (msg.type === "running-sessions") {
+      const ids = (msg.sessionIds as string[]) ?? [];
+      setTrayRunningCount(ids.length, getMainWindow);
+    } else if (msg.type === "agent-end") {
+      const sessionId = String(msg.sessionId ?? "");
+      // Notify if no focused window or window is hidden (desktop value-add)
+      const win = getMainWindow();
+      const shouldNotify = !win || !win.isVisible() || !win.isFocused();
+      if (shouldNotify && Notification.isSupported() && sessionId) {
+        const n = new Notification({
+          title: "Agent finished",
+          body: "A session completed in the background",
+        });
+        n.on("click", () => {
+          const w = getMainWindow();
+          if (w) {
+            w.show();
+            w.focus();
+            w.webContents.send("deep-link:session", sessionId);
+          }
+        });
+        n.show();
+        unreadBadge += 1;
+        app.setBadgeCount(unreadBadge);
+      }
+    } else if (msg.type === "host-restarted") {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send("host:restarted", { reason: String(msg.reason ?? "restart") });
+      }
+    }
+  });
+
   hostManager.start();
 
   if (process.env.PI_SMOKE_TEST !== "1") {
@@ -326,6 +388,7 @@ app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  destroyTray();
   hostManager?.stop();
 });
 

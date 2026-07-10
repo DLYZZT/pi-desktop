@@ -3,7 +3,7 @@ import { homedir } from "os";
 import path from "path";
 import { getAdditionalAllowedRoots, normalizeSlashes } from "../shared/allowed-roots";
 import { listAllSessions } from "./session-reader";
-export { allowFileRoot, normalizeSlashes } from "../shared/allowed-roots";
+export { allowFileRoot, normalizeSlashes, invalidateAllowedRootsCache } from "../shared/allowed-roots";
 
 // Short-TTL cache for the allowed-roots set. Without this, every file list/read
 // request re-scans every pi session on disk just to check access. 5s is short

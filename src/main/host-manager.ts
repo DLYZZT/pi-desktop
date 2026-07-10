@@ -14,6 +14,14 @@ const PING_TIMEOUT_MS = 10_000;
 
 export type HostStatus = "starting" | "ready" | "crashed" | "stopped";
 
+export type HostMessage =
+  | { type: "ready"; ts?: number }
+  | { type: "pong"; ts?: number }
+  | { type: "log"; message: string }
+  | { type: "running-sessions"; sessionIds: string[] }
+  | { type: "agent-end"; sessionId: string; eventType?: string }
+  | { type: string; [key: string]: unknown };
+
 export class HostManager {
   private child: UtilityProcess | null = null;
   private status: HostStatus = "stopped";
@@ -21,12 +29,18 @@ export class HostManager {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private lastPong = 0;
   private onStatusChange: ((s: HostStatus, detail?: string) => void) | null = null;
+  private onHostMessage: ((msg: HostMessage) => void) | null = null;
   private pendingPorts: MessagePortMain[] = [];
+  private wasReadyBeforeExit = false;
 
   constructor(private readonly hostEntry: string) {}
 
   setStatusListener(cb: (s: HostStatus, detail?: string) => void): void {
     this.onStatusChange = cb;
+  }
+
+  setMessageListener(cb: (msg: HostMessage) => void): void {
+    this.onHostMessage = cb;
   }
 
   getStatus(): HostStatus {
@@ -120,16 +134,22 @@ export class HostManager {
     });
 
     child.on("message", (msg: unknown) => {
-      const m = msg as { type?: string; [key: string]: unknown };
+      const m = msg as HostMessage;
       if (m?.type === "ready") {
         appendMainLog("agent-host ready");
+        const restarted = this.wasReadyBeforeExit;
+        this.wasReadyBeforeExit = false;
         this.setStatus("ready");
         this.startPing();
+        if (restarted) {
+          this.onHostMessage?.({ type: "host-restarted", reason: "crash-recovery" });
+        }
       } else if (m?.type === "pong") {
         this.lastPong = Date.now();
       } else if (m?.type === "log") {
         appendMainLog(`[host] ${m.message}`);
       }
+      this.onHostMessage?.(m);
     });
 
     child.on("exit", (code) => {
@@ -138,6 +158,7 @@ export class HostManager {
       this.child = null;
       if (this.status === "stopped") return;
 
+      this.wasReadyBeforeExit = this.status === "ready" || this.status === "starting";
       const now = Date.now();
       this.restartTimes = this.restartTimes.filter((t) => now - t < CRASH_WINDOW_MS);
       if (this.restartTimes.length >= MAX_RESTARTS) {
@@ -146,6 +167,7 @@ export class HostManager {
       }
       this.restartTimes.push(now);
       appendMainLog(`restarting agent-host (attempt ${this.restartTimes.length}/${MAX_RESTARTS})`);
+      this.setStatus("starting", `restarting after exit ${code}`);
       setTimeout(() => this.spawn(), 500);
     });
 

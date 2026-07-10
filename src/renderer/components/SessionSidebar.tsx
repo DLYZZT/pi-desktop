@@ -413,25 +413,48 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, [unreadSessionIds]);
 
   useEffect(() => {
-    // Live running status via SSE — no polling. The server pushes the current
-    // set of running session ids whenever any session starts/stops working.
+    // Live running status via IPC stream (shimmed as EventSource).
     const source = new EventSource("/api/agent/running/events");
 
     source.onmessage = (e) => {
       try {
-        const data = JSON.parse(e.data) as { type?: string; runningSessionIds?: string[] };
+        const data = JSON.parse(e.data) as {
+          type?: string;
+          runningSessionIds?: string[];
+          sessionIds?: string[];
+        };
         if (data.type === "running") {
           sseAuthoritativeRef.current = true;
-          setRunningSessionIds(new Set(data.runningSessionIds ?? []));
+          setRunningSessionIds(
+            new Set(data.runningSessionIds ?? data.sessionIds ?? []),
+          );
         }
       } catch {
         // ignore malformed frames
       }
     };
 
-    // On error EventSource auto-reconnects; keep the last known state meanwhile.
     return () => source.close();
   }, []);
+
+  // sessions.changed (CLI / disk watcher) → refresh sidebar without polling
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    let cancelled = false;
+    void import("@/lib/api-client").then(({ subscribeSessionsChanged }) => {
+      if (cancelled) return;
+      return subscribeSessionsChanged(() => {
+        void loadSessions(false);
+      }).then((u) => {
+        if (cancelled) u();
+        else unsub = u;
+      });
+    });
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, [loadSessions]);
 
   useEffect(() => {
     const previous = previousRunningSessionIdsRef.current;

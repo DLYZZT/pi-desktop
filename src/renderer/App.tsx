@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 import { AppShell } from "@/components/AppShell";
-import { ensureRpc } from "@/lib/api-client";
+import { ensureRpc, resetRpc } from "@/lib/api-client";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -52,21 +52,53 @@ export function App() {
         : "piBridge missing (preload failed?)",
     );
 
-    ensureRpc()
-      .then(() => {
-        if (!cancelled) {
-          setReady(true);
-          setError(null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      });
+    const connect = () => {
+      ensureRpc()
+        .then(() => {
+          if (!cancelled) {
+            setReady(true);
+            setError(null);
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : String(err));
+            setReady(false);
+          }
+        });
+    };
+
+    connect();
+
+    const offRestart = window.piBridge?.onHostRestarted?.((payload) => {
+      console.warn("[pi-desktop] host restarted:", payload.reason);
+      resetRpc();
+      setReady(false);
+      setStatus("Agent Host restarted — reconnecting…");
+      setError(null);
+      connect();
+    });
+
+    const offCrash = window.piBridge?.onHostCrashed?.((payload) => {
+      resetRpc();
+      setReady(false);
+      setError(payload.detail || "Agent Host crashed and could not recover");
+    });
+
+    const offMenuDiag = window.piBridge?.onMenu?.("export-diagnostics", () => {
+      void window.piBridge?.exportDiagnostics?.();
+    });
+
+    // Clear dock badge when user focuses the app
+    const onFocus = () => window.piBridge?.clearBadge?.();
+    window.addEventListener("focus", onFocus);
 
     return () => {
       cancelled = true;
+      offRestart?.();
+      offCrash?.();
+      offMenuDiag?.();
+      window.removeEventListener("focus", onFocus);
     };
   }, []);
 

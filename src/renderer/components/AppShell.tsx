@@ -167,6 +167,40 @@ export function AppShell() {
   // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
   const suppressCwdBumpRef = useRef(false);
 
+  // Deep link + menu actions from Electron main
+  useEffect(() => {
+    const offDeep = window.piBridge?.onDeepLinkSession?.(async (sessionId) => {
+      try {
+        const { sessions } = await listSessions();
+        const found = sessions.find((s) => s.id === sessionId);
+        if (found) {
+          setNewSessionCwd(null);
+          setSelectedSession(found as SessionInfo);
+          setSessionKey((k) => k + 1);
+          setRefreshKey((k) => k + 1);
+          router.replace(`?session=${encodeURIComponent(sessionId)}`);
+        }
+      } catch (e) {
+        console.error("deep link open failed", e);
+      }
+    });
+    const offNew = window.piBridge?.onMenu?.("new-session", () => {
+      if (activeCwd) {
+        setSelectedSession(null);
+        setNewSessionCwd(activeCwd);
+        setSessionKey((k) => k + 1);
+      }
+    });
+    const offSettings = window.piBridge?.onMenu?.("settings", () => {
+      setModelsConfigOpen(true);
+    });
+    return () => {
+      offDeep?.();
+      offNew?.();
+      offSettings?.();
+    };
+  }, [activeCwd, router]);
+
   const handleCwdChange = useCallback((cwd: string | null, projectRoot?: string | null) => {
     setActiveCwd(cwd);
     // Skip if cwd is null (initial mount) or during the initial URL restore.

@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { RpcServer } from "../contract/rpc";
+import { invalidateAllowedRootsCache } from "./file-access";
 
 export function startSessionWatcher(server: RpcServer): () => void {
   let agentDir: string;
@@ -26,6 +27,7 @@ export function startSessionWatcher(server: RpcServer): () => void {
   const debounce = () => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
+      invalidateAllowedRootsCache();
       server.emit("sessions.changed", "*", { cwd: null });
     }, 300);
   };

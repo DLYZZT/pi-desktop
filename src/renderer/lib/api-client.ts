@@ -8,6 +8,17 @@ import type { ApiMethod, ApiParams, ApiResult, StreamTopic, Streams } from "@con
 let rpc: PiRpc | null = null;
 let connectPromise: Promise<PiRpc> | null = null;
 
+/** Drop RPC client so the next ensureRpc() re-connects (Host crash recovery). */
+export function resetRpc(): void {
+  try {
+    rpc?.close();
+  } catch {
+    /* ignore */
+  }
+  rpc = null;
+  connectPromise = null;
+}
+
 const HOST_READY_TIMEOUT_MS = 30_000;
 const PORT_TIMEOUT_MS = 15_000;
 const PING_TIMEOUT_MS = 10_000;

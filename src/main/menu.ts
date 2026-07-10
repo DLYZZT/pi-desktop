@@ -112,9 +112,16 @@ export function installAppMenu(getWindow: () => BrowserWindow | null): void {
           },
         },
         {
+          label: "Export Diagnostics…",
+          click: () => {
+            getWindow()?.webContents.send("menu:export-diagnostics");
+          },
+        },
+        { type: "separator" },
+        {
           label: "Learn More",
           click: () => {
-            void shell.openExternal("https://github.com/DLYZZT/pi-app");
+            void shell.openExternal("https://github.com/DLYZZT/pi-desktop");
           },
         },
       ],

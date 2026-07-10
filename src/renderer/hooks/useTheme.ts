@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 type Theme = "light" | "dark";
 
@@ -20,10 +20,37 @@ function getServerSnapshot(): Theme {
   return "light";
 }
 
+function systemPrefersDark(): boolean {
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
+}
+
 type ToggleOrigin = { x: number; y: number };
 
 export function useTheme() {
   const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+
+  // Follow OS theme when user has not forced a preference (or chose system)
+  useEffect(() => {
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem("pi-theme");
+    } catch {
+      /* ignore */
+    }
+    if (stored === "light" || stored === "dark") return;
+
+    const applySystem = () => {
+      const dark = systemPrefersDark();
+      document.documentElement.classList.toggle("dark", dark);
+      listeners.forEach((cb) => cb());
+      void window.piBridge?.setThemeSource?.("system");
+    };
+    applySystem();
+    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const onChange = () => applySystem();
+    mq?.addEventListener?.("change", onChange);
+    return () => mq?.removeEventListener?.("change", onChange);
+  }, []);
 
   const toggleTheme = useCallback((origin?: ToggleOrigin) => {
     const next: Theme = getSnapshot() === "dark" ? "light" : "dark";
@@ -39,6 +66,7 @@ export function useTheme() {
       } catch {
         // ignore storage errors (private mode, quota, etc.)
       }
+      void window.piBridge?.setThemeSource?.(next);
       listeners.forEach((cb) => cb());
     };
 

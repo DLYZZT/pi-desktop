@@ -10,12 +10,13 @@ directories:
 files:
   - out/**/*
   - package.json
+  - build/icon.png
+  - build/entitlements.mac.plist
   - "!out/**/*.map"
   - "!**/*.{md,ts,tsx}"
   - "!scripts/**"
   - "!src/**"
   - "!dist/**"
-  - "!build/**"
   - "!tsconfig*.json"
   - "!tsup.config.ts"
   - "!vite.config.ts"

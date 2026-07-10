@@ -100,6 +100,14 @@ export interface Api {
     params: { root: string; query?: string };
     result: { matches: FuzzyMatch[] };
   };
+  "files.watchStart": {
+    params: { path: string; sourceSessionId?: string };
+    result: { ok: true };
+  };
+  "files.watchStop": {
+    params: { path: string };
+    result: { ok: true };
+  };
 
   // Config
   "models.list": {
@@ -126,6 +134,15 @@ export interface Api {
   "auth.logout": { params: { provider: string }; result: { ok: true } };
   "auth.loginSubmit": {
     params: { provider: string; token: string; code: string };
+    result: { ok: true };
+  };
+  /** Kick off OAuth login; progress arrives on Streams["auth.login"]. */
+  "auth.loginStart": {
+    params: { provider: string };
+    result: { ok: true; started: boolean };
+  };
+  "auth.loginCancel": {
+    params: { provider: string };
     result: { ok: true };
   };
 
@@ -162,6 +179,8 @@ export interface Api {
     result: { ok: boolean; path?: string; error?: string };
   };
   "system.defaultCwd": { params: void; result: { cwd: string } };
+  "system.allowRoot": { params: { path: string }; result: { ok: true } };
+  "system.runningCount": { params: void; result: { count: number; sessionIds: string[] } };
 }
 
 /** Server-push streams (replaces SSE routes). */
@@ -170,7 +189,13 @@ export interface Streams {
   "agent.running": RunningStateEvent;
   "auth.login": LoginProgressEvent;
   "sessions.changed": { cwd: string | null };
-  "files.changed": { path: string; event: string };
+  "files.changed": {
+    path: string;
+    event: "connected" | "change" | "error";
+    mtime?: string;
+    size?: number;
+    message?: string;
+  };
   "host.restarted": { reason: string };
   "host.ready": { ts: number };
 }

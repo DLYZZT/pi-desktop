@@ -22,3 +22,8 @@ export function allowFileRoot(root: string): void {
   getAdditionalAllowedRoots().add(normalizedRoot);
   globalThis.__piAllowedRootsCache?.roots.add(normalizedRoot);
 }
+
+/** Drop TTL cache so next getAllowedFileRoots() re-scans sessions (watcher-driven). */
+export function invalidateAllowedRootsCache(): void {
+  globalThis.__piAllowedRootsCache = undefined;
+}

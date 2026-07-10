@@ -21,7 +21,11 @@ export type PiBridge = {
   getThemeSource: () => Promise<"system" | "light" | "dark">;
   setThemeSource: (source: "system" | "light" | "dark") => Promise<void>;
   openLogs: () => Promise<void>;
+  exportDiagnostics: () => Promise<string | null>;
+  clearBadge: () => void;
   onHostStatus: (cb: (s: { status: HostStatus; detail?: string }) => void) => () => void;
+  onHostRestarted: (cb: (payload: { reason: string }) => void) => () => void;
+  onHostCrashed: (cb: (payload: { detail?: string }) => void) => () => void;
   onDeepLinkSession: (cb: (sessionId: string) => void) => () => void;
   onMenu: (event: string, cb: () => void) => () => void;
 };

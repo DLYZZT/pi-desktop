@@ -2,12 +2,15 @@
  * Register all Api handlers on the RPC server.
  * Ports logic from the old Next.js API routes onto the Host process.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
-import { homedir } from "os";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { homedir, tmpdir } from "os";
 import path from "path";
 import {
   AuthStorage,
   DefaultResourceLoader,
+  ModelRegistry,
   SessionManager,
   createAgentSessionServices,
   getAgentDir,
@@ -15,9 +18,17 @@ import {
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { completeSimple, type AssistantMessage } from "@earendil-works/pi-ai/compat";
 import type { RpcServer } from "../contract/rpc";
 import { RpcError } from "../contract/types";
-import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed, isWindowsAbsolutePath, normalizeSlashes } from "./file-access";
+import {
+  allowFileRoot,
+  getAllowedFileRoots,
+  invalidateAllowedRootsCache,
+  isFilePathAllowed,
+  isWindowsAbsolutePath,
+  normalizeSlashes,
+} from "./file-access";
 import {
   getRpcSession,
   getRunningRpcSessionIds,
@@ -43,6 +54,12 @@ import {
   getFileExt,
   getImageMime,
 } from "../shared/file-types";
+import { createFileWatchService } from "./file-watch";
+import { createAuthLoginService, resolveLoginCode } from "./auth-login";
+import { applyPluginAction, readPlugins } from "./plugins-service";
+import { installSkill, searchSkills } from "./skills-service";
+
+const execFileAsync = promisify(execFile);
 
 const IGNORED_NAMES = new Set([
   "node_modules", ".git", ".next", "dist", "build", "__pycache__",
@@ -173,9 +190,22 @@ function projectTreeForResponse<T extends { entry: { id: string }; children: T[]
 }
 
 export function registerHandlers(server: RpcServer): void {
-  // Running sessions stream
+  const fileWatch = createFileWatchService(server);
+  const authLogin = createAuthLoginService(server);
+
+  // Running sessions stream + tray badge signal to main via parentPort
   subscribeRunningSessions((ids) => {
-    server.emit("agent.running", "*", { type: "running", sessionIds: ids });
+    // Field name matches old SSE payload consumed by SessionSidebar
+    server.emit("agent.running", "*", {
+      type: "running",
+      sessionIds: ids,
+      runningSessionIds: ids,
+    } as never);
+    try {
+      process.parentPort?.postMessage({ type: "running-sessions", sessionIds: ids });
+    } catch {
+      /* ignore */
+    }
   });
 
   server.handle({
@@ -512,29 +542,46 @@ export function registerHandlers(server: RpcServer): void {
     "files.index": async (params) => {
       const { root, query } = params as { root: string; query?: string };
       await assertPathAllowed(root);
-      const files: string[] = [];
-      const walk = (dir: string, depth: number) => {
-        if (depth > 8 || files.length >= 5000) return;
-        let names: string[];
-        try {
-          names = readdirSync(dir);
-        } catch {
-          return;
-        }
-        for (const name of names) {
-          if (IGNORED_NAMES.has(name) || name.startsWith(".")) continue;
-          const full = path.join(dir, name);
+      let files: string[] = [];
+
+      // Prefer git ls-files when available (respects .gitignore like the TUI)
+      try {
+        const { stdout } = await execFileAsync(
+          "git",
+          ["-C", root, "ls-files", "--cached", "--others", "--exclude-standard"],
+          { maxBuffer: 20 * 1024 * 1024, timeout: 15_000 },
+        );
+        files = stdout
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .slice(0, 50_000)
+          .map((rel) => path.join(root, rel));
+      } catch {
+        const walk = (dir: string, depth: number) => {
+          if (depth > 8 || files.length >= 5000) return;
+          let names: string[];
           try {
-            const st = statSync(full);
-            if (st.isDirectory()) walk(full, depth + 1);
-            else files.push(full);
+            names = readdirSync(dir);
           } catch {
-            /* skip */
+            return;
           }
-          if (files.length >= 5000) return;
-        }
-      };
-      walk(root, 0);
+          for (const name of names) {
+            if (IGNORED_NAMES.has(name) || name.startsWith(".")) continue;
+            const full = path.join(dir, name);
+            try {
+              const st = statSync(full);
+              if (st.isDirectory()) walk(full, depth + 1);
+              else files.push(full);
+            } catch {
+              /* skip */
+            }
+            if (files.length >= 5000) return;
+          }
+        };
+        walk(root, 0);
+      }
+
       const entries = buildEntriesFromFiles(files, root);
       const matches = query ? filterFileEntries(entries, query).slice(0, 50) : entries.slice(0, 100);
       return {
@@ -599,13 +646,115 @@ export function registerHandlers(server: RpcServer): void {
       return { ok: true as const };
     },
     "modelsConfig.test": async (params) => {
-      const { provider } = params as { provider: string };
+      const body = params as {
+        providerName?: string;
+        provider?: Record<string, unknown>;
+        model?: Record<string, unknown>;
+      };
+      const providerName = typeof body.providerName === "string" ? body.providerName.trim() : "";
+      if (!providerName) return { ok: false, error: "providerName is required" };
+      if (!body.provider || typeof body.provider !== "object") {
+        return { ok: false, error: "provider is required" };
+      }
+      if (!body.model || typeof body.model !== "object") {
+        return { ok: false, error: "model is required" };
+      }
+      const modelId = typeof body.model.id === "string" ? body.model.id.trim() : "";
+      if (!modelId) return { ok: false, error: "Model ID is required" };
+
+      let tempDir: string | undefined;
       try {
-        const auth = AuthStorage.create();
-        const has = auth.has(provider);
-        return { ok: has, error: has ? undefined : `No credentials for ${provider}` };
+        tempDir = mkdtempSync(path.join(tmpdir(), "pi-desktop-model-test-"));
+        const modelsPath = path.join(tempDir, "models.json");
+        writeFileSync(
+          modelsPath,
+          JSON.stringify(
+            {
+              providers: {
+                [providerName]: {
+                  ...body.provider,
+                  models: [{ ...body.model, id: modelId }],
+                },
+              },
+            },
+            null,
+            2,
+          ),
+          "utf8",
+        );
+
+        const registry = ModelRegistry.create(AuthStorage.create(), modelsPath);
+        const loadError = registry.getError();
+        if (loadError) return { ok: false, error: loadError };
+
+        const model = registry.find(providerName, modelId);
+        if (!model) return { ok: false, error: `Model not found: ${providerName}/${modelId}` };
+
+        const auth = await registry.getApiKeyAndHeaders(model);
+        if (!auth.ok) return { ok: false, error: auth.error };
+        if (!auth.apiKey) return { ok: false, error: `No API key found for "${providerName}"` };
+
+        const TEST_TIMEOUT_MS = 20_000;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
+        let status: number | undefined;
+        const startedAt = Date.now();
+        try {
+          const message = (await completeSimple(
+            model,
+            {
+              messages: [
+                {
+                  role: "user",
+                  content: "Reply with OK only.",
+                  timestamp: Date.now(),
+                },
+              ],
+            },
+            {
+              apiKey: auth.apiKey,
+              headers: auth.headers,
+              maxTokens: 16,
+              timeoutMs: TEST_TIMEOUT_MS,
+              maxRetries: 0,
+              cacheRetention: "none",
+              signal: controller.signal,
+              onResponse: (response: { status: number }) => {
+                status = response.status;
+              },
+            },
+          )) as AssistantMessage;
+
+          const latencyMs = Date.now() - startedAt;
+          if (message.stopReason === "error" || message.stopReason === "aborted") {
+            return {
+              ok: false,
+              error:
+                message.errorMessage ??
+                (controller.signal.aborted ? "Test timed out" : "Model returned an error"),
+              latencyMs,
+              status,
+            };
+          }
+          const responseText = message.content
+            .filter((b) => b.type === "text")
+            .map((b) => (b as { text: string }).text)
+            .join("")
+            .slice(0, 300);
+          return { ok: true, latencyMs, status, responseText };
+        } finally {
+          clearTimeout(timeout);
+        }
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      } finally {
+        if (tempDir) {
+          try {
+            rmSync(tempDir, { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
+        }
       }
     },
 
@@ -630,29 +779,47 @@ export function registerHandlers(server: RpcServer): void {
     },
 
     "auth.allProviders": async () => {
-      // Simplified: return same OAuth set + API-key style from models.json
       const authStorage = AuthStorage.create();
-      const oauth = authStorage.getOAuthProviders().map((p) => ({
-        id: p.id,
-        name: p.name,
-        authenticated: authStorage.has(p.id),
-        type: "oauth",
-      }));
-      return { providers: oauth };
+      const registry = ModelRegistry.create(authStorage);
+      const all = registry.getAll();
+      const OAUTH_PROVIDER_IDS = new Set(["anthropic", "github-copilot", "openai-codex"]);
+      const seen = new Set<string>();
+      const result: Array<{
+        id: string;
+        displayName: string;
+        configured: boolean;
+        source?: string;
+        modelCount: number;
+      }> = [];
+      for (const m of all) {
+        if (seen.has(m.provider)) continue;
+        seen.add(m.provider);
+        if (OAUTH_PROVIDER_IDS.has(m.provider)) continue;
+        const status = registry.getProviderAuthStatus(m.provider);
+        if (status.source === "models_json_key") continue;
+        result.push({
+          id: m.provider,
+          displayName: registry.getProviderDisplayName(m.provider),
+          configured: status.configured,
+          source: status.source,
+          modelCount: all.filter((x) => x.provider === m.provider).length,
+        });
+      }
+      return { providers: result as never };
     },
 
     "auth.setApiKey": async (params) => {
       const { provider, key } = params as { provider: string; key: string };
       const authStorage = AuthStorage.create();
-      authStorage.set?.(provider, key) ??
-        // Fallback: write into models.json env-style if set API not available
-        (() => {
-          const models = readModelsJson();
-          const providers = (models.providers as Record<string, unknown>) ?? {};
-          providers[provider] = { ...(providers[provider] as object), apiKey: key };
-          models.providers = providers;
-          writeModelsJson(models);
-        })();
+      if (typeof (authStorage as { set?: (p: string, k: string) => void }).set === "function") {
+        (authStorage as { set: (p: string, k: string) => void }).set(provider, key);
+      } else {
+        const models = readModelsJson();
+        const providers = (models.providers as Record<string, unknown>) ?? {};
+        providers[provider] = { ...(providers[provider] as object), apiKey: key };
+        models.providers = providers;
+        writeModelsJson(models);
+      }
       return { ok: true as const };
     },
 
@@ -660,7 +827,7 @@ export function registerHandlers(server: RpcServer): void {
       const { provider } = params as { provider: string };
       try {
         const authStorage = AuthStorage.create();
-        authStorage.logout?.(provider);
+        if (typeof authStorage.logout === "function") await authStorage.logout(provider);
       } catch {
         /* ignore */
       }
@@ -682,15 +849,23 @@ export function registerHandlers(server: RpcServer): void {
         token: string;
         code: string;
       };
-      const callbacks = loginCallbacks.get(token);
-      if (!callbacks) {
-        throw new RpcError({ code: "NOT_FOUND", message: "No pending login for token" });
-      }
       if (!token.startsWith(`${provider}-`)) {
         throw new RpcError({ code: "BAD_REQUEST", message: "Token does not match provider" });
       }
-      callbacks.resolve(code);
-      loginCallbacks.delete(token);
+      if (!resolveLoginCode(token, code)) {
+        throw new RpcError({ code: "NOT_FOUND", message: "No pending login for token" });
+      }
+      return { ok: true as const };
+    },
+
+    "auth.loginStart": async (params) => {
+      const { provider } = params as { provider: string };
+      return authLogin.start(provider);
+    },
+
+    "auth.loginCancel": async (params) => {
+      const { provider } = params as { provider: string };
+      authLogin.cancel(provider);
       return { ok: true as const };
     },
 
@@ -705,15 +880,25 @@ export function registerHandlers(server: RpcServer): void {
 
     "skills.search": async (params) => {
       const { query } = params as { query: string };
-      // Best-effort: return empty if skills registry not available offline
-      return { results: [], query } as never;
+      try {
+        return (await searchSkills(query)) as never;
+      } catch (e) {
+        throw new RpcError({
+          code: "INTERNAL",
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
     },
 
-    "skills.install": async () => {
-      throw new RpcError({
-        code: "NOT_IMPLEMENTED",
-        message: "skills.install will be wired via ELECTRON_RUN_AS_NODE npx in M4",
-      });
+    "skills.install": async (params) => {
+      try {
+        return await installSkill(params as { package: string; scope?: "global" | "project"; cwd?: string });
+      } catch (e) {
+        throw new RpcError({
+          code: "INTERNAL",
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
     },
 
     "skills.set": async (params) => {
@@ -738,17 +923,35 @@ export function registerHandlers(server: RpcServer): void {
     },
 
     "plugins.list": async (params) => {
-      // Minimal stub — full plugin manager ported in M4
       const cwd = (params as { cwd?: string } | void)?.cwd;
-      return {
-        packages: [],
-        totals: { extensions: 0, skills: 0, prompts: 0, themes: 0 },
-        diagnostics: [],
-        cwd,
-      };
+      if (!cwd) throw new RpcError({ code: "BAD_REQUEST", message: "cwd required" });
+      return (await readPlugins(cwd)) as never;
     },
 
-    "plugins.set": async () => ({ ok: true as const }),
+    "plugins.set": async (params) => {
+      const body = params as {
+        action: "install" | "remove" | "update" | "disable" | "enable";
+        source?: string;
+        scope?: "global" | "project";
+        cwd: string;
+      };
+      return (await applyPluginAction(body)) as never;
+    },
+
+    "files.watchStart": async (params) => {
+      const { path: filePath, sourceSessionId } = params as {
+        path: string;
+        sourceSessionId?: string;
+      };
+      await fileWatch.start(filePath, sourceSessionId);
+      return { ok: true as const };
+    },
+
+    "files.watchStop": async (params) => {
+      const { path: filePath } = params as { path: string };
+      fileWatch.stop(filePath);
+      return { ok: true as const };
+    },
 
     "system.home": () => ({ home: homedir() }),
 
@@ -758,6 +961,7 @@ export function registerHandlers(server: RpcServer): void {
         const st = statSync(dir);
         if (!st.isDirectory()) return { ok: false, error: "Not a directory" };
         allowFileRoot(dir);
+        invalidateAllowedRootsCache();
         return { ok: true, path: dir };
       } catch {
         return { ok: false, error: "Directory does not exist" };
@@ -769,7 +973,20 @@ export function registerHandlers(server: RpcServer): void {
       const dir = path.join(homedir(), `pi-cwd-${date}`);
       mkdirSync(dir, { recursive: true });
       allowFileRoot(dir);
+      invalidateAllowedRootsCache();
       return { cwd: dir };
+    },
+
+    "system.allowRoot": async (params) => {
+      const { path: dir } = params as { path: string };
+      allowFileRoot(dir);
+      invalidateAllowedRootsCache();
+      return { ok: true as const };
+    },
+
+    "system.runningCount": async () => {
+      const sessionIds = getRunningRpcSessionIds();
+      return { count: sessionIds.length, sessionIds };
     },
   });
 }
@@ -786,12 +1003,32 @@ function ensureSessionEvents(
   eventAttached.add(key);
   session.onEvent((event) => {
     server.emit("agent.events", key, event as never);
+    if (event.type === "agent_end" || event.type === "prompt_done") {
+      try {
+        process.parentPort?.postMessage({
+          type: "agent-end",
+          sessionId: key,
+          eventType: event.type,
+        });
+      } catch {
+        /* ignore */
+      }
+    }
   });
 }
 
-export { loginCallbacks };
+// Notify main when a session ends with no renderer interest (desktop §6.1)
+export function wireAgentEndNotifications(
+  server: RpcServer,
+  sessionId: string,
+): void {
+  // Handled via ensureSessionEvents + parentPort in start path when needed
+  void server;
+  void sessionId;
+}
 
 // silence unused imports in some builds
 void isWindowsAbsolutePath;
 void normalizeSlashes;
 void getFileExt;
+void execFileAsync;

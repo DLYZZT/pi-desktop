@@ -1,6 +1,5 @@
 /**
- * Compatibility fetch for migrated components that still call `/api/...`.
- * Routes those requests over the Host RPC contract.
+ * Compatibility fetch + EventSource for migrated components that still call `/api/...`.
  */
 import {
   agentCommand,
@@ -20,6 +19,7 @@ import {
   newAgent,
   readFile,
   renameSession,
+  subscribe,
   subscribeAgentEvents,
   subscribeAuthLogin,
   subscribeRunning,
@@ -52,7 +52,6 @@ async function parseBody(init?: RequestInit): Promise<Record<string, unknown>> {
   return {};
 }
 
-/** Handle a path like `/api/sessions` or full URL ending with that. */
 export async function apiFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   const url =
     typeof input === "string"
@@ -71,17 +70,14 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
   const segs = u.pathname.replace(/^\/api\//, "").split("/").filter(Boolean);
 
   try {
-    // /api/sessions
     if (segs[0] === "sessions" && segs.length === 1 && method === "GET") {
       return jsonResponse(await listSessions());
     }
-    // /api/sessions/:id
     if (segs[0] === "sessions" && segs.length === 2) {
       const id = decodeURIComponent(segs[1]);
       if (method === "GET") {
         const includeState = u.searchParams.has("includeState");
-        const data = await getSession(id, includeState);
-        return jsonResponse(data);
+        return jsonResponse(await getSession(id, includeState));
       }
       if (method === "DELETE") {
         await deleteSession(id);
@@ -96,13 +92,11 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
         return errorResponse("name is required", 400);
       }
     }
-    // /api/sessions/:id/context
     if (segs[0] === "sessions" && segs[2] === "context" && method === "GET") {
       const id = decodeURIComponent(segs[1]);
       const leafId = u.searchParams.get("leafId") ?? undefined;
       return jsonResponse(await getSessionContext(id, leafId));
     }
-    // /api/sessions/:id/export
     if (segs[0] === "sessions" && segs[2] === "export" && method === "GET") {
       const id = decodeURIComponent(segs[1]);
       const { content, suggestedName } = await exportSession(id);
@@ -116,19 +110,14 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       return jsonResponse({ ok: true, content });
     }
 
-    // /api/agent/new
     if (segs[0] === "agent" && segs[1] === "new" && method === "POST") {
       const body = await parseBody(init);
       const result = await newAgent(body as never);
       return jsonResponse({ success: true, ...result });
     }
-    // /api/agent/running/events — SSE not via fetch; EventSource polyfill handles it
-    // /api/agent/:id
     if (segs[0] === "agent" && segs.length === 2 && segs[1] !== "new" && segs[1] !== "running") {
       const id = decodeURIComponent(segs[1]);
-      if (method === "GET") {
-        return jsonResponse(await agentState(id));
-      }
+      if (method === "GET") return jsonResponse(await agentState(id));
       if (method === "POST") {
         const body = await parseBody(init);
         const data = await agentCommand(id, body);
@@ -136,20 +125,16 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       }
     }
 
-    // /api/models
     if (segs[0] === "models" && segs.length === 1 && method === "GET") {
       const cwd = u.searchParams.get("cwd") ?? undefined;
       const d = await listModels(cwd);
       return jsonResponse({
         ...d,
         modelList: d.models,
-        models: d.nameMap
-          ? Object.fromEntries(Object.entries(d.nameMap))
-          : d.models,
+        models: d.nameMap ? Object.fromEntries(Object.entries(d.nameMap)) : d.models,
       });
     }
 
-    // /api/models-config
     if (segs[0] === "models-config" && segs.length === 1) {
       if (method === "GET") return jsonResponse(await call("modelsConfig.get"));
       if (method === "PUT" || method === "POST") {
@@ -163,7 +148,6 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       return jsonResponse(await call("modelsConfig.test", body as never));
     }
 
-    // /api/auth/*
     if (segs[0] === "auth" && segs[1] === "providers" && method === "GET") {
       return jsonResponse(await call("auth.providers"));
     }
@@ -179,7 +163,10 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       const provider = decodeURIComponent(segs[2] ?? "");
       if (method === "PUT" || method === "POST") {
         const body = await parseBody(init);
-        await call("auth.setApiKey", { provider, key: String(body.key ?? body.apiKey ?? "") });
+        await call("auth.setApiKey", {
+          provider,
+          key: String(body.key ?? body.apiKey ?? ""),
+        });
         return jsonResponse({ ok: true });
       }
       if (method === "DELETE") {
@@ -198,7 +185,6 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       return jsonResponse({ ok: true });
     }
 
-    // /api/skills
     if (segs[0] === "skills" && segs.length === 1 && method === "GET") {
       const cwd = u.searchParams.get("cwd") ?? undefined;
       return jsonResponse(await call("skills.list", cwd ? { cwd } : undefined));
@@ -216,7 +202,6 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       return jsonResponse(await call("skills.install", body as never));
     }
 
-    // /api/plugins
     if (segs[0] === "plugins" && method === "GET") {
       const cwd = u.searchParams.get("cwd") ?? undefined;
       return jsonResponse(await call("plugins.list", cwd ? { cwd } : undefined));
@@ -226,19 +211,21 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       return jsonResponse(await call("plugins.set", body as never));
     }
 
-    // /api/files/*
     if (segs[0] === "files") {
-      // path is everything after files/ — may be absolute with empty first segment
       const rawPath = "/" + segs.slice(1).map(decodeURIComponent).join("/");
-      // Windows: /C:/... style
-      const filePath = rawPath.match(/^\/[A-Za-z]:\//)
-        ? rawPath.slice(1)
-        : rawPath;
+      const filePath = rawPath.match(/^\/[A-Za-z]:\//) ? rawPath.slice(1) : rawPath;
       const type = u.searchParams.get("type") ?? "list";
       const sourceSessionId = u.searchParams.get("sessionId") ?? undefined;
       if (type === "list") return jsonResponse(await listFiles(filePath));
-      if (type === "read") return jsonResponse(await readFile(filePath, sourceSessionId));
+      if (type === "read") {
+        const content = await readFile(filePath, sourceSessionId);
+        // Image/binary may return base64 — FileViewer text path expects JSON
+        return jsonResponse(content);
+      }
       if (type === "meta") return jsonResponse(await fileMeta(filePath, sourceSessionId));
+      if (type === "preview") {
+        return jsonResponse(await call("files.preview", { path: filePath, sourceSessionId }));
+      }
       if (type === "download") {
         const content = await readFile(filePath, sourceSessionId);
         return new Response(content.content, {
@@ -248,29 +235,26 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       }
     }
 
-    // /api/file-index
     if (segs[0] === "file-index" && method === "GET") {
       const root = u.searchParams.get("cwd") ?? u.searchParams.get("root") ?? "";
       const query = u.searchParams.get("q") ?? undefined;
       const result = await fileIndex(root, query);
-      // Old API returned array or { files }
       return jsonResponse(result.matches ?? result);
     }
 
-    // /api/worktrees
     if (segs[0] === "worktrees" && method === "GET") {
       const cwd = u.searchParams.get("cwd") ?? "";
-      const result = await listWorktrees(cwd);
-      return jsonResponse(result);
+      return jsonResponse(await listWorktrees(cwd));
     }
     if (segs[0] === "worktrees" && method === "POST") {
       const body = await parseBody(init);
-      const result = await call("worktrees.create", {
-        projectRoot: String(body.cwd ?? body.projectRoot ?? ""),
-        branch: String(body.branch ?? ""),
-        cwd: body.cwd as string | undefined,
-      });
-      return jsonResponse(result);
+      return jsonResponse(
+        await call("worktrees.create", {
+          projectRoot: String(body.cwd ?? body.projectRoot ?? ""),
+          branch: String(body.branch ?? ""),
+          cwd: body.cwd as string | undefined,
+        }),
+      );
     }
     if (segs[0] === "worktrees" && method === "DELETE") {
       const body = await parseBody(init);
@@ -282,18 +266,15 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       return jsonResponse({ success: true });
     }
 
-    // /api/cwd/validate
     if (segs[0] === "cwd" && segs[1] === "validate" && method === "POST") {
       const body = await parseBody(init);
       const result = await validateCwd(String(body.path ?? body.cwd ?? ""));
       if (!result.ok) return jsonResponse({ error: result.error ?? "Invalid path" }, 400);
       return jsonResponse({ cwd: result.path, ok: true });
     }
-    // /api/default-cwd
     if (segs[0] === "default-cwd" && method === "POST") {
       return jsonResponse(await defaultCwd());
     }
-    // /api/home
     if (segs[0] === "home" && method === "GET") {
       return jsonResponse(await getHome());
     }
@@ -307,7 +288,7 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
 }
 
 /**
- * Minimal EventSource polyfill for /api SSE endpoints used by the UI.
+ * EventSource polyfill with named events (connected / change / …).
  */
 export class ApiEventSource {
   static CONNECTING = 0;
@@ -320,10 +301,25 @@ export class ApiEventSource {
   onopen: ((ev: Event) => void) | null = null;
 
   private unsub: (() => void) | null = null;
+  private named = new Map<string, Set<(ev: Event) => void>>();
+  private filePath: string | null = null;
   private closed = false;
 
   constructor(url: string) {
     void this.connect(url);
+  }
+
+  private dispatchNamed(type: string, data: unknown) {
+    const me = { data: typeof data === "string" ? data : JSON.stringify(data) } as MessageEvent;
+    this.named.get(type)?.forEach((cb) => {
+      try {
+        cb(me);
+      } catch {
+        /* ignore */
+      }
+    });
+    // Also fire onmessage with envelope for generic listeners
+    this.onmessage?.(me);
   }
 
   private async connect(url: string) {
@@ -335,12 +331,12 @@ export class ApiEventSource {
         const sessionId = decodeURIComponent(segs[1]);
         this.unsub = await subscribeAgentEvents(sessionId, (event) => {
           this.readyState = ApiEventSource.OPEN;
+          this.dispatchNamed(String((event as { type?: string }).type ?? "message"), event);
           this.onmessage?.({ data: JSON.stringify(event) } as MessageEvent);
         });
         this.readyState = ApiEventSource.OPEN;
         this.onopen?.(new Event("open"));
-        // Emit connected for parity with old SSE
-        this.onmessage?.({ data: JSON.stringify({ type: "connected" }) } as MessageEvent);
+        this.dispatchNamed("connected", { type: "connected" });
         return;
       }
 
@@ -358,25 +354,42 @@ export class ApiEventSource {
         const provider = decodeURIComponent(segs[2] ?? "");
         this.unsub = await subscribeAuthLogin(provider, (event) => {
           this.readyState = ApiEventSource.OPEN;
+          const type = String((event as { type?: string }).type ?? "message");
+          this.dispatchNamed(type, event);
           this.onmessage?.({ data: JSON.stringify(event) } as MessageEvent);
+          // Open browser for OAuth URL
+          if (type === "auth" && (event as { url?: string }).url) {
+            void window.piBridge?.openExternal((event as { url: string }).url);
+          }
+          if (type === "device_code" && (event as { verificationUri?: string }).verificationUri) {
+            void window.piBridge?.openExternal(
+              (event as { verificationUri: string }).verificationUri,
+            );
+          }
         });
-        // Kick off login stream on host (async side effect)
-        void call("auth.providers").then(() => {
-          // Full OAuth stream wiring is M4; emit placeholder
-          this.onmessage?.({
-            data: JSON.stringify({
-              type: "error",
-              message: "OAuth login stream: use M4 auth.login host stream",
-            }),
-          } as MessageEvent);
-        });
+        await call("auth.loginStart", { provider });
         this.readyState = ApiEventSource.OPEN;
         this.onopen?.(new Event("open"));
         return;
       }
 
-      // File watch — emit a single open; periodic poll would be overkill for now
       if (segs[0] === "files") {
+        const rawPath = "/" + segs.slice(1).map(decodeURIComponent).join("/");
+        const filePath = rawPath.match(/^\/[A-Za-z]:\//) ? rawPath.slice(1) : rawPath;
+        const sourceSessionId = u.searchParams.get("sessionId") ?? undefined;
+        this.filePath = filePath;
+
+        this.unsub = await subscribe("files.changed", filePath, (ev) => {
+          this.readyState = ApiEventSource.OPEN;
+          const eventName = ev.event ?? "change";
+          this.dispatchNamed(eventName, {
+            mtime: ev.mtime,
+            size: ev.size,
+            message: ev.message,
+            filePath: ev.path,
+          });
+        });
+        await call("files.watchStart", { path: filePath, sourceSessionId });
         this.readyState = ApiEventSource.OPEN;
         this.onopen?.(new Event("open"));
         return;
@@ -391,22 +404,33 @@ export class ApiEventSource {
   }
 
   close() {
+    if (this.closed) return;
     this.closed = true;
     this.readyState = ApiEventSource.CLOSED;
     this.unsub?.();
     this.unsub = null;
+    if (this.filePath) {
+      void call("files.watchStop", { path: this.filePath }).catch(() => {});
+      this.filePath = null;
+    }
   }
 
-  addEventListener() {
-    /* no-op shim */
+  addEventListener(type: string, cb: EventListenerOrEventListenerObject) {
+    const fn = typeof cb === "function" ? cb : (cb as EventListenerObject).handleEvent.bind(cb);
+    let set = this.named.get(type);
+    if (!set) {
+      set = new Set();
+      this.named.set(type, set);
+    }
+    set.add(fn as (ev: Event) => void);
   }
 
-  removeEventListener() {
-    /* no-op shim */
+  removeEventListener(type: string, cb: EventListenerOrEventListenerObject) {
+    const fn = typeof cb === "function" ? cb : (cb as EventListenerObject).handleEvent.bind(cb);
+    this.named.get(type)?.delete(fn as (ev: Event) => void);
   }
 }
 
-/** Install global fetch + EventSource shims for /api routes. */
 export function installApiShims(): void {
   const originalFetch = window.fetch.bind(window);
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
