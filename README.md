@@ -59,7 +59,7 @@ src/
 |------|------|
 | M1 骨架（三进程 + 契约 + Vite） | ✅ |
 | M2 会话核心 | ✅（RPC + 迁移 UI） |
-| M3 项目与文件 | 🟡（list/read/index 可用；watch 简化） |
-| M4 配置 / OAuth | 🟡（models/skills 可用；OAuth 流待完整接线） |
-| M5 桌面化 | 🟡（通知/badge/菜单/deep link/目录选择） |
-| M6 发布 | ⏳ |
+| M3 项目与文件 | ✅ watcher、file watch、git index、原生选目录 |
+| M4 配置 / OAuth | ✅ Models 测试、Skills 搜索安装、Plugins、OAuth 流 |
+| M5 桌面化 | ✅ 托盘、通知/badge、崩溃恢复、诊断导出、系统主题 |
+| M6 发布 | ⏳ 签名 / 自动更新 / CI 矩阵 |
