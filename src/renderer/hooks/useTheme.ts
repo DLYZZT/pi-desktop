@@ -31,15 +31,22 @@ export function useTheme() {
 
   // Follow OS theme when user has not forced a preference (or chose system)
   useEffect(() => {
-    let stored: string | null = null;
-    try {
-      stored = localStorage.getItem("pi-theme");
-    } catch {
-      /* ignore */
-    }
-    if (stored === "light" || stored === "dark") return;
+    const storedTheme = (): string | null => {
+      try {
+        return localStorage.getItem("pi-theme");
+      } catch {
+        return null;
+      }
+    };
+    if (storedTheme() === "light" || storedTheme() === "dark") return;
 
     const applySystem = () => {
+      // Re-check on every invocation: toggling the theme flips Electron's
+      // nativeTheme, which fires this media-query listener again. Without
+      // this guard the listener resets themeSource to "system" and reverts
+      // the toggle (feedback loop).
+      const stored = storedTheme();
+      if (stored === "light" || stored === "dark") return;
       const dark = systemPrefersDark();
       document.documentElement.classList.toggle("dark", dark);
       listeners.forEach((cb) => cb());

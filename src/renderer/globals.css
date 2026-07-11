@@ -666,12 +666,16 @@ span.linenumber {
 /* Right panel: animate width */
 @media (min-width: 641px) {
   .right-panel-container {
+    position: relative;
     overflow: hidden;
     transition: width 0.2s ease, min-width 0.2s ease;
     flex-shrink: 0;
   }
+  .right-panel-container.right-panel-resizing {
+    transition: none;
+  }
   .right-panel-container.right-panel-open {
-    width: 42%;
+    width: var(--right-panel-width, 440px);
     min-width: 300px;
   }
   .right-panel-container.right-panel-closed {
@@ -680,9 +684,26 @@ span.linenumber {
     border-left: none !important;
   }
   /* keep inner content at fixed width so it doesn't reflow during animation */
-  .right-panel-container > * {
-    width: 42vw;
+  .right-panel-container > :not(.right-panel-resizer) {
+    width: var(--right-panel-width, 440px);
     min-width: 300px;
+  }
+  .right-panel-resizer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 10;
+    width: 6px;
+    min-width: 6px;
+    cursor: col-resize;
+    touch-action: none;
+    background: transparent;
+    transition: background 0.12s ease;
+  }
+  .right-panel-resizer:hover,
+  .right-panel-container.right-panel-resizing .right-panel-resizer {
+    background: color-mix(in srgb, var(--accent) 55%, transparent);
   }
 }
 
@@ -713,6 +734,9 @@ span.linenumber {
     overflow: hidden;
     transition: width 0.2s ease, min-width 0.2s ease;
     flex-shrink: 0;
+  }
+  .right-panel-resizer {
+    display: none;
   }
   .right-panel-container.right-panel-open {
     width: 100%;
