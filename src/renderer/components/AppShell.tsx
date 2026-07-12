@@ -19,16 +19,16 @@ import type { SessionStatsInfo } from "@/lib/pi-types";
 
 type SessionCopyField = "file" | "id";
 const EXPLORER_TAB_ID = "explorer";
-const RIGHT_PANEL_WIDTH_KEY = "pi-desktop:right-panel-width";
+const RIGHT_PANEL_WIDTH_KEY = "pi-desktop:right-panel-width:v2";
 
 function initialRightPanelWidth(): number {
   try {
     const stored = Number(localStorage.getItem(RIGHT_PANEL_WIDTH_KEY));
-    if (Number.isFinite(stored) && stored >= 300) return stored;
+    if (Number.isFinite(stored) && stored >= 280) return stored;
   } catch {
     // Storage can be unavailable in privacy-restricted renderer contexts.
   }
-  return 440;
+  return 360;
 }
 
 function useSearchParamsCompat() {
@@ -154,10 +154,10 @@ export function AppShell() {
     const startX = event.clientX;
     const startWidth = rightPanelWidth;
     let finalWidth = startWidth;
-    const maxWidth = () => Math.max(300, window.innerWidth - (sidebarOpen ? 300 : 0) - 360);
+    const maxWidth = () => Math.max(280, window.innerWidth - (sidebarOpen ? 280 : 0) - 420);
 
     const handleMove = (moveEvent: PointerEvent) => {
-      finalWidth = Math.min(maxWidth(), Math.max(300, startWidth + startX - moveEvent.clientX));
+      finalWidth = Math.min(maxWidth(), Math.max(280, startWidth + startX - moveEvent.clientX));
       setRightPanelWidth(finalWidth);
     };
     const cleanup = () => {
@@ -189,7 +189,7 @@ export function AppShell() {
   useEffect(() => {
     if (isMobile) return;
     const fitToWindow = () => {
-      const maxWidth = Math.max(300, window.innerWidth - (sidebarOpen ? 300 : 0) - 360);
+      const maxWidth = Math.max(280, window.innerWidth - (sidebarOpen ? 280 : 0) - 420);
       setRightPanelWidth((width) => Math.min(width, maxWidth));
     };
     fitToWindow();
@@ -973,7 +973,7 @@ export function AppShell() {
           role="separator"
           aria-label="Resize right panel"
           aria-orientation="vertical"
-          aria-valuemin={300}
+          aria-valuemin={280}
           aria-valuenow={Math.round(rightPanelWidth)}
           onPointerDown={handleRightPanelResizeStart}
         />

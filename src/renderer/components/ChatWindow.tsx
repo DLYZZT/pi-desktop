@@ -301,7 +301,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       onDrop={handleDrop}
     >
       {/* Grid paper + corner ticks (design.html grid style) */}
-      <div className="chat-grid-bg pointer-events-none absolute inset-0 z-0" aria-hidden="true" />
+      <div className={`chat-grid-bg${isEmptyNew ? " chat-grid-bg-idle" : ""} pointer-events-none absolute inset-0 z-0`} aria-hidden="true" />
       <div className="chat-corner-tick chat-corner-tick-tl" aria-hidden="true" />
       <div className="chat-corner-tick chat-corner-tick-tr" aria-hidden="true" />
       <div className="chat-corner-tick chat-corner-tick-bl" aria-hidden="true" />

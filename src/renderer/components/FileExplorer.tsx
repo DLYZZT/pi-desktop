@@ -78,6 +78,7 @@ function TreeNode({
   const [loaded, setLoaded] = useState(node.loaded ?? false);
   const [loading, setLoading] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [focusedWithin, setFocusedWithin] = useState(false);
 
   const loadChildren = useCallback(async (force = false) => {
     if (loaded && !force) return;
@@ -120,23 +121,41 @@ function TreeNode({
   return (
     <div>
       <div
-        onClick={handleClick}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
+        onFocus={() => setFocusedWithin(true)}
+        onBlur={(event) => {
+          const next = event.relatedTarget as Node | null;
+          if (!next || !event.currentTarget.contains(next)) setFocusedWithin(false);
+        }}
         style={{
           position: "relative",
+          margin: "1px 0",
+        }}
+      >
+        <button
+          type="button"
+          onClick={handleClick}
+          aria-expanded={node.isDir ? open : undefined}
+          aria-label={node.isDir ? `${open ? "Collapse" : "Expand"} folder ${node.name}` : `Open file ${node.name}`}
+          title={node.fullPath}
+          style={{
           display: "flex",
           alignItems: "center",
           gap: 4,
+          width: "100%",
           paddingLeft: 8 + depth * 14,
-          paddingRight: 8,
-          height: 24,
+          paddingRight: (hovered || focusedWithin) && onAtMention ? (node.isDir ? 88 : 122) : 8,
+          height: 40,
           cursor: "pointer",
-          background: hovered ? "var(--bg-hover)" : "transparent",
-          borderRadius: 4,
+          background: hovered || focusedWithin ? "var(--bg-hover)" : "transparent",
+          border: "none",
+          borderRadius: 6,
           userSelect: "none",
+          textAlign: "left",
+          transition: "background 0.12s, padding-right 0.12s",
         }}
-      >
+        >
         {node.isDir && (
           <svg
             width="10" height="10" viewBox="0 0 10 10" fill="none"
@@ -152,14 +171,13 @@ function TreeNode({
         </span>
         <span
           style={{
-            fontSize: 12,
+            fontSize: 13,
             color: "var(--text)",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
             flex: 1,
           }}
-          title={node.fullPath}
         >
           {node.name}
         </span>
@@ -168,8 +186,10 @@ function TreeNode({
             <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
           </svg>
         )}
-        {onAtMention && hovered && (
+        </button>
+        {onAtMention && (hovered || focusedWithin) && (
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               onAtMention(getRelativeFilePath(node.fullPath, cwd), node.isDir);
@@ -177,7 +197,7 @@ function TreeNode({
             title="Insert path into chat"
             style={{
               position: "absolute",
-              right: !node.isDir ? 28 : 4,
+              right: !node.isDir ? 40 : 4,
               top: "50%",
               transform: "translateY(-50%)",
               display: "flex",
@@ -185,13 +205,13 @@ function TreeNode({
               justifyContent: "center",
               gap: 4,
               padding: "0 8px",
-              height: 20,
+              height: 30,
               background: "var(--bg-panel)",
               border: "1px solid var(--border)",
               borderRadius: 4,
               color: "var(--accent)",
               cursor: "pointer",
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               whiteSpace: "nowrap",
             }}
@@ -203,7 +223,7 @@ function TreeNode({
             mention
           </button>
         )}
-        {hovered && !node.isDir && (
+        {(hovered || focusedWithin) && !node.isDir && (
           <a
             href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
             download
@@ -219,13 +239,14 @@ function TreeNode({
               justifyContent: "center",
               gap: 4,
               padding: "0 5px",
-              height: 20,
+              width: 30,
+              height: 30,
               background: "var(--bg-panel)",
               border: "1px solid var(--border)",
               borderRadius: 4,
               color: "var(--text-muted)",
               cursor: "pointer",
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               whiteSpace: "nowrap",
               textDecoration: "none",
@@ -245,7 +266,7 @@ function TreeNode({
             <TreeNode key={child.fullPath} node={child} depth={depth + 1} cwd={cwd} onOpenFile={onOpenFile} onAtMention={onAtMention} expandedPaths={expandedPaths} onToggleExpanded={onToggleExpanded} refreshKey={refreshKey} />
           ))}
           {children.length === 0 && loaded && (
-            <div style={{ paddingLeft: 8 + (depth + 1) * 14, fontSize: 11, color: "var(--text-dim)", height: 22, display: "flex", alignItems: "center" }}>
+            <div style={{ paddingLeft: 8 + (depth + 1) * 14, fontSize: 12, color: "var(--text-dim)", height: 32, display: "flex", alignItems: "center" }}>
               empty
             </div>
           )}

@@ -1264,6 +1264,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             );
           })()}
           <div
+            className="chat-composer-shell"
             style={{
               display: "flex",
               gap: 8,
@@ -1412,7 +1413,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }}>
 
           {/* LEFT: attach + model selector (idle) or steer/followup toggle (streaming) */}
-          <div style={{ flex: isMobile ? "1 1 auto" : "0 0 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2 }}>
+          <div style={{ flex: isMobile ? "1 1 auto" : "0 0 auto", minWidth: 0, display: "flex", alignItems: "center", gap: isMobile ? 2 : 6 }}>
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming}
@@ -1420,7 +1421,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               style={{
                 flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
                 width: 32, height: 32, padding: 0,
-                background: "none", border: "none",
+                background: attachedImages.length ? "var(--accent-soft)" : "var(--bg-panel)", border: "1px solid var(--border)",
                 borderRadius: 9,
                 color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
                 cursor: isStreaming ? "not-allowed" : "pointer",
@@ -1433,7 +1434,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = "none";
+                e.currentTarget.style.background = attachedImages.length ? "var(--accent-soft)" : "var(--bg-panel)";
                 e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text-muted)";
               }}
             >
@@ -1461,8 +1462,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       width: isMobile ? "100%" : undefined,
                       maxWidth: isMobile ? "100%" : 220,
                       overflow: "hidden",
-                      background: modelDropdownOpen ? "var(--bg-hover)" : "none",
-                      border: "none",
+                      background: modelDropdownOpen ? "var(--bg-selected)" : "var(--bg-panel)",
+                      border: "1px solid var(--border)",
                       borderRadius: 9,
                       color: "var(--text-muted)",
                       cursor: isStreaming ? "not-allowed" : "pointer",
@@ -1476,7 +1477,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       e.currentTarget.style.color = "var(--text)";
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.background = modelDropdownOpen ? "var(--bg-hover)" : "none";
+                      e.currentTarget.style.background = modelDropdownOpen ? "var(--bg-selected)" : "var(--bg-panel)";
                       e.currentTarget.style.color = "var(--text-muted)";
                     }}
                   >
@@ -1614,7 +1615,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             <div style={{
               display: isMobile ? (controlsMenuOpen ? "flex" : "none") : "flex",
               alignItems: "center",
-              gap: isMobile ? 1 : 2,
+              gap: isMobile ? 2 : 6,
               ...(isMobile ? {
                 position: "absolute",
                 right: 0,
@@ -1644,8 +1645,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     padding: isMobile ? "0 6px" : "8px 12px",
                     width: isMobile ? "auto" : undefined,
                     height: 32,
-                    background: thinkingDropdownOpen ? "var(--bg-hover)" : "none",
-                    border: "none",
+                    background: thinkingDropdownOpen ? "var(--bg-selected)" : "var(--bg-panel)",
+                    border: "1px solid var(--border)",
                     borderRadius: 9,
                     color: "var(--text-muted)",
                     cursor: isStreaming ? "not-allowed" : "pointer",
@@ -1659,7 +1660,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     e.currentTarget.style.color = "var(--text)";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = thinkingDropdownOpen ? "var(--bg-hover)" : "none";
+                    e.currentTarget.style.background = thinkingDropdownOpen ? "var(--bg-selected)" : "var(--bg-panel)";
                     e.currentTarget.style.color = "var(--text-muted)";
                   }}
                 >
@@ -1731,8 +1732,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     padding: isMobile ? "0 6px" : "8px 12px",
                     width: isMobile ? "auto" : undefined,
                     height: 32,
-                    background: toolDropdownOpen ? "var(--bg-hover)" : "none",
-                    border: "none",
+                    background: toolDropdownOpen ? "var(--bg-selected)" : "var(--bg-panel)",
+                    border: "1px solid var(--border)",
                     borderRadius: 9,
                     color: "var(--text-muted)",
                     cursor: isStreaming ? "not-allowed" : "pointer",
@@ -1746,7 +1747,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     e.currentTarget.style.color = "var(--text)";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = toolDropdownOpen ? "var(--bg-hover)" : "none";
+                    e.currentTarget.style.background = toolDropdownOpen ? "var(--bg-selected)" : "var(--bg-panel)";
                     e.currentTarget.style.color = "var(--text-muted)";
                   }}
                 >
@@ -1817,8 +1818,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     padding: isMobile ? "0 6px" : "8px 12px",
                     width: isMobile ? "auto" : undefined,
                     height: 32,
-                    background: isCompacting ? "rgba(239,68,68,0.08)" : "none",
-                    border: "none",
+                    background: isCompacting ? "rgba(239,68,68,0.08)" : "var(--bg-panel)",
+                    border: "1px solid var(--border)",
                     borderRadius: 9,
                     color: isCompacting ? "#ef4444" : "var(--text-muted)",
                     cursor: (isStreaming && !isCompacting) ? "not-allowed" : "pointer",
@@ -1831,7 +1832,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     e.currentTarget.style.color = isCompacting ? "#ef4444" : "var(--text)";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = isCompacting ? "rgba(239,68,68,0.08)" : "none";
+                    e.currentTarget.style.background = isCompacting ? "rgba(239,68,68,0.08)" : "var(--bg-panel)";
                     e.currentTarget.style.color = isCompacting ? "#ef4444" : "var(--text-muted)";
                   }}
                   title={isCompacting ? "Stop compaction" : "Compact context"}
@@ -1886,8 +1887,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   width: isMobile ? 32 : 32,
                   height: 32,
                   padding: 0,
-                  background: "none",
-                  border: "none",
+                  background: soundEnabled ? "var(--bg-panel)" : "var(--bg-hover)",
+                  border: "1px solid var(--border)",
                   borderRadius: 9,
                   color: soundEnabled ? "var(--text-muted)" : "var(--text-dim)",
                   cursor: "pointer",
@@ -1900,7 +1901,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   e.currentTarget.style.opacity = "1";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "none";
+                  e.currentTarget.style.background = soundEnabled ? "var(--bg-panel)" : "var(--bg-hover)";
                   e.currentTarget.style.color = soundEnabled ? "var(--text-muted)" : "var(--text-dim)";
                   e.currentTarget.style.opacity = soundEnabled ? "1" : "0.55";
                 }}
