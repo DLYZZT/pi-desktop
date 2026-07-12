@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Pi Agent Desktop \u2014 pure Electron desktop app for the pi coding agent",
   "homepage": "https://github.com/DLYZZT/pi-desktop#readme",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "productName": "Pi Agent Desktop",
   "author": "DLYZZT",
   "main": "out/main/main.js",

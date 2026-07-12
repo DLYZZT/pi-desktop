@@ -12,7 +12,7 @@
 ![Electron 35](https://img.shields.io/badge/Electron-35-47848F?logo=electron&logoColor=white)
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=0B1F2A)
 ![macOS & Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
-![MIT](https://img.shields.io/badge/license-MIT-blue)
+![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [参与开发](#参与开发) · [发布](#构建与发布)
 
@@ -163,4 +163,4 @@ Pi Agent Desktop 是 Pi Coding Agent 的桌面工作台，继续使用 `~/.pi/ag
 
 ## License
 
-[MIT](./package.json)
+[Apache License 2.0](./LICENSE)

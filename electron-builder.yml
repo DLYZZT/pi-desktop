@@ -10,6 +10,7 @@ directories:
 files:
   - out/**/*
   - package.json
+  - LICENSE
   - build/icon.png
   - build/entitlements.mac.plist
   - "!out/**/*.map"
