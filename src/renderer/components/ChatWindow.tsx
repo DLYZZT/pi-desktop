@@ -11,6 +11,7 @@ import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { APP_VERSION, PI_VERSION } from "@/lib/app-version";
+import { useI18n } from "@/i18n";
 
 interface Props {
   session: SessionInfo | null;
@@ -28,17 +29,18 @@ interface Props {
   onOpenFile?: (filePath: string) => void;
 }
 
-function phaseLabel(phase: AgentPhase): string {
+function phaseLabel(phase: AgentPhase, t: (key: string, fallback: string) => string): string {
   if (phase?.kind === "running_tools") {
     const names = phase.tools.map((t) => t.name);
-    if (names.length === 0) return "Running tool...";
-    if (names.length === 1) return `Running ${names[0]}...`;
-    if (names.length <= 3) return `Running ${names.join(", ")}...`;
-    return `Running ${names.slice(0, 2).join(", ")} (+${names.length - 2})...`;
+    const running = t("runningTools", "Running");
+    if (names.length === 0) return t("runningTool", "Running tool…");
+    if (names.length === 1) return `${running} ${names[0]}…`;
+    if (names.length <= 3) return `${running} ${names.join(", ")}…`;
+    return `${running} ${names.slice(0, 2).join(", ")} (+${names.length - 2})…`;
   }
-  if (phase?.kind === "waiting_model") return "Waiting for model...";
-  if (phase?.kind === "running_command") return "Running command...";
-  return "Thinking...";
+  if (phase?.kind === "waiting_model") return t("waitingForModel", "Waiting for model…");
+  if (phase?.kind === "running_command") return t("runningCommand", "Running command…");
+  return t("thinking", "Thinking…");
 }
 
 const CHAT_MINIMAP_WIDTH = 36;
@@ -91,8 +93,14 @@ function withAssistantBlocks(
 
 function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messageCount: number; toolCallCount: number; children: ReactNode }) {
   const [expanded, setExpanded] = useState(false);
-  const parts = ["Process details", `${messageCount} ${messageCount === 1 ? "message" : "messages"}`];
-  if (toolCallCount > 0) parts.push(`${toolCallCount} ${toolCallCount === 1 ? "tool call" : "tool calls"}`);
+  const { language, t } = useI18n();
+  const parts = [
+    t("processDetails", "Process details"),
+    language === "zh-CN" ? `${messageCount} ${t("messagesCount", "messages")}` : `${messageCount} ${messageCount === 1 ? "message" : "messages"}`,
+  ];
+  if (toolCallCount > 0) {
+    parts.push(language === "zh-CN" ? `${toolCallCount} ${t("toolCallsCount", "tool calls")}` : `${toolCallCount} ${toolCallCount === 1 ? "tool call" : "tool calls"}`);
+  }
 
   return (
     <div style={{ marginBottom: 14 }}>
@@ -114,7 +122,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messag
           fontSize: 12,
           textAlign: "left",
         }}
-        title={expanded ? "Collapse process details" : "Expand process details"}
+        title={expanded ? t("collapseProcessDetails", "Collapse process details") : t("expandProcessDetails", "Expand process details")}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
           <polyline points="4 2.5 7.5 6 4 9.5" />
@@ -135,6 +143,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messag
 export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile }: Props) {
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
+  const { t } = useI18n();
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
   // wrapping handleAgentEventRef because useAgentSession overwrites that ref
@@ -574,7 +583,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
 
             {agentRunning && !streamState.streamingMessage && (
               <div className="py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase)}</span>
+                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t)}</span>
               </div>
             )}
 

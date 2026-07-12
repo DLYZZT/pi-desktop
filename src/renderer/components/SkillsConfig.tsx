@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useI18n } from "@/i18n";
 import type { SkillSearchResult } from "@/lib/api-types";
 
 interface Skill {
@@ -581,11 +582,14 @@ function AddSkillPanel({
 export function SkillsConfig({
   cwd,
   onClose,
+  embedded = false,
 }: {
   cwd: string;
   onClose: () => void;
+  embedded?: boolean;
 }) {
   const isMobile = useIsMobile();
+  const { t } = useI18n();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -657,36 +661,33 @@ export function SkillsConfig({
 
   return (
     <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 1000,
-        background: "rgba(0,0,0,0.35)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
+      style={embedded ? {
+        position: "relative", flex: 1, minWidth: 0, minHeight: 0, display: "flex",
+      } : {
+        position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.35)",
+        display: "flex", alignItems: "center", justifyContent: "center",
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (!embedded && e.target === e.currentTarget) onClose();
       }}
     >
       <div
         style={{
-          width: isMobile ? "calc(100vw - 16px)" : 860,
-          maxWidth: "calc(100vw - 16px)",
-          height: isMobile ? "calc(100dvh - 16px)" : "78vh",
-          maxHeight: "calc(100dvh - 16px)",
+          width: embedded ? "100%" : isMobile ? "calc(100vw - 16px)" : 860,
+          maxWidth: embedded ? undefined : "calc(100vw - 16px)",
+          height: embedded ? "100%" : isMobile ? "calc(100dvh - 16px)" : "78vh",
+          maxHeight: embedded ? undefined : "calc(100dvh - 16px)",
           background: "var(--bg)",
-          border: "1px solid var(--border)",
-          borderRadius: 10,
+          border: embedded ? "none" : "1px solid var(--border)",
+          borderRadius: embedded ? 0 : 10,
           display: "flex",
           flexDirection: "column",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+          boxShadow: embedded ? "none" : "0 8px 32px rgba(0,0,0,0.18)",
           overflow: "hidden",
         }}
       >
         {/* Header */}
-        <div
+        {!embedded && <div
           style={{
             display: "flex",
             alignItems: "center",
@@ -730,7 +731,7 @@ export function SkillsConfig({
           >
             ×
           </button>
-        </div>
+        </div>}
 
         {/* Body */}
         <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: "hidden" }}>
@@ -918,7 +919,7 @@ export function SkillsConfig({
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
-                Add skill
+                {t("addSkill", "Add skill")}
               </div>
             </div>
           </div>
@@ -953,14 +954,14 @@ export function SkillsConfig({
                   fontSize: 13,
                 }}
               >
-                Select a skill
+                {t("selectSkill", "Select a skill")}
               </div>
             )}
           </div>
         </div>
 
         {/* Footer */}
-        <div
+        {!embedded && <div
           style={{
             display: "flex",
             alignItems: "center",
@@ -984,7 +985,7 @@ export function SkillsConfig({
           >
             Close
           </button>
-        </div>
+        </div>}
       </div>
     </div>
   );

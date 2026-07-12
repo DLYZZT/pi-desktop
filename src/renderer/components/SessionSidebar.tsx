@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { APP_VERSION, PI_VERSION } from "@/lib/app-version";
+import { useI18n } from "@/i18n";
 
 interface Props {
   selectedSessionId: string | null;
@@ -318,6 +319,7 @@ function PiAgentTitle() {
 }
 
 export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange }: Props) {
+  const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -830,7 +832,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 e.currentTarget.style.color = "var(--text-muted)";
                 e.currentTarget.style.borderColor = "var(--border)";
               }}
-              title="Refresh"
+              title={t("refresh", "Refresh")}
             >
               {sessionRefreshDone ? (
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -864,7 +866,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             transition: "opacity 0.12s",
             opacity: selectedCwd ? 1 : 0.7,
           }}
-          title={selectedCwd ? `New session in ${selectedCwd}` : "Select a project first"}
+          title={selectedCwd ? `${t("newSessionIn", "New session in selected project")}: ${selectedCwd}` : t("selectProjectFirst", "Select a project first")}
           onMouseEnter={(e) => {
             if (!selectedCwd) return;
             e.currentTarget.style.opacity = "0.9";
@@ -874,7 +876,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           }}
         >
           <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
-          new session
+          {t("newSession", "new session")}
         </button>
 
         {/* CWD picker */}
@@ -919,7 +921,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   color: "var(--text-dim)",
                 }}
               >
-                {initialSessionId && !restoredRef.current ? "" : "Select project…"}
+                {initialSessionId && !restoredRef.current ? "" : t("selectProjectEllipsis", "Select project…")}
               </span>
             )}
           </button>
@@ -950,7 +952,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                         setDropdownOpen(false);
                       }
                     }}
-                    placeholder="Filter projects…"
+                    placeholder={t("filterProjects", "Filter projects…")}
                     autoFocus
                     style={{
                       width: "100%",
@@ -1009,7 +1011,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   </button>
                 ))}
                 {visibleProjects.length === 0 && projectFilter.trim() && (
-                  <div style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-dim)" }}>No matching projects</div>
+                  <div style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-dim)" }}>{t("noMatchingProjects", "No matching projects")}</div>
                 )}
               </div>
 
@@ -1035,7 +1037,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                     <path d="M1 3A1 1 0 0 1 2 2H4L5 3.5H8.5a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 1 8V3Z" />
                   </svg>
-                  <span>Use default directory</span>
+                  <span>{t("useDefaultDirectory", "Use default directory")}</span>
                 </button>
               )}
 
@@ -1060,7 +1062,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                     <path d="M1 3A1 1 0 0 1 2 2H4L5 3.5H8.5a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 1 8V3Z" />
                   </svg>
-                  <span>Browse folder…</span>
+                  <span>{t("browseFolder", "Browse folder…")}</span>
                 </button>
               )}
 
@@ -1091,7 +1093,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                     <line x1="5" y1="1" x2="5" y2="9" />
                     <line x1="1" y1="5" x2="9" y2="5" />
                   </svg>
-                  <span>Custom path…</span>
+                  <span>{t("customPath", "Custom path…")}</span>
                 </button>
               ) : (
                 <div style={{ padding: "6px 8px", borderTop: visibleProjects.length > 0 ? "none" : undefined }}>
@@ -1155,7 +1157,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                         opacity: customPathValidating || !customPathValue.trim() ? 0.65 : 1,
                       }}
                     >
-                      {customPathValidating ? "Checking…" : "Open"}
+                      {customPathValidating ? t("checking", "Checking…") : t("open", "Open")}
                     </button>
                     <button
                       onClick={() => { setCustomPathOpen(false); setCustomPathValue(""); setCustomPathError(null); }}
@@ -1170,7 +1172,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                         cursor: "pointer",
                       }}
                     >
-                      Cancel
+                      {t("cancel", "Cancel")}
                     </button>
                   </div>
                 </div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useI18n } from "@/i18n";
 import type { PluginPackageInfo, PluginsResponse } from "@/lib/api-types";
 
 type PluginScope = PluginPackageInfo["scope"];
@@ -557,13 +558,16 @@ export function PluginsConfig({
   sessionId,
   onClose,
   onReloaded,
+  embedded = false,
 }: {
   cwd: string;
   sessionId: string | null;
   onClose: () => void;
   onReloaded?: () => void;
+  embedded?: boolean;
 }) {
   const isMobile = useIsMobile();
+  const { t } = useI18n();
   const [data, setData] = useState<PluginsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -691,35 +695,32 @@ export function PluginsConfig({
 
   return (
     <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 1000,
-        background: "rgba(0,0,0,0.35)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
+      style={embedded ? {
+        position: "relative", flex: 1, minWidth: 0, minHeight: 0, display: "flex",
+      } : {
+        position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.35)",
+        display: "flex", alignItems: "center", justifyContent: "center",
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (!embedded && e.target === e.currentTarget) onClose();
       }}
     >
       <div
         style={{
-          width: isMobile ? "calc(100vw - 16px)" : 860,
-          maxWidth: "calc(100vw - 16px)",
-          height: isMobile ? "calc(100dvh - 16px)" : "76vh",
-          maxHeight: "calc(100dvh - 16px)",
+          width: embedded ? "100%" : isMobile ? "calc(100vw - 16px)" : 860,
+          maxWidth: embedded ? undefined : "calc(100vw - 16px)",
+          height: embedded ? "100%" : isMobile ? "calc(100dvh - 16px)" : "76vh",
+          maxHeight: embedded ? undefined : "calc(100dvh - 16px)",
           background: "var(--bg)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
+          border: embedded ? "none" : "1px solid var(--border)",
+          borderRadius: embedded ? 0 : 8,
           display: "flex",
           flexDirection: "column",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+          boxShadow: embedded ? "none" : "0 8px 32px rgba(0,0,0,0.18)",
           overflow: "hidden",
         }}
       >
-        <div
+        {!embedded && <div
           style={{
             display: "flex",
             alignItems: "center",
@@ -760,7 +761,7 @@ export function PluginsConfig({
           >
             ×
           </button>
-        </div>
+        </div>}
 
         <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: "hidden" }}>
           <div
@@ -928,7 +929,7 @@ export function PluginsConfig({
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
-                Add plugin
+                {t("addPlugin", "Add plugin")}
               </button>
             </div>
           </div>
@@ -968,7 +969,7 @@ export function PluginsConfig({
                   fontSize: 13,
                 }}
               >
-                Select a package
+                {t("selectPackage", "Select a package")}
               </div>
             )}
           </div>
@@ -1000,11 +1001,11 @@ export function PluginsConfig({
             )}
           </div>
           <button onClick={() => void loadPlugins()} disabled={loading || busyKey !== null} style={buttonStyle(loading || busyKey !== null)}>
-            Refresh
+            {t("refresh", "Refresh")}
           </button>
-          <button onClick={onClose} style={buttonStyle(false)}>
+          {!embedded && <button onClick={onClose} style={buttonStyle(false)}>
             Close
-          </button>
+          </button>}
         </div>
       </div>
     </div>

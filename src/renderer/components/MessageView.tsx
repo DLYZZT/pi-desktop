@@ -3,6 +3,7 @@ import { MarkdownBody } from "./MarkdownBody";
 import { copyText } from "@/lib/clipboard";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { isEmptyThinkingBlock } from "@/lib/message-display";
+import { useI18n } from "@/i18n";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import type {
   AgentMessage,
@@ -541,6 +542,7 @@ function TextBlock({ block, isStreaming, cwd, onOpenFile }: { block: TextContent
 
 function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?: number }) {
   const [expanded, setExpanded] = useState(false);
+  const { t } = useI18n();
   return (
     <div
       style={{
@@ -569,12 +571,12 @@ function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?:
         }}
       >
         <span style={{ fontSize: 10 }}>{expanded ? "▾" : "▸"}</span>
-        <span>thinking</span>
+        <span>{t("thinkingLabel", "thinking")}</span>
         {duration !== undefined && (
           <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
         )}
         {duration === undefined && !expanded && (
-          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)" }}>collapsed</span>
+          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)" }}>{t("collapsed", "collapsed")}</span>
         )}
       </button>
       {expanded && (

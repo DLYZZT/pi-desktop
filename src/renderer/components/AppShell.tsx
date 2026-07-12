@@ -5,11 +5,10 @@ import { ChatWindow } from "./ChatWindow";
 import { FileExplorer } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
-import { ModelsConfig } from "./ModelsConfig";
-import { SkillsConfig } from "./SkillsConfig";
-import { PluginsConfig } from "./PluginsConfig";
+import { SettingsConfig } from "./SettingsConfig";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useI18n } from "@/i18n";
 import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText } from "@/lib/file-fuzzy";
@@ -57,6 +56,7 @@ export function AppShell() {
   const router = useRouterCompat();
   const searchParams = useSearchParamsCompat();
   const { isDark, toggleTheme } = useTheme();
+  const { language, t } = useI18n();
   const isMobile = useIsMobile();
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
   // When user clicks +, we only store the cwd — no fake session id
@@ -64,10 +64,8 @@ export function AppShell() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
-  const [modelsConfigOpen, setModelsConfigOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
-  const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
-  const [pluginsConfigOpen, setPluginsConfigOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
@@ -79,7 +77,6 @@ export function AppShell() {
     setMobileSidebarReady(true);
   }, []);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
-  const topBarRef = useRef<HTMLDivElement>(null);
 
   // Session stats (tokens + cost) — populated by ChatWindow, displayed in top bar
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
@@ -109,7 +106,6 @@ export function AppShell() {
   }, []);
 
   const [activeTopPanel, setActiveTopPanel] = useState<"session" | null>(null);
-  const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const toggleTopPanel = useCallback(() => {
     if (isMobile) setSidebarOpen(false);
@@ -125,18 +121,6 @@ export function AppShell() {
     if (isMobile) setActiveTopPanel(null);
     setSidebarOpen((open) => !open);
   }, [isMobile]);
-
-  useEffect(() => {
-    if (!activeTopPanel || !topBarRef.current) return;
-    const update = () => {
-      const rect = topBarRef.current!.getBoundingClientRect();
-      setTopPanelPos({ top: rect.bottom, left: rect.left, width: rect.width });
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(topBarRef.current);
-    return () => ro.disconnect();
-  }, [activeTopPanel]);
 
   // Right panel — file tabs only
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
@@ -235,7 +219,7 @@ export function AppShell() {
       }
     });
     const offSettings = window.piBridge?.onMenu?.("settings", () => {
-      setModelsConfigOpen(true);
+      setSettingsOpen(true);
     });
     // ISSUE-016: Switch Session palette — focus sidebar / open project list
     const offSwitch = window.piBridge?.onMenu?.("switch-session", () => {
@@ -421,67 +405,25 @@ export function AppShell() {
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
         onCwdChange={handleCwdChange}
       />
-      <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
-        {([
-          {
-            label: "Models",
-            onClick: () => setModelsConfigOpen(true),
-            disabled: false,
-            icon: (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" />
-                <line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" />
-                <line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" />
-                <line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" />
-                <line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
-              </svg>
-            ),
-          },
-          {
-            label: "Skills",
-            onClick: () => setSkillsConfigOpen(true),
-            disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
-            icon: (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                <path d="M2 17l10 5 10-5" />
-                <path d="M2 12l10 5 10-5" />
-              </svg>
-            ),
-          },
-          {
-            label: "Plugins",
-            onClick: () => setPluginsConfigOpen(true),
-            disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
-            icon: (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 7V2" />
-                <path d="M15 7V2" />
-                <path d="M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0Z" />
-                <path d="M12 19v3" />
-              </svg>
-            ),
-          },
-        ] as { label: string; onClick: () => void; disabled: boolean; icon: React.ReactNode }[]).map(({ label, onClick, disabled, icon }) => (
-          <button
-            key={label}
-            onClick={onClick}
-            disabled={disabled}
-            title={label}
-            style={{
-              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-              height: 32, padding: 0, background: "none", border: "none",
-              borderRadius: 9, color: "var(--text-muted)", cursor: disabled ? "default" : "pointer",
-              fontSize: 12, opacity: disabled ? 0.35 : 1,
-              transition: "background 0.12s, color 0.12s",
-            }}
-            onMouseEnter={(e) => { if (!disabled) { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; } }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted)"; }}
-          >
-            {icon}
-            {label}
-          </button>
-        ))}
+      <div style={{ padding: "8px", flexShrink: 0 }}>
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          title={t("settings", "Settings")}
+          style={{
+            width: "100%", height: 34, padding: "0 12px", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+            background: "none", border: "none", borderRadius: 9, color: "var(--text-muted)", cursor: "pointer", fontSize: 12,
+            transition: "background 0.12s, color 0.12s",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted)"; }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.38.33.72.6 1 .3.29.69.42 1.1.4h.09v4h-.09a1.7 1.7 0 0 0-1.7.6Z" />
+          </svg>
+          {t("settings", "Settings")}
+        </button>
       </div>
     </>
   );
@@ -591,13 +533,13 @@ export function AppShell() {
       </div>
 
       {/* Center: chat */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, position: "relative" }}>
         {/* Top bar with sidebar toggle */}
-        <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: 44, background: "var(--bg-panel)", position: "relative", zIndex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: 44, background: "var(--bg-panel)", position: "relative", zIndex: 2 }}>
           <button
             onClick={handleSidebarToggle}
-            title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-            aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+            title={sidebarOpen ? t("hideSidebar", "Hide sidebar") : t("showSidebar", "Show sidebar")}
+            aria-label={sidebarOpen ? t("hideSidebar", "Hide sidebar") : t("showSidebar", "Show sidebar")}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 36, height: 36, padding: 0,
@@ -622,8 +564,8 @@ export function AppShell() {
               const rect = e.currentTarget.getBoundingClientRect();
               toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
             }}
-            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-            aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            title={isDark ? t("switchToLight", "Switch to light mode") : t("switchToDark", "Switch to dark mode")}
+            aria-label={isDark ? t("switchToLight", "Switch to light mode") : t("switchToDark", "Switch to dark mode")}
             aria-pressed={isDark}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -650,7 +592,7 @@ export function AppShell() {
           </button>
           {/* Session stats — right-aligned in top bar */}
           {showChat && (sessionStats || contextUsage) && (() => {
-            const t = sessionStats?.tokens;
+            const tokenStats = sessionStats?.tokens;
             const c = sessionStats?.cost ?? 0;
             const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
             const costStr = c > 0 ? (c >= 0.01 ? `$${c.toFixed(2)}` : `<$0.01`) : null;
@@ -665,16 +607,16 @@ export function AppShell() {
             }
 
             const tooltipParts: string[] = [];
-            if (t) {
-              tooltipParts.push(`in: ${t.input.toLocaleString()}`);
-              tooltipParts.push(`out: ${t.output.toLocaleString()}`);
-              tooltipParts.push(`cache read: ${t.cacheRead.toLocaleString()}`);
-              tooltipParts.push(`cache write: ${t.cacheWrite.toLocaleString()}`);
-              if (c > 0) tooltipParts.push(`cost: $${c.toFixed(4)}`);
+            if (tokenStats) {
+              tooltipParts.push(`${t("usageInput", "Input")}: ${tokenStats.input.toLocaleString(language)}`);
+              tooltipParts.push(`${t("usageOutput", "Output")}: ${tokenStats.output.toLocaleString(language)}`);
+              tooltipParts.push(`${t("cacheRead", "Cache read")}: ${tokenStats.cacheRead.toLocaleString(language)}`);
+              tooltipParts.push(`${t("cacheWrite", "Cache write")}: ${tokenStats.cacheWrite.toLocaleString(language)}`);
+              if (c > 0) tooltipParts.push(`${t("usageCost", "Cost")}: $${c.toFixed(4)}`);
             }
             if (contextUsage?.contextWindow) {
               const pct = contextUsage.percent;
-              tooltipParts.push(`context: ${pct !== null ? pct.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
+              tooltipParts.push(`${t("usageContext", "Context")}: ${pct !== null ? pct.toFixed(1) + "%" : t("unknown", "unknown")} / ${contextUsage.contextWindow.toLocaleString(language)} ${t("tokens", "tokens")}`);
             }
             const tooltip = tooltipParts.join("  |  ");
 
@@ -682,8 +624,8 @@ export function AppShell() {
               <button
                 type="button"
                 onClick={toggleTopPanel}
-                title={tooltip || "Session info"}
-                aria-label="Session info"
+                title={tooltip || t("sessionInfo", "Session info")}
+                aria-label={t("sessionInfo", "Session info")}
                 aria-pressed={activeTopPanel === "session"}
                 style={{
                   marginLeft: "auto",
@@ -707,28 +649,28 @@ export function AppShell() {
                     <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
                   </svg>
                 )}
-                {!isMobile && t && t.input > 0 && (
+                {!isMobile && tokenStats && tokenStats.input > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
                     </svg>
-                    {fmt(t.input)}
+                    {fmt(tokenStats.input)}
                   </span>
                 )}
-                {!isMobile && t && t.output > 0 && (
+                {!isMobile && tokenStats && tokenStats.output > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
                     </svg>
-                    {fmt(t.output)}
+                    {fmt(tokenStats.output)}
                   </span>
                 )}
-                {!isMobile && t && t.cacheRead > 0 && (
+                {!isMobile && tokenStats && tokenStats.cacheRead > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M8.5 5a3.5 3.5 0 1 1-1-2.45" /><polyline points="6.5 1.5 8.5 2.5 7.5 4.5" />
                     </svg>
-                    {fmt(t.cacheRead)}
+                    {fmt(tokenStats.cacheRead)}
                   </span>
                 )}
                 {!isMobile && costStr && (
@@ -748,15 +690,15 @@ export function AppShell() {
             );
           })()}
           {/* Top panel dropdown — shared, only one active at a time */}
-          {activeTopPanel && topPanelPos && (
+          {activeTopPanel && (
             <div style={{
-              position: "fixed",
-              top: topPanelPos.top,
-              left: topPanelPos.left,
-              width: topPanelPos.width,
-              maxHeight: `calc(100dvh - ${topPanelPos.top}px)`,
+              position: "absolute",
+              top: "100%",
+              left: 0,
+              right: 0,
+              maxHeight: "calc(100dvh - 44px)",
               overflowY: "auto",
-              zIndex: 500,
+              zIndex: 50,
             }}>
               {activeTopPanel === "session" && (
                 <div className="session-info-popover" style={{
@@ -767,29 +709,29 @@ export function AppShell() {
                 }}>
                   {sessionStats ? (() => {
                     const sessionRows = [
-                      ...(sessionStats.sessionName ? [{ label: "Name", value: sessionStats.sessionName, copyField: null }] : []),
-                      { label: "File", value: sessionStats.sessionFile ?? "In-memory", copyField: "file" as const },
-                      { label: "ID", value: sessionStats.sessionId, copyField: "id" as const },
+                      ...(sessionStats.sessionName ? [{ label: t("sessionName", "Name"), value: sessionStats.sessionName, copyField: null }] : []),
+                      { label: t("sessionFile", "File"), value: sessionStats.sessionFile ?? t("inMemory", "In-memory"), copyField: "file" as const },
+                      { label: t("sessionId", "ID"), value: sessionStats.sessionId, copyField: "id" as const },
                     ];
                     const messageRows = [
-                      ["User", sessionStats.userMessages.toLocaleString()],
-                      ["Assistant", sessionStats.assistantMessages.toLocaleString()],
-                      ["Tool Calls", sessionStats.toolCalls.toLocaleString()],
-                      ["Tool Results", sessionStats.toolResults.toLocaleString()],
-                      ["Total", sessionStats.totalMessages.toLocaleString()],
+                      [t("user", "User"), sessionStats.userMessages.toLocaleString(language)],
+                      [t("assistant", "Assistant"), sessionStats.assistantMessages.toLocaleString(language)],
+                      [t("toolCalls", "Tool Calls"), sessionStats.toolCalls.toLocaleString(language)],
+                      [t("toolResults", "Tool Results"), sessionStats.toolResults.toLocaleString(language)],
+                      [t("total", "Total"), sessionStats.totalMessages.toLocaleString(language)],
                     ];
                     const tokenRows = [
-                      ["Input", sessionStats.tokens.input.toLocaleString()],
-                      ["Output", sessionStats.tokens.output.toLocaleString()],
-                      ...(sessionStats.tokens.cacheRead > 0 ? [["Cache Read", sessionStats.tokens.cacheRead.toLocaleString()]] : []),
-                      ...(sessionStats.tokens.cacheWrite > 0 ? [["Cache Write", sessionStats.tokens.cacheWrite.toLocaleString()]] : []),
-                      ["Total", sessionStats.tokens.total.toLocaleString()],
+                      [t("usageInput", "Input"), sessionStats.tokens.input.toLocaleString(language)],
+                      [t("usageOutput", "Output"), sessionStats.tokens.output.toLocaleString(language)],
+                      ...(sessionStats.tokens.cacheRead > 0 ? [[t("cacheRead", "Cache Read"), sessionStats.tokens.cacheRead.toLocaleString(language)]] : []),
+                      ...(sessionStats.tokens.cacheWrite > 0 ? [[t("cacheWrite", "Cache Write"), sessionStats.tokens.cacheWrite.toLocaleString(language)]] : []),
+                      [t("total", "Total"), sessionStats.tokens.total.toLocaleString(language)],
                     ];
                     const ctx = contextUsage ?? sessionStats.contextUsage;
                     const formatCompact = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
                     const extraTokenRows = [
-                      ...(sessionStats.cost > 0 ? [["Cost", `$${sessionStats.cost.toFixed(4)}`]] : []),
-                      ...(ctx?.contextWindow ? [["Context", `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompact(ctx.contextWindow)}`]] : []),
+                      ...(sessionStats.cost > 0 ? [[t("usageCost", "Cost"), `$${sessionStats.cost.toFixed(4)}`]] : []),
+                      ...(ctx?.contextWindow ? [[t("usageContext", "Context"), `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompact(ctx.contextWindow)}`]] : []),
                     ];
                     const section = (
                       title: string,
@@ -826,7 +768,7 @@ export function AppShell() {
                       return (
                         <button
                           type="button"
-                          title={copied ? "Copied" : `Copy ${field === "file" ? "file path" : "session ID"}`}
+                          title={copied ? t("copied", "Copied") : field === "file" ? t("copyFilePath", "Copy file path") : t("copySessionId", "Copy session ID")}
                           onClick={() => handleCopySessionField(field, value)}
                           style={{
                             alignSelf: "start",
@@ -870,7 +812,7 @@ export function AppShell() {
                     };
                     const sessionInfoSection = (
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>Session Info</div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{t("sessionInfo", "Session Info")}</div>
                         <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", columnGap: 12, rowGap: 8, alignItems: "start" }}>
                           {sessionRows.map((row) => (
                             <div key={`session-info:${row.label}`} style={{ display: "contents" }}>
@@ -901,13 +843,13 @@ export function AppShell() {
                         fontFamily: "var(--font-mono)",
                       }}>
                         {sessionInfoSection}
-                        {section("Messages", messageRows)}
-                        {section("Tokens", [...tokenRows, ...extraTokenRows], "right", true)}
+                        {section(t("messages", "Messages"), messageRows)}
+                        {section(t("tokens", "Tokens"), [...tokenRows, ...extraTokenRows], "right", true)}
                       </div>
                     );
                   })() : (
                     <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      Send a message or run /session to load session info
+                      {t("loadSessionInfoHint", "Send a message or run /session to load session info")}
                     </div>
                   )}
                 </div>
@@ -937,7 +879,7 @@ export function AppShell() {
           ) : showPlaceholder ? (
             activeCwd ? (
               <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 15 }}>
-                Select a session from the sidebar
+                {t("selectSession", "Select a session from the sidebar")}
               </div>
             ) : (
               <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "flex-start", gap: 8, userSelect: "none", pointerEvents: "none" }}>
@@ -945,10 +887,10 @@ export function AppShell() {
                   <line x1="20" y1="12" x2="4" y2="12" /><polyline points="10 6 4 12 10 18" />
                 </svg>
                 <div>
-                  <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>Get Started</div>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>{t("getStarted", "Get Started")}</div>
                   <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8 }}>
-                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>Select a project directory from the sidebar<br />
-                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>Add models via the <strong style={{ color: "var(--text)" }}>Models</strong> button at the bottom
+                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>{t("selectProject", "Select a project directory from the sidebar")}<br />
+                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>{t("addModelsFromSettings", "Open Settings at the bottom, then add models")}
                   </div>
                 </div>
               </div>
@@ -971,7 +913,7 @@ export function AppShell() {
         <div
           className="right-panel-resizer"
           role="separator"
-          aria-label="Resize right panel"
+          aria-label={t("resizeRightPanel", "Resize right panel")}
           aria-orientation="vertical"
           aria-valuemin={280}
           aria-valuenow={Math.round(rightPanelWidth)}
@@ -1016,8 +958,8 @@ export function AppShell() {
             <button
               type="button"
               onClick={() => setExplorerRefreshKey((key) => key + 1)}
-              title="Refresh explorer"
-              aria-label="Refresh explorer"
+              title={t("refreshExplorer", "Refresh explorer")}
+              aria-label={t("refreshExplorer", "Refresh explorer")}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -1079,8 +1021,8 @@ export function AppShell() {
     {/* File panel toggle — always visible at top-right */}
     <button
       onClick={() => setRightPanelOpen((v) => !v)}
-      title={rightPanelOpen ? "Hide file panel" : "Show file panel"}
-      aria-label={rightPanelOpen ? "Hide file panel" : "Show file panel"}
+      title={rightPanelOpen ? t("hideFilePanel", "Hide file panel") : t("showFilePanel", "Show file panel")}
+      aria-label={rightPanelOpen ? t("hideFilePanel", "Hide file panel") : t("showFilePanel", "Show file panel")}
       style={{
         position: "fixed", top: 0, right: 0, zIndex: 300,
         display: "flex", alignItems: "center", justifyContent: "center",
@@ -1096,16 +1038,13 @@ export function AppShell() {
         <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
       </svg>
     </button>
-    {modelsConfigOpen && <ModelsConfig onClose={() => { setModelsConfigOpen(false); setModelsRefreshKey((k) => k + 1); }} />}
-    {skillsConfigOpen && (activeCwd ?? selectedSession?.cwd ?? newSessionCwd) && (
-      <SkillsConfig cwd={(activeCwd ?? selectedSession?.cwd ?? newSessionCwd)!} onClose={() => setSkillsConfigOpen(false)} />
-    )}
-    {pluginsConfigOpen && (activeCwd ?? selectedSession?.cwd ?? newSessionCwd) && (
-      <PluginsConfig
-        cwd={(activeCwd ?? selectedSession?.cwd ?? newSessionCwd)!}
+    {settingsOpen && (
+      <SettingsConfig
+        cwd={activeCwd ?? selectedSession?.cwd ?? newSessionCwd ?? null}
         sessionId={selectedSession?.id ?? null}
-        onClose={() => setPluginsConfigOpen(false)}
-        onReloaded={() => setSessionKey((k) => k + 1)}
+        onClose={() => setSettingsOpen(false)}
+        onModelsChanged={() => setModelsRefreshKey((key) => key + 1)}
+        onPluginsReloaded={() => setSessionKey((key) => key + 1)}
       />
     )}
     </>
