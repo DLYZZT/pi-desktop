@@ -3,6 +3,9 @@ import { existsSync, mkdirSync, realpathSync } from "fs";
 import { basename, dirname, join, resolve } from "path";
 import { promisify } from "util";
 import { allowFileRoot } from "./allowed-roots";
+import type { GitStatusResult } from "./api-types";
+import { parseGitStatusPorcelain } from "./git-status";
+export { parseGitStatusPorcelain } from "./git-status";
 
 const execFileAsync = promisify(execFile);
 
@@ -57,6 +60,42 @@ async function git(cwd: string, args: string[]): Promise<string> {
     env: { ...process.env, LC_ALL: "C" },
   });
   return stdout.trim();
+}
+
+async function gitRaw(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
+    timeout: 10_000,
+    maxBuffer: 20 * 1024 * 1024,
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
+  });
+  return stdout;
+}
+
+export async function getGitStatus(cwd: string): Promise<GitStatusResult> {
+  try {
+    const [branchRaw, status] = await Promise.all([
+      git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]),
+      gitRaw(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"]),
+    ]);
+    return parseGitStatusPorcelain(status, branchRaw && branchRaw !== "HEAD" ? branchRaw : null);
+  } catch {
+    return {
+      isGit: false,
+      branch: null,
+      clean: true,
+      staged: 0,
+      modified: 0,
+      untracked: 0,
+      conflicted: 0,
+      entries: [],
+    };
+  }
+}
+
+export function isDirtyWorktreeError(error: unknown): boolean {
+  const message = extractGitError(error);
+  return /contains modified or untracked files|working tree.*(dirty|modified)|use --force/i.test(message);
 }
 
 /**

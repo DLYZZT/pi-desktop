@@ -191,7 +191,14 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
     }
     if (segs[0] === "skills" && segs.length === 1 && (method === "PATCH" || method === "POST")) {
       const body = await parseBody(init);
-      return jsonResponse(await call("skills.set", body as never));
+      return jsonResponse(await call("skills.set", {
+        cwd: String(body.cwd ?? ""),
+        filePath: String(body.filePath ?? ""),
+        ...(typeof body.disableModelInvocation === "boolean"
+          ? { disableModelInvocation: body.disableModelInvocation }
+          : {}),
+        ...(typeof body.content === "string" ? { content: body.content } : {}),
+      }));
     }
     if (segs[0] === "skills" && segs[1] === "search" && method === "POST") {
       const body = await parseBody(init);
@@ -208,7 +215,16 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
     }
     if (segs[0] === "plugins" && (method === "POST" || method === "PUT" || method === "PATCH")) {
       const body = await parseBody(init);
-      return jsonResponse(await call("plugins.set", body as never));
+      const action = String(body.action ?? "");
+      if (!["install", "remove", "update", "disable", "enable"].includes(action)) {
+        return errorResponse("Invalid plugin action", 400);
+      }
+      return jsonResponse(await call("plugins.set", {
+        action: action as "install" | "remove" | "update" | "disable" | "enable",
+        cwd: String(body.cwd ?? ""),
+        ...(typeof body.source === "string" ? { source: body.source } : {}),
+        ...(body.scope === "project" || body.scope === "global" ? { scope: body.scope } : {}),
+      }));
     }
 
     if (segs[0] === "files") {
@@ -227,10 +243,13 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
         return jsonResponse(await call("files.preview", { path: filePath, sourceSessionId }));
       }
       if (type === "download") {
-        const content = await readFile(filePath, sourceSessionId);
-        return new Response(content.content, {
+        const content = await call("files.download", { path: filePath, sourceSessionId });
+        const binary = atob(content.base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        return new Response(bytes, {
           status: 200,
-          headers: { "Content-Type": "application/octet-stream" },
+          headers: { "Content-Type": content.mime },
         });
       }
     }
@@ -249,13 +268,13 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
     }
     if (segs[0] === "worktrees" && method === "POST") {
       const body = await parseBody(init);
-      return jsonResponse(
-        await call("worktrees.create", {
-          projectRoot: String(body.cwd ?? body.projectRoot ?? ""),
-          branch: String(body.branch ?? ""),
-          cwd: body.cwd as string | undefined,
-        }),
-      );
+      const result = await call("worktrees.create", {
+        projectRoot: String(body.cwd ?? body.projectRoot ?? ""),
+        branch: String(body.branch ?? ""),
+        cwd: body.cwd as string | undefined,
+      });
+      // Preserve the legacy route shape consumed by SessionSidebar.
+      return jsonResponse(result.worktree);
     }
     if (segs[0] === "worktrees" && method === "DELETE") {
       const body = await parseBody(init);
@@ -265,6 +284,11 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
         force: body.force as boolean | undefined,
       });
       return jsonResponse({ success: true });
+    }
+
+    if (segs[0] === "git-status" && method === "GET") {
+      const cwd = u.searchParams.get("cwd") ?? "";
+      return jsonResponse(await call("git.status", { path: cwd }));
     }
 
     if (segs[0] === "cwd" && segs[1] === "validate" && method === "POST") {
@@ -283,8 +307,22 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
     return errorResponse(`Unmapped API route: ${method} ${u.pathname}`, 404);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    const status = /not found/i.test(msg) ? 404 : /denied|forbidden/i.test(msg) ? 403 : 500;
-    return errorResponse(msg, status);
+    const rpc = e as { code?: string; detail?: unknown };
+    const status = rpc.code === "BAD_REQUEST"
+      ? 400
+      : rpc.code === "FORBIDDEN"
+        ? 403
+        : rpc.code === "NOT_FOUND"
+          ? 404
+          : rpc.code === "CONFLICT"
+            ? 409
+            : /not found/i.test(msg)
+              ? 404
+              : /denied|forbidden/i.test(msg)
+                ? 403
+                : 500;
+    const detail = rpc.detail && typeof rpc.detail === "object" ? rpc.detail : {};
+    return jsonResponse({ error: msg, ...detail }, status);
   }
 }
 

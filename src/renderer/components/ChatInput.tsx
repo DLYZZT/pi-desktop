@@ -1797,7 +1797,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             )}
 
-            {!isStreaming && onCompact && (
+            {onCompact && (!isStreaming || isCompacting) && (
               <div style={{ position: "relative" }}>
                 {compactError && (
                   <div style={{

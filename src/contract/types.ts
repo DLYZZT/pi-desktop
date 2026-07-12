@@ -31,9 +31,8 @@ export interface ContextInfo {
 
 export interface WorktreeInfo {
   path: string;
-  branch?: string;
+  branch?: string | null;
   isMain?: boolean;
-  [key: string]: unknown;
 }
 
 export interface DirEntry {

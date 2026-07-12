@@ -10,6 +10,7 @@ import { RpcError } from "../contract/types";
 type WatchEntry = {
   watcher: fs.FSWatcher;
   refs: number;
+  timer: ReturnType<typeof setTimeout> | null;
 };
 
 const watches = new Map<string, WatchEntry>();
@@ -35,35 +36,59 @@ export function createFileWatchService(server: RpcServer) {
         return;
       }
 
-      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-        throw new RpcError({ code: "NOT_FOUND", message: "Not a file" });
+      if (!fs.existsSync(filePath)) {
+        throw new RpcError({ code: "NOT_FOUND", message: "Path not found" });
+      }
+      const initialStats = fs.statSync(filePath);
+      if (!initialStats.isFile() && !initialStats.isDirectory()) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "Path is not watchable" });
       }
 
       let watcher: fs.FSWatcher;
-      try {
-        watcher = fs.watch(filePath, () => {
+      let watchEntry: WatchEntry | null = null;
+      const emitChange = () => {
+        if (watchEntry?.timer) clearTimeout(watchEntry.timer);
+        const timer = setTimeout(() => {
+          if (watchEntry) watchEntry.timer = null;
           try {
             const s = fs.statSync(filePath);
             server.emit("files.changed", filePath, {
               path: filePath,
               event: "change",
               mtime: s.mtime.toISOString(),
-              size: s.size,
+              ...(s.isFile() ? { size: s.size } : {}),
             });
           } catch {
             server.emit("files.changed", filePath, {
               path: filePath,
               event: "change",
               mtime: new Date().toISOString(),
-              size: 0,
             });
           }
-        });
+        }, 100);
+        if (watchEntry) watchEntry.timer = timer;
+      };
+      try {
+        watcher = initialStats.isDirectory()
+          ? fs.watch(filePath, { recursive: true }, emitChange)
+          : fs.watch(filePath, emitChange);
       } catch (err) {
-        throw new RpcError({
-          code: "INTERNAL",
-          message: err instanceof Error ? err.message : "Failed to watch file",
-        });
+        // Recursive watching is not supported by every Node/platform pair.
+        if (initialStats.isDirectory()) {
+          try {
+            watcher = fs.watch(filePath, emitChange);
+          } catch (fallbackError) {
+            throw new RpcError({
+              code: "INTERNAL",
+              message: fallbackError instanceof Error ? fallbackError.message : "Failed to watch directory",
+            });
+          }
+        } else {
+          throw new RpcError({
+            code: "INTERNAL",
+            message: err instanceof Error ? err.message : "Failed to watch file",
+          });
+        }
       }
 
       watcher.on("error", () => {
@@ -75,7 +100,8 @@ export function createFileWatchService(server: RpcServer) {
         stop(filePath, true);
       });
 
-      watches.set(filePath, { watcher, refs: 1 });
+      watchEntry = { watcher, refs: 1, timer: null };
+      watches.set(filePath, watchEntry);
       server.emit("files.changed", filePath, {
         path: filePath,
         event: "connected",
@@ -98,6 +124,7 @@ function stop(filePath: string, force = false): void {
   } catch {
     /* ignore */
   }
+  if (entry.timer) clearTimeout(entry.timer);
   watches.delete(filePath);
 }
 

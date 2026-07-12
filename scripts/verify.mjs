@@ -22,6 +22,7 @@ run("typecheck (main/host)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.json"]);
 run("typecheck (renderer)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.renderer.json"]);
 run("unit tests", "npm", ["test"]);
 run("contract coverage", "node", ["scripts/check-contract-coverage.mjs"]);
+run("desktop security invariants", "node", ["scripts/check-desktop-security.mjs"]);
 run("build", "npm", ["run", "build"]);
 run("smoke electron", "npm", ["run", "smoke"]);
 

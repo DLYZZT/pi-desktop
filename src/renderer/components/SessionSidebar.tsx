@@ -531,21 +531,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
     let cancelled = false;
     setWorktreeLoadingCwd(selectedCwd);
-    fetch(`/api/worktrees?cwd=${encodeURIComponent(selectedCwd)}`)
-      .then((r) => r.json())
-      .then((d: { projectRoot?: string; isGit?: boolean; isTopLevel?: boolean; worktrees?: WorktreeEntry[]; error?: string }) => {
+    void import("@/lib/api-client")
+      .then(({ call }) => call("worktrees.list", { projectRoot: selectedCwd }))
+      .then((d) => {
         if (cancelled) return;
         setWorktreeLoadingCwd(null);
-        if (d.error || !d.projectRoot) {
-          setWorktreeState(null);
-          return;
-        }
         setWorktreeState({
           forCwd: selectedCwd,
           projectRoot: d.projectRoot,
-          isGit: d.isGit ?? false,
-          isTopLevel: d.isTopLevel ?? false,
-          worktrees: d.worktrees ?? [],
+          isGit: d.isGit,
+          isTopLevel: d.isTopLevel,
+          worktrees: d.worktrees.map((worktree) => ({
+            path: worktree.path,
+            branch: worktree.branch ?? null,
+            isMain: worktree.isMain === true,
+          })),
         });
       })
       .catch(() => {
@@ -654,16 +654,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     setWtBusy(true);
     setWtError(null);
     try {
-      const res = await fetch("/api/worktrees", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: worktreeState.projectRoot, branch }),
+      const { call } = await import("@/lib/api-client");
+      const { worktree } = await call("worktrees.create", {
+        projectRoot: worktreeState.projectRoot,
+        cwd: worktreeState.projectRoot,
+        branch,
       });
-      const data = await res.json().catch(() => ({})) as { path?: string; error?: string };
-      if (!res.ok || data.error || !data.path) {
-        setWtError(data.error ?? `HTTP ${res.status}`);
-        return;
-      }
       setWtNewOpen(false);
       setWtNewBranch("");
       setWtDropdownOpen(false);
@@ -672,10 +668,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       // treating the new cwd as a different project).
       setWorktreeState((prev) => prev ? {
         ...prev,
-        forCwd: data.path!,
-        worktrees: [...prev.worktrees, { path: data.path!, branch, isMain: false }],
+        forCwd: worktree.path,
+        worktrees: [...prev.worktrees, { path: worktree.path, branch, isMain: false }],
       } : prev);
-      setSelectedCwd(data.path);
+      setSelectedCwd(worktree.path);
       setWtRefreshKey((k) => k + 1);
     } catch (e) {
       setWtError(e instanceof Error ? e.message : String(e));
@@ -689,25 +685,20 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     setWtBusy(true);
     setWtError(null);
     try {
-      const res = await fetch("/api/worktrees", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: worktreeState.projectRoot, path, force }),
+      const { call } = await import("@/lib/api-client");
+      await call("worktrees.remove", {
+        cwd: worktreeState.projectRoot,
+        path,
+        force,
       });
-      const data = await res.json().catch(() => ({})) as { error?: string; dirty?: boolean };
-      if (!res.ok) {
-        if (data.dirty && !force) {
-          // Dirty worktree — ask the user to confirm a force removal
-          setWtConfirmRemove(path);
-          return;
-        }
-        setWtError(data.error ?? `HTTP ${res.status}`);
-        return;
-      }
       setWtConfirmRemove(null);
       if (selectedCwd === path) setSelectedCwd(worktreeState.projectRoot);
       setWtRefreshKey((k) => k + 1);
     } catch (e) {
+      if (!force && (e as { detail?: { dirty?: boolean } }).detail?.dirty) {
+        setWtConfirmRemove(path);
+        return;
+      }
       setWtError(e instanceof Error ? e.message : String(e));
     } finally {
       setWtBusy(false);

@@ -1,7 +1,7 @@
 /**
  * Plugin package management — ported from old /api/plugins route.
  */
-import { existsSync, readFileSync, statSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { basename, dirname, extname, join, relative } from "path";
 import {
   DefaultPackageManager,
@@ -34,6 +34,39 @@ function toPluginScope(scope: string): PluginScope {
 
 function keyFor(source: string, scope: PluginScope): string {
   return `${scope}\0${source}`;
+}
+
+function disabledBackupPath(): string {
+  return join(getAgentDir(), "pi-desktop-plugin-filters.json");
+}
+
+function readDisabledBackups(): Record<string, PackageSource> {
+  try {
+    return JSON.parse(readFileSync(disabledBackupPath(), "utf8")) as Record<string, PackageSource>;
+  } catch {
+    return {};
+  }
+}
+
+function writeDisabledBackups(backups: Record<string, PackageSource>): void {
+  const filePath = disabledBackupPath();
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(tmp, JSON.stringify(backups, null, 2), "utf8");
+  try {
+    renameSync(tmp, filePath);
+  } catch (error) {
+    try { unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
+    throw error;
+  }
+}
+
+function clearDisabledBackup(source: string, scope: PluginScope): void {
+  const backups = readDisabledBackups();
+  const key = keyFor(source, scope);
+  if (!(key in backups)) return;
+  delete backups[key];
+  writeDisabledBackups(backups);
 }
 
 function getPackageSource(entry: PackageSource): string {
@@ -76,10 +109,13 @@ function setPackageDisabled(
       ? (settingsManager.getProjectSettings().packages ?? [])
       : (settingsManager.getGlobalSettings().packages ?? []);
   let changed = false;
+  const backups = readDisabledBackups();
+  const backupKey = keyFor(source, scope);
   const next = current.map((entry): PackageSource => {
     if (getPackageSource(entry) !== source) return entry;
     changed = true;
     if (disabled) {
+      backups[backupKey] = entry;
       return {
         ...(typeof entry === "string" ? { source: entry } : entry),
         extensions: [],
@@ -88,9 +124,12 @@ function setPackageDisabled(
         themes: [],
       };
     }
-    return getPackageSource(entry);
+    const restored = backups[backupKey] ?? getPackageSource(entry);
+    delete backups[backupKey];
+    return restored;
   });
   if (!changed) return false;
+  writeDisabledBackups(backups);
   if (scope === "project") settingsManager.setProjectPackages(next);
   else settingsManager.setPackages(next);
   return true;
@@ -298,6 +337,7 @@ export async function applyPluginAction(body: {
   } else if (body.action === "remove") {
     if (!source) throw new RpcError({ code: "BAD_REQUEST", message: "source required" });
     await packageManager.removeAndPersist(source, { local });
+    clearDisabledBackup(source, body.scope === "project" ? "project" : "global");
   } else if (body.action === "update") {
     await packageManager.update(source);
   } else if (body.action === "disable") {

@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -53,7 +54,14 @@ import {
   resolveSessionPath,
 } from "./session-reader";
 import { isFilePathReferencedBySession } from "./session-file-references";
-import { addWorktree, listWorktrees, removeWorktree, resolveProject } from "../shared/worktree";
+import {
+  addWorktree,
+  getGitStatus,
+  isDirtyWorktreeError,
+  listWorktrees,
+  removeWorktree,
+  resolveProject,
+} from "../shared/worktree";
 import { buildEntriesFromFiles, filterFileEntries } from "../shared/file-fuzzy";
 import {
   DOCX_PREVIEW_MAX_BYTES,
@@ -147,6 +155,37 @@ function writeModelsJson(data: Record<string, unknown>): void {
       /* ignore */
     }
     throw e;
+  }
+}
+
+async function resolveLoadedSkill(cwd: string, filePath: string) {
+  if (!cwd || !filePath) {
+    throw new RpcError({ code: "BAD_REQUEST", message: "cwd and filePath are required" });
+  }
+  const loader = new DefaultResourceLoader({ cwd, agentDir: getAgentDir() });
+  await loader.reload();
+  const requested = realpathSync(filePath);
+  const skill = loader.getSkills().skills.find((candidate) => {
+    try {
+      return realpathSync(candidate.filePath) === requested;
+    } catch {
+      return false;
+    }
+  });
+  if (!skill) {
+    throw new RpcError({ code: "FORBIDDEN", message: "Skill is not loaded for this project" });
+  }
+  return skill;
+}
+
+function writeTextAtomically(filePath: string, content: string): void {
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  writeFileSync(tmp, content, "utf8");
+  try {
+    renameSync(tmp, filePath);
+  } catch (error) {
+    try { unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
+    throw error;
   }
 }
 
@@ -386,11 +425,11 @@ export function registerHandlers(server: RpcServer): void {
       }
       for (const w of worktrees) allowFileRoot(w.path);
       return {
-        worktrees: worktrees as never,
+        worktrees,
         projectRoot: project.projectRoot,
         isGit,
         isTopLevel: project.isTopLevel,
-      } as never;
+      };
     },
 
     "worktrees.create": async (params) => {
@@ -402,7 +441,7 @@ export function registerHandlers(server: RpcServer): void {
       }
       const result = await addWorktree(cwd, body.branch);
       allowFileRoot(result.path);
-      return { worktree: result as never };
+      return { worktree: result };
     },
 
     "worktrees.remove": async (params) => {
@@ -412,8 +451,25 @@ export function registerHandlers(server: RpcServer): void {
       if (!isFilePathAllowed(cwd, allowed)) {
         throw new RpcError({ code: "FORBIDDEN", message: "Access denied" });
       }
-      await removeWorktree(cwd, body.path, body.force === true);
+      try {
+        await removeWorktree(cwd, body.path, body.force === true);
+      } catch (error) {
+        if (!body.force && isDirtyWorktreeError(error)) {
+          throw new RpcError({
+            code: "CONFLICT",
+            message: error instanceof Error ? error.message : String(error),
+            detail: { dirty: true },
+          });
+        }
+        throw error;
+      }
       return { ok: true as const };
+    },
+
+    "git.status": async (params) => {
+      const { path: cwd } = params as { path: string };
+      await assertPathAllowed(cwd);
+      return getGitStatus(cwd);
     },
 
     "agent.new": async (params) => {
@@ -579,6 +635,23 @@ export function registerHandlers(server: RpcServer): void {
       } finally {
         (await import("fs")).closeSync(fd);
       }
+    },
+
+    "files.download": async (params) => {
+      const { path: filePath, sourceSessionId } = params as {
+        path: string;
+        sourceSessionId?: string;
+      };
+      await assertPathAllowed(filePath, sourceSessionId);
+      const st = statSync(filePath);
+      if (!st.isFile()) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "Not a file" });
+      }
+      return {
+        base64: readFileSync(filePath).toString("base64"),
+        size: st.size,
+        mime: getImageMime(filePath) || getAudioMime(filePath) || getDocumentMime(filePath) || "application/octet-stream",
+      };
     },
 
     "files.meta": async (params) => {
@@ -1025,7 +1098,7 @@ export function registerHandlers(server: RpcServer): void {
       const loader = new DefaultResourceLoader({ cwd, agentDir: getAgentDir() });
       await loader.reload();
       const { skills, diagnostics } = loader.getSkills();
-      return { skills, diagnostics } as never;
+      return { skills, diagnostics };
     },
 
     "skills.search": async (params) => {
@@ -1052,40 +1125,46 @@ export function registerHandlers(server: RpcServer): void {
     },
 
     "skills.set": async (params) => {
-      const body = params as { filePath: string; disableModelInvocation: boolean };
-      const { filePath, disableModelInvocation } = body;
-      if (!filePath || !existsSync(filePath)) {
-        throw new RpcError({ code: "NOT_FOUND", message: "file not found" });
+      const body = params as {
+        cwd: string;
+        filePath: string;
+        disableModelInvocation?: boolean;
+        content?: string;
+      };
+      const skill = await resolveLoadedSkill(body.cwd, body.filePath);
+      const { filePath } = skill;
+      let content = body.content ?? readFileSync(filePath, "utf8");
+      if (content.length > 2 * 1024 * 1024) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "Skill file is too large" });
       }
-      const content = readFileSync(filePath, "utf8");
       const key = "disable-model-invocation";
       const { frontmatter } = parseFrontmatter<Record<string, unknown>>(content);
       const alreadySet = Boolean(frontmatter[key]);
       let updated = content;
-      if (disableModelInvocation && !alreadySet) {
+      if (body.disableModelInvocation === true && !alreadySet) {
         updated = content.replace(/^---\r?\n/, `---\n${key}: true\n`);
         if (updated === content) updated = `---\n${key}: true\n---\n${content}`;
-      } else if (!disableModelInvocation && alreadySet) {
+      } else if (body.disableModelInvocation === false && alreadySet) {
         updated = content.replace(new RegExp(`^${key}\\s*:.*\\r?\\n`, "m"), "");
       }
-      writeFileSync(filePath, updated, "utf8");
+      writeTextAtomically(filePath, updated);
       return { ok: true as const };
+    },
+
+    "skills.getContent": async (params) => {
+      const body = params as { cwd: string; filePath: string };
+      const skill = await resolveLoadedSkill(body.cwd, body.filePath);
+      return { content: readFileSync(skill.filePath, "utf8") };
     },
 
     "plugins.list": async (params) => {
       const cwd = (params as { cwd?: string } | void)?.cwd;
       if (!cwd) throw new RpcError({ code: "BAD_REQUEST", message: "cwd required" });
-      return (await readPlugins(cwd)) as never;
+      return readPlugins(cwd);
     },
 
     "plugins.set": async (params) => {
-      const body = params as {
-        action: "install" | "remove" | "update" | "disable" | "enable";
-        source?: string;
-        scope?: "global" | "project";
-        cwd: string;
-      };
-      return (await applyPluginAction(body)) as never;
+      return applyPluginAction(params);
     },
 
     "files.watchStart": async (params) => {

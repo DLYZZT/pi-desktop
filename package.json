@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.renderer.json",
     "test": "node --test src/shared/*.test.mjs",
     "check:contract": "node scripts/check-contract-coverage.mjs",
+    "check:desktop-security": "node scripts/check-desktop-security.mjs",
     "smoke": "node scripts/smoke-electron.mjs",
     "verify": "node scripts/verify.mjs",
     "start": "electron .",

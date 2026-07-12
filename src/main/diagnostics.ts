@@ -57,6 +57,19 @@ export async function exportDiagnostics(win: BrowserWindow | null): Promise<stri
     /* ignore */
   }
 
+  // Include locally collected Electron crash dumps. They are never uploaded.
+  try {
+    const crashDir = app.getPath("crashDumps");
+    if (fs.existsSync(crashDir)) {
+      fs.cpSync(crashDir, path.join(outDir, "crash-dumps"), {
+        recursive: true,
+        force: true,
+      });
+    }
+  } catch {
+    /* ignore unavailable crash dump directories */
+  }
+
   shell.showItemInFolder(outDir);
   return outDir;
 }

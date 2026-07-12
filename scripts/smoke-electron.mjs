@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
- * Smoke test: launch electron with PI_SMOKE_TEST=1, host ready + sessions.list, exit.
- * For CI — currently a lightweight host-entry check when electron is available.
+ * Smoke test: launch Electron and a hidden renderer, connect to the Host over
+ * MessagePort, and verify
+ * ping, sessions, Worktree conflict handling, Git status, directory watching,
+ * exact binary download, and safe Skill editing.
  */
 import { spawn } from "child_process";
 import path from "path";

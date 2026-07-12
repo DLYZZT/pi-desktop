@@ -15,15 +15,9 @@ const markdownSanitizeSchema = {
 };
 
 export const markdownRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [remarkGfm, remarkMath];
-export const markdownPreviewRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [remarkGfm];
 
 export const markdownRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
   rehypeRaw,
   [rehypeSanitize, markdownSanitizeSchema],
   [rehypeKatex, { throwOnError: false, strict: false }],
-];
-
-export const markdownPreviewRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
-  rehypeRaw,
-  [rehypeSanitize, markdownSanitizeSchema],
 ];

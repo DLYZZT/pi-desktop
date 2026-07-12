@@ -2,8 +2,8 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import ReactMarkdown from "react-markdown";
 import { useTheme } from "@/hooks/useTheme";
+import { MarkdownBody } from "./MarkdownBody";
 import {
   DOCX_PREVIEW_MAX_BYTES,
   getFileExt,
@@ -12,7 +12,6 @@ import {
   isImagePath,
 } from "@/lib/file-types";
 import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/file-paths";
-import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins } from "@/lib/markdown";
 
 interface Props {
   filePath: string;
@@ -1014,12 +1013,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
             className="markdown-body markdown-file-preview"
             style={{ padding: "24px 32px", maxWidth: 800 }}
           >
-            <ReactMarkdown
-              remarkPlugins={markdownPreviewRemarkPlugins}
-              rehypePlugins={markdownPreviewRehypePlugins}
-            >
-              {data.content}
-            </ReactMarkdown>
+            <MarkdownBody cwd={cwd}>{data.content}</MarkdownBody>
           </div>
         ) : (
           <SyntaxHighlighter

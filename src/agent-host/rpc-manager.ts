@@ -80,6 +80,11 @@ export class AgentSessionWrapper {
   private activeCustomUis = new Map<string, ActiveCustomUi>();
   private extensionStatuses = new Map<string, string>();
   private extensionWidgets = new Map<string, ExtensionWidgetItem>();
+  private extensionWorkingMessage = "Working";
+  private extensionWorkingIndicator = "";
+  private extensionWorkingVisible = true;
+  private extensionEditorText = "";
+  private unsupportedExtensionFeatures = new Set<string>();
   private promptRunning = false;
   private extensionsBound = false;
   private extensionBindingPromise: Promise<void> | null = null;
@@ -544,6 +549,39 @@ export class AgentSessionWrapper {
     return Array.from(this.extensionStatuses, ([key, text]) => ({ key, text }));
   }
 
+  private setExtensionStatus(key: string, text: string | undefined): void {
+    if (text === undefined) this.extensionStatuses.delete(key);
+    else this.extensionStatuses.set(key, text);
+    this.emit({
+      type: "extension_ui_request",
+      id: randomUUID(),
+      method: "setStatus",
+      statusKey: key,
+      statusText: text,
+    } as ExtensionUiRequest as AgentEvent);
+  }
+
+  private syncExtensionWorkingStatus(): void {
+    this.setExtensionStatus(
+      "extension-working",
+      this.extensionWorkingVisible
+        ? [this.extensionWorkingIndicator, this.extensionWorkingMessage].filter(Boolean).join(" ")
+        : undefined,
+    );
+  }
+
+  private reportUnsupportedExtensionFeature(feature: string): void {
+    if (this.unsupportedExtensionFeatures.has(feature)) return;
+    this.unsupportedExtensionFeatures.add(feature);
+    this.emit({
+      type: "extension_ui_request",
+      id: randomUUID(),
+      method: "notify",
+      message: `Extension feature “${feature}” is terminal-specific and is not available in the desktop renderer.`,
+      notifyType: "warning",
+    } as ExtensionUiRequest as AgentEvent);
+  }
+
   private getExtensionWidgets(): ExtensionWidgetItem[] {
     return Array.from(this.extensionWidgets.values());
   }
@@ -742,22 +780,33 @@ export class AgentSessionWrapper {
           notifyType: type,
         } as ExtensionUiRequest as AgentEvent);
       },
-      onTerminalInput: () => () => {},
-      setStatus: (key, text) => {
-        if (text === undefined) this.extensionStatuses.delete(key);
-        else this.extensionStatuses.set(key, text);
-        this.emit({
-          type: "extension_ui_request",
-          id: randomUUID(),
-          method: "setStatus",
-          statusKey: key,
-          statusText: text,
-        } as ExtensionUiRequest as AgentEvent);
+      onTerminalInput: () => {
+        this.reportUnsupportedExtensionFeature("raw terminal input");
+        return () => {};
       },
-      setWorkingMessage: () => {},
-      setWorkingVisible: () => {},
-      setWorkingIndicator: () => {},
-      setHiddenThinkingLabel: () => {},
+      setStatus: (key, text) => {
+        this.setExtensionStatus(key, text);
+      },
+      setWorkingMessage: (message) => {
+        this.extensionWorkingMessage = message?.trim() || "Working";
+        this.syncExtensionWorkingStatus();
+      },
+      setWorkingVisible: (visible) => {
+        this.extensionWorkingVisible = visible;
+        this.syncExtensionWorkingStatus();
+      },
+      setWorkingIndicator: (options) => {
+        const frame = options?.frames?.[0];
+        if (options?.frames?.length === 0) this.extensionWorkingVisible = false;
+        else {
+          this.extensionWorkingVisible = true;
+          this.extensionWorkingIndicator = frame ?? "";
+        }
+        this.syncExtensionWorkingStatus();
+      },
+      setHiddenThinkingLabel: (label) => {
+        this.setExtensionStatus("hidden-thinking-label", label);
+      },
       setWidget: (key, content, options) => {
         if (content !== undefined && !Array.isArray(content)) return;
         if (content === undefined) {
@@ -778,8 +827,8 @@ export class AgentSessionWrapper {
           widgetPlacement: options?.placement,
         } as ExtensionUiRequest as AgentEvent);
       },
-      setFooter: () => {},
-      setHeader: () => {},
+      setFooter: () => this.reportUnsupportedExtensionFeature("custom TUI footer"),
+      setHeader: () => this.reportUnsupportedExtensionFeature("custom TUI header"),
       setTitle: (title) => {
         this.emit({
           type: "extension_ui_request",
@@ -790,6 +839,7 @@ export class AgentSessionWrapper {
       },
       custom: <T = unknown>(factory: unknown, options?: unknown) => this.requestExtensionCustomUi<T>(factory, options),
       pasteToEditor: (text) => {
+        this.extensionEditorText += text;
         this.emit({
           type: "extension_ui_request",
           id: randomUUID(),
@@ -798,6 +848,7 @@ export class AgentSessionWrapper {
         } as ExtensionUiRequest as AgentEvent);
       },
       setEditorText: (text) => {
+        this.extensionEditorText = text;
         this.emit({
           type: "extension_ui_request",
           id: randomUUID(),
@@ -805,9 +856,9 @@ export class AgentSessionWrapper {
           text,
         } as ExtensionUiRequest as AgentEvent);
       },
-      getEditorText: () => "",
-      addAutocompleteProvider: () => {},
-      setEditorComponent: () => {},
+      getEditorText: () => this.extensionEditorText,
+      addAutocompleteProvider: () => this.reportUnsupportedExtensionFeature("TUI autocomplete provider"),
+      setEditorComponent: () => this.reportUnsupportedExtensionFeature("custom TUI editor component"),
       getEditorComponent: () => undefined,
       get theme() { return undefined; },
       getAllThemes: () => [],
@@ -824,13 +875,22 @@ export class AgentSessionWrapper {
         const agent = this.inner.agent as { waitForIdle?: () => Promise<void> };
         await agent.waitForIdle?.();
       },
-      newSession: async () => ({ cancelled: true }),
-      fork: async () => ({ cancelled: true }),
+      newSession: async () => {
+        this.reportUnsupportedExtensionFeature("extension-driven session replacement");
+        return { cancelled: true };
+      },
+      fork: async () => {
+        this.reportUnsupportedExtensionFeature("extension-driven session fork");
+        return { cancelled: true };
+      },
       navigateTree: async (targetId, options) => {
         const result = await this.inner.navigateTree(targetId, { summarize: options?.summarize });
         return { cancelled: result.cancelled };
       },
-      switchSession: async () => ({ cancelled: true }),
+      switchSession: async () => {
+        this.reportUnsupportedExtensionFeature("extension-driven session switch");
+        return { cancelled: true };
+      },
       reload: async () => {
         this.extensionStatuses.clear();
         this.extensionWidgets.clear();

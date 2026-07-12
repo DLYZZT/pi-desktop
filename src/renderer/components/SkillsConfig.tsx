@@ -82,15 +82,62 @@ function SkillDetail({
   onToggle,
   toggling,
   saveError,
+  onSaved,
 }: {
   skill: Skill;
   cwd: string;
   onToggle: (skill: Skill) => void;
   toggling: boolean;
   saveError: string | null;
+  onSaved: () => void;
 }) {
   const label = sourceLabel(skill);
   const enabled = !skill.disableModelInvocation;
+  const [content, setContent] = useState("");
+  const [savedContent, setSavedContent] = useState("");
+  const [contentLoading, setContentLoading] = useState(true);
+  const [contentSaving, setContentSaving] = useState(false);
+  const [contentError, setContentError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setContentLoading(true);
+    setContentError(null);
+    void import("@/lib/api-client")
+      .then(({ call }) => call("skills.getContent", { cwd, filePath: skill.filePath }))
+      .then((result) => {
+        if (cancelled) return;
+        setContent(result.content);
+        setSavedContent(result.content);
+      })
+      .catch((error) => {
+        if (!cancelled) setContentError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (!cancelled) setContentLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [cwd, skill.filePath]);
+
+  const saveContent = useCallback(async () => {
+    setContentSaving(true);
+    setContentError(null);
+    try {
+      const res = await fetch("/api/skills", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd, filePath: skill.filePath, content }),
+      });
+      const result = await res.json().catch(() => ({})) as { error?: string };
+      if (!res.ok || result.error) throw new Error(result.error ?? `HTTP ${res.status}`);
+      setSavedContent(content);
+      onSaved();
+    } catch (error) {
+      setContentError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setContentSaving(false);
+    }
+  }, [content, cwd, onSaved, skill.filePath]);
 
   function displayPath(p: string): string {
     if (label === "project" && p.startsWith(cwd)) {
@@ -160,6 +207,32 @@ function SkillDetail({
         >
           {skill.name}
         </span>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 7, minHeight: 260 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>SKILL.md</span>
+          <button
+            type="button"
+            onClick={() => void saveContent()}
+            disabled={contentLoading || contentSaving || content === savedContent}
+            style={{ padding: "5px 10px", borderRadius: 5, border: "1px solid var(--border)", background: content !== savedContent ? "var(--accent)" : "var(--bg-panel)", color: content !== savedContent ? "#fff" : "var(--text-dim)", cursor: contentLoading || contentSaving || content === savedContent ? "default" : "pointer", fontSize: 11 }}
+          >
+            {contentSaving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+        {contentLoading ? (
+          <div style={{ padding: 12, color: "var(--text-dim)", fontSize: 12 }}>Loading skill file…</div>
+        ) : (
+          <textarea
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            spellCheck={false}
+            aria-label="Skill markdown content"
+            style={{ width: "100%", flex: 1, minHeight: 240, resize: "vertical", border: "1px solid var(--border)", borderRadius: 7, background: "var(--bg-panel)", color: "var(--text)", padding: 12, fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.55, outline: "none" }}
+          />
+        )}
+        {contentError && <span style={{ fontSize: 11, color: "#f87171" }}>{contentError}</span>}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -552,6 +625,7 @@ export function SkillsConfig({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          cwd,
           filePath: skill.filePath,
           disableModelInvocation: next,
         }),
@@ -577,7 +651,7 @@ export function SkillsConfig({
         return n;
       });
     }
-  }, []);
+  }, [cwd]);
 
   const selectedSkill = skills.find((s) => s.filePath === selected) ?? null;
 
@@ -866,6 +940,7 @@ export function SkillsConfig({
                 onToggle={toggle}
                 toggling={toggling.has(selectedSkill.filePath)}
                 saveError={saveError}
+                onSaved={loadSkills}
               />
             ) : (
               <div

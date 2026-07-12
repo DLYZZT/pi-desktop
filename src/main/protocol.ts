@@ -9,8 +9,10 @@ import { appendMainLog } from "./logger";
 
 const CSP =
   "default-src 'self' app:; " +
-  "script-src 'self' app: 'unsafe-inline'; " +
-  "style-src 'self' app: 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
+  "script-src 'self' app:; " +
+  "style-src 'self' app: https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
+  "style-src-elem 'self' app: 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
+  "style-src-attr 'unsafe-inline'; " +
   "font-src 'self' app: data: https://fonts.gstatic.com https://cdn.jsdelivr.net; " +
   "img-src 'self' app: data: blob:; " +
   "media-src 'self' app: blob: data:; " +

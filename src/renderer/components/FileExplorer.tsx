@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { getFileIcon, FolderIcon } from "./FileIcons";
 import { encodeFilePathForApi, getRelativeFilePath, joinFilePath } from "@/lib/file-paths";
+import type { GitStatusResult } from "@shared/api-types";
 
 interface FileEntry {
   name: string;
@@ -25,13 +26,9 @@ interface Props {
   onAtMention?: (relativePath: string, isDir: boolean) => void;
 }
 
-let fetchGen = 0;
-
 async function fetchEntries(dirPath: string): Promise<FileNode[]> {
-  const gen = ++fetchGen;
   const encoded = encodeFilePathForApi(dirPath);
   const res = await fetch(`/api/files/${encoded}?type=list`);
-  if (gen !== fetchGen) return []; // ISSUE-019: stale
   if (!res.ok) {
     let message = `Failed to load files (HTTP ${res.status})`;
     try {
@@ -43,7 +40,6 @@ async function fetchEntries(dirPath: string): Promise<FileNode[]> {
     throw new Error(message);
   }
   const data = await res.json() as { entries?: FileEntry[] };
-  if (gen !== fetchGen) return [];
   return (data.entries ?? []).map((e) => ({
     name: e.name,
     fullPath: joinFilePath(dirPath, e.name),
@@ -79,6 +75,7 @@ function TreeNode({
   const [loading, setLoading] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [focusedWithin, setFocusedWithin] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const loadChildren = useCallback(async (force = false) => {
     if (loaded && !force) return;
@@ -224,10 +221,17 @@ function TreeNode({
           </button>
         )}
         {(hovered || focusedWithin) && !node.isDir && (
-          <a
-            href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
-            download
-            onClick={(e) => e.stopPropagation()}
+          <button
+            type="button"
+            disabled={downloading}
+            onClick={(e) => {
+              e.stopPropagation();
+              setDownloading(true);
+              void import("@/lib/file-blob")
+                .then(({ downloadFileViaRpc }) => downloadFileViaRpc(node.fullPath, node.name))
+                .catch((error) => console.error("download failed", error))
+                .finally(() => setDownloading(false));
+            }}
             title="Download file"
             style={{
               position: "absolute",
@@ -245,11 +249,10 @@ function TreeNode({
               border: "1px solid var(--border)",
               borderRadius: 4,
               color: "var(--text-muted)",
-              cursor: "pointer",
+              cursor: downloading ? "wait" : "pointer",
               fontSize: 12,
               fontWeight: 600,
               whiteSpace: "nowrap",
-              textDecoration: "none",
             }}
           >
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -257,7 +260,7 @@ function TreeNode({
               <polyline points="7 10 12 15 17 10" />
               <line x1="12" y1="15" x2="12" y2="3" />
             </svg>
-          </a>
+          </button>
         )}
       </div>
       {node.isDir && open && (
@@ -281,7 +284,11 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [gitStatus, setGitStatus] = useState<GitStatusResult | null>(null);
+  const [watching, setWatching] = useState(false);
+  const [liveRefreshKey, setLiveRefreshKey] = useState(0);
   const prevCwdRef = useRef<string | null>(null);
+  const loadGenerationRef = useRef(0);
 
   const handleToggleExpanded = useCallback((fullPath: string, open: boolean) => {
     setExpandedPaths((prev) => {
@@ -291,6 +298,30 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
     });
   }, []);
 
+  const loadProject = useCallback(async (showLoading: boolean) => {
+    const generation = ++loadGenerationRef.current;
+    if (showLoading) setLoading(true);
+    setError(null);
+    try {
+      const [entries, statusResponse] = await Promise.all([
+        fetchEntries(cwd),
+        fetch(`/api/git-status?cwd=${encodeURIComponent(cwd)}`),
+      ]);
+      const status = statusResponse.ok
+        ? await statusResponse.json() as GitStatusResult
+        : null;
+      if (generation !== loadGenerationRef.current) return;
+      setRoots(entries);
+      setGitStatus(status);
+    } catch (error) {
+      if (generation === loadGenerationRef.current) {
+        setError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (generation === loadGenerationRef.current) setLoading(false);
+    }
+  }, [cwd]);
+
   useEffect(() => {
     const cwdChanged = prevCwdRef.current !== cwd;
     prevCwdRef.current = cwd;
@@ -298,13 +329,29 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
     // Reset expanded state only when cwd changes, not on refreshKey bumps
     if (cwdChanged) setExpandedPaths(new Set());
 
-    setLoading(cwdChanged);
-    setError(null);
-    fetchEntries(cwd)
-      .then((entries) => setRoots(entries))
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false));
-  }, [cwd, refreshKey]);
+    void loadProject(cwdChanged);
+  }, [cwd, refreshKey, loadProject]);
+
+  useEffect(() => {
+    setWatching(false);
+    const encoded = encodeFilePathForApi(cwd);
+    const events = new EventSource(`/api/files/${encoded}?type=watch`);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    events.addEventListener("connected", () => setWatching(true));
+    events.addEventListener("change", () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        setLiveRefreshKey((key) => key + 1);
+        void loadProject(false);
+      }, 200);
+    });
+    events.addEventListener("error", () => setWatching(false));
+    events.onerror = () => setWatching(false);
+    return () => {
+      if (timer) clearTimeout(timer);
+      events.close();
+    };
+  }, [cwd, loadProject]);
 
   if (loading) {
     return (
@@ -324,6 +371,26 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
 
   return (
     <div style={{ padding: "2px 4px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "5px 8px 7px", fontSize: 10.5, color: "var(--text-dim)", borderBottom: "1px solid var(--border)", marginBottom: 3 }}>
+        <span title={watching ? "Project changes are monitored" : "Project watcher unavailable"} style={{ width: 7, height: 7, borderRadius: "50%", background: watching ? "var(--success)" : "var(--border)", flexShrink: 0 }} />
+        {gitStatus?.isGit ? (
+          <>
+            <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{gitStatus.branch ?? "detached"}</span>
+            {gitStatus.clean ? (
+              <span style={{ color: "var(--success)" }}>clean</span>
+            ) : (
+              <span title={`${gitStatus.entries.length} changed paths`}>
+                {gitStatus.staged ? `+${gitStatus.staged} staged ` : ""}
+                {gitStatus.modified ? `${gitStatus.modified} modified ` : ""}
+                {gitStatus.untracked ? `${gitStatus.untracked} untracked ` : ""}
+                {gitStatus.conflicted ? `${gitStatus.conflicted} conflicted` : ""}
+              </span>
+            )}
+          </>
+        ) : (
+          <span>{watching ? "live" : "static"}</span>
+        )}
+      </div>
       {roots.map((node) => (
         <TreeNode
           key={node.fullPath}
@@ -334,7 +401,7 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
           onAtMention={onAtMention}
           expandedPaths={expandedPaths}
           onToggleExpanded={handleToggleExpanded}
-          refreshKey={refreshKey}
+          refreshKey={(refreshKey ?? 0) + liveRefreshKey}
         />
       ))}
       {roots.length === 0 && (

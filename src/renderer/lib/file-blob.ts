@@ -69,24 +69,16 @@ export async function downloadFileViaRpc(
   fileName: string,
   sourceSessionId?: string | null,
 ): Promise<void> {
-  const data = await readFilePayload(filePath, sourceSessionId);
-  if (data.encoding === "too_large") {
-    // Fall back to native save dialog with base64 chunk? For now error.
-    throw new Error("File too large to download in-app");
-  }
-  let blob: Blob;
-  if (data.encoding === "base64") {
-    blob = base64ToBlob(data.content, data.mime || "application/octet-stream");
-  } else {
-    blob = new Blob([data.content ?? ""], {
-      type: data.mime || "application/octet-stream",
-    });
-  }
+  const data = await call("files.download", {
+    path: filePath,
+    sourceSessionId: sourceSessionId ?? undefined,
+  });
+  const blob = base64ToBlob(data.base64, data.mime);
 
-  // Prefer native save dialog when available
-  if (window.piBridge?.saveFile && data.encoding !== "base64") {
-    const saved = await window.piBridge.saveFile({
-      content: data.content,
+  // Native binary save preserves exact bytes for text and arbitrary binary files.
+  if (window.piBridge?.saveBinaryFile) {
+    const saved = await window.piBridge.saveBinaryFile({
+      base64: data.base64,
       defaultPath: fileName,
     });
     if (saved) {

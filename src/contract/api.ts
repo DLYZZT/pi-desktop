@@ -14,10 +14,16 @@ import type {
   RunningStateEvent,
   SessionDetail,
   SessionInfo,
-  SkillInfo,
   TestResult,
   WorktreeInfo,
 } from "./types";
+import type {
+  GitStatusResult,
+  PluginActionParams,
+  PluginsResponse,
+  SkillRecord,
+  SkillUpdateParams,
+} from "../shared/api-types";
 
 /** Request/response API surface (replaces HTTP routes). */
 export interface Api {
@@ -48,15 +54,25 @@ export interface Api {
 
   "worktrees.list": {
     params: { projectRoot: string };
-    result: { worktrees: WorktreeInfo[] };
+    result: {
+      worktrees: WorktreeInfo[];
+      projectRoot: string;
+      isGit: boolean;
+      isTopLevel: boolean;
+    };
   };
   "worktrees.create": {
-    params: { projectRoot: string; branch?: string; path?: string; [key: string]: unknown };
+    params: { projectRoot: string; branch: string; cwd?: string };
     result: { worktree: WorktreeInfo };
   };
   "worktrees.remove": {
-    params: { path: string; [key: string]: unknown };
+    params: { path: string; cwd?: string; force?: boolean };
     result: { ok: true };
+  };
+
+  "git.status": {
+    params: { path: string };
+    result: GitStatusResult;
   };
 
   // Agent lifecycle
@@ -90,6 +106,10 @@ export interface Api {
       encoding?: "utf8" | "base64" | "too_large";
       mime?: string;
     };
+  };
+  "files.download": {
+    params: { path: string; sourceSessionId?: string };
+    result: { base64: string; size: number; mime: string };
   };
   "files.meta": {
     params: { path: string; sourceSessionId?: string };
@@ -160,7 +180,7 @@ export interface Api {
 
   "skills.list": {
     params: { cwd?: string } | void;
-    result: { skills: SkillInfo[] };
+    result: { skills: SkillRecord[]; diagnostics?: unknown[] };
   };
   "skills.search": {
     params: { query: string };
@@ -171,17 +191,21 @@ export interface Api {
     result: { ok: true; [key: string]: unknown };
   };
   "skills.set": {
-    params: unknown;
+    params: SkillUpdateParams;
     result: { ok: true };
+  };
+  "skills.getContent": {
+    params: { cwd: string; filePath: string };
+    result: { content: string };
   };
 
   "plugins.list": {
     params: { cwd?: string } | void;
-    result: unknown;
+    result: PluginsResponse;
   };
   "plugins.set": {
-    params: unknown;
-    result: { ok: true };
+    params: PluginActionParams;
+    result: PluginsResponse;
   };
 
   // System / desktop helpers exposed via Host (or main-bridged)

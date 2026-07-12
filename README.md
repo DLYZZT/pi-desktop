@@ -55,7 +55,7 @@
 
 Pi Agent Desktop 已内置 Pi Coding Agent 运行时。普通用户无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。
 
-应用会读取 `~/.pi/agent/` 中的会话与配置。如果你已经使用 Pi CLI，可以直接复用现有数据，无需迁移；此前没有使用过 Pi CLI 也不影响使用。仅在线安装部分 Skills 时，系统可能需要提供 Node.js 和 npm。
+应用会读取 `~/.pi/agent/` 中的会话与配置。如果你已经使用 Pi CLI，可以直接复用现有数据，无需迁移；此前没有使用过 Pi CLI 也不影响使用。在线安装部分 Skills 或 npm Plugins 时，系统可能需要提供 Node.js 和 npm。
 
 ### 源码开发环境要求
 
@@ -160,6 +160,8 @@ npm run verify
 ## 与 Pi 生态的关系
 
 Pi Agent Desktop 是 Pi Coding Agent 的桌面工作台，继续使用 `~/.pi/agent/` 中的会话和配置，因此可以与 CLI 配合使用。
+
+Plugins 继续通过 Pi 的包管理器与运行时加载。仅适用于终端 TUI 的扩展接口（例如自定义终端组件或原始按键监听）无法在桌面 Renderer 中等价呈现；应用会显示明确的兼容性提示，不会静默忽略。
 
 ## License
 

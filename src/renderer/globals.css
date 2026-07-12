@@ -24,6 +24,8 @@
 
 /* Warm paper + orange accent design system (from design.html) */
 :root {
+  --font-inter: "Inter", system-ui, sans-serif;
+  --font-noto-mono: "Noto Sans Mono", ui-monospace, monospace;
   --bg: #f7f6f3;
   --bg-panel: #fcfbf9;
   --bg-hover: #f0eeea;
@@ -115,6 +117,10 @@ html, body {
 
 body {
   height: 100dvh;
+}
+
+#root {
+  height: 100%;
 }
 
 ::selection {
