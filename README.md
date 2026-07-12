@@ -32,6 +32,23 @@ npm run pack         # electron-builder --dir
 npm run dist         # 安装包
 ```
 
+## GitHub Actions 发布
+
+`.github/workflows/build-desktop.yml` 在推送到 `main`、Pull Request 和手动触发时执行完整质量门，并构建以下未签名安装包：
+
+- macOS Apple Silicon（arm64）：DMG + ZIP
+- macOS Intel（x64）：DMG + ZIP
+- Windows（x64）：NSIS 安装程序
+
+构建产物在对应的 Actions run 中保留 14 天。推送 `v*` 标签时，工作流还会创建一个包含三平台产物的 Draft Release：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+正式对外发布前仍需配置 Apple Developer ID 签名与 notarization；当前 CI 显式关闭自动签名，以便在没有证书 Secrets 时也能稳定生成测试包。
+
 ## 脚本
 
 | 命令 | 说明 |
@@ -62,4 +79,4 @@ src/
 | M3 项目与文件 | ✅ watcher、file watch、git index、原生选目录 |
 | M4 配置 / OAuth | ✅ Models 测试、Skills 搜索安装、Plugins、OAuth 流 |
 | M5 桌面化 | ✅ 托盘、通知/badge、崩溃恢复、诊断导出、系统主题 |
-| M6 发布 | ⏳ 签名 / 自动更新 / CI 矩阵 |
+| M6 发布 | 🚧 CI 构建矩阵已完成；待签名、公证与自动更新验证 |
