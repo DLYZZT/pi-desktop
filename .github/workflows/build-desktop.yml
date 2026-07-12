@@ -36,6 +36,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Configure Electron sandbox
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+
       - name: Run full verification
         run: xvfb-run --auto-servernum npm run verify
 
