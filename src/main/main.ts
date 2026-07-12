@@ -18,7 +18,13 @@ import path from "path";
 import { HostManager, resolveHostEntry, resolvePreloadPath, resolveRendererEntry } from "./host-manager";
 import { appendMainLog, getMainLogPath } from "./logger";
 import { installAppMenu } from "./menu";
-import { handleAppProtocol, registerAppProtocol, rendererRootPath } from "./protocol";
+import {
+  createHtmlPreviewUrl,
+  handleAppProtocol,
+  registerAppProtocol,
+  releaseHtmlPreviewUrl,
+  rendererRootPath,
+} from "./protocol";
 import { acquireSingleInstanceLock } from "./single-instance";
 import { applyWindowBounds, loadUiState, saveUiState, shouldMaximize, trackWindowState } from "./window-state";
 import { createTray, destroyTray, setTrayRunningCount } from "./tray";
@@ -237,10 +243,39 @@ async function runSmokeHostChecks(manager: HostManager): Promise<void> {
               const root = document.getElementById("root");
               if (window.piBridge && root && root.childElementCount > 0) {
                 const status = await fetch(${JSON.stringify(`/api/git-status?cwd=${encodeURIComponent(process.cwd())}`)}).then((response) => response.json());
+                const token = "pi-html-preview-smoke-" + Math.random().toString(36).slice(2);
+                const previewUrl = await window.piBridge.createHtmlPreview(
+                  "<!doctype html><img id='asset' src='./icon.png'><script>addEventListener('load',()=>{if(asset.naturalWidth)parent.postMessage(" + JSON.stringify(token) + ",'*')})<\\/script>",
+                  ${JSON.stringify(path.join(process.cwd(), "build", "smoke.html"))},
+                );
+                const previewRendered = await new Promise((previewResolve, previewReject) => {
+                  const frame = document.createElement("iframe");
+                  frame.sandbox = "allow-scripts";
+                  frame.style.display = "none";
+                  const previewTimer = setTimeout(() => {
+                    cleanup();
+                    previewReject(new Error("Sandboxed HTML preview did not execute"));
+                  }, 3000);
+                  const onMessage = (event) => {
+                    if (event.data !== token) return;
+                    cleanup();
+                    previewResolve(true);
+                  };
+                  const cleanup = () => {
+                    clearTimeout(previewTimer);
+                    window.removeEventListener("message", onMessage);
+                    frame.remove();
+                    void window.piBridge.releaseHtmlPreview(previewUrl);
+                  };
+                  window.addEventListener("message", onMessage);
+                  frame.src = previewUrl;
+                  document.body.appendChild(frame);
+                });
                 resolve({
                   bridge: typeof window.piBridge.saveBinaryFile === "function",
                   rendered: root.childElementCount > 0,
                   gitStatus: typeof status.isGit === "boolean",
+                  htmlPreview: previewRendered,
                 });
                 return;
               }
@@ -253,8 +288,8 @@ async function runSmokeHostChecks(manager: HostManager): Promise<void> {
           };
           void check();
         })
-      `) as { bridge?: boolean; rendered?: boolean; gitStatus?: boolean };
-      if (!rendererResult.bridge || !rendererResult.rendered || !rendererResult.gitStatus) {
+      `) as { bridge?: boolean; rendered?: boolean; gitStatus?: boolean; htmlPreview?: boolean };
+      if (!rendererResult.bridge || !rendererResult.rendered || !rendererResult.gitStatus || !rendererResult.htmlPreview) {
         throw new Error(`Renderer smoke returned invalid result: ${JSON.stringify(rendererResult)}`);
       }
       if (smokeRendererSecurityViolation) {
@@ -508,6 +543,27 @@ function installIpc(): void {
       return result.filePath;
     },
   );
+
+  ipcMain.handle(
+    "desktop:create-html-preview",
+    (_event, content: string, filePath: string, sourceSessionId?: string | null) =>
+      createHtmlPreviewUrl(content, filePath, async (assetPath) => {
+        const manager = hostManager;
+        if (!manager) throw new Error("Agent Host is unavailable");
+        const meta = await manager.call<{ size: number }>("files.meta", {
+          path: assetPath,
+          sourceSessionId: sourceSessionId ?? undefined,
+        });
+        if (meta.size > 20 * 1024 * 1024) throw new Error("HTML preview asset is too large");
+        return manager.call<{ base64: string; size: number; mime?: string }>("files.download", {
+          path: assetPath,
+          sourceSessionId: sourceSessionId ?? undefined,
+        });
+      }),
+  );
+  ipcMain.handle("desktop:release-html-preview", (_event, previewUrl: string) => {
+    releaseHtmlPreviewUrl(previewUrl);
+  });
 
   ipcMain.on("desktop:notify-agent-end", (_e, payload: { sessionId: string; title?: string }) => {
     if (!Notification.isSupported()) return;

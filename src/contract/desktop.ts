@@ -23,6 +23,8 @@ export interface PiBridge {
   selectDirectory: () => Promise<string | null>;
   saveFile: (opts: SaveTextFileOptions) => Promise<string | null>;
   saveBinaryFile: (opts: SaveBinaryFileOptions) => Promise<string | null>;
+  createHtmlPreview: (content: string, filePath: string, sourceSessionId?: string | null) => Promise<string>;
+  releaseHtmlPreview: (previewUrl: string) => Promise<void>;
   notifyAgentEnd: (payload: { sessionId: string; title?: string }) => void;
   setBadgeCount: (n: number) => void;
   getUiState: () => Promise<Record<string, unknown>>;

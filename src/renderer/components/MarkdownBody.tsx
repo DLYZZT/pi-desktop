@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ImgHTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
@@ -13,10 +13,20 @@ interface MarkdownBodyProps {
   className?: string;
   isStreaming?: boolean;
   cwd?: string;
+  imageBasePath?: string;
+  sourceSessionId?: string | null;
   onOpenFile?: (filePath: string) => void;
 }
 
-export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile }: MarkdownBodyProps) {
+export function MarkdownBody({
+  children,
+  className,
+  isStreaming,
+  cwd,
+  imageBasePath,
+  sourceSessionId,
+  onOpenFile,
+}: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
 
   return (
@@ -73,6 +83,18 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
               </a>
             );
           },
+          img({ src, alt, node: _node, ...props }) {
+            return (
+              <MarkdownImage
+                src={src}
+                alt={alt}
+                cwd={cwd}
+                relativeBase={imageBasePath ?? cwd}
+                sourceSessionId={sourceSessionId}
+                {...props}
+              />
+            );
+          },
           table({ children }) {
             return (
               <div className="markdown-table-wrap">
@@ -85,6 +107,71 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         {normalizedMarkdown}
       </ReactMarkdown>
     </div>
+  );
+}
+
+function MarkdownImage({
+  src,
+  alt,
+  cwd,
+  relativeBase,
+  sourceSessionId,
+  ...props
+}: ImgHTMLAttributes<HTMLImageElement> & {
+  cwd?: string;
+  relativeBase?: string;
+  sourceSessionId?: string | null;
+}) {
+  const localPath = useMemo(
+    () => resolveLocalFileHref(typeof src === "string" ? src : undefined, cwd, relativeBase),
+    [cwd, relativeBase, src],
+  );
+  const [previewSrc, setPreviewSrc] = useState<string | null>(localPath ? null : (typeof src === "string" ? src : null));
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!localPath) {
+      setPreviewSrc(typeof src === "string" ? src : null);
+      setFailed(false);
+      return;
+    }
+
+    let disposed = false;
+    let revoke: (() => void) | null = null;
+    setPreviewSrc(null);
+    setFailed(false);
+
+    void import("@/lib/file-blob")
+      .then(({ fileToObjectUrl }) => fileToObjectUrl(localPath, sourceSessionId))
+      .then((result) => {
+        if (disposed) {
+          result.revoke();
+          return;
+        }
+        revoke = result.revoke;
+        setPreviewSrc(result.url);
+      })
+      .catch(() => {
+        if (!disposed) setFailed(true);
+      });
+
+    return () => {
+      disposed = true;
+      revoke?.();
+    };
+  }, [localPath, sourceSessionId, src]);
+
+  if (failed) {
+    return <span className="markdown-image-error" title={localPath ?? undefined}>{alt || "Image failed to load"}</span>;
+  }
+
+  if (!previewSrc) {
+    return <span className="markdown-image-loading" aria-label={alt || "Loading image"} />;
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={previewSrc} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" {...props} />
   );
 }
 

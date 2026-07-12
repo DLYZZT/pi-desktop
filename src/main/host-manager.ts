@@ -94,6 +94,42 @@ export class HostManager {
     return { port1, port2 };
   }
 
+  /** Issue a one-shot RPC from the main process to the Host. */
+  call<T>(method: string, params?: unknown, timeoutMs = 10_000): Promise<T> {
+    if (this.status !== "ready") {
+      return Promise.reject(new Error("Agent Host is not ready"));
+    }
+    const { port1 } = this.createRendererChannel();
+    const id = `main-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    return new Promise<T>((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        port1.close();
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Host RPC timed out: ${method}`));
+      }, timeoutMs);
+
+      port1.on("message", (event) => {
+        const message = event.data as {
+          kind?: string;
+          id?: string;
+          ok?: boolean;
+          result?: T;
+          error?: { message?: string };
+        };
+        if (message.kind !== "response" || message.id !== id) return;
+        cleanup();
+        if (message.ok) resolve(message.result as T);
+        else reject(new Error(message.error?.message ?? `Host RPC failed: ${method}`));
+      });
+      port1.start();
+      port1.postMessage({ kind: "request", id, method, params });
+    });
+  }
+
   private setStatus(s: HostStatus, detail?: string): void {
     this.status = s;
     this.onStatusChange?.(s, detail);

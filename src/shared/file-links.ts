@@ -74,7 +74,11 @@ function fileUrlToPath(href: string): string | null {
   }
 }
 
-export function resolveLocalFileHref(href: string | undefined, cwd?: string): string | null {
+export function resolveLocalFileHref(
+  href: string | undefined,
+  cwd?: string,
+  relativeBase = cwd,
+): string | null {
   if (!href) return null;
 
   const cleanHref = href.split("#", 1)[0].split("?", 1)[0].trim();
@@ -102,8 +106,8 @@ export function resolveLocalFileHref(href: string | undefined, cwd?: string): st
   } else if (normalizedHref.startsWith("/")) {
     candidate = normalizedHref;
     candidateKind = "absolute";
-  } else if (cwd && looksLikeRelativeFileHref(normalizedHref)) {
-    candidate = `${normalizeFilePathSlashes(cwd).replace(/\/+$/, "")}/${normalizedHref}`;
+  } else if (relativeBase && looksLikeRelativeFileHref(normalizedHref)) {
+    candidate = `${normalizeFilePathSlashes(relativeBase).replace(/\/+$/, "")}/${normalizedHref}`;
     candidateKind = "relative";
   }
 

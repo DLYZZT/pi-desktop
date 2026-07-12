@@ -252,6 +252,31 @@ pre, code {
   text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .markdown-body a:hover { text-decoration-color: var(--accent); }
+.markdown-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 10px 0;
+  border-radius: 6px;
+  object-fit: contain;
+}
+.markdown-image-loading {
+  display: block;
+  width: min(100%, 320px);
+  min-height: 120px;
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.markdown-image-error {
+  display: inline-block;
+  margin: 6px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
 .markdown-body .markdown-inline-code {
   background: var(--bg-subtle);
   border-radius: 5px;

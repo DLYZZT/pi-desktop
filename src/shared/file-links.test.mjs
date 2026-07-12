@@ -47,6 +47,19 @@ test("does not let relative links escape cwd", async () => {
   );
 });
 
+test("resolves markdown assets from the document directory within cwd", async () => {
+  const { resolveLocalFileHref } = await loadSubject();
+
+  assert.equal(
+    resolveLocalFileHref("../assets/diagram.png", "/home/me/project", "/home/me/project/docs/guide"),
+    "/home/me/project/docs/assets/diagram.png",
+  );
+  assert.equal(
+    resolveLocalFileHref("../../../outside.png", "/home/me/project", "/home/me/project/docs/guide"),
+    null,
+  );
+});
+
 test("does not treat app or external URLs as file links", async () => {
   const { resolveLocalFileHref } = await loadSubject();
 

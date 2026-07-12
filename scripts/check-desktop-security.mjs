@@ -11,6 +11,11 @@ const html = read("src/renderer/index.html");
 const preload = read("src/preload/preload.ts");
 const globals = read("src/renderer/global.d.ts");
 const diagnostics = read("src/main/diagnostics.ts");
+const fileViewer = read("src/renderer/components/FileViewer.tsx");
+const rendererCsp = protocol.slice(
+  protocol.indexOf("const CSP ="),
+  protocol.indexOf("const HTML_PREVIEW_CSP ="),
+);
 
 const checks = [
   [main.includes("sandbox: true"), "BrowserWindow sandbox must remain enabled"],
@@ -19,7 +24,9 @@ const checks = [
   [main.includes("crashReporter.start"), "local crash reporting must be started"],
   [main.includes("setOverlayIcon"), "Windows taskbar overlay badges must remain implemented"],
   [diagnostics.includes('app.getPath("crashDumps")'), "diagnostic export must include local crash dumps"],
-  [!/script-src[^;]*unsafe-inline/.test(protocol), "script-src must not allow unsafe-inline"],
+  [!/script-src[^;]*unsafe-inline/.test(rendererCsp), "renderer script-src must not allow unsafe-inline"],
+  [fileViewer.includes('sandbox="allow-scripts"'), "HTML previews must remain sandboxed"],
+  [protocol.includes('"object-src \'none\'; "') && protocol.includes('"form-action \'none\'"'), "HTML preview CSP must block plugins and forms"],
   [!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), "renderer HTML must not contain inline scripts"],
   [preload.includes('../contract/desktop'), "preload must use the shared desktop bridge contract"],
   [globals.includes('../contract/desktop'), "renderer globals must use the shared desktop bridge contract"],

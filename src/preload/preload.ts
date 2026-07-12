@@ -49,6 +49,9 @@ const bridge: PiBridge = {
   selectDirectory: () => ipcRenderer.invoke("desktop:select-directory"),
   saveFile: (opts) => ipcRenderer.invoke("desktop:save-file", opts),
   saveBinaryFile: (opts) => ipcRenderer.invoke("desktop:save-binary-file", opts),
+  createHtmlPreview: (content, filePath, sourceSessionId) =>
+    ipcRenderer.invoke("desktop:create-html-preview", content, filePath, sourceSessionId),
+  releaseHtmlPreview: (previewUrl) => ipcRenderer.invoke("desktop:release-html-preview", previewUrl),
   notifyAgentEnd: (payload) => {
     ipcRenderer.send("desktop:notify-agent-end", payload);
   },

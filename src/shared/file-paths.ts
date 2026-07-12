@@ -18,6 +18,14 @@ export function getFileName(filePath: string): string {
   return normalized.split("/").pop() ?? normalized;
 }
 
+export function getParentFilePath(filePath: string): string {
+  const normalized = normalizeFilePathSlashes(filePath).replace(/\/+$/, "");
+  const separator = normalized.lastIndexOf("/");
+  if (separator < 0) return "";
+  if (separator === 0) return "/";
+  return normalized.slice(0, separator);
+}
+
 export function getRelativeFilePath(filePath: string, cwd?: string): string {
   if (!cwd) return filePath;
 

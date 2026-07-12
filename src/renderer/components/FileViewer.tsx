@@ -11,7 +11,7 @@ import {
   isDocumentPreviewPath,
   isImagePath,
 } from "@/lib/file-types";
-import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/file-paths";
+import { encodeFilePathForApi, getFileName, getParentFilePath, getRelativeFilePath } from "@/lib/file-paths";
 
 interface Props {
   filePath: string;
@@ -76,6 +76,46 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
         <line x1="12" y1="15" x2="12" y2="3" />
       </svg>
     </button>
+  );
+}
+
+function HtmlPreview({ content, filePath, sourceSessionId }: {
+  content: string;
+  filePath: string;
+  sourceSessionId?: string | null;
+}) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    let activeUrl: string | null = null;
+
+    void window.piBridge.createHtmlPreview(content, filePath, sourceSessionId).then((url) => {
+      if (disposed) {
+        void window.piBridge.releaseHtmlPreview(url);
+        return;
+      }
+      activeUrl = url;
+      setPreviewUrl(url);
+    });
+
+    return () => {
+      disposed = true;
+      if (activeUrl) void window.piBridge.releaseHtmlPreview(activeUrl);
+    };
+  }, [content, filePath, sourceSessionId]);
+
+  if (!previewUrl) return null;
+
+  return (
+    <iframe
+      key={previewUrl}
+      src={previewUrl}
+      sandbox="allow-scripts"
+      referrerPolicy="no-referrer"
+      style={{ display: "block", width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
+      title="HTML preview"
+    />
   );
 }
 
@@ -998,22 +1038,23 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
       </div>
 
       {/* Content area */}
-      <div style={{ flex: 1, overflow: "auto", background: "var(--bg)" }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", background: "var(--bg)" }}>
         {viewMode === "diff" && hasDiff ? (
           <DiffView oldContent={prevContent!} newContent={data.content} language={data.language} />
         ) : isHtml && previewMode ? (
-          <iframe
-            srcDoc={data.content}
-            sandbox="allow-scripts"
-            style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
-            title="HTML preview"
-          />
+          <HtmlPreview content={data.content} filePath={filePath} sourceSessionId={sourceSessionId} />
         ) : isMarkdown && previewMode ? (
           <div
             className="markdown-body markdown-file-preview"
             style={{ padding: "24px 32px", maxWidth: 800 }}
           >
-            <MarkdownBody cwd={cwd}>{data.content}</MarkdownBody>
+            <MarkdownBody
+              cwd={cwd}
+              imageBasePath={getParentFilePath(filePath)}
+              sourceSessionId={sourceSessionId}
+            >
+              {data.content}
+            </MarkdownBody>
           </div>
         ) : (
           <SyntaxHighlighter

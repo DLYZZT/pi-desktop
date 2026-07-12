@@ -2,6 +2,7 @@
  * protocol.handle("app") — serve static UI with strict CSP.
  */
 import { protocol } from "electron";
+import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 import { pathToFileURL } from "url";
@@ -14,13 +15,67 @@ const CSP =
   "style-src-elem 'self' app: 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
   "style-src-attr 'unsafe-inline'; " +
   "font-src 'self' app: data: https://fonts.gstatic.com https://cdn.jsdelivr.net; " +
-  "img-src 'self' app: data: blob:; " +
+  "img-src 'self' app: data: blob: https:; " +
   "media-src 'self' app: blob: data:; " +
   "connect-src 'self' app:; " +
   "worker-src 'self' app: blob:; " +
+  "frame-src 'self' app: blob:; " +
   "object-src 'none'; " +
   "base-uri 'none'; " +
   "frame-ancestors 'none'";
+
+const HTML_PREVIEW_CSP =
+  "default-src 'none'; " +
+  "script-src 'unsafe-inline' app: http: https:; " +
+  "style-src 'unsafe-inline' app: http: https:; " +
+  "img-src app: data: blob: http: https:; " +
+  "font-src app: data: http: https:; " +
+  "media-src app: data: blob: http: https:; " +
+  "connect-src http: https:; " +
+  "worker-src blob:; " +
+  "object-src 'none'; " +
+  "base-uri 'none'; " +
+  "form-action 'none'";
+
+const HTML_PREVIEW_MAX_BYTES = 1024 * 1024;
+const HTML_PREVIEW_ASSET_MAX_BYTES = 20 * 1024 * 1024;
+
+type HtmlPreviewEntry = {
+  content: string;
+  filePath: string;
+  loadAsset: (filePath: string) => Promise<{ base64: string; size: number; mime?: string }>;
+};
+
+const htmlPreviews = new Map<string, HtmlPreviewEntry>();
+
+export function createHtmlPreviewUrl(
+  content: string,
+  filePath: string,
+  loadAsset: HtmlPreviewEntry["loadAsset"],
+): string {
+  if (
+    typeof content !== "string" ||
+    typeof filePath !== "string" ||
+    !path.isAbsolute(filePath) ||
+    Buffer.byteLength(content, "utf8") > HTML_PREVIEW_MAX_BYTES
+  ) {
+    throw new Error("HTML preview is too large");
+  }
+  const token = randomUUID();
+  htmlPreviews.set(token, { content, filePath, loadAsset });
+  return `app://preview/${token}/index.html`;
+}
+
+export function releaseHtmlPreviewUrl(previewUrl: string): void {
+  try {
+    const url = new URL(previewUrl);
+    if (url.protocol !== "app:" || url.hostname !== "preview") return;
+    const [token] = url.pathname.split("/").filter(Boolean);
+    if (token) htmlPreviews.delete(token);
+  } catch {
+    /* ignore malformed preview URLs */
+  }
+}
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -59,6 +114,41 @@ export function handleAppProtocol(rendererRoot: string): void {
   protocol.handle("app", async (request) => {
     try {
       const url = new URL(request.url);
+      if (url.hostname === "preview") {
+        const [token, ...assetSegments] = url.pathname.split("/").filter(Boolean);
+        const preview = token ? htmlPreviews.get(token) : undefined;
+        if (!preview) return new Response("Not Found", { status: 404 });
+
+        if (assetSegments.join("/") === "index.html") {
+          return new Response(preview.content, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Content-Security-Policy": HTML_PREVIEW_CSP,
+              "X-Content-Type-Options": "nosniff",
+              "Referrer-Policy": "no-referrer",
+            },
+          });
+        }
+
+        const relativePath = decodeURIComponent(assetSegments.join("/"));
+        const assetPath = path.resolve(path.dirname(preview.filePath), relativePath);
+        const asset = await preview.loadAsset(assetPath);
+        if (asset.size > HTML_PREVIEW_ASSET_MAX_BYTES) {
+          return new Response("Asset too large", { status: 413 });
+        }
+        const ext = path.extname(assetPath).toLowerCase();
+        const mime = MIME[ext] ?? asset.mime ?? "application/octet-stream";
+        return new Response(Buffer.from(asset.base64, "base64"), {
+          status: 200,
+          headers: {
+            "Content-Type": mime,
+            "Access-Control-Allow-Origin": "*",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+          },
+        });
+      }
       let pathname = decodeURIComponent(url.pathname);
       if (pathname.startsWith("/bundle")) {
         pathname = pathname.slice("/bundle".length) || "/";
