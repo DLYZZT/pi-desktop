@@ -31,6 +31,9 @@ export default defineConfig({
   base: "./",
   envPrefix: ["VITE_"],
   define: {
+    // Renderer version constants. Keep these aligned with app-version.ts.
+    "import.meta.env.VITE_APP_VERSION": JSON.stringify(pkg.version),
+    "import.meta.env.VITE_PI_VERSION": JSON.stringify(readPiVersion()),
     // Guard any accidental process.env.* left in migrated Next.js code
     "process.env.NEXT_PUBLIC_APP_VERSION": JSON.stringify(pkg.version),
     "process.env.NEXT_PUBLIC_PI_VERSION": JSON.stringify(readPiVersion()),
