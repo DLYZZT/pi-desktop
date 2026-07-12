@@ -9,6 +9,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "types": ["node"],
     "baseUrl": ".",
@@ -22,12 +23,8 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/agent-host/**/*",
+    "src/smoke/**/*",
     "src/shared/**/*"
   ],
-  "exclude": [
-    "node_modules",
-    "out",
-    "dist",
-    "src/shared/clipboard.ts"
-  ]
+  "exclude": ["node_modules", "out", "dist", "src/shared/clipboard.ts"]
 }

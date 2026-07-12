@@ -1,4 +1,8 @@
-import { SessionManager, buildSessionContext as piBuildSessionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+  SessionManager,
+  buildSessionContext as piBuildSessionContext,
+  getAgentDir,
+} from "@earendil-works/pi-coding-agent";
 import type { AgentMessage, SessionEntry, SessionInfo, SessionContext } from "../shared/types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "../shared/normalize";
@@ -15,9 +19,11 @@ export async function listAllSessions(): Promise<SessionInfo[]> {
   // worktrees). resolveProject caches per-cwd, so this is cheap after warmup.
   const uniqueCwds = [...new Set(piSessions.map((s) => s.cwd).filter(Boolean))];
   const projectByCwd = new Map<string, ProjectInfo>();
-  await Promise.all(uniqueCwds.map(async (cwd) => {
-    projectByCwd.set(cwd, await resolveProject(cwd));
-  }));
+  await Promise.all(
+    uniqueCwds.map(async (cwd) => {
+      projectByCwd.set(cwd, await resolveProject(cwd));
+    }),
+  );
 
   const cache = getPathCache();
   return piSessions.map((s) => {
@@ -40,17 +46,12 @@ export async function listAllSessions(): Promise<SessionInfo[]> {
   });
 }
 
-// ============================================================================
-// Session path cache: sessionId → absolute file path
-// Stored in globalThis for hot-reload safety
-// ============================================================================
-declare global {
-  var __piSessionPathCache: Map<string, string> | undefined;
-}
+// Session path cache: sessionId → absolute file path. Its lifetime is bounded
+// by the Agent Host utility process.
+const sessionPathCache = new Map<string, string>();
 
 function getPathCache(): Map<string, string> {
-  if (!globalThis.__piSessionPathCache) globalThis.__piSessionPathCache = new Map();
-  return globalThis.__piSessionPathCache;
+  return sessionPathCache;
 }
 
 export async function resolveSessionPath(sessionId: string): Promise<string | null> {

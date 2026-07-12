@@ -32,14 +32,14 @@ async function fetchEntries(dirPath: string): Promise<FileNode[]> {
   if (!res.ok) {
     let message = `Failed to load files (HTTP ${res.status})`;
     try {
-      const data = await res.json() as { error?: string };
+      const data = (await res.json()) as { error?: string };
       if (data.error) message = data.error;
     } catch {
       // ignore non-JSON error bodies
     }
     throw new Error(message);
   }
-  const data = await res.json() as { entries?: FileEntry[] };
+  const data = (await res.json()) as { entries?: FileEntry[] };
   return (data.entries ?? []).map((e) => ({
     name: e.name,
     fullPath: joinFilePath(dirPath, e.name),
@@ -77,19 +77,22 @@ function TreeNode({
   const [focusedWithin, setFocusedWithin] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
-  const loadChildren = useCallback(async (force = false) => {
-    if (loaded && !force) return;
-    setLoading(true);
-    try {
-      const entries = await fetchEntries(node.fullPath);
-      setChildren(entries);
-      setLoaded(true);
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
-    }
-  }, [loaded, node.fullPath]);
+  const loadChildren = useCallback(
+    async (force = false) => {
+      if (loaded && !force) return;
+      setLoading(true);
+      try {
+        const entries = await fetchEntries(node.fullPath);
+        setChildren(entries);
+        setLoaded(true);
+      } catch {
+        // ignore
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loaded, node.fullPath],
+  );
 
   // When refreshKey causes a re-render with the same node identity, reload open dirs
   const prevLoadedRef = useRef(loaded);
@@ -100,16 +103,16 @@ function TreeNode({
   // Re-fetch children when refreshKey changes and the directory is already open/loaded
   useEffect(() => {
     if (open && loaded) {
-      loadChildren(true);
+      void loadChildren(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshKey intentionally owns this refresh effect.
   }, [refreshKey]);
 
   const handleClick = useCallback(() => {
     if (node.isDir) {
       const next = !open;
       onToggleExpanded(node.fullPath, next);
-      if (next && !loaded) loadChildren();
+      if (next && !loaded) void loadChildren();
     } else {
       onOpenFile(node.fullPath, node.name);
     }
@@ -137,52 +140,66 @@ function TreeNode({
           aria-label={node.isDir ? `${open ? "Collapse" : "Expand"} folder ${node.name}` : `Open file ${node.name}`}
           title={node.fullPath}
           style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          width: "100%",
-          paddingLeft: 8 + depth * 14,
-          paddingRight: (hovered || focusedWithin) && onAtMention ? (node.isDir ? 88 : 122) : 8,
-          height: 40,
-          cursor: "pointer",
-          background: hovered || focusedWithin ? "var(--bg-hover)" : "transparent",
-          border: "none",
-          borderRadius: 6,
-          userSelect: "none",
-          textAlign: "left",
-          transition: "background 0.12s, padding-right 0.12s",
-        }}
-        >
-        {node.isDir && (
-          <svg
-            width="10" height="10" viewBox="0 0 10 10" fill="none"
-            stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-            style={{ flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}
-          >
-            <polyline points="3 2 7 5 3 8" />
-          </svg>
-        )}
-        {!node.isDir && <span style={{ width: 10, flexShrink: 0 }} />}
-        <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
-          {node.isDir ? <FolderIcon size={14} open={open} /> : getFileIcon(node.name, 14)}
-        </span>
-        <span
-          style={{
-            fontSize: 13,
-            color: "var(--text)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            width: "100%",
+            paddingLeft: 8 + depth * 14,
+            paddingRight: (hovered || focusedWithin) && onAtMention ? (node.isDir ? 88 : 122) : 8,
+            height: 40,
+            cursor: "pointer",
+            background: hovered || focusedWithin ? "var(--bg-hover)" : "transparent",
+            border: "none",
+            borderRadius: 6,
+            userSelect: "none",
+            textAlign: "left",
+            transition: "background 0.12s, padding-right 0.12s",
           }}
         >
-          {node.name}
-        </span>
-        {loading && (
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round">
-            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
-          </svg>
-        )}
+          {node.isDir && (
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="var(--text-dim)"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}
+            >
+              <polyline points="3 2 7 5 3 8" />
+            </svg>
+          )}
+          {!node.isDir && <span style={{ width: 10, flexShrink: 0 }} />}
+          <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
+            {node.isDir ? <FolderIcon size={14} open={open} /> : getFileIcon(node.name, 14)}
+          </span>
+          <span
+            style={{
+              fontSize: 13,
+              color: "var(--text)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              flex: 1,
+            }}
+          >
+            {node.name}
+          </span>
+          {loading && (
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--text-dim)"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
+            </svg>
+          )}
         </button>
         {onAtMention && (hovered || focusedWithin) && (
           <button
@@ -213,7 +230,16 @@ function TreeNode({
               whiteSpace: "nowrap",
             }}
           >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <circle cx="12" cy="12" r="4" />
               <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" />
             </svg>
@@ -255,7 +281,16 @@ function TreeNode({
               whiteSpace: "nowrap",
             }}
           >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <polyline points="7 10 12 15 17 10" />
               <line x1="12" y1="15" x2="12" y2="3" />
@@ -266,10 +301,29 @@ function TreeNode({
       {node.isDir && open && (
         <div>
           {children.map((child) => (
-            <TreeNode key={child.fullPath} node={child} depth={depth + 1} cwd={cwd} onOpenFile={onOpenFile} onAtMention={onAtMention} expandedPaths={expandedPaths} onToggleExpanded={onToggleExpanded} refreshKey={refreshKey} />
+            <TreeNode
+              key={child.fullPath}
+              node={child}
+              depth={depth + 1}
+              cwd={cwd}
+              onOpenFile={onOpenFile}
+              onAtMention={onAtMention}
+              expandedPaths={expandedPaths}
+              onToggleExpanded={onToggleExpanded}
+              refreshKey={refreshKey}
+            />
           ))}
           {children.length === 0 && loaded && (
-            <div style={{ paddingLeft: 8 + (depth + 1) * 14, fontSize: 12, color: "var(--text-dim)", height: 32, display: "flex", alignItems: "center" }}>
+            <div
+              style={{
+                paddingLeft: 8 + (depth + 1) * 14,
+                fontSize: 12,
+                color: "var(--text-dim)",
+                height: 32,
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
               empty
             </div>
           )}
@@ -293,34 +347,36 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
   const handleToggleExpanded = useCallback((fullPath: string, open: boolean) => {
     setExpandedPaths((prev) => {
       const next = new Set(prev);
-      if (open) next.add(fullPath); else next.delete(fullPath);
+      if (open) next.add(fullPath);
+      else next.delete(fullPath);
       return next;
     });
   }, []);
 
-  const loadProject = useCallback(async (showLoading: boolean) => {
-    const generation = ++loadGenerationRef.current;
-    if (showLoading) setLoading(true);
-    setError(null);
-    try {
-      const [entries, statusResponse] = await Promise.all([
-        fetchEntries(cwd),
-        fetch(`/api/git-status?cwd=${encodeURIComponent(cwd)}`),
-      ]);
-      const status = statusResponse.ok
-        ? await statusResponse.json() as GitStatusResult
-        : null;
-      if (generation !== loadGenerationRef.current) return;
-      setRoots(entries);
-      setGitStatus(status);
-    } catch (error) {
-      if (generation === loadGenerationRef.current) {
-        setError(error instanceof Error ? error.message : String(error));
+  const loadProject = useCallback(
+    async (showLoading: boolean) => {
+      const generation = ++loadGenerationRef.current;
+      if (showLoading) setLoading(true);
+      setError(null);
+      try {
+        const [entries, statusResponse] = await Promise.all([
+          fetchEntries(cwd),
+          fetch(`/api/git-status?cwd=${encodeURIComponent(cwd)}`),
+        ]);
+        const status = statusResponse.ok ? ((await statusResponse.json()) as GitStatusResult) : null;
+        if (generation !== loadGenerationRef.current) return;
+        setRoots(entries);
+        setGitStatus(status);
+      } catch (error) {
+        if (generation === loadGenerationRef.current) {
+          setError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (generation === loadGenerationRef.current) setLoading(false);
       }
-    } finally {
-      if (generation === loadGenerationRef.current) setLoading(false);
-    }
-  }, [cwd]);
+    },
+    [cwd],
+  );
 
   useEffect(() => {
     const cwdChanged = prevCwdRef.current !== cwd;
@@ -354,28 +410,50 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
   }, [cwd, loadProject]);
 
   if (loading) {
-    return (
-      <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>
-        Loading files...
-      </div>
-    );
+    return <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>Loading files...</div>;
   }
 
   if (error) {
-    return (
-      <div style={{ padding: "8px 12px", fontSize: 11, color: "#f87171" }}>
-        {error}
-      </div>
-    );
+    return <div style={{ padding: "8px 12px", fontSize: 11, color: "#f87171" }}>{error}</div>;
   }
 
   return (
     <div style={{ padding: "2px 4px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "5px 8px 7px", fontSize: 10.5, color: "var(--text-dim)", borderBottom: "1px solid var(--border)", marginBottom: 3 }}>
-        <span title={watching ? "Project changes are monitored" : "Project watcher unavailable"} style={{ width: 7, height: 7, borderRadius: "50%", background: watching ? "var(--success)" : "var(--border)", flexShrink: 0 }} />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          padding: "5px 8px 7px",
+          fontSize: 10.5,
+          color: "var(--text-dim)",
+          borderBottom: "1px solid var(--border)",
+          marginBottom: 3,
+        }}
+      >
+        <span
+          title={watching ? "Project changes are monitored" : "Project watcher unavailable"}
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            background: watching ? "var(--success)" : "var(--border)",
+            flexShrink: 0,
+          }}
+        />
         {gitStatus?.isGit ? (
           <>
-            <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{gitStatus.branch ?? "detached"}</span>
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                color: "var(--text-muted)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {gitStatus.branch ?? "detached"}
+            </span>
             {gitStatus.clean ? (
               <span style={{ color: "var(--success)" }}>clean</span>
             ) : (
@@ -405,9 +483,7 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
         />
       ))}
       {roots.length === 0 && (
-        <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>
-          No files found
-        </div>
+        <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>No files found</div>
       )}
     </div>
   );

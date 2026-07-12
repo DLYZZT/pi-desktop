@@ -19,23 +19,26 @@ test("parses paired changes into split diff rows", async () => {
   assert.equal(files?.length, 1);
   assert.equal(files?.[0].oldPath, "a/demo.ts");
   assert.equal(files?.[0].newPath, "b/demo.ts");
-  assert.deepEqual(files?.[0].rows.filter((row) => row.type === "line"), [
-    {
-      type: "line",
-      left: { lineNo: 10, text: "const keep = true;", type: "context" },
-      right: { lineNo: 10, text: "const keep = true;", type: "context" },
-    },
-    {
-      type: "line",
-      left: { lineNo: 11, text: 'const value = "old";', type: "removed" },
-      right: { lineNo: 11, text: 'const value = "new";', type: "added" },
-    },
-    {
-      type: "line",
-      left: { lineNo: 12, text: "done();", type: "context" },
-      right: { lineNo: 12, text: "done();", type: "context" },
-    },
-  ]);
+  assert.deepEqual(
+    files?.[0].rows.filter((row) => row.type === "line"),
+    [
+      {
+        type: "line",
+        left: { lineNo: 10, text: "const keep = true;", type: "context" },
+        right: { lineNo: 10, text: "const keep = true;", type: "context" },
+      },
+      {
+        type: "line",
+        left: { lineNo: 11, text: 'const value = "old";', type: "removed" },
+        right: { lineNo: 11, text: 'const value = "new";', type: "added" },
+      },
+      {
+        type: "line",
+        left: { lineNo: 12, text: "done();", type: "context" },
+        right: { lineNo: 12, text: "done();", type: "context" },
+      },
+    ],
+  );
 });
 
 test("pads one-sided additions and removes timestamp suffixes from file paths", async () => {

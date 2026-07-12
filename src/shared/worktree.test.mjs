@@ -4,15 +4,7 @@ import assert from "node:assert/strict";
 test("parses staged, modified, untracked, and conflicted git status entries", async () => {
   const { parseGitStatusPorcelain } = await import("./git-status.ts");
   const result = parseGitStatusPorcelain(
-    [
-      "M  staged.ts",
-      " M modified.ts",
-      "?? new.ts",
-      "UU conflict.ts",
-      "A  both.ts",
-      " M both.ts",
-      "",
-    ].join("\0"),
+    ["M  staged.ts", " M modified.ts", "?? new.ts", "UU conflict.ts", "A  both.ts", " M both.ts", ""].join("\0"),
     "feature/status",
   );
 
@@ -30,7 +22,10 @@ test("skips the original path record emitted for porcelain rename entries", asyn
   const result = parseGitStatusPorcelain("R  new-name.ts\0old-name.ts\0", "main");
 
   assert.equal(result.staged, 1);
-  assert.deepEqual(result.entries.map((entry) => entry.path), ["new-name.ts"]);
+  assert.deepEqual(
+    result.entries.map((entry) => entry.path),
+    ["new-name.ts"],
+  );
 });
 
 test("reports a clean repository for empty porcelain output", async () => {

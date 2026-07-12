@@ -1,4 +1,9 @@
-import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+  createAgentSessionFromServices,
+  createAgentSessionServices,
+  getAgentDir,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "crypto";
 import { cacheSessionPath } from "./session-reader";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
@@ -132,7 +137,10 @@ export class AgentSessionWrapper {
 
   beginExtensionBinding(options: ExtensionBindingOptions = {}): void {
     void this.ensureExtensionsBound(options).catch((err) => {
-      console.error("[pi-web] failed to dispatch session_start to extensions:", err instanceof Error ? err.message : err);
+      console.error(
+        "[pi-desktop] failed to dispatch session_start to extensions:",
+        err instanceof Error ? err.message : err,
+      );
     });
   }
 
@@ -160,26 +168,28 @@ export class AgentSessionWrapper {
           uiContext,
           mode: "rpc",
           commandContextActions: this.createExtensionCommandContextActions(),
-          shutdownHandler: () => this.emit({
-            type: "extension_ui_request",
-            id: randomUUID(),
-            method: "notify",
-            notifyType: "warning",
-            message: "Extension requested shutdown, but shutdown is not supported in pi-web.",
-          } as ExtensionUiRequest as AgentEvent),
-          onError: (error) => this.emit({
-            type: "extension_error",
-            extensionPath: error.extensionPath,
-            event: error.event,
-            error: error.error,
-          }),
+          shutdownHandler: () =>
+            this.emit({
+              type: "extension_ui_request",
+              id: randomUUID(),
+              method: "notify",
+              notifyType: "warning",
+              message: "Extension requested shutdown, but shutdown is not supported in Pi Desktop.",
+            } as ExtensionUiRequest as AgentEvent),
+          onError: (error) =>
+            this.emit({
+              type: "extension_error",
+              extensionPath: error.extensionPath,
+              event: error.event,
+              error: error.error,
+            }),
         });
       } else {
         this.inner.extensionRunner.setUIContext?.(uiContext, "rpc");
       }
       this.extensionsBound = true;
       this.applyForcedEmptySystemPrompt();
-      console.log(`[pi-web] session_start dispatched to extensions for session ${this.inner.sessionId}`);
+      console.log(`[pi-desktop] session_start dispatched to extensions for session ${this.inner.sessionId}`);
     })().catch((err) => {
       this.extensionBindingError = err;
       throw err;
@@ -225,14 +235,17 @@ export class AgentSessionWrapper {
 
   private resetIdleTimer(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => {
-      // Never idle-evict a still-running agent (ISSUE-003)
-      if (this.isRunning()) {
-        this.resetIdleTimer();
-        return;
-      }
-      this.destroy();
-    }, 10 * 60 * 1000);
+    this.idleTimer = setTimeout(
+      () => {
+        // Never idle-evict a still-running agent (ISSUE-003)
+        if (this.isRunning()) {
+          this.resetIdleTimer();
+          return;
+        }
+        this.destroy();
+      },
+      10 * 60 * 1000,
+    );
   }
 
   onEvent(listener: EventListener): () => void {
@@ -260,23 +273,26 @@ export class AgentSessionWrapper {
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
         this.promptRunning = true;
         notifyRunningChange();
-        this.inner.prompt(command.message as string, {
-          ...(promptImages?.length ? { images: promptImages } : {}),
-          ...(streamingBehavior ? { streamingBehavior } : {}),
-          source: "rpc",
-        }).then(() => {
-          this.promptRunning = false;
-          if (!streamingBehavior) this.emit({ type: "prompt_done" });
-          notifyRunningChange();
-        }).catch((error) => {
-          this.promptRunning = false;
-          this.emit({
-            type: "prompt_error",
-            errorMessage: error instanceof Error ? error.message : String(error),
+        this.inner
+          .prompt(command.message as string, {
+            ...(promptImages?.length ? { images: promptImages } : {}),
+            ...(streamingBehavior ? { streamingBehavior } : {}),
+            source: "rpc",
+          })
+          .then(() => {
+            this.promptRunning = false;
+            if (!streamingBehavior) this.emit({ type: "prompt_done" });
+            notifyRunningChange();
+          })
+          .catch((error) => {
+            this.promptRunning = false;
+            this.emit({
+              type: "prompt_error",
+              errorMessage: error instanceof Error ? error.message : String(error),
+            });
+            if (!streamingBehavior) this.emit({ type: "prompt_done" });
+            notifyRunningChange();
           });
-          if (!streamingBehavior) this.emit({ type: "prompt_done" });
-          notifyRunningChange();
-        });
         return null;
       }
 
@@ -365,7 +381,12 @@ export class AgentSessionWrapper {
         // setThinkingLevel clamps xhigh→high for models where supportsXhigh()===false.
         // If the model has DeepSeek thinking compat (reasoningEffortMap maps xhigh→max),
         // force the state back so the compat layer can use it correctly.
-        if (level === "xhigh" && (this.inner.model as { compat?: { thinkingFormat?: string } } | null)?.compat?.thinkingFormat === "deepseek" && this.inner.agent?.state) {
+        if (
+          level === "xhigh" &&
+          (this.inner.model as { compat?: { thinkingFormat?: string } } | null)?.compat?.thinkingFormat ===
+            "deepseek" &&
+          this.inner.agent?.state
+        ) {
           this.inner.agent.state.thinkingLevel = "xhigh";
         }
         return null;
@@ -373,7 +394,7 @@ export class AgentSessionWrapper {
 
       case "compact": {
         const result = await this.withFinalRunningNotification(() =>
-          this.inner.compact(command.customInstructions as string | undefined)
+          this.inner.compact(command.customInstructions as string | undefined),
         );
         return result;
       }
@@ -592,9 +613,7 @@ export class AgentSessionWrapper {
     const resolved = typeof overlayOptions === "function" ? overlayOptions() : overlayOptions;
     if (!resolved || typeof resolved !== "object") return 92;
     const width = (resolved as { width?: unknown }).width;
-    return typeof width === "number" && Number.isFinite(width)
-      ? Math.max(40, Math.min(140, Math.round(width)))
-      : 92;
+    return typeof width === "number" && Number.isFinite(width) ? Math.max(40, Math.min(140, Math.round(width))) : 92;
   }
 
   private emitCustomUiRender(id: string, custom: ActiveCustomUi): void {
@@ -652,10 +671,7 @@ export class AgentSessionWrapper {
     }
   }
 
-  private requestExtensionCustomUi<T>(
-    factory: unknown,
-    options?: unknown,
-  ): Promise<T> {
+  private requestExtensionCustomUi<T>(factory: unknown, options?: unknown): Promise<T> {
     if (typeof factory !== "function") return Promise.resolve(undefined as T);
 
     const id = randomUUID();
@@ -673,7 +689,11 @@ export class AgentSessionWrapper {
       Promise.resolve()
         .then(() => factory(tui, undefined, undefined, done))
         .then((component) => {
-          if (!component || typeof component !== "object" || typeof (component as CustomUiComponent).render !== "function") {
+          if (
+            !component ||
+            typeof component !== "object" ||
+            typeof (component as CustomUiComponent).render !== "function"
+          ) {
             resolve(undefined as T);
             return;
           }
@@ -743,34 +763,48 @@ export class AgentSessionWrapper {
 
   private createExtensionUiContext(): ExtensionUiContextLike {
     return {
-      select: (title, options, opts) => this.requestExtensionUi(
-        { method: "select", title, options, ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
-        undefined,
-        (response) => "value" in response ? response.value : undefined,
-        opts?.timeout,
-        opts?.signal,
-      ),
-      confirm: (title, message, opts) => this.requestExtensionUi(
-        { method: "confirm", title, message, ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
-        false,
-        (response) => "confirmed" in response ? response.confirmed : false,
-        opts?.timeout,
-        opts?.signal,
-      ),
-      input: (title, placeholder, opts) => this.requestExtensionUi(
-        { method: "input", title, ...(placeholder !== undefined ? { placeholder } : {}), ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
-        undefined,
-        (response) => "value" in response ? response.value : undefined,
-        opts?.timeout,
-        opts?.signal,
-      ),
-      editor: (title, prefill, opts) => this.requestExtensionUi(
-        { method: "editor", title, ...(prefill !== undefined ? { prefill } : {}), ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
-        undefined,
-        (response) => "value" in response ? response.value : undefined,
-        opts?.timeout,
-        opts?.signal,
-      ),
+      select: (title, options, opts) =>
+        this.requestExtensionUi(
+          { method: "select", title, options, ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
+          undefined,
+          (response) => ("value" in response ? response.value : undefined),
+          opts?.timeout,
+          opts?.signal,
+        ),
+      confirm: (title, message, opts) =>
+        this.requestExtensionUi(
+          { method: "confirm", title, message, ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
+          false,
+          (response) => ("confirmed" in response ? response.confirmed : false),
+          opts?.timeout,
+          opts?.signal,
+        ),
+      input: (title, placeholder, opts) =>
+        this.requestExtensionUi(
+          {
+            method: "input",
+            title,
+            ...(placeholder !== undefined ? { placeholder } : {}),
+            ...(opts?.timeout ? { timeout: opts.timeout } : {}),
+          },
+          undefined,
+          (response) => ("value" in response ? response.value : undefined),
+          opts?.timeout,
+          opts?.signal,
+        ),
+      editor: (title, prefill, opts) =>
+        this.requestExtensionUi(
+          {
+            method: "editor",
+            title,
+            ...(prefill !== undefined ? { prefill } : {}),
+            ...(opts?.timeout ? { timeout: opts.timeout } : {}),
+          },
+          undefined,
+          (response) => ("value" in response ? response.value : undefined),
+          opts?.timeout,
+          opts?.signal,
+        ),
       notify: (message, type) => {
         this.emit({
           type: "extension_ui_request",
@@ -860,10 +894,15 @@ export class AgentSessionWrapper {
       addAutocompleteProvider: () => this.reportUnsupportedExtensionFeature("TUI autocomplete provider"),
       setEditorComponent: () => this.reportUnsupportedExtensionFeature("custom TUI editor component"),
       getEditorComponent: () => undefined,
-      get theme() { return undefined; },
+      get theme() {
+        return undefined;
+      },
       getAllThemes: () => [],
       getTheme: () => undefined,
-      setTheme: () => ({ success: false, error: "Theme switching is not supported in pi-web extension UI yet" }),
+      setTheme: () => ({
+        success: false,
+        error: "Theme switching is not supported in the Pi Desktop extension UI yet",
+      }),
       getToolsExpanded: () => false,
       setToolsExpanded: () => {},
     };
@@ -909,26 +948,24 @@ export class AgentSessionWrapper {
 // Session registry
 // ============================================================================
 
-declare global {
-  var __piSessions: Map<string, AgentSessionWrapper> | undefined;
-  var __piStartLocks: Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> | undefined;
-  var __piRunningListeners: Set<(ids: string[]) => void> | undefined;
-}
+const sessionRegistry = new Map<string, AgentSessionWrapper>();
+const startLocks = new Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>>();
+const runningListeners = new Set<(ids: string[]) => void>();
+let registryCleanupInstalled = false;
 
 function getRegistry(): Map<string, AgentSessionWrapper> {
-  if (!globalThis.__piSessions) {
-    globalThis.__piSessions = new Map();
-    const cleanup = () => globalThis.__piSessions?.forEach((s) => s.destroy());
+  if (!registryCleanupInstalled) {
+    registryCleanupInstalled = true;
+    const cleanup = () => sessionRegistry.forEach((session) => session.destroy());
     process.once("exit", cleanup);
     process.once("SIGINT", cleanup);
     process.once("SIGTERM", cleanup);
   }
-  return globalThis.__piSessions;
+  return sessionRegistry;
 }
 
 function getLocks(): Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> {
-  if (!globalThis.__piStartLocks) globalThis.__piStartLocks = new Map();
-  return globalThis.__piStartLocks;
+  return startLocks;
 }
 
 export function getRpcSession(sessionId: string): AgentSessionWrapper | undefined {
@@ -948,20 +985,20 @@ export function getRunningRpcSessionIds(): string[] {
 //
 // Pushes the current set of running session ids to subscribers whenever any
 // session's running state may have changed. This lets the sidebar receive live
-// updates over SSE instead of polling. Listeners live on globalThis so they
-// survive Next.js hot-reload.
+// MessagePort updates instead of polling.
 // ----------------------------------------------------------------------------
 
 function getRunningListeners(): Set<(ids: string[]) => void> {
-  if (!globalThis.__piRunningListeners) globalThis.__piRunningListeners = new Set();
-  return globalThis.__piRunningListeners;
+  return runningListeners;
 }
 
 /** Subscribe to running-session-id changes. Returns an unsubscribe function. */
 export function subscribeRunningSessions(listener: (ids: string[]) => void): () => void {
   const listeners = getRunningListeners();
   listeners.add(listener);
-  return () => { listeners.delete(listener); };
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 let lastRunningSnapshot = "";
@@ -976,7 +1013,11 @@ export function notifyRunningChange(): void {
   if (snapshot === lastRunningSnapshot) return;
   lastRunningSnapshot = snapshot;
   for (const listener of getRunningListeners()) {
-    try { listener(ids); } catch { /* ignore listener errors */ }
+    try {
+      listener(ids);
+    } catch {
+      /* ignore listener errors */
+    }
   }
 }
 
@@ -989,7 +1030,7 @@ export async function startRpcSession(
   sessionId: string,
   sessionFile: string,
   cwd: string,
-  toolNames?: string[]
+  toolNames?: string[],
 ): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
   const registry = getRegistry();
   const locks = getLocks();
@@ -1015,7 +1056,7 @@ export async function startRpcSession(
       // Otherwise DO NOT pass a builtin-only allow-list: passing CODING_TOOL_NAMES
       // set allowedToolNames to coding builtins only, which filtered every
       // extension/package-provided tool (e.g. subagents, web access) out of the
-      // tool registry — so they were unavailable in pi-web sessions even though the
+      // tool registry — so they were unavailable in desktop sessions even though the
       // `pi` CLI keeps them. Leaving the allow-list unset lets the SDK register all
       // tools (and activate extension tools); we narrow the ACTIVE set below.
       toolsOption = toolNames.length === 0 ? [] : undefined;
@@ -1032,7 +1073,7 @@ export async function startRpcSession(
 
     // If specific tool names were requested (non-empty), set the active tools to the
     // requested builtin coding tools PLUS all extension/package tools, so installed
-    // extensions stay usable in pi-web just like in the `pi` CLI.
+    // extensions stay usable in Pi Desktop just like in the `pi` CLI.
     if (toolNames && toolNames.length > 0) {
       inner.setActiveToolsByName(withExtensionTools(inner, toolNames));
     }

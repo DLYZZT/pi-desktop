@@ -19,7 +19,7 @@ function run(cmd, args, opts = {}) {
     env: { ...process.env, ...opts.env },
   });
   children.push(child);
-  child.on("exit", (code, signal) => {
+  child.on("exit", (code) => {
     if (opts.fatal !== false && code && code !== 0) {
       console.error(`[dev] ${cmd} exited ${code}`);
       shutdown(code);
@@ -61,15 +61,11 @@ build.on("exit", (code) => {
   // Wait for vite, then launch electron
   setTimeout(() => {
     console.log("[dev] starting electron…");
-    run(
-      path.join(root, "node_modules", ".bin", isWin ? "electron.cmd" : "electron"),
-      ["."],
-      {
-        env: {
-          VITE_DEV_SERVER_URL: "http://localhost:5173",
-          ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
-        },
+    run(path.join(root, "node_modules", ".bin", isWin ? "electron.cmd" : "electron"), ["."], {
+      env: {
+        VITE_DEV_SERVER_URL: "http://localhost:5173",
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
       },
-    );
+    });
   }, 2000);
 });

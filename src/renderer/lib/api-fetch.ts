@@ -53,12 +53,7 @@ async function parseBody(init?: RequestInit): Promise<Record<string, unknown>> {
 }
 
 export async function apiFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-  const url =
-    typeof input === "string"
-      ? input
-      : input instanceof URL
-        ? input.pathname + input.search
-        : input.url;
+  const url = typeof input === "string" ? input : input instanceof URL ? input.pathname + input.search : input.url;
 
   const path = url.startsWith("http") ? new URL(url).pathname + new URL(url).search : url;
   if (!path.startsWith("/api/")) {
@@ -67,7 +62,10 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
 
   const method = (init?.method ?? "GET").toUpperCase();
   const u = new URL(path, "http://local");
-  const segs = u.pathname.replace(/^\/api\//, "").split("/").filter(Boolean);
+  const segs = u.pathname
+    .replace(/^\/api\//, "")
+    .split("/")
+    .filter(Boolean);
 
   try {
     if (segs[0] === "sessions" && segs.length === 1 && method === "GET") {
@@ -191,14 +189,16 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
     }
     if (segs[0] === "skills" && segs.length === 1 && (method === "PATCH" || method === "POST")) {
       const body = await parseBody(init);
-      return jsonResponse(await call("skills.set", {
-        cwd: String(body.cwd ?? ""),
-        filePath: String(body.filePath ?? ""),
-        ...(typeof body.disableModelInvocation === "boolean"
-          ? { disableModelInvocation: body.disableModelInvocation }
-          : {}),
-        ...(typeof body.content === "string" ? { content: body.content } : {}),
-      }));
+      return jsonResponse(
+        await call("skills.set", {
+          cwd: String(body.cwd ?? ""),
+          filePath: String(body.filePath ?? ""),
+          ...(typeof body.disableModelInvocation === "boolean"
+            ? { disableModelInvocation: body.disableModelInvocation }
+            : {}),
+          ...(typeof body.content === "string" ? { content: body.content } : {}),
+        }),
+      );
     }
     if (segs[0] === "skills" && segs[1] === "search" && method === "POST") {
       const body = await parseBody(init);
@@ -219,12 +219,14 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       if (!["install", "remove", "update", "disable", "enable"].includes(action)) {
         return errorResponse("Invalid plugin action", 400);
       }
-      return jsonResponse(await call("plugins.set", {
-        action: action as "install" | "remove" | "update" | "disable" | "enable",
-        cwd: String(body.cwd ?? ""),
-        ...(typeof body.source === "string" ? { source: body.source } : {}),
-        ...(body.scope === "project" || body.scope === "global" ? { scope: body.scope } : {}),
-      }));
+      return jsonResponse(
+        await call("plugins.set", {
+          action: action as "install" | "remove" | "update" | "disable" | "enable",
+          cwd: String(body.cwd ?? ""),
+          ...(typeof body.source === "string" ? { source: body.source } : {}),
+          ...(body.scope === "project" || body.scope === "global" ? { scope: body.scope } : {}),
+        }),
+      );
     }
 
     if (segs[0] === "files") {
@@ -308,19 +310,20 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const rpc = e as { code?: string; detail?: unknown };
-    const status = rpc.code === "BAD_REQUEST"
-      ? 400
-      : rpc.code === "FORBIDDEN"
-        ? 403
-        : rpc.code === "NOT_FOUND"
-          ? 404
-          : rpc.code === "CONFLICT"
-            ? 409
-            : /not found/i.test(msg)
-              ? 404
-              : /denied|forbidden/i.test(msg)
-                ? 403
-                : 500;
+    const status =
+      rpc.code === "BAD_REQUEST"
+        ? 400
+        : rpc.code === "FORBIDDEN"
+          ? 403
+          : rpc.code === "NOT_FOUND"
+            ? 404
+            : rpc.code === "CONFLICT"
+              ? 409
+              : /not found/i.test(msg)
+                ? 404
+                : /denied|forbidden/i.test(msg)
+                  ? 403
+                  : 500;
     const detail = rpc.detail && typeof rpc.detail === "object" ? rpc.detail : {};
     return jsonResponse({ error: msg, ...detail }, status);
   }
@@ -367,7 +370,10 @@ export class ApiEventSource {
     const gen = ++this.generation;
     try {
       const u = new URL(url, "http://local");
-      const segs = u.pathname.replace(/^\/api\//, "").split("/").filter(Boolean);
+      const segs = u.pathname
+        .replace(/^\/api\//, "")
+        .split("/")
+        .filter(Boolean);
 
       if (segs[0] === "agent" && segs[2] === "events") {
         const sessionId = decodeURIComponent(segs[1]);
@@ -502,12 +508,7 @@ export class ApiEventSource {
 export function installApiShims(): void {
   const originalFetch = window.fetch.bind(window);
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.href
-          : input.url;
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (typeof url === "string" && (url.startsWith("/api/") || url.includes("/api/"))) {
       return apiFetch(input as string, init);
     }

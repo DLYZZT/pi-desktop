@@ -5,7 +5,8 @@ export interface ParsedCompactionSummary {
 }
 
 const FILE_SECTION_RE = /<(read-files|modified-files)>\s*([\s\S]*?)\s*<\/\1>/g;
-const TRAILING_FILE_SECTIONS_RE = /(?:\r?\n){2,}((?:[ \t]*<(?:read-files|modified-files)>[ \t]*\r?\n[\s\S]*?\r?\n[ \t]*<\/(?:read-files|modified-files)>[ \t]*(?:\r?\n)?)+)\s*$/;
+const TRAILING_FILE_SECTIONS_RE =
+  /(?:\r?\n){2,}((?:[ \t]*<(?:read-files|modified-files)>[ \t]*\r?\n[\s\S]*?\r?\n[ \t]*<\/(?:read-files|modified-files)>[ \t]*(?:\r?\n)?)+)\s*$/;
 
 export function parseCompactionSummary(summary: string): ParsedCompactionSummary {
   const readFiles: string[] = [];

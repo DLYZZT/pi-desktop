@@ -1,5 +1,5 @@
 /**
- * Plugin package management — ported from old /api/plugins route.
+ * Plugin package management for the desktop Agent Host.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { basename, dirname, extname, join, relative } from "path";
@@ -56,7 +56,11 @@ function writeDisabledBackups(backups: Record<string, PackageSource>): void {
   try {
     renameSync(tmp, filePath);
   } catch (error) {
-    try { unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* ignore cleanup failure */
+    }
     throw error;
   }
 }
@@ -212,13 +216,7 @@ function collectResource(
   countsByPackage.set(key, counts);
   const resources = resourcesByPackage.get(key) ?? [];
   const resourceKind =
-    kind === "extensions"
-      ? "extension"
-      : kind === "skills"
-        ? "skill"
-        : kind === "prompts"
-          ? "prompt"
-          : "theme";
+    kind === "extensions" ? "extension" : kind === "skills" ? "skill" : kind === "prompts" ? "prompt" : "theme";
   resources.push({
     kind: resourceKind,
     name: getResourceName(resource.path, resourceKind),
@@ -232,14 +230,10 @@ function collectResources(paths: ResolvedPaths) {
   const countsByPackage = new Map<string, PluginResourceCounts>();
   const resourcesByPackage = new Map<string, PluginResourceInfo[]>();
   const totals = emptyCounts();
-  for (const r of paths.extensions)
-    collectResource(r, "extensions", countsByPackage, resourcesByPackage, totals);
-  for (const r of paths.skills)
-    collectResource(r, "skills", countsByPackage, resourcesByPackage, totals);
-  for (const r of paths.prompts)
-    collectResource(r, "prompts", countsByPackage, resourcesByPackage, totals);
-  for (const r of paths.themes)
-    collectResource(r, "themes", countsByPackage, resourcesByPackage, totals);
+  for (const r of paths.extensions) collectResource(r, "extensions", countsByPackage, resourcesByPackage, totals);
+  for (const r of paths.skills) collectResource(r, "skills", countsByPackage, resourcesByPackage, totals);
+  for (const r of paths.prompts) collectResource(r, "prompts", countsByPackage, resourcesByPackage, totals);
+  for (const r of paths.themes) collectResource(r, "themes", countsByPackage, resourcesByPackage, totals);
   return { countsByPackage, resourcesByPackage, totals };
 }
 
@@ -300,13 +294,7 @@ export async function readPlugins(cwd: string): Promise<PluginsResponse> {
       configuredVersion: getConfiguredVersion(pkg.source),
       counts,
       resources,
-      status: disabled
-        ? "disabled"
-        : resourceCount > 0
-          ? "loaded"
-          : pkg.installedPath
-            ? "installed"
-            : "missing",
+      status: disabled ? "disabled" : resourceCount > 0 ? "loaded" : pkg.installedPath ? "installed" : "missing",
     } satisfies PluginPackageInfo;
   });
 

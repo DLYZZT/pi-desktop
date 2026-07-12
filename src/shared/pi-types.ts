@@ -93,7 +93,11 @@ export interface ExtensionUiContextLike {
   setWorkingVisible(visible: boolean): void;
   setWorkingIndicator(options?: { frames?: string[]; intervalMs?: number }): void;
   setHiddenThinkingLabel(label?: string): void;
-  setWidget(key: string, content: string[] | ((...args: never[]) => unknown) | undefined, options?: WidgetOptionsLike): void;
+  setWidget(
+    key: string,
+    content: string[] | ((...args: never[]) => unknown) | undefined,
+    options?: WidgetOptionsLike,
+  ): void;
   setFooter(factory: unknown): void;
   setHeader(factory: unknown): void;
   setTitle(title: string): void;
@@ -131,11 +135,14 @@ export interface AgentSessionLike {
   readonly bindExtensions?: unknown;
   reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void>;
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
-  prompt(text: string, options?: {
-    images?: Array<{ type: "image"; data: string; mimeType: string }>;
-    streamingBehavior?: "steer" | "followUp";
-    source?: "interactive" | "rpc";
-  }): Promise<void>;
+  prompt(
+    text: string,
+    options?: {
+      images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      streamingBehavior?: "steer" | "followUp";
+      source?: "interactive" | "rpc";
+    },
+  ): Promise<void>;
   abort(): Promise<void>;
   setModel(model: ModelLike): Promise<void>;
   navigateTree(targetId: string, options?: { summarize?: boolean }): Promise<NavigateTreeResult>;

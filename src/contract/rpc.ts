@@ -3,8 +3,8 @@
  * Three message kinds: request / response / event.
  */
 
-import type { Api, ApiMethod, ApiParams, ApiResult, StreamTopic, Streams } from "./api";
-import { RpcError, type RpcErrorShape } from "./types";
+import type { ApiMethod, ApiParams, ApiResult, StreamTopic, Streams } from "./api";
+import { RpcError, type RpcErrorShape } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Wire protocol
@@ -46,12 +46,7 @@ export type WireUnsubscribe = {
   key: string;
 };
 
-export type WireMessage =
-  | WireRequest
-  | WireResponse
-  | WireEvent
-  | WireSubscribe
-  | WireUnsubscribe;
+export type WireMessage = WireRequest | WireResponse | WireEvent | WireSubscribe | WireUnsubscribe;
 
 // ---------------------------------------------------------------------------
 // Client (renderer / any consumer)
@@ -62,11 +57,7 @@ export interface PiRpc {
     method: M,
     ...args: ApiParams<M> extends void ? [] | [void] : [ApiParams<M>]
   ): Promise<ApiResult<M>>;
-  subscribe<T extends StreamTopic>(
-    topic: T,
-    key: string,
-    on: (ev: Streams[T]) => void,
-  ): () => void;
+  subscribe<T extends StreamTopic>(topic: T, key: string, on: (ev: Streams[T]) => void): () => void;
   close(): void;
 }
 
@@ -101,18 +92,14 @@ export function createRpcClient(port: MessagePort): PiRpc {
       pending.delete(msg.id);
       if (msg.ok) p.resolve(msg.result);
       else {
-        p.reject(
-          new RpcError(
-            msg.error ?? { code: "UNKNOWN", message: "Unknown RPC error" },
-          ),
-        );
+        p.reject(new RpcError(msg.error ?? { code: "UNKNOWN", message: "Unknown RPC error" }));
       }
       return;
     }
 
     if (msg.kind === "event") {
       for (const sub of subs.values()) {
-        if (sub.topic === msg.topic && (sub.key === "*" || sub.key === msg.key)) {
+        if (sub.topic === msg.topic && (sub.key === "*" || sub.key === msg.key || msg.key === "*")) {
           try {
             sub.handler(msg.data);
           } catch {
@@ -205,9 +192,7 @@ export function createRpcClient(port: MessagePort): PiRpc {
 // ---------------------------------------------------------------------------
 
 export type ApiHandler = {
-  [M in ApiMethod]?: (
-    params: ApiParams<M>,
-  ) => Promise<ApiResult<M>> | ApiResult<M>;
+  [M in ApiMethod]?: (params: ApiParams<M>) => Promise<ApiResult<M>> | ApiResult<M>;
 };
 
 export type StreamSink = {
@@ -249,10 +234,7 @@ function extractMessageData(arg: unknown): unknown {
   return arg;
 }
 
-function listenPort(
-  port: AnyMessagePort,
-  onData: (data: unknown) => void,
-): () => void {
+function listenPort(port: AnyMessagePort, onData: (data: unknown) => void): () => void {
   if (typeof port.addEventListener === "function") {
     const listener = (ev: { data: unknown }) => onData(ev.data);
     port.addEventListener("message", listener);
@@ -281,6 +263,16 @@ export function createRpcServer(): RpcServer {
   /** port → subscription id → { topic, key } */
   const portSubs = new Map<AnyMessagePort, Map<string, { topic: string; key: string }>>();
   const portUnlisten = new Map<AnyMessagePort, () => void>();
+  const portCloseUnlisten = new Map<AnyMessagePort, () => void>();
+
+  function forgetPort(port: AnyMessagePort): void {
+    ports.delete(port);
+    portSubs.delete(port);
+    portUnlisten.get(port)?.();
+    portUnlisten.delete(port);
+    portCloseUnlisten.get(port)?.();
+    portCloseUnlisten.delete(port);
+  }
 
   function ensureSubs(port: AnyMessagePort): Map<string, { topic: string; key: string }> {
     let m = portSubs.get(port);
@@ -305,9 +297,7 @@ export function createRpcServer(): RpcServer {
     }
     if (msg.kind !== "request") return;
 
-    const handler = handlers[msg.method as ApiMethod] as
-      | ((params: unknown) => Promise<unknown> | unknown)
-      | undefined;
+    const handler = handlers[msg.method as ApiMethod] as ((params: unknown) => Promise<unknown> | unknown) | undefined;
 
     let response: WireResponse;
     try {
@@ -368,6 +358,7 @@ export function createRpcServer(): RpcServer {
     },
 
     attachPort(port) {
+      if (ports.has(port)) return;
       ports.add(port);
       ensureSubs(port);
       const unlisten = listenPort(port, (data) => {
@@ -376,23 +367,25 @@ export function createRpcServer(): RpcServer {
       portUnlisten.set(port, unlisten);
       // ISSUE-013: drop port when remote closes
       const onClose = () => {
-        ports.delete(port);
-        portSubs.delete(port);
-        portUnlisten.get(port)?.();
-        portUnlisten.delete(port);
+        forgetPort(port);
       };
       if (typeof port.addEventListener === "function") {
         port.addEventListener("close", onClose as (ev: { data: unknown }) => void);
+        portCloseUnlisten.set(port, () => {
+          port.removeEventListener?.("close", onClose as (ev: { data: unknown }) => void);
+        });
       } else if (typeof port.on === "function") {
         port.on("close", onClose);
+        portCloseUnlisten.set(port, () => {
+          if (typeof port.off === "function") port.off("close", onClose);
+          else port.removeListener?.("close", onClose);
+        });
       }
     },
 
     detachPort(port) {
-      ports.delete(port);
-      portSubs.delete(port);
-      portUnlisten.get(port)?.();
-      portUnlisten.delete(port);
+      if (!ports.has(port)) return;
+      forgetPort(port);
       try {
         port.close?.();
       } catch {

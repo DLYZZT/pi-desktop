@@ -4,13 +4,7 @@ import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useTheme } from "@/hooks/useTheme";
 import { MarkdownBody } from "./MarkdownBody";
-import {
-  DOCX_PREVIEW_MAX_BYTES,
-  getFileExt,
-  isAudioPath,
-  isDocumentPreviewPath,
-  isImagePath,
-} from "@/lib/file-types";
+import { DOCX_PREVIEW_MAX_BYTES, getFileExt, isAudioPath, isDocumentPreviewPath, isImagePath } from "@/lib/file-types";
 import { encodeFilePathForApi, getFileName, getParentFilePath, getRelativeFilePath } from "@/lib/file-paths";
 
 interface Props {
@@ -50,9 +44,7 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
       onClick={() => {
         setBusy(true);
         void import("@/lib/file-blob")
-          .then(({ downloadFileViaRpc }) =>
-            downloadFileViaRpc(filePath, getFileName(filePath), sourceSessionId),
-          )
+          .then(({ downloadFileViaRpc }) => downloadFileViaRpc(filePath, getFileName(filePath), sourceSessionId))
           .catch((e) => console.error("download failed", e))
           .finally(() => setBusy(false));
       }}
@@ -70,7 +62,16 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
         flexShrink: 0,
       }}
     >
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="11"
+        height="11"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
         <polyline points="7 10 12 15 17 10" />
         <line x1="12" y1="15" x2="12" y2="3" />
@@ -79,7 +80,11 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
   );
 }
 
-function HtmlPreview({ content, filePath, sourceSessionId }: {
+function HtmlPreview({
+  content,
+  filePath,
+  sourceSessionId,
+}: {
   content: string;
   filePath: string;
   sourceSessionId?: string | null;
@@ -156,7 +161,8 @@ function diffLines(oldLines: string[], newLines: string[]): DiffLine[] {
       if (x >= m && y >= n) {
         // backtrack
         const result: DiffLine[] = [];
-        let cx = m, cy = n;
+        let cx = m,
+          cy = n;
         for (let dd = d; dd > 0; dd--) {
           const pv = trace[dd - 1];
           const pk = cx - cy;
@@ -285,10 +291,9 @@ function DiffView({ oldContent, newContent }: { oldContent: string; newContent: 
             line.type === "added"
               ? "rgba(0,200,80,0.12)"
               : line.type === "removed"
-              ? "rgba(240,60,60,0.14)"
-              : "transparent";
-          const prefix =
-            line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
+                ? "rgba(240,60,60,0.14)"
+                : "transparent";
+          const prefix = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
           const prefixColor =
             line.type === "added" ? "#4ade80" : line.type === "removed" ? "#f87171" : "var(--text-dim)";
 
@@ -298,11 +303,12 @@ function DiffView({ oldContent, newContent }: { oldContent: string; newContent: 
               style={{
                 display: "flex",
                 background: bg,
-                borderLeft: line.type === "added"
-                  ? "3px solid #4ade80"
-                  : line.type === "removed"
-                  ? "3px solid #f87171"
-                  : "3px solid transparent",
+                borderLeft:
+                  line.type === "added"
+                    ? "3px solid #4ade80"
+                    : line.type === "removed"
+                      ? "3px solid #f87171"
+                      : "3px solid transparent",
               }}
             >
               <span
@@ -391,11 +397,7 @@ function useBlobSrc(filePath: string, sourceSessionId?: string | null, bust = 0)
   return { src, size, error, setError, setSize };
 }
 
-function useFileWatch(
-  filePath: string,
-  sourceSessionId: string | null | undefined,
-  onChange: (size?: number) => void,
-) {
+function useFileWatch(filePath: string, sourceSessionId: string | null | undefined, onChange: (size?: number) => void) {
   const [watching, setWatching] = useState(false);
   useEffect(() => {
     setWatching(false);
@@ -420,11 +422,14 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
   const [bust, setBust] = useState(0);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const { src, size, error, setError, setSize } = useBlobSrc(filePath, sourceSessionId, bust);
-  const onChange = useCallback((s?: number) => {
-    if (typeof s === "number") setSize(s);
-    setNaturalSize(null);
-    setBust((b) => b + 1);
-  }, [setSize]);
+  const onChange = useCallback(
+    (s?: number) => {
+      if (typeof s === "number") setSize(s);
+      setNaturalSize(null);
+      setBust((b) => b + 1);
+    },
+    [setSize],
+  );
   const watching = useFileWatch(filePath, sourceSessionId, onChange);
 
   const ext = getFileName(filePath).toLowerCase().split(".").pop() ?? "";
@@ -450,7 +455,11 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
           {getRelativeFilePath(filePath, cwd)}
         </span>
         <span style={{ marginLeft: "auto" }}>{ext || "image"}</span>
-        {naturalSize && <span>{naturalSize.w} × {naturalSize.h}</span>}
+        {naturalSize && (
+          <span>
+            {naturalSize.w} × {naturalSize.h}
+          </span>
+        )}
         {formatSizeStr && <span>{formatSizeStr}</span>}
         <span
           title={watching ? "Live sync active" : "Not watching"}
@@ -490,7 +499,6 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
         ) : !src ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
         ) : (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={src}
             alt={filePath}
@@ -524,12 +532,15 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
   const [bust, setBust] = useState(0);
   const [duration, setDuration] = useState<number | null>(null);
   const { src, size, error, setError, setSize } = useBlobSrc(filePath, sourceSessionId, bust);
-  const onChange = useCallback((s?: number) => {
-    if (typeof s === "number") setSize(s);
-    setDuration(null);
-    setError(null);
-    setBust((b) => b + 1);
-  }, [setSize, setError]);
+  const onChange = useCallback(
+    (s?: number) => {
+      if (typeof s === "number") setSize(s);
+      setDuration(null);
+      setError(null);
+      setBust((b) => b + 1);
+    },
+    [setSize, setError],
+  );
   const watching = useFileWatch(filePath, sourceSessionId, onChange);
 
   const ext = getFileName(filePath).toLowerCase().split(".").pop() ?? "";
@@ -585,9 +596,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
       >
         <div style={{ width: "min(680px, 100%)" }}>
           {error && (
-            <div style={{ color: "#f87171", fontSize: 13, marginBottom: 12, textAlign: "center" }}>
-              {error}
-            </div>
+            <div style={{ color: "#f87171", fontSize: 13, marginBottom: 12, textAlign: "center" }}>{error}</div>
           )}
           {src && (
             <audio
@@ -680,17 +689,20 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
     };
   }, [filePath, isPdf, sourceSessionId, bust]);
 
-  const onChange = useCallback((s?: number) => {
-    if (typeof s === "number") {
-      setSize(s);
-      if (!isPdf && s > DOCX_PREVIEW_MAX_BYTES) {
-        setError("DOCX too large for preview (>10MB)");
-        return;
+  const onChange = useCallback(
+    (s?: number) => {
+      if (typeof s === "number") {
+        setSize(s);
+        if (!isPdf && s > DOCX_PREVIEW_MAX_BYTES) {
+          setError("DOCX too large for preview (>10MB)");
+          return;
+        }
       }
-    }
-    setError(null);
-    setBust((b) => b + 1);
-  }, [isPdf]);
+      setError(null);
+      setBust((b) => b + 1);
+    },
+    [isPdf],
+  );
   const watching = useFileWatch(filePath, sourceSessionId, onChange);
 
   return (
@@ -708,7 +720,10 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
           flexShrink: 0,
         }}
       >
-        <span style={{ fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={filePath}>
+        <span
+          style={{ fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          title={filePath}
+        >
           {getRelativeFilePath(filePath, cwd)}
         </span>
         <span style={{ marginLeft: "auto" }}>{ext === "docx" ? "docx preview" : "pdf"}</span>
@@ -716,7 +731,13 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
         <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
         <span
           title={watching ? "Live sync active" : "Not watching"}
-          style={{ display: "flex", alignItems: "center", gap: 4, color: watching ? "#4ade80" : "var(--text-dim)", flexShrink: 0 }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            color: watching ? "#4ade80" : "var(--text-dim)",
+            flexShrink: 0,
+          }}
         >
           <span
             style={{
@@ -733,11 +754,31 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
       </div>
       <div style={{ flex: 1, minHeight: 0, background: "var(--bg-panel)" }}>
         {error ? (
-          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: "#f87171", fontSize: 13, textAlign: "center" }}>
+          <div
+            style={{
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 24,
+              color: "#f87171",
+              fontSize: 13,
+              textAlign: "center",
+            }}
+          >
             {error}
           </div>
         ) : !previewUrl ? (
-          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 13 }}>
+          <div
+            style={{
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--text-muted)",
+              fontSize: 13,
+            }}
+          >
             Loading…
           </div>
         ) : (
@@ -782,46 +823,49 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
 
   const loadGen = useRef(0);
 
-  const fetchContent = useCallback((targetPath: string, isRefresh = false) => {
-    const gen = ++loadGen.current;
-    return import("@/lib/file-blob")
-      .then(({ readFilePayload }) => readFilePayload(targetPath, sourceSessionId))
-      .then((d) => {
-        if (gen !== loadGen.current) return null; // ISSUE-019: stale response
-        if (d.error) {
-          setError(d.error);
+  const fetchContent = useCallback(
+    (targetPath: string, isRefresh = false) => {
+      const gen = ++loadGen.current;
+      return import("@/lib/file-blob")
+        .then(({ readFilePayload }) => readFilePayload(targetPath, sourceSessionId))
+        .then((d) => {
+          if (gen !== loadGen.current) return null; // ISSUE-019: stale response
+          if (d.error) {
+            setError(d.error);
+            return null;
+          }
+          if (d.encoding === "too_large") {
+            setError("File too large for preview");
+            return null;
+          }
+          if (d.encoding === "base64") {
+            setError("Binary file cannot be shown as text");
+            return null;
+          }
+          const payload: FileData = {
+            content: d.content,
+            language: d.language ?? "text",
+            size: d.size ?? d.content.length,
+          };
+          if (isRefresh) {
+            setData((prev) => {
+              if (prev) setPrevContent(prev.content);
+              return payload;
+            });
+            setChangeCount((c) => c + 1);
+          } else {
+            setData(payload);
+          }
+          return payload;
+        })
+        .catch((e) => {
+          if (gen !== loadGen.current) return null;
+          setError(String(e));
           return null;
-        }
-        if (d.encoding === "too_large") {
-          setError("File too large for preview");
-          return null;
-        }
-        if (d.encoding === "base64") {
-          setError("Binary file cannot be shown as text");
-          return null;
-        }
-        const payload: FileData = {
-          content: d.content,
-          language: d.language ?? "text",
-          size: d.size ?? d.content.length,
-        };
-        if (isRefresh) {
-          setData((prev) => {
-            if (prev) setPrevContent(prev.content);
-            return payload;
-          });
-          setChangeCount((c) => c + 1);
-        } else {
-          setData(payload);
-        }
-        return payload;
-      })
-      .catch((e) => {
-        if (gen !== loadGen.current) return null;
-        setError(String(e));
-        return null;
-      });
-  }, [sourceSessionId]);
+        });
+    },
+    [sourceSessionId],
+  );
 
   // Initial load + watch setup
   useEffect(() => {
@@ -840,9 +884,11 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
       esRef.current = null;
     }
 
-    fetchContent(filePath).then((d) => {
-      if (d?.language === "markdown") setPreviewMode(true);
-    }).finally(() => setLoading(false));
+    void fetchContent(filePath)
+      .then((data) => {
+        if (data?.language === "markdown") setPreviewMode(true);
+      })
+      .finally(() => setLoading(false));
 
     const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
     esRef.current = es;
@@ -852,7 +898,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
     });
 
     es.addEventListener("change", () => {
-      fetchContent(filePath, true);
+      void fetchContent(filePath, true);
     });
 
     es.addEventListener("error", () => {
@@ -872,7 +918,16 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
 
   if (loading) {
     return (
-      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 13 }}>
+      <div
+        style={{
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--text-muted)",
+          fontSize: 13,
+        }}
+      >
         Loading...
       </div>
     );
@@ -880,7 +935,16 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
 
   if (error) {
     return (
-      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#f87171", fontSize: 13 }}>
+      <div
+        style={{
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#f87171",
+          fontSize: 13,
+        }}
+      >
         {error}
       </div>
     );
@@ -940,7 +1004,10 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
             <button
               onClick={() => setViewMode("source")}
               style={{
-                padding: "2px 8px", fontSize: 11, border: "none", cursor: "pointer",
+                padding: "2px 8px",
+                fontSize: 11,
+                border: "none",
+                cursor: "pointer",
                 background: viewMode === "source" ? "var(--bg-selected)" : "var(--bg-hover)",
                 color: viewMode === "source" ? "var(--text)" : "var(--text-muted)",
                 fontWeight: viewMode === "source" ? 600 : 400,
@@ -951,7 +1018,11 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
             <button
               onClick={() => setViewMode("diff")}
               style={{
-                padding: "2px 8px", fontSize: 11, border: "none", borderLeft: "1px solid var(--border)", cursor: "pointer",
+                padding: "2px 8px",
+                fontSize: 11,
+                border: "none",
+                borderLeft: "1px solid var(--border)",
+                cursor: "pointer",
                 background: viewMode === "diff" ? "var(--bg-selected)" : "var(--bg-hover)",
                 color: viewMode === "diff" ? "var(--text)" : "var(--text-muted)",
                 fontWeight: viewMode === "diff" ? 600 : 400,
@@ -968,10 +1039,13 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
             onClick={() => setWrapLines((v) => !v)}
             title={wrapLines ? "Disable word wrap" : "Enable word wrap"}
             style={{
-              padding: "2px 8px", fontSize: 11, cursor: "pointer",
+              padding: "2px 8px",
+              fontSize: 11,
+              cursor: "pointer",
               background: wrapLines ? "var(--bg-selected)" : "var(--bg-hover)",
               color: wrapLines ? "var(--text)" : "var(--text-muted)",
-              border: "1px solid var(--border)", borderRadius: 5,
+              border: "1px solid var(--border)",
+              borderRadius: 5,
               fontWeight: wrapLines ? 600 : 400,
             }}
           >
@@ -985,7 +1059,10 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
             <button
               onClick={() => setPreviewMode(false)}
               style={{
-                padding: "2px 8px", fontSize: 11, border: "none", cursor: "pointer",
+                padding: "2px 8px",
+                fontSize: 11,
+                border: "none",
+                cursor: "pointer",
                 background: !previewMode ? "var(--bg-selected)" : "var(--bg-hover)",
                 color: !previewMode ? "var(--text)" : "var(--text-muted)",
                 fontWeight: !previewMode ? 600 : 400,
@@ -996,7 +1073,11 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
             <button
               onClick={() => setPreviewMode(true)}
               style={{
-                padding: "2px 8px", fontSize: 11, border: "none", borderLeft: "1px solid var(--border)", cursor: "pointer",
+                padding: "2px 8px",
+                fontSize: 11,
+                border: "none",
+                borderLeft: "1px solid var(--border)",
+                cursor: "pointer",
                 background: previewMode ? "var(--bg-selected)" : "var(--bg-hover)",
                 color: previewMode ? "var(--text)" : "var(--text-muted)",
                 fontWeight: previewMode ? 600 : 400,
@@ -1013,7 +1094,10 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
             <button
               onClick={() => setPreviewMode(true)}
               style={{
-                padding: "2px 8px", fontSize: 11, border: "none", cursor: "pointer",
+                padding: "2px 8px",
+                fontSize: 11,
+                border: "none",
+                cursor: "pointer",
                 background: previewMode ? "var(--bg-selected)" : "var(--bg-hover)",
                 color: previewMode ? "var(--text)" : "var(--text-muted)",
                 fontWeight: previewMode ? 600 : 400,
@@ -1024,7 +1108,11 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
             <button
               onClick={() => setPreviewMode(false)}
               style={{
-                padding: "2px 8px", fontSize: 11, border: "none", borderLeft: "1px solid var(--border)", cursor: "pointer",
+                padding: "2px 8px",
+                fontSize: 11,
+                border: "none",
+                borderLeft: "1px solid var(--border)",
+                cursor: "pointer",
                 background: !previewMode ? "var(--bg-selected)" : "var(--bg-hover)",
                 color: !previewMode ? "var(--text)" : "var(--text-muted)",
                 fontWeight: !previewMode ? 600 : 400,
@@ -1044,15 +1132,8 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
         ) : isHtml && previewMode ? (
           <HtmlPreview content={data.content} filePath={filePath} sourceSessionId={sourceSessionId} />
         ) : isMarkdown && previewMode ? (
-          <div
-            className="markdown-body markdown-file-preview"
-            style={{ padding: "24px 32px", maxWidth: 800 }}
-          >
-            <MarkdownBody
-              cwd={cwd}
-              imageBasePath={getParentFilePath(filePath)}
-              sourceSessionId={sourceSessionId}
-            >
+          <div className="markdown-body markdown-file-preview" style={{ padding: "24px 32px", maxWidth: 800 }}>
+            <MarkdownBody cwd={cwd} imageBasePath={getParentFilePath(filePath)} sourceSessionId={sourceSessionId}>
               {data.content}
             </MarkdownBody>
           </div>

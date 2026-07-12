@@ -16,13 +16,7 @@ interface SettingsConfigProps {
   onPluginsReloaded: () => void;
 }
 
-export function SettingsConfig({
-  cwd,
-  sessionId,
-  onClose,
-  onModelsChanged,
-  onPluginsReloaded,
-}: SettingsConfigProps) {
+export function SettingsConfig({ cwd, sessionId, onClose, onModelsChanged, onPluginsReloaded }: SettingsConfigProps) {
   const isMobile = useIsMobile();
   const { isDark, toggleTheme } = useTheme();
   const { language, setLanguage, t } = useI18n();
@@ -38,8 +32,18 @@ export function SettingsConfig({
   return (
     <div
       role="presentation"
-      style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}
-      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "rgba(0,0,0,0.35)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
     >
       <div
         role="dialog"
@@ -59,15 +63,54 @@ export function SettingsConfig({
           overflow: "hidden",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "13px 18px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "13px 18px",
+            borderBottom: "1px solid var(--border)",
+            flexShrink: 0,
+          }}
+        >
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>{t("settings", "Settings")}</div>
-            {!isMobile && <div style={{ marginTop: 2, fontSize: 11, color: "var(--text-dim)" }}>{t("settingsDescription", "Manage app preferences, models, skills, and plugins.")}</div>}
+            {!isMobile && (
+              <div style={{ marginTop: 2, fontSize: 11, color: "var(--text-dim)" }}>
+                {t("settingsDescription", "Manage app preferences, models, skills, and plugins.")}
+              </div>
+            )}
           </div>
-          <button type="button" onClick={onClose} aria-label={t("close", "Close")} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "4px 7px" }}>×</button>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t("close", "Close")}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              fontSize: 20,
+              lineHeight: 1,
+              padding: "4px 7px",
+            }}
+          >
+            ×
+          </button>
         </div>
 
-        <div style={{ display: "flex", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border)", overflowX: "auto", flexShrink: 0, background: "var(--bg-panel)" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            padding: "10px 14px",
+            borderBottom: "1px solid var(--border)",
+            overflowX: "auto",
+            flexShrink: 0,
+            background: "var(--bg-panel)",
+          }}
+        >
           {tabs.map((tab) => {
             const active = tab.id === activeTab;
             return (
@@ -103,16 +146,26 @@ export function SettingsConfig({
               language={language}
               onLanguageChange={setLanguage}
               isDark={isDark}
-              onThemeChange={(nextDark) => { if (nextDark !== isDark) toggleTheme(); }}
+              onThemeChange={(nextDark) => {
+                if (nextDark !== isDark) toggleTheme();
+              }}
             />
           )}
           {activeTab === "models" && <ModelsConfig embedded onClose={() => undefined} onChanged={onModelsChanged} />}
-          {activeTab === "skills" && (cwd
-            ? <SkillsConfig embedded cwd={cwd} onClose={() => undefined} />
-            : <ProjectRequired />)}
-          {activeTab === "plugins" && (cwd
-            ? <PluginsConfig embedded cwd={cwd} sessionId={sessionId} onClose={() => undefined} onReloaded={onPluginsReloaded} />
-            : <ProjectRequired />)}
+          {activeTab === "skills" &&
+            (cwd ? <SkillsConfig embedded cwd={cwd} onClose={() => undefined} /> : <ProjectRequired />)}
+          {activeTab === "plugins" &&
+            (cwd ? (
+              <PluginsConfig
+                embedded
+                cwd={cwd}
+                sessionId={sessionId}
+                onClose={() => undefined}
+                onReloaded={onPluginsReloaded}
+              />
+            ) : (
+              <ProjectRequired />
+            ))}
         </div>
       </div>
     </div>
@@ -134,8 +187,12 @@ function GeneralSettings({
   return (
     <div style={{ width: "100%", overflowY: "auto", padding: "28px clamp(18px, 5vw, 52px)" }}>
       <section style={{ maxWidth: 620 }}>
-        <h2 style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>{t("interfaceLanguage", "Interface language")}</h2>
-        <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>{t("interfaceLanguageDescription", "Choose the language used by the app. Changes take effect immediately.")}</p>
+        <h2 style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>
+          {t("interfaceLanguage", "Interface language")}
+        </h2>
+        <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
+          {t("interfaceLanguageDescription", "Choose the language used by the app. Changes take effect immediately.")}
+        </p>
         <SettingRow label={t("language", "Language")}>
           <select
             value={language}
@@ -152,9 +209,15 @@ function GeneralSettings({
 
       <section style={{ maxWidth: 620 }}>
         <h2 style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>{t("appearance", "Appearance")}</h2>
-        <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>{t("appearanceDescription", "Choose the color mode used by the app.")}</p>
+        <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
+          {t("appearanceDescription", "Choose the color mode used by the app.")}
+        </p>
         <SettingRow label={t("theme", "Theme")}>
-          <select value={isDark ? "dark" : "light"} onChange={(event) => onThemeChange(event.target.value === "dark")} style={selectStyle}>
+          <select
+            value={isDark ? "dark" : "light"}
+            onChange={(event) => onThemeChange(event.target.value === "dark")}
+            style={selectStyle}
+          >
             <option value="light">{t("light", "Light")}</option>
             <option value="dark">{t("dark", "Dark")}</option>
           </select>
@@ -166,7 +229,19 @@ function GeneralSettings({
 
 function SettingRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20, minHeight: 52, padding: "10px 12px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-panel)" }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 20,
+        minHeight: 52,
+        padding: "10px 12px",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        background: "var(--bg-panel)",
+      }}
+    >
       <span style={{ fontSize: 13, color: "var(--text-muted)" }}>{label}</span>
       {children}
     </div>
@@ -176,10 +251,26 @@ function SettingRow({ label, children }: { label: string; children: React.ReactN
 function ProjectRequired() {
   const { t } = useI18n();
   return (
-    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 28, textAlign: "center" }}>
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 28,
+        textAlign: "center",
+      }}
+    >
       <div style={{ maxWidth: 380 }}>
-        <div style={{ fontSize: 14, fontWeight: 650, color: "var(--text)" }}>{t("projectRequiredTitle", "Select a project first")}</div>
-        <div style={{ marginTop: 7, fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>{t("projectRequiredDescription", "Skills and plugins depend on the current project. Select a project directory from the sidebar first.")}</div>
+        <div style={{ fontSize: 14, fontWeight: 650, color: "var(--text)" }}>
+          {t("projectRequiredTitle", "Select a project first")}
+        </div>
+        <div style={{ marginTop: 7, fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
+          {t(
+            "projectRequiredDescription",
+            "Skills and plugins depend on the current project. Select a project directory from the sidebar first.",
+          )}
+        </div>
       </div>
     </div>
   );

@@ -14,10 +14,7 @@ export type FileReadResult = {
   error?: string;
 };
 
-export async function readFilePayload(
-  filePath: string,
-  sourceSessionId?: string | null,
-): Promise<FileReadResult> {
+export async function readFilePayload(filePath: string, sourceSessionId?: string | null): Promise<FileReadResult> {
   return call("files.read", {
     path: filePath,
     sourceSessionId: sourceSessionId ?? undefined,

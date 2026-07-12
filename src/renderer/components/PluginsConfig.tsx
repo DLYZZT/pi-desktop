@@ -34,9 +34,7 @@ function versionSummary(pkg: PluginPackageInfo): string {
 }
 
 function installLocation(scope: PluginScope, cwd: string): string {
-  return scope === "project"
-    ? `${shortenPath(cwd)}/.pi/agent/{npm,git}`
-    : "~/.pi/agent/{npm,git}";
+  return scope === "project" ? `${shortenPath(cwd)}/.pi/agent/{npm,git}` : "~/.pi/agent/{npm,git}";
 }
 
 function findInstalledPackage(
@@ -46,9 +44,11 @@ function findInstalledPackage(
 ): PluginPackageInfo | undefined {
   const trimmed = source.trim();
   const withoutNpmPrefix = trimmed.startsWith("npm:") ? trimmed.slice(4) : trimmed;
-  return packages.find((pkg) => pkg.scope === scope && pkg.source === trimmed)
-    ?? packages.find((pkg) => pkg.scope === scope && pkg.source === `npm:${withoutNpmPrefix}`)
-    ?? packages.find((pkg) => pkg.scope === scope && pkg.source.endsWith(trimmed));
+  return (
+    packages.find((pkg) => pkg.scope === scope && pkg.source === trimmed) ??
+    packages.find((pkg) => pkg.scope === scope && pkg.source === `npm:${withoutNpmPrefix}`) ??
+    packages.find((pkg) => pkg.scope === scope && pkg.source.endsWith(trimmed))
+  );
 }
 
 function statusColor(status: PluginPackageInfo["status"]): string {
@@ -59,12 +59,14 @@ function statusColor(status: PluginPackageInfo["status"]): string {
 }
 
 function ResourceList({ pkg }: { pkg: PluginPackageInfo }) {
-  const groups = ([
-    ["extension", "Extensions"],
-    ["skill", "Skills"],
-    ["prompt", "Prompts"],
-    ["theme", "Themes"],
-  ] as const)
+  const groups = (
+    [
+      ["extension", "Extensions"],
+      ["skill", "Skills"],
+      ["prompt", "Prompts"],
+      ["theme", "Themes"],
+    ] as const
+  )
     .map(([kind, label]) => ({
       kind,
       label,
@@ -227,13 +229,7 @@ function Toggle({
   );
 }
 
-function SegmentedScope({
-  value,
-  onChange,
-}: {
-  value: PluginScope;
-  onChange: (scope: PluginScope) => void;
-}) {
+function SegmentedScope({ value, onChange }: { value: PluginScope; onChange: (scope: PluginScope) => void }) {
   return (
     <div
       style={{
@@ -297,9 +293,7 @@ function AddPluginPanel({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 660, minHeight: "100%" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>
-          Add Plugin
-        </div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>Add Plugin</div>
         <div style={{ fontSize: 12, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
           {installLocation(scope, cwd)}
         </div>
@@ -351,9 +345,7 @@ function AddPluginPanel({
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }}>
-          Examples
-        </div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }}>Examples</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {examples.map((example) => (
             <button
@@ -388,11 +380,7 @@ function AddPluginPanel({
         </div>
       </div>
 
-      {actionError && (
-        <div style={{ fontSize: 12, color: "#ef4444", whiteSpace: "pre-wrap" }}>
-          {actionError}
-        </div>
-      )}
+      {actionError && <div style={{ fontSize: 12, color: "#ef4444", whiteSpace: "pre-wrap" }}>{actionError}</div>}
     </div>
   );
 }
@@ -423,7 +411,16 @@ function PackageDetail({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 680 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, minWidth: 0, flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 12,
+          minWidth: 0,
+          flexWrap: "wrap",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 180, flex: 1 }}>
           <Toggle
             enabled={enabled}
@@ -444,18 +441,20 @@ function PackageDetail({
             >
               disabled
             </span>
-          ) : pkg.filtered && (
-            <span
-              style={{
-                fontSize: 10,
-                padding: "1px 5px",
-                borderRadius: 3,
-                background: "rgba(245,158,11,0.12)",
-                color: "#d97706",
-              }}
-            >
-              filtered
-            </span>
+          ) : (
+            pkg.filtered && (
+              <span
+                style={{
+                  fontSize: 10,
+                  padding: "1px 5px",
+                  borderRadius: 3,
+                  background: "rgba(245,158,11,0.12)",
+                  color: "#d97706",
+                }}
+              >
+                filtered
+              </span>
+            )
           )}
           <span
             style={{
@@ -533,22 +532,12 @@ function PackageDetail({
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
-          Resolved Resources
-        </div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>Resolved Resources</div>
         <ResourceList pkg={pkg} />
       </div>
 
-      {actionMessage && (
-        <div style={{ fontSize: 12, color: "#16a34a" }}>
-          {actionMessage}
-        </div>
-      )}
-      {actionError && (
-        <div style={{ fontSize: 12, color: "#ef4444", whiteSpace: "pre-wrap" }}>
-          {actionError}
-        </div>
-      )}
+      {actionMessage && <div style={{ fontSize: 12, color: "#16a34a" }}>{actionMessage}</div>}
+      {actionError && <div style={{ fontSize: 12, color: "#ef4444", whiteSpace: "pre-wrap" }}>{actionError}</div>}
     </div>
   );
 }
@@ -612,39 +601,42 @@ export function PluginsConfig({
     void loadPlugins();
   }, [loadPlugins]);
 
-  const runAction = useCallback(async (action: PluginAction, pkg: PluginPackageInfo) => {
-    const key = packageKey(pkg);
-    setBusyKey(`${action}:${key}`);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      const res = await fetch("/api/plugins", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, source: pkg.source, scope: pkg.scope, cwd }),
-      });
-      const next = (await res.json()) as PluginsResponse & { error?: string };
-      if (!res.ok || next.error) throw new Error(next.error ?? `HTTP ${res.status}`);
-      setData(next);
-      if (action === "remove") {
-        setSelected(next.packages[0] ? packageKey(next.packages[0]) : null);
-        if (next.packages.length === 0) setAddMode(true);
-        setActionMessage("Package removed.");
-      } else {
-        const messages: Record<Exclude<PluginAction, "remove">, string> = {
-          install: "Package installed.",
-          update: "Package updated.",
-          disable: "Package disabled.",
-          enable: "Package enabled.",
-        };
-        setActionMessage(messages[action]);
+  const runAction = useCallback(
+    async (action: PluginAction, pkg: PluginPackageInfo) => {
+      const key = packageKey(pkg);
+      setBusyKey(`${action}:${key}`);
+      setActionError(null);
+      setActionMessage(null);
+      try {
+        const res = await fetch("/api/plugins", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, source: pkg.source, scope: pkg.scope, cwd }),
+        });
+        const next = (await res.json()) as PluginsResponse & { error?: string };
+        if (!res.ok || next.error) throw new Error(next.error ?? `HTTP ${res.status}`);
+        setData(next);
+        if (action === "remove") {
+          setSelected(next.packages[0] ? packageKey(next.packages[0]) : null);
+          if (next.packages.length === 0) setAddMode(true);
+          setActionMessage("Package removed.");
+        } else {
+          const messages: Record<Exclude<PluginAction, "remove">, string> = {
+            install: "Package installed.",
+            update: "Package updated.",
+            disable: "Package disabled.",
+            enable: "Package enabled.",
+          };
+          setActionMessage(messages[action]);
+        }
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusyKey(null);
       }
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusyKey(null);
-    }
-  }, [cwd]);
+    },
+    [cwd],
+  );
 
   const installPlugin = useCallback(async () => {
     const source = installSource.trim();
@@ -695,12 +687,25 @@ export function PluginsConfig({
 
   return (
     <div
-      style={embedded ? {
-        position: "relative", flex: 1, minWidth: 0, minHeight: 0, display: "flex",
-      } : {
-        position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.35)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}
+      style={
+        embedded
+          ? {
+              position: "relative",
+              flex: 1,
+              minWidth: 0,
+              minHeight: 0,
+              display: "flex",
+            }
+          : {
+              position: "fixed",
+              inset: 0,
+              zIndex: 1000,
+              background: "rgba(0,0,0,0.35)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }
+      }
       onClick={(e) => {
         if (!embedded && e.target === e.currentTarget) onClose();
       }}
@@ -720,48 +725,48 @@ export function PluginsConfig({
           overflow: "hidden",
         }}
       >
-        {!embedded && <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "12px 18px",
-            borderBottom: "1px solid var(--border)",
-            flexShrink: 0,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-              Plugins
-            </span>
-            <code
-              style={{
-                fontSize: 11,
-                color: "var(--text-muted)",
-                fontFamily: "var(--font-mono)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {shortenPath(cwd)}
-            </code>
-          </div>
-          <button
-            onClick={onClose}
+        {!embedded && (
+          <div
             style={{
-              background: "none",
-              border: "none",
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              fontSize: 20,
-              lineHeight: 1,
-              padding: "2px 6px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "12px 18px",
+              borderBottom: "1px solid var(--border)",
+              flexShrink: 0,
             }}
           >
-            ×
-          </button>
-        </div>}
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Plugins</span>
+              <code
+                style={{
+                  fontSize: 11,
+                  color: "var(--text-muted)",
+                  fontFamily: "var(--font-mono)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {shortenPath(cwd)}
+              </code>
+            </div>
+            <button
+              onClick={onClose}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                fontSize: 20,
+                lineHeight: 1,
+                padding: "2px 6px",
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: "hidden" }}>
           <div
@@ -778,17 +783,11 @@ export function PluginsConfig({
           >
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 6px" }}>
               {loading ? (
-                <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--text-muted)" }}>
-                  Loading...
-                </div>
+                <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--text-muted)" }}>Loading...</div>
               ) : error ? (
-                <div style={{ padding: "10px 8px", fontSize: 11, color: "#ef4444" }}>
-                  {error}
-                </div>
+                <div style={{ padding: "10px 8px", fontSize: 11, color: "#ef4444" }}>{error}</div>
               ) : packages.length === 0 ? (
-                <div style={{ padding: "10px 8px", fontSize: 11, color: "var(--text-dim)" }}>
-                  No plugins configured
-                </div>
+                <div style={{ padding: "10px 8px", fontSize: 11, color: "var(--text-dim)" }}>No plugins configured</div>
               ) : (
                 groupedPackages.map((group) => (
                   <div key={group.scope} style={{ marginBottom: 6 }}>
@@ -989,23 +988,33 @@ export function PluginsConfig({
           <div style={{ minWidth: 0, flex: 1, fontSize: 11, color: "var(--text-dim)", overflow: "hidden" }}>
             {data?.diagnostics.length ? (
               <span
-                title={data.diagnostics.map((d) => `${d.type}: ${d.source ? `${d.source}: ` : ""}${d.message}`).join("\n")}
+                title={data.diagnostics
+                  .map((d) => `${d.type}: ${d.source ? `${d.source}: ` : ""}${d.message}`)
+                  .join("\n")}
                 style={{ color: data.diagnostics.some((d) => d.type === "error") ? "#ef4444" : "#d97706" }}
               >
                 {data.diagnostics.length} diagnostic{data.diagnostics.length === 1 ? "" : "s"}
               </span>
             ) : (
               <span>
-                {data ? `${data.totals.extensions} ext · ${data.totals.skills} skills · ${data.totals.prompts} prompts · ${data.totals.themes} themes` : ""}
+                {data
+                  ? `${data.totals.extensions} ext · ${data.totals.skills} skills · ${data.totals.prompts} prompts · ${data.totals.themes} themes`
+                  : ""}
               </span>
             )}
           </div>
-          <button onClick={() => void loadPlugins()} disabled={loading || busyKey !== null} style={buttonStyle(loading || busyKey !== null)}>
+          <button
+            onClick={() => void loadPlugins()}
+            disabled={loading || busyKey !== null}
+            style={buttonStyle(loading || busyKey !== null)}
+          >
             {t("refresh", "Refresh")}
           </button>
-          {!embedded && <button onClick={onClose} style={buttonStyle(false)}>
-            Close
-          </button>}
+          {!embedded && (
+            <button onClick={onClose} style={buttonStyle(false)}>
+              Close
+            </button>
+          )}
         </div>
       </div>
     </div>

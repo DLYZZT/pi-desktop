@@ -14,8 +14,8 @@ const execFileAsync = promisify(execFile);
 //
 // A worktree's `git rev-parse --git-common-dir` points at the *main* repo's
 // .git directory, so its parent is the project root shared by all worktrees.
-// Non-git directories resolve to themselves. Results are cached on globalThis
-// (hot-reload safe) with a short TTL; add/remove worktree invalidates eagerly.
+// Non-git directories resolve to themselves. Results use a process-local short
+// TTL cache; add/remove worktree invalidates it eagerly.
 // ============================================================================
 
 export interface ProjectInfo {
@@ -36,19 +36,15 @@ export interface WorktreeInfo {
   isMain: boolean;
 }
 
-declare global {
-  var __piProjectCache: Map<string, { info: ProjectInfo; expiresAt: number }> | undefined;
-}
-
 const PROJECT_CACHE_TTL_MS = 60_000;
+const projectCache = new Map<string, { info: ProjectInfo; expiresAt: number }>();
 
 function getProjectCache(): Map<string, { info: ProjectInfo; expiresAt: number }> {
-  if (!globalThis.__piProjectCache) globalThis.__piProjectCache = new Map();
-  return globalThis.__piProjectCache;
+  return projectCache;
 }
 
 export function invalidateProjectCache(): void {
-  globalThis.__piProjectCache?.clear();
+  projectCache.clear();
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
@@ -125,14 +121,22 @@ export async function resolveProject(cwd: string): Promise<ProjectInfo> {
       return info;
     }
     const out = await git(cwd, [
-      "rev-parse", "--path-format=absolute",
-      "--git-common-dir", "--git-dir", "--show-toplevel",
-      "--abbrev-ref", "HEAD",
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+      "--git-dir",
+      "--show-toplevel",
+      "--abbrev-ref",
+      "HEAD",
     ]);
     const [commonDir, gitDir, toplevel, ref] = out.split("\n").map((l) => l.trim());
     // git prints resolved (symlink-free) paths; normalize cwd the same way
     let realCwd = cwd;
-    try { realCwd = realpathSync(cwd); } catch { /* keep as-is */ }
+    try {
+      realCwd = realpathSync(cwd);
+    } catch {
+      /* keep as-is */
+    }
     // For a linked worktree, --git-dir differs from --git-common-dir.
     // Only collapse *worktree toplevels* into the main repo. A session whose
     // cwd is a subdirectory of a repo keeps its own project identity —
@@ -194,7 +198,10 @@ export async function listWorktrees(cwd: string): Promise<WorktreeInfo[]> {
       flush();
       current = { path: line.slice("worktree ".length).trim() };
     } else if (line.startsWith("branch ") && current) {
-      current.branch = line.slice("branch ".length).trim().replace(/^refs\/heads\//, "");
+      current.branch = line
+        .slice("branch ".length)
+        .trim()
+        .replace(/^refs\/heads\//, "");
     } else if (line.startsWith("prunable") && current) {
       current.prunable = true;
     } else if (line.trim() === "") {

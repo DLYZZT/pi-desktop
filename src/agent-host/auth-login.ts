@@ -1,5 +1,5 @@
 /**
- * OAuth login stream — ports old /api/auth/login/[provider] SSE onto Streams["auth.login"].
+ * OAuth login progress service for Streams["auth.login"].
  */
 import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type { RpcServer } from "../contract/rpc";
@@ -141,10 +141,7 @@ export function createAuthLoginService(server: RpcServer) {
             onProgress: (message: string) => {
               emit(provider, { type: "progress", message });
             },
-            onSelect: async (prompt: {
-              message: string;
-              options: { id: string; label: string }[];
-            }) => {
+            onSelect: async (prompt: { message: string; options: { id: string; label: string }[] }) => {
               const request = createClientInputRequest();
               emit(provider, {
                 type: "select_request",
@@ -180,5 +177,3 @@ export function createAuthLoginService(server: RpcServer) {
     },
   };
 }
-
-export { loginCallbacks };

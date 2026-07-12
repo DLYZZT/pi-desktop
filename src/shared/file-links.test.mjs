@@ -9,10 +9,7 @@ test("resolves absolute markdown file links and strips line suffixes", async () 
   const { resolveLocalFileHref } = await loadSubject();
 
   assert.equal(
-    resolveLocalFileHref(
-      "/home/me/project/components/MarkdownBody.tsx:36",
-      "/home/me/project",
-    ),
+    resolveLocalFileHref("/home/me/project/components/MarkdownBody.tsx:36", "/home/me/project"),
     "/home/me/project/components/MarkdownBody.tsx",
   );
 });
@@ -21,10 +18,7 @@ test("resolves absolute file links outside cwd", async () => {
   const { resolveLocalFileHref } = await loadSubject();
 
   assert.equal(
-    resolveLocalFileHref(
-      "/home/me/.codex/config.toml:12",
-      "/home/me/project",
-    ),
+    resolveLocalFileHref("/home/me/.codex/config.toml:12", "/home/me/project"),
     "/home/me/.codex/config.toml",
   );
 });
@@ -41,10 +35,7 @@ test("resolves relative markdown file links against cwd", async () => {
 test("does not let relative links escape cwd", async () => {
   const { resolveLocalFileHref } = await loadSubject();
 
-  assert.equal(
-    resolveLocalFileHref("../outside.md", "/home/me/project"),
-    null,
-  );
+  assert.equal(resolveLocalFileHref("../outside.md", "/home/me/project"), null);
 });
 
 test("resolves markdown assets from the document directory within cwd", async () => {
@@ -54,10 +45,7 @@ test("resolves markdown assets from the document directory within cwd", async ()
     resolveLocalFileHref("../assets/diagram.png", "/home/me/project", "/home/me/project/docs/guide"),
     "/home/me/project/docs/assets/diagram.png",
   );
-  assert.equal(
-    resolveLocalFileHref("../../../outside.png", "/home/me/project", "/home/me/project/docs/guide"),
-    null,
-  );
+  assert.equal(resolveLocalFileHref("../../../outside.png", "/home/me/project", "/home/me/project/docs/guide"), null);
 });
 
 test("does not treat app or external URLs as file links", async () => {

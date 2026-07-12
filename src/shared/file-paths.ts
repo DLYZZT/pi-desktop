@@ -6,11 +6,7 @@ export function normalizeFilePathSlashes(filePath: string): string {
 }
 
 export function encodeFilePathForApi(filePath: string): string {
-  return normalizeFilePathSlashes(filePath)
-    .split("/")
-    .filter(Boolean)
-    .map(encodeURIComponent)
-    .join("/");
+  return normalizeFilePathSlashes(filePath).split("/").filter(Boolean).map(encodeURIComponent).join("/");
 }
 
 export function getFileName(filePath: string): string {

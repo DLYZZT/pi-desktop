@@ -1,11 +1,4 @@
-import {
-  Component,
-  type CSSProperties,
-  type ErrorInfo,
-  type ReactNode,
-  useEffect,
-  useState,
-} from "react";
+import { Component, type CSSProperties, type ErrorInfo, type ReactNode, useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { ensureRpc, resetRpc } from "@/lib/api-client";
 
@@ -46,11 +39,7 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
-    setStatus(
-      window.piBridge
-        ? "Waiting for Agent Host…"
-        : "piBridge missing (preload failed?)",
-    );
+    setStatus(window.piBridge ? "Waiting for Agent Host…" : "piBridge missing (preload failed?)");
 
     const connect = () => {
       ensureRpc()
@@ -114,11 +103,7 @@ export function App() {
           <button type="button" onClick={() => window.location.reload()} style={btnPrimary}>
             Retry
           </button>
-          <button
-            type="button"
-            onClick={() => void window.piBridge?.openLogs()}
-            style={btnSecondary}
-          >
+          <button type="button" onClick={() => void window.piBridge?.openLogs()} style={btnSecondary}>
             Open logs
           </button>
         </div>

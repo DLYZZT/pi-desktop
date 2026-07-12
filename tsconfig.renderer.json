@@ -10,6 +10,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "types": ["vite/client"],
     "baseUrl": ".",
@@ -19,10 +20,6 @@
       "@shared/*": ["src/shared/*"]
     }
   },
-  "include": [
-    "src/renderer/**/*",
-    "src/contract/**/*",
-    "src/shared/**/*"
-  ],
+  "include": ["src/renderer/**/*", "src/contract/**/*", "src/shared/**/*"],
   "exclude": ["node_modules", "out", "dist"]
 }

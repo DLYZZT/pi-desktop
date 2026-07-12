@@ -43,11 +43,7 @@ function findSystemNode(): string | null {
     }
   }
   // Common install locations when PATH is empty (macOS GUI apps)
-  const extras = [
-    "/usr/local/bin/node",
-    "/opt/homebrew/bin/node",
-    "/usr/bin/node",
-  ];
+  const extras = ["/usr/local/bin/node", "/opt/homebrew/bin/node", "/usr/bin/node"];
   for (const p of extras) {
     if (existsSync(p)) return p;
   }

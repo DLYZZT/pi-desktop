@@ -48,17 +48,10 @@ export function createTray(getMainWindow: () => BrowserWindow | null): Tray | nu
   }
 }
 
-export function setTrayRunningCount(
-  count: number,
-  getMainWindow: () => BrowserWindow | null,
-): void {
+export function setTrayRunningCount(count: number, getMainWindow: () => BrowserWindow | null): void {
   runningCount = Math.max(0, count);
   if (!tray) return;
-  tray.setToolTip(
-    runningCount > 0
-      ? `Pi Agent Desktop — ${runningCount} running`
-      : "Pi Agent Desktop",
-  );
+  tray.setToolTip(runningCount > 0 ? `Pi Agent Desktop — ${runningCount} running` : "Pi Agent Desktop");
   updateTrayMenu(getMainWindow);
 }
 

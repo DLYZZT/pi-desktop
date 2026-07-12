@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * ISSUE-010: single quality gate that blocks pack/dist.
- * typecheck → unit → contract → build → smoke
+ * format → lint → typecheck → unit → contract → security → build → smoke
  */
 import { spawnSync } from "child_process";
 import path from "path";
@@ -18,12 +18,15 @@ function run(label, cmd, args) {
   }
 }
 
+run("format check", "npm", ["run", "format:check"]);
+run("lint", "npm", ["run", "lint"]);
 run("typecheck (main/host)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.json"]);
 run("typecheck (renderer)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.renderer.json"]);
 run("unit tests", "npm", ["test"]);
 run("contract coverage", "node", ["scripts/check-contract-coverage.mjs"]);
 run("desktop security invariants", "node", ["scripts/check-desktop-security.mjs"]);
 run("build", "npm", ["run", "build"]);
+run("production artifact isolation", "node", ["scripts/check-production-artifacts.mjs"]);
 run("smoke electron", "npm", ["run", "smoke"]);
 
 console.log("\n[verify] all checks passed\n");

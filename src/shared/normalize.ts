@@ -8,13 +8,14 @@ function normalizeToolCallBlock(block: unknown): ToolCallContent | null {
   if (!isObject(block) || block.type !== "toolCall") return null;
   return {
     type: "toolCall",
-    toolCallId: typeof block.toolCallId === "string" ? block.toolCallId : (typeof block.id === "string" ? block.id : ""),
-    toolName: typeof block.toolName === "string" ? block.toolName : (typeof block.name === "string" ? block.name : ""),
-    input: typeof block.input === "object" && block.input !== null && !Array.isArray(block.input)
-      ? block.input as Record<string, unknown>
-      : (typeof block.arguments === "object" && block.arguments !== null && !Array.isArray(block.arguments)
-        ? block.arguments as Record<string, unknown>
-        : {}),
+    toolCallId: typeof block.toolCallId === "string" ? block.toolCallId : typeof block.id === "string" ? block.id : "",
+    toolName: typeof block.toolName === "string" ? block.toolName : typeof block.name === "string" ? block.name : "",
+    input:
+      typeof block.input === "object" && block.input !== null && !Array.isArray(block.input)
+        ? (block.input as Record<string, unknown>)
+        : typeof block.arguments === "object" && block.arguments !== null && !Array.isArray(block.arguments)
+          ? (block.arguments as Record<string, unknown>)
+          : {},
   };
 }
 

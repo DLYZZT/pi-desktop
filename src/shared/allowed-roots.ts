@@ -1,29 +1,34 @@
-// In-memory roots that should be browsable in addition to roots derived from
-// persisted sessions. Stored on globalThis so Next.js hot-reload keeps them.
-declare global {
-  var __piAllowedRootsCache: { roots: Set<string>; expiresAt: number } | undefined;
-  var __piAdditionalAllowedRoots: Set<string> | undefined;
-}
+// Process-local roots that should be browsable in addition to roots derived
+// from persisted sessions. The Agent Host owns this state for its lifetime.
+export type AllowedRootsCache = { roots: Set<string>; expiresAt: number };
+
+const additionalAllowedRoots = new Set<string>();
+let allowedRootsCache: AllowedRootsCache | undefined;
 
 export function normalizeSlashes(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }
 
 export function getAdditionalAllowedRoots(): Set<string> {
-  if (!globalThis.__piAdditionalAllowedRoots) {
-    globalThis.__piAdditionalAllowedRoots = new Set();
-  }
-  return globalThis.__piAdditionalAllowedRoots;
+  return additionalAllowedRoots;
+}
+
+export function getAllowedRootsCache(): AllowedRootsCache | undefined {
+  return allowedRootsCache;
+}
+
+export function setAllowedRootsCache(cache: AllowedRootsCache | undefined): void {
+  allowedRootsCache = cache;
 }
 
 export function allowFileRoot(root: string): void {
   if (!root) return;
   const normalizedRoot = normalizeSlashes(root);
   getAdditionalAllowedRoots().add(normalizedRoot);
-  globalThis.__piAllowedRootsCache?.roots.add(normalizedRoot);
+  allowedRootsCache?.roots.add(normalizedRoot);
 }
 
 /** Drop TTL cache so next getAllowedFileRoots() re-scans sessions (watcher-driven). */
 export function invalidateAllowedRootsCache(): void {
-  globalThis.__piAllowedRootsCache = undefined;
+  allowedRootsCache = undefined;
 }

@@ -116,17 +116,17 @@ flowchart LR
 
 ### 常用命令
 
-| 命令 | 说明 |
-|---|---|
-| `npm run dev` | 启动 Vite、主进程构建监听与 Electron |
-| `npm run typecheck` | 执行 TypeScript 类型检查 |
-| `npm run test` | 运行 shared 纯函数测试 |
+| 命令                     | 说明                                  |
+| ------------------------ | ------------------------------------- |
+| `npm run dev`            | 启动 Vite、主进程构建监听与 Electron  |
+| `npm run typecheck`      | 执行 TypeScript 类型检查              |
+| `npm run test`           | 运行 shared 纯函数测试                |
 | `npm run check:contract` | 检查 API 方法与 Host handler 覆盖关系 |
-| `npm run smoke` | 运行 Electron 冒烟测试 |
-| `npm run verify` | 执行提交前的完整质量检查 |
-| `npm run build` | 构建 main、preload 与 renderer |
-| `npm run pack` | 生成未封装的应用目录 |
-| `npm run dist` | 生成当前平台安装包 |
+| `npm run smoke`          | 运行 Electron 冒烟测试                |
+| `npm run verify`         | 执行提交前的完整质量检查              |
+| `npm run build`          | 构建 main、preload 与 renderer        |
+| `npm run pack`           | 生成未封装的应用目录                  |
+| `npm run dist`           | 生成当前平台安装包                    |
 
 ### 项目结构
 

@@ -68,8 +68,7 @@ const bridge: PiBridge = {
     ipcRenderer.send("desktop:set-badge-count", 0);
   },
   onHostStatus: (cb) => {
-    const handler = (_: Electron.IpcRendererEvent, data: { status: HostStatus; detail?: string }) =>
-      cb(data);
+    const handler = (_: Electron.IpcRendererEvent, data: { status: HostStatus; detail?: string }) => cb(data);
     ipcRenderer.on("host:status", handler);
     return () => ipcRenderer.removeListener("host:status", handler);
   },

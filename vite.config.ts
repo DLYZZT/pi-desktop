@@ -10,9 +10,7 @@ const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "package.json"), "ut
 };
 
 function readPiVersion(): string {
-  const candidates = [
-    path.resolve(__dirname, "node_modules/@earendil-works/pi-coding-agent/package.json"),
-  ];
+  const candidates = [path.resolve(__dirname, "node_modules/@earendil-works/pi-coding-agent/package.json")];
   for (const p of candidates) {
     try {
       if (!existsSync(p)) continue;

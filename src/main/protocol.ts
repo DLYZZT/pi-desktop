@@ -195,8 +195,8 @@ export function handleAppProtocol(rendererRoot: string): void {
 }
 
 /** Dev convenience: load via file:// is avoided; keep helper for diagnostics. */
-export function rendererRootPath(): string {
-  return path.join(__dirname, "..", "renderer");
+export function rendererRootPath(mainDirectory = __dirname): string {
+  return path.join(mainDirectory, "..", "renderer");
 }
 
 export function fileUrl(p: string): string {

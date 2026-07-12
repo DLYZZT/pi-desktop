@@ -46,10 +46,7 @@ export function MarkdownBody({
               return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} />;
             }
             return (
-              <code
-                className="markdown-inline-code"
-                {...props}
-              >
+              <code className="markdown-inline-code" {...props}>
                 {children}
               </code>
             );
@@ -126,7 +123,7 @@ function MarkdownImage({
     () => resolveLocalFileHref(typeof src === "string" ? src : undefined, cwd, relativeBase),
     [cwd, relativeBase, src],
   );
-  const [previewSrc, setPreviewSrc] = useState<string | null>(localPath ? null : (typeof src === "string" ? src : null));
+  const [previewSrc, setPreviewSrc] = useState<string | null>(localPath ? null : typeof src === "string" ? src : null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -162,17 +159,18 @@ function MarkdownImage({
   }, [localPath, sourceSessionId, src]);
 
   if (failed) {
-    return <span className="markdown-image-error" title={localPath ?? undefined}>{alt || "Image failed to load"}</span>;
+    return (
+      <span className="markdown-image-error" title={localPath ?? undefined}>
+        {alt || "Image failed to load"}
+      </span>
+    );
   }
 
   if (!previewSrc) {
     return <span className="markdown-image-loading" aria-label={alt || "Loading image"} />;
   }
 
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={previewSrc} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" {...props} />
-  );
+  return <img src={previewSrc} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" {...props} />;
 }
 
 function normalizeDisplayMath(markdown: string): string {
@@ -254,7 +252,13 @@ function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boole
     <button
       onClick={() => setShowPreview((v) => !v)}
       disabled={isStreaming}
-      title={isStreaming ? "Preview available after streaming" : (showPreview ? "Show Mermaid source" : "Preview Mermaid diagram")}
+      title={
+        isStreaming
+          ? "Preview available after streaming"
+          : showPreview
+            ? "Show Mermaid source"
+            : "Preview Mermaid diagram"
+      }
       className={["markdown-code-action", showPreview ? "is-active" : ""].filter(Boolean).join(" ")}
     >
       {showPreview ? "Source" : "Preview"}
@@ -271,10 +275,7 @@ function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boole
     ) : !svg || renderedKey !== currentKey ? (
       <div className="mermaid-block mermaid-block-loading" aria-label="Rendering Mermaid diagram" />
     ) : (
-      <div
-        className="mermaid-block"
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
+      <div className="mermaid-block" dangerouslySetInnerHTML={{ __html: svg }} />
     );
 
   return (
@@ -293,7 +294,7 @@ function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; h
   const [copied, setCopied] = useState(false);
 
   const copy = () => {
-    copyText(code).then(() => {
+    void copyText(code).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
@@ -305,10 +306,7 @@ function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; h
         <span className="markdown-code-lang">{lang || "text"}</span>
         <div className="markdown-code-actions">
           {headerAction}
-          <button
-            onClick={copy}
-            className="markdown-code-action"
-          >
+          <button onClick={copy} className="markdown-code-action">
             {copied ? "copied" : "copy"}
           </button>
         </div>

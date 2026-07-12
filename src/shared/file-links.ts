@@ -74,11 +74,7 @@ function fileUrlToPath(href: string): string | null {
   }
 }
 
-export function resolveLocalFileHref(
-  href: string | undefined,
-  cwd?: string,
-  relativeBase = cwd,
-): string | null {
+export function resolveLocalFileHref(href: string | undefined, cwd?: string, relativeBase = cwd): string | null {
   if (!href) return null;
 
   const cleanHref = href.split("#", 1)[0].split("?", 1)[0].trim();
@@ -93,7 +89,11 @@ export function resolveLocalFileHref(
 
   if (lowerHref.startsWith("/api/") || lowerHref.startsWith("/_next/")) return null;
   if (!isBackslashUncPath && normalizedHref.startsWith("//")) return null;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/i.test(normalizedHref) && !lowerHref.startsWith("file:") && !/^[a-zA-Z]:\//.test(normalizedHref)) {
+  if (
+    /^[a-zA-Z][a-zA-Z0-9+.-]*:/i.test(normalizedHref) &&
+    !lowerHref.startsWith("file:") &&
+    !/^[a-zA-Z]:\//.test(normalizedHref)
+  ) {
     return null;
   }
 

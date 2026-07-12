@@ -1,6 +1,6 @@
 /**
  * Register all Api handlers on the RPC server.
- * Ports logic from the old Next.js API routes onto the Host process.
+ * Implements the desktop RPC contract in the Agent Host process.
  */
 import {
   existsSync,
@@ -33,26 +33,9 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { completeSimple, type AssistantMessage } from "@earendil-works/pi-ai/compat";
 import type { RpcServer } from "../contract/rpc";
 import { RpcError } from "../contract/types";
-import {
-  allowFileRoot,
-  getAllowedFileRoots,
-  invalidateAllowedRootsCache,
-  isFilePathAllowed,
-  isWindowsAbsolutePath,
-  normalizeSlashes,
-} from "./file-access";
-import {
-  getRpcSession,
-  getRunningRpcSessionIds,
-  startRpcSession,
-  subscribeRunningSessions,
-} from "./rpc-manager";
-import {
-  buildSessionContext,
-  invalidateSessionPathCache,
-  listAllSessions,
-  resolveSessionPath,
-} from "./session-reader";
+import { allowFileRoot, getAllowedFileRoots, invalidateAllowedRootsCache, isFilePathAllowed } from "./file-access";
+import { getRpcSession, getRunningRpcSessionIds, startRpcSession, subscribeRunningSessions } from "./rpc-manager";
+import { buildSessionContext, invalidateSessionPathCache, listAllSessions, resolveSessionPath } from "./session-reader";
 import { isFilePathReferencedBySession } from "./session-file-references";
 import {
   addWorktree,
@@ -70,32 +53,71 @@ import {
   documentPreviewKind,
   getAudioMime,
   getDocumentMime,
-  getFileExt,
   getImageMime,
 } from "../shared/file-types";
 import { createFileWatchService } from "./file-watch";
 import { createAuthLoginService, resolveLoginCode } from "./auth-login";
 import { applyPluginAction, readPlugins } from "./plugins-service";
 import { installSkill, searchSkills } from "./skills-service";
+import { projectTreeForResponse } from "./project-tree";
 
 const execFileAsync = promisify(execFile);
 
 const IGNORED_NAMES = new Set([
-  "node_modules", ".git", ".next", "dist", "build", "__pycache__",
-  ".turbo", ".cache", "coverage", ".pytest_cache", ".mypy_cache",
-  "target", "vendor", ".DS_Store",
+  "node_modules",
+  ".git",
+  ".next",
+  "dist",
+  "build",
+  "__pycache__",
+  ".turbo",
+  ".cache",
+  "coverage",
+  ".pytest_cache",
+  ".mypy_cache",
+  "target",
+  "vendor",
+  ".DS_Store",
 ]);
 
 const EXT_TO_LANGUAGE: Record<string, string> = {
-  ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
-  mjs: "javascript", cjs: "javascript", py: "python", rb: "ruby",
-  go: "go", rs: "rust", java: "java", kt: "kotlin", swift: "swift",
-  c: "c", cpp: "cpp", h: "c", hpp: "cpp", cs: "csharp",
-  html: "html", htm: "html", css: "css", scss: "css", less: "css",
-  json: "json", jsonl: "json", yaml: "yaml", yml: "yaml",
-  toml: "toml", xml: "xml", md: "markdown", mdx: "markdown",
-  sh: "bash", bash: "bash", zsh: "bash", fish: "bash",
-  sql: "sql", txt: "text",
+  ts: "typescript",
+  tsx: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  py: "python",
+  rb: "ruby",
+  go: "go",
+  rs: "rust",
+  java: "java",
+  kt: "kotlin",
+  swift: "swift",
+  c: "c",
+  cpp: "cpp",
+  h: "c",
+  hpp: "cpp",
+  cs: "csharp",
+  html: "html",
+  htm: "html",
+  css: "css",
+  scss: "css",
+  less: "css",
+  json: "json",
+  jsonl: "json",
+  yaml: "yaml",
+  yml: "yaml",
+  toml: "toml",
+  xml: "xml",
+  md: "markdown",
+  mdx: "markdown",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  fish: "bash",
+  sql: "sql",
+  txt: "text",
 };
 
 function getLanguage(filePath: string): string {
@@ -184,7 +206,11 @@ function writeTextAtomically(filePath: string, content: string): void {
   try {
     renameSync(tmp, filePath);
   } catch (error) {
-    try { unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* ignore cleanup failure */
+    }
     throw error;
   }
 }
@@ -209,67 +235,13 @@ function filterByExactEnabledModels<T extends { id: string; provider: string }>(
   return visible.length > 0 ? visible : available;
 }
 
-// OAuth login callback registry
-const loginCallbacks = new Map<string, { resolve: (v: string) => void; reject: (e: Error) => void }>();
-
-const MAX_PROJECTED_TREE_DEPTH = 200;
-
-function projectTreeForResponse<T extends { entry: { id: string }; children: T[]; compressedEntryIds?: string[] }>(
-  nodes: T[],
-): T[] {
-  const keep = new Set<T>();
-  const roots = new Set(nodes);
-  const seen = new Set<T>();
-  const stack = [...nodes];
-
-  while (stack.length > 0) {
-    const node = stack.pop()!;
-    if (seen.has(node)) continue;
-    seen.add(node);
-    if (roots.has(node) || node.children.length !== 1) keep.add(node);
-    for (const child of node.children) stack.push(child);
-  }
-
-  const cloneNode = (node: T, compressedEntryIds?: string[]): T => ({
-    ...node,
-    children: [],
-    ...(compressedEntryIds?.length ? { compressedEntryIds } : {}),
-  });
-  const projectedRoots = nodes.map((node) => cloneNode(node));
-  const tasks = nodes.map((source, index) => ({
-    source,
-    projected: projectedRoots[index],
-    depth: 1,
-  }));
-
-  while (tasks.length > 0) {
-    const { source, projected, depth } = tasks.pop()!;
-    for (const sourceChild of source.children) {
-      let child = sourceChild;
-      if (depth >= MAX_PROJECTED_TREE_DEPTH) {
-        projected.children.push(cloneNode(child));
-        continue;
-      }
-      const compressedEntryIds: string[] = [];
-      while (!keep.has(child) && child.children.length === 1) {
-        compressedEntryIds.push(child.entry.id);
-        child = child.children[0];
-      }
-      const projectedChild = cloneNode(child, compressedEntryIds.length ? compressedEntryIds : undefined);
-      projected.children.push(projectedChild);
-      tasks.push({ source: child, projected: projectedChild, depth: depth + 1 });
-    }
-  }
-  return projectedRoots;
-}
-
 export function registerHandlers(server: RpcServer): void {
   const fileWatch = createFileWatchService(server);
   const authLogin = createAuthLoginService(server);
 
   // Running sessions stream + tray badge signal to main via parentPort
   subscribeRunningSessions((ids) => {
-    // Field name matches old SSE payload consumed by SessionSidebar
+    // Both fields remain in the current stream contract for renderer compatibility.
     server.emit("agent.running", "*", {
       type: "running",
       sessionIds: ids,
@@ -300,7 +272,6 @@ export function registerHandlers(server: RpcServer): void {
       const leafId = sm.getLeafId();
       const tree = projectTreeForResponse(sm.getTree() as never);
       const context = buildSessionContext(entries, leafId);
-      const header = sm.getHeader();
       const all = await listAllSessions();
       const info = all.find((s) => s.id === id);
 
@@ -550,7 +521,14 @@ export function registerHandlers(server: RpcServer): void {
         throw new RpcError({ code: "NOT_FOUND", message: "Directory not found" });
       }
       const names = readdirSync(dirPath);
-      const entries: Array<{ name: string; isDir: boolean; size?: number; mtime?: number; path: string; type: "file" | "directory" }> = [];
+      const entries: Array<{
+        name: string;
+        isDir: boolean;
+        size?: number;
+        mtime?: number;
+        path: string;
+        type: "file" | "directory";
+      }> = [];
       for (const name of names) {
         if (IGNORED_NAMES.has(name)) continue;
         const full = path.join(dirPath, name);
@@ -594,11 +572,7 @@ export function registerHandlers(server: RpcServer): void {
 
       // ISSUE-004: binary as base64+mime; never UTF-8 corrupt
       if (binaryMime) {
-        const limit = imageMime
-          ? IMAGE_PREVIEW_MAX_BYTES
-          : documentMime
-            ? DOCX_PREVIEW_MAX_BYTES
-            : 50 * 1024 * 1024;
+        const limit = imageMime ? IMAGE_PREVIEW_MAX_BYTES : documentMime ? DOCX_PREVIEW_MAX_BYTES : 50 * 1024 * 1024;
         if (st.size > limit) {
           return {
             content: "",
@@ -650,7 +624,8 @@ export function registerHandlers(server: RpcServer): void {
       return {
         base64: readFileSync(filePath).toString("base64"),
         size: st.size,
-        mime: getImageMime(filePath) || getAudioMime(filePath) || getDocumentMime(filePath) || "application/octet-stream",
+        mime:
+          getImageMime(filePath) || getAudioMime(filePath) || getDocumentMime(filePath) || "application/octet-stream",
       };
     },
 
@@ -947,9 +922,7 @@ export function registerHandlers(server: RpcServer): void {
           if (message.stopReason === "error" || message.stopReason === "aborted") {
             return {
               ok: false,
-              error:
-                message.errorMessage ??
-                (controller.signal.aborted ? "Test timed out" : "Model returned an error"),
+              error: message.errorMessage ?? (controller.signal.aborted ? "Test timed out" : "Model returned an error"),
               latencyMs,
               status,
             };
@@ -1049,7 +1022,7 @@ export function registerHandlers(server: RpcServer): void {
       const { provider } = params as { provider: string };
       try {
         const authStorage = AuthStorage.create();
-        if (typeof authStorage.logout === "function") await authStorage.logout(provider);
+        if (typeof authStorage.logout === "function") authStorage.logout(provider);
       } catch {
         /* ignore */
       }
@@ -1060,7 +1033,7 @@ export function registerHandlers(server: RpcServer): void {
       const { provider } = params as { provider: string };
       const authStorage = AuthStorage.create();
       if (typeof authStorage.logout === "function") {
-        await authStorage.logout(provider);
+        authStorage.logout(provider);
       }
       return { ok: true as const };
     },
@@ -1133,7 +1106,7 @@ export function registerHandlers(server: RpcServer): void {
       };
       const skill = await resolveLoadedSkill(body.cwd, body.filePath);
       const { filePath } = skill;
-      let content = body.content ?? readFileSync(filePath, "utf8");
+      const content = body.content ?? readFileSync(filePath, "utf8");
       if (content.length > 2 * 1024 * 1024) {
         throw new RpcError({ code: "BAD_REQUEST", message: "Skill file is too large" });
       }
@@ -1272,9 +1245,3 @@ function ensureSessionEvents(
     clearSessionEventBinding(key);
   });
 }
-
-// silence unused imports in some builds
-void isWindowsAbsolutePath;
-void normalizeSlashes;
-void getFileExt;
-void execFileAsync;

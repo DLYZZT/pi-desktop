@@ -94,12 +94,7 @@ export function installAppMenu(getWindow: () => BrowserWindow | null): void {
       submenu: [
         { role: "minimize" },
         { role: "zoom" },
-        ...(isMac
-          ? [
-              { type: "separator" as const },
-              { role: "front" as const },
-            ]
-          : [{ role: "close" as const }]),
+        ...(isMac ? [{ type: "separator" as const }, { role: "front" as const }] : [{ role: "close" as const }]),
       ],
     },
     {
@@ -108,7 +103,7 @@ export function installAppMenu(getWindow: () => BrowserWindow | null): void {
         {
           label: "Open Logs Folder",
           click: () => {
-            shell.openPath(app.getPath("logs"));
+            void shell.openPath(app.getPath("logs"));
           },
         },
         {

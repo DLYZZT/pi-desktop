@@ -5,9 +5,7 @@ import type {
   DirEntry,
   FileContent,
   FileMeta,
-  FuzzyMatch,
   LoginProgressEvent,
-  ModelInfo,
   ModelsConfig,
   ModelsListResult,
   ProviderStatus,
@@ -219,7 +217,7 @@ export interface Api {
   "system.runningCount": { params: void; result: { count: number; sessionIds: string[] } };
 }
 
-/** Server-push streams (replaces SSE routes). */
+/** Server-push streams delivered over MessagePort RPC. */
 export interface Streams {
   "agent.events": AgentEvent;
   "agent.running": RunningStateEvent;

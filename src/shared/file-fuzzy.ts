@@ -130,10 +130,12 @@ export function filterFileEntries(
     const score = scoreEntry(entry, lowerQuery);
     if (score > 0) scored.push({ entry, score });
   }
-  scored.sort((a, b) =>
-    b.score - a.score
-    || pathDepth(a.entry.path) - pathDepth(b.entry.path)
-    || a.entry.path.localeCompare(b.entry.path));
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      pathDepth(a.entry.path) - pathDepth(b.entry.path) ||
+      a.entry.path.localeCompare(b.entry.path),
+  );
   return scored.slice(0, limit).map((s) => s.entry);
 }
 

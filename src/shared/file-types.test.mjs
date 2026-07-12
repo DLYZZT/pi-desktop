@@ -6,18 +6,15 @@ async function loadSubject() {
 }
 
 test("detects image, audio, and document preview paths", async () => {
-  const {
-    getAudioMime,
-    getDocumentMime,
-    getImageMime,
-    isAudioPath,
-    isDocumentPreviewPath,
-    isImagePath,
-  } = await loadSubject();
+  const { getAudioMime, getDocumentMime, getImageMime, isAudioPath, isDocumentPreviewPath, isImagePath } =
+    await loadSubject();
 
   assert.equal(getImageMime("/tmp/screenshot.PNG"), "image/png");
   assert.equal(getAudioMime("C:\\Users\\me\\voice.OPUS"), "audio/ogg");
-  assert.equal(getDocumentMime("/tmp/report.docx"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  assert.equal(
+    getDocumentMime("/tmp/report.docx"),
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  );
   assert.equal(isImagePath("/tmp/screenshot.PNG"), true);
   assert.equal(isAudioPath("C:\\Users\\me\\voice.OPUS"), true);
   assert.equal(isDocumentPreviewPath("/tmp/report.pdf"), true);

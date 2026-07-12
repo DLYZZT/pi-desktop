@@ -246,22 +246,22 @@ export class HostManager {
   }
 }
 
-export function resolveHostEntry(): string {
+export function resolveHostEntry(mainDirectory = __dirname): string {
   // ESM agent-host (pi packages are import-only)
-  return path.join(__dirname, "agent-host.mjs");
+  return path.join(mainDirectory, "agent-host.mjs");
 }
 
-export function resolvePreloadPath(): string {
-  return path.join(__dirname, "..", "preload", "preload.js");
+export function resolvePreloadPath(mainDirectory = __dirname): string {
+  return path.join(mainDirectory, "..", "preload", "preload.js");
 }
 
-export function resolveRendererEntry(isDev: boolean): string {
+export function resolveRendererEntry(isDev: boolean, mainDirectory = __dirname): string {
   // Explicit Vite URL (npm run dev sets this)
   if (process.env.VITE_DEV_SERVER_URL) {
     return process.env.VITE_DEV_SERVER_URL;
   }
   // Prefer built renderer whenever it exists (works for `npm start` after build)
-  const builtIndex = path.join(__dirname, "..", "renderer", "index.html");
+  const builtIndex = path.join(mainDirectory, "..", "renderer", "index.html");
   if (fs.existsSync(builtIndex)) {
     return "app://bundle/index.html";
   }

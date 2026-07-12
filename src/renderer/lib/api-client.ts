@@ -57,8 +57,7 @@ function requestHostPort(): Promise<MessagePort> {
       if (event.source !== window) return;
       const data = event.data as { channel?: string } | string | null;
       const isPortMsg =
-        data === "pi-desktop-host-port" ||
-        (typeof data === "object" && data?.channel === "pi-desktop-host-port");
+        data === "pi-desktop-host-port" || (typeof data === "object" && data?.channel === "pi-desktop-host-port");
       if (!isPortMsg) return;
       const port = event.ports[0];
       if (!port) return;
@@ -238,10 +237,7 @@ export async function fileIndex(root: string, query?: string) {
   return call("files.index", { root, query });
 }
 
-export async function subscribeAgentEvents(
-  sessionId: string,
-  on: (ev: Streams["agent.events"]) => void,
-) {
+export async function subscribeAgentEvents(sessionId: string, on: (ev: Streams["agent.events"]) => void) {
   return subscribe("agent.events", sessionId, on);
 }
 
@@ -253,9 +249,6 @@ export async function subscribeSessionsChanged(on: (ev: Streams["sessions.change
   return subscribe("sessions.changed", "*", on);
 }
 
-export async function subscribeAuthLogin(
-  provider: string,
-  on: (ev: Streams["auth.login"]) => void,
-) {
+export async function subscribeAuthLogin(provider: string, on: (ev: Streams["auth.login"]) => void) {
   return subscribe("auth.login", provider, on);
 }

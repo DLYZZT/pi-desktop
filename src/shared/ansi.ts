@@ -4,27 +4,9 @@ const ANSI_ESCAPE_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\
 const ANSI_ESCAPE_AT_START_RE = /^\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/;
 const ANSI_SGR_RE = /\x1B\[([0-9;]*)m/g;
 
-const ANSI_8_COLORS = [
-  "#1f2937",
-  "#dc2626",
-  "#16a34a",
-  "#d97706",
-  "#2563eb",
-  "#9333ea",
-  "#0891b2",
-  "#6b7280",
-];
+const ANSI_8_COLORS = ["#1f2937", "#dc2626", "#16a34a", "#d97706", "#2563eb", "#9333ea", "#0891b2", "#6b7280"];
 
-const ANSI_BRIGHT_COLORS = [
-  "#9ca3af",
-  "#ef4444",
-  "#22c55e",
-  "#f59e0b",
-  "#3b82f6",
-  "#a855f7",
-  "#06b6d4",
-  "#e5e7eb",
-];
+const ANSI_BRIGHT_COLORS = ["#9ca3af", "#ef4444", "#22c55e", "#f59e0b", "#3b82f6", "#a855f7", "#06b6d4", "#e5e7eb"];
 
 export interface AnsiSegment {
   text: string;
@@ -121,7 +103,7 @@ export function ansi256Color(index: number): string | undefined {
     const r = Math.floor(n / 36);
     const g = Math.floor((n % 36) / 6);
     const b = n % 6;
-    const scale = (v: number) => v === 0 ? 0 : 55 + v * 40;
+    const scale = (v: number) => (v === 0 ? 0 : 55 + v * 40);
     return `rgb(${scale(r)}, ${scale(g)}, ${scale(b)})`;
   }
   if (index >= 232 && index <= 255) {
@@ -194,9 +176,7 @@ export function parseAnsiLine(line: string): AnsiSegment[] {
     if (match.index > lastIndex) {
       segments.push({ text: line.slice(lastIndex, match.index), style });
     }
-    const codes = match[1]
-      ? match[1].split(";").map((part) => Number(part || "0"))
-      : [0];
+    const codes = match[1] ? match[1].split(";").map((part) => Number(part || "0")) : [0];
     style = applyAnsiCodes(style, codes);
     lastIndex = match.index + match[0].length;
   }

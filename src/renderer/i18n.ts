@@ -195,8 +195,11 @@ export function setAppLanguage(language: AppLanguage): void {
 
 export function useI18n() {
   const language = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  const t = useCallback((key: string, fallback: string) => {
-    return dictionaries[language][key] ?? fallback;
-  }, [language]);
+  const t = useCallback(
+    (key: string, fallback: string) => {
+      return dictionaries[language][key] ?? fallback;
+    },
+    [language],
+  );
   return { language, setLanguage: setAppLanguage, t };
 }

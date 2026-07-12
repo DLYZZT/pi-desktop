@@ -25,8 +25,14 @@ test("splits trailing final answer blocks from process blocks", async () => {
 
   const result = splitFinalAssistantBlocks(message, { isStreaming: false });
 
-  assert.deepEqual(result.answerBlocks.map((block) => block.type), ["text", "image"]);
-  assert.deepEqual(result.processBlocks.map((block) => block.type), ["thinking", "toolCall"]);
+  assert.deepEqual(
+    result.answerBlocks.map((block) => block.type),
+    ["text", "image"],
+  );
+  assert.deepEqual(
+    result.processBlocks.map((block) => block.type),
+    ["thinking", "toolCall"],
+  );
 });
 
 test("keeps pre-tool text in process blocks", async () => {
@@ -39,9 +45,15 @@ test("keeps pre-tool text in process blocks", async () => {
 
   const result = splitFinalAssistantBlocks(message, { isStreaming: false });
 
-  assert.deepEqual(result.answerBlocks.map((block) => block.type), ["text"]);
+  assert.deepEqual(
+    result.answerBlocks.map((block) => block.type),
+    ["text"],
+  );
   assert.equal(result.answerBlocks[0].text, "Final answer");
-  assert.deepEqual(result.processBlocks.map((block) => block.type), ["text", "toolCall"]);
+  assert.deepEqual(
+    result.processBlocks.map((block) => block.type),
+    ["text", "toolCall"],
+  );
 });
 
 test("does not expose text before a trailing tool call as final answer", async () => {
@@ -55,7 +67,10 @@ test("does not expose text before a trailing tool call as final answer", async (
   const result = splitFinalAssistantBlocks(message, { isStreaming: false });
 
   assert.deepEqual(result.answerBlocks, []);
-  assert.deepEqual(result.processBlocks.map((block) => block.type), ["thinking", "text", "toolCall"]);
+  assert.deepEqual(
+    result.processBlocks.map((block) => block.type),
+    ["thinking", "text", "toolCall"],
+  );
 });
 
 test("drops empty thinking blocks after completion", async () => {
@@ -71,7 +86,10 @@ test("drops empty thinking blocks after completion", async () => {
   );
 
   const result = splitFinalAssistantBlocks(message, { isStreaming: false });
-  assert.deepEqual(result.answerBlocks.map((block) => block.type), ["text"]);
+  assert.deepEqual(
+    result.answerBlocks.map((block) => block.type),
+    ["text"],
+  );
   assert.deepEqual(result.processBlocks, []);
 });
 
@@ -84,6 +102,12 @@ test("keeps empty thinking while streaming", async () => {
 
   const result = splitFinalAssistantBlocks(message, { isStreaming: true });
 
-  assert.deepEqual(result.answerBlocks.map((block) => block.type), ["text"]);
-  assert.deepEqual(result.processBlocks.map((block) => block.type), ["thinking"]);
+  assert.deepEqual(
+    result.answerBlocks.map((block) => block.type),
+    ["text"],
+  );
+  assert.deepEqual(
+    result.processBlocks.map((block) => block.type),
+    ["thinking"],
+  );
 });

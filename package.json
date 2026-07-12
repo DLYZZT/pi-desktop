@@ -6,22 +6,31 @@
   "license": "Apache-2.0",
   "productName": "Pi Agent Desktop",
   "author": "DLYZZT",
+  "engines": {
+    "node": ">=20.19"
+  },
   "main": "out/main/main.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
     "build:main": "tsup --config tsup.config.ts",
     "build:renderer": "vite build",
+    "build:smoke": "tsup --config tsup.smoke.config.ts",
+    "lint": "eslint src scripts *.ts *.mjs --max-warnings=0",
+    "lint:fix": "eslint src scripts *.ts *.mjs --fix --max-warnings=0",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.renderer.json",
-    "test": "node --test src/shared/*.test.mjs",
+    "test": "node scripts/test.mjs",
     "check:contract": "node scripts/check-contract-coverage.mjs",
     "check:desktop-security": "node scripts/check-desktop-security.mjs",
+    "check:production-artifacts": "node scripts/check-production-artifacts.mjs",
     "smoke": "node scripts/smoke-electron.mjs",
     "verify": "node scripts/verify.mjs",
+    "prepare": "husky",
     "start": "electron .",
     "pack": "npm run verify && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
-    "dist": "npm run verify && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --publish never",
-    "engines-note": "Use Node 20+ for dev; Electron ships its own runtime"
+    "dist": "npm run verify && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --publish never"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.80.3",
@@ -41,6 +50,8 @@
     "remark-math": "^6.0.0"
   },
   "devDependencies": {
+    "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/postcss": "^4.2.2",
     "@types/node": "^25",
     "@types/react": "^19",
@@ -50,10 +61,18 @@
     "electron": "35.7.5",
     "electron-builder": "26.0.12",
     "electron-updater": "^6.6.2",
+    "esbuild": "^0.27.7",
+    "eslint": "^10.7.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.8",
     "postcss": "^8",
+    "prettier": "^3.9.5",
     "tailwindcss": "^4.2.2",
     "tsup": "8.5.1",
     "typescript": "^5",
+    "typescript-eslint": "^8.63.0",
     "vite": "^6.3.5"
   }
 }

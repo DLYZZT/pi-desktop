@@ -55,13 +55,13 @@ if (parentPort) {
 }
 
 process.on("uncaughtException", (err) => {
-  log(`uncaughtException: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+  log(`uncaughtException: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
   // Do not keep serving requests from a potentially corrupted Host. The main
   // process supervisor will restart this utility process within its budget.
   setImmediate(() => process.exit(1));
 });
 process.on("unhandledRejection", (err) => {
-  log(`unhandledRejection: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+  log(`unhandledRejection: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
   setImmediate(() => process.exit(1));
 });
 

@@ -6,9 +6,7 @@ export interface SplitDiffCell {
   type: SplitDiffCellType;
 }
 
-export type SplitDiffRow =
-  | { type: "hunk"; text: string }
-  | { type: "line"; left: SplitDiffCell; right: SplitDiffCell };
+export type SplitDiffRow = { type: "hunk"; text: string } | { type: "line"; left: SplitDiffCell; right: SplitDiffCell };
 
 export interface SplitDiffFile {
   oldPath?: string;
@@ -42,9 +40,7 @@ export function parseUnifiedPatch(text: string): SplitDiffFile[] | null {
       const left = removed[i]
         ? { lineNo: removed[i].lineNo, text: removed[i].text, type: "removed" as const }
         : emptyCell();
-      const right = added[i]
-        ? { lineNo: added[i].lineNo, text: added[i].text, type: "added" as const }
-        : emptyCell();
+      const right = added[i] ? { lineNo: added[i].lineNo, text: added[i].text, type: "added" as const } : emptyCell();
       current.rows.push({ type: "line", left, right });
     }
     removed = [];

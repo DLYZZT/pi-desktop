@@ -19,8 +19,7 @@ function parseInstallCount(installs: string): number {
   if (!match) return 0;
   const value = Number(match[1]);
   if (!Number.isFinite(value)) return 0;
-  const multiplier =
-    match[2] === "B" ? 1_000_000_000 : match[2] === "M" ? 1_000_000 : match[2] === "K" ? 1_000 : 1;
+  const multiplier = match[2] === "B" ? 1_000_000_000 : match[2] === "M" ? 1_000_000 : match[2] === "K" ? 1_000 : 1;
   return value * multiplier;
 }
 
@@ -66,10 +65,7 @@ async function searchSkillsApi(query: string, limit: number): Promise<SkillSearc
     .sort((a, b) => parseInstallCount(b.installs) - parseInstallCount(a.installs));
 }
 
-export async function searchSkills(
-  query: string,
-  limit = 50,
-): Promise<{ results: SkillSearchResult[] }> {
+export async function searchSkills(query: string, limit = 50): Promise<{ results: SkillSearchResult[] }> {
   const q = query.trim();
   if (!q) return { results: [] };
   const capped = Math.min(50, Math.max(1, limit));
