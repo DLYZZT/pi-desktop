@@ -60,6 +60,7 @@ import { createAuthLoginService, resolveLoginCode } from "./auth-login";
 import { applyPluginAction, readPlugins } from "./plugins-service";
 import { installSkill, searchSkills } from "./skills-service";
 import { projectTreeForResponse } from "./project-tree";
+import { ChannelManager } from "./channels/channel-manager";
 
 const execFileAsync = promisify(execFile);
 
@@ -235,9 +236,13 @@ function filterByExactEnabledModels<T extends { id: string; provider: string }>(
   return visible.length > 0 ? visible : available;
 }
 
-export function registerHandlers(server: RpcServer): void {
+export function registerHandlers(server: RpcServer): () => Promise<void> {
   const fileWatch = createFileWatchService(server);
   const authLogin = createAuthLoginService(server);
+  const channelManager = new ChannelManager(server, (session, sessionId) =>
+    ensureSessionEvents(server, session, sessionId),
+  );
+  void channelManager.initialize();
 
   // Running sessions stream + tray badge signal to main via parentPort
   subscribeRunningSessions((ids) => {
@@ -513,6 +518,53 @@ export function registerHandlers(server: RpcServer): void {
       const state = await session.send({ type: "get_state" });
       return { running: true, state };
     },
+
+    "channels.list": async () => channelManager.snapshot(),
+
+    "channels.accountUpsert": async (params) => channelManager.upsertAccount(params.account),
+
+    "channels.accountDelete": async (params) => channelManager.deleteAccount(params.accountId),
+
+    "channels.start": async (params) => {
+      await channelManager.startAccount(params.accountId);
+      return { ok: true as const };
+    },
+
+    "channels.stop": async (params) => {
+      await channelManager.stopAccount(params.accountId);
+      return { ok: true as const };
+    },
+
+    "channels.restart": async (params) => {
+      await channelManager.restartAccount(params.accountId);
+      return { ok: true as const };
+    },
+
+    "channels.probe": async (params) => channelManager.probe(params.accountId),
+
+    "channels.loginStart": async (params) => channelManager.startLogin(params.force),
+
+    "channels.loginWait": async (params) => channelManager.waitLogin(params.sessionKey),
+
+    "channels.loginSubmitCode": async (params) => {
+      channelManager.submitLoginCode(params.sessionKey, params.code);
+      return { ok: true as const };
+    },
+
+    "channels.loginCancel": async (params) => {
+      channelManager.cancelLogin(params.sessionKey);
+      return { ok: true as const };
+    },
+
+    "channels.pairingApprove": async (params) => channelManager.approvePairing(params.pairingId),
+
+    "channels.pairingReject": async (params) => channelManager.rejectPairing(params.pairingId),
+
+    "channels.bindingUpsert": async (params) => channelManager.upsertBinding(params.binding),
+
+    "channels.bindingDelete": async (params) => channelManager.deleteBinding(params.bindingId),
+
+    "channels.testSend": async (params) => channelManager.testSend(params.accountId, params.peerId, params.message),
 
     "files.list": async (params) => {
       const { path: dirPath } = params as { path: string };
@@ -1191,6 +1243,8 @@ export function registerHandlers(server: RpcServer): void {
       return { count: sessionIds.length, sessionIds };
     },
   });
+
+  return () => channelManager.shutdown();
 }
 
 /** ISSUE-003: track bindings per wrapper instance, not permanent sessionId set */

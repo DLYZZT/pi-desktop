@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n, type AppLanguage } from "@/i18n";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
+import { ChannelsConfig } from "./channels/ChannelsConfig";
+import type { ChannelsSnapshot } from "@shared/channel-types";
 
-type SettingsTab = "general" | "models" | "skills" | "plugins";
+type SettingsTab = "general" | "channels" | "models" | "skills" | "plugins";
 
 interface SettingsConfigProps {
   cwd: string | null;
@@ -14,9 +16,17 @@ interface SettingsConfigProps {
   onClose: () => void;
   onModelsChanged: () => void;
   onPluginsReloaded: () => void;
+  onChannelsChanged: (snapshot: ChannelsSnapshot) => void;
 }
 
-export function SettingsConfig({ cwd, sessionId, onClose, onModelsChanged, onPluginsReloaded }: SettingsConfigProps) {
+export function SettingsConfig({
+  cwd,
+  sessionId,
+  onClose,
+  onModelsChanged,
+  onPluginsReloaded,
+  onChannelsChanged,
+}: SettingsConfigProps) {
   const isMobile = useIsMobile();
   const { isDark, toggleTheme } = useTheme();
   const { language, setLanguage, t } = useI18n();
@@ -24,6 +34,7 @@ export function SettingsConfig({ cwd, sessionId, onClose, onModelsChanged, onPlu
 
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: "general", label: t("general", "General") },
+    { id: "channels", label: t("channels", "Channels") },
     { id: "models", label: t("models", "Models") },
     { id: "skills", label: t("skills", "Skills") },
     { id: "plugins", label: t("plugins", "Plugins") },
@@ -152,6 +163,7 @@ export function SettingsConfig({ cwd, sessionId, onClose, onModelsChanged, onPlu
             />
           )}
           {activeTab === "models" && <ModelsConfig embedded onClose={() => undefined} onChanged={onModelsChanged} />}
+          {activeTab === "channels" && <ChannelsConfig onSnapshotChange={onChannelsChanged} />}
           {activeTab === "skills" &&
             (cwd ? <SkillsConfig embedded cwd={cwd} onClose={() => undefined} /> : <ProjectRequired />)}
           {activeTab === "plugins" &&
@@ -184,6 +196,10 @@ function GeneralSettings({
   onThemeChange: (dark: boolean) => void;
 }) {
   const { t } = useI18n();
+  const [backgroundMode, setBackgroundMode] = useState(true);
+  useEffect(() => {
+    void window.piBridge.getUiState().then((state) => setBackgroundMode(state.backgroundMode !== false));
+  }, []);
   return (
     <div style={{ width: "100%", overflowY: "auto", padding: "28px clamp(18px, 5vw, 52px)" }}>
       <section style={{ maxWidth: 620 }}>
@@ -202,6 +218,26 @@ function GeneralSettings({
             <option value="en-US">English</option>
             <option value="zh-CN">简体中文</option>
           </select>
+        </SettingRow>
+      </section>
+
+      <div style={{ height: 1, background: "var(--border)", maxWidth: 620, margin: "28px 0" }} />
+
+      <section style={{ maxWidth: 620 }}>
+        <h2 style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>{t("backgroundMode", "Background mode")}</h2>
+        <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
+          {t("backgroundModeDescription", "Keep messaging channels connected when the window is closed.")}
+        </p>
+        <SettingRow label={t("closeToTray", "Close window to tray")}>
+          <input
+            type="checkbox"
+            checked={backgroundMode}
+            onChange={(event) => {
+              const next = event.target.checked;
+              setBackgroundMode(next);
+              void window.piBridge.setUiState({ backgroundMode: next });
+            }}
+          />
         </SettingRow>
       </section>
 

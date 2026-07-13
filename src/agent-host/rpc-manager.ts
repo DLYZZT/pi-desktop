@@ -79,6 +79,7 @@ function withExtensionTools(session: AgentSessionLike, toolNames: string[]): str
 // ============================================================================
 
 export class AgentSessionWrapper {
+  public readonly inner: AgentSessionLike;
   private listeners: EventListener[] = [];
   private pendingUiResponses = new Map<string, PendingUiResponse>();
   private pendingUiRequests = new Map<string, AgentEvent>();
@@ -91,6 +92,9 @@ export class AgentSessionWrapper {
   private extensionEditorText = "";
   private unsupportedExtensionFeatures = new Set<string>();
   private promptRunning = false;
+  private queuedTurnCount = 0;
+  private turnTail: Promise<void> = Promise.resolve();
+  private externalTurnActive = false;
   private extensionsBound = false;
   private extensionBindingPromise: Promise<void> | null = null;
   private extensionBindingError: unknown = null;
@@ -100,7 +104,9 @@ export class AgentSessionWrapper {
   private onDestroyCallback: (() => void) | null = null;
   private _alive = true;
 
-  constructor(public readonly inner: AgentSessionLike) {}
+  constructor(inner: AgentSessionLike) {
+    this.inner = inner;
+  }
 
   get sessionId(): string {
     return this.inner.sessionId;
@@ -115,7 +121,10 @@ export class AgentSessionWrapper {
   }
 
   isRunning(): boolean {
-    return this._alive && (this.promptRunning || this.inner.isStreaming || this.inner.isCompacting);
+    return (
+      this._alive &&
+      (this.promptRunning || this.queuedTurnCount > 0 || this.inner.isStreaming || this.inner.isCompacting)
+    );
   }
 
   start(): void {
@@ -233,6 +242,52 @@ export class AgentSessionWrapper {
     for (const l of this.listeners) l(event);
   }
 
+  private enqueueTurn<T>(task: () => Promise<T>): Promise<T> {
+    this.queuedTurnCount += 1;
+    notifyRunningChange();
+    const run = this.turnTail
+      .catch(() => undefined)
+      .then(async () => {
+        if (!this._alive) throw new Error("Agent session is no longer available");
+        this.promptRunning = true;
+        notifyRunningChange();
+        try {
+          return await task();
+        } finally {
+          this.promptRunning = false;
+          this.queuedTurnCount = Math.max(0, this.queuedTurnCount - 1);
+          notifyRunningChange();
+        }
+      });
+    this.turnTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  async runExternalTurn(params: { runId: string; message: string }): Promise<{ runId: string; finalText: string }> {
+    return this.enqueueTurn(async () => {
+      this.emit({ type: "channel_turn_start", runId: params.runId });
+      this.externalTurnActive = true;
+      try {
+        await this.inner.prompt(params.message, { source: "rpc" });
+        const finalText = this.inner.getLastAssistantText()?.trim() ?? "";
+        this.emit({ type: "channel_turn_end", runId: params.runId, finalText });
+        return { runId: params.runId, finalText };
+      } catch (error) {
+        this.emit({
+          type: "channel_turn_error",
+          runId: params.runId,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      } finally {
+        this.externalTurnActive = false;
+      }
+    });
+  }
+
   private resetIdleTimer(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = setTimeout(
@@ -271,27 +326,23 @@ export class AgentSessionWrapper {
         // Fire and forget — events come via subscribe
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
-        this.promptRunning = true;
-        notifyRunningChange();
-        this.inner
-          .prompt(command.message as string, {
+        const invokePrompt = () =>
+          this.inner.prompt(command.message as string, {
             ...(promptImages?.length ? { images: promptImages } : {}),
             ...(streamingBehavior ? { streamingBehavior } : {}),
             source: "rpc",
-          })
+          });
+        const operation = streamingBehavior ? invokePrompt() : this.enqueueTurn(invokePrompt);
+        operation
           .then(() => {
-            this.promptRunning = false;
             if (!streamingBehavior) this.emit({ type: "prompt_done" });
-            notifyRunningChange();
           })
           .catch((error) => {
-            this.promptRunning = false;
             this.emit({
               type: "prompt_error",
               errorMessage: error instanceof Error ? error.message : String(error),
             });
             if (!streamingBehavior) this.emit({ type: "prompt_done" });
-            notifyRunningChange();
           });
         return null;
       }
@@ -672,6 +723,14 @@ export class AgentSessionWrapper {
   }
 
   private requestExtensionCustomUi<T>(factory: unknown, options?: unknown): Promise<T> {
+    if (this.externalTurnActive) {
+      this.emit({
+        type: "channel_headless_ui_blocked",
+        feature: "custom",
+        errorMessage: "Interactive extension UI is unavailable for messaging-channel turns.",
+      });
+      return Promise.resolve(undefined as T);
+    }
     if (typeof factory !== "function") return Promise.resolve(undefined as T);
 
     const id = randomUUID();
@@ -725,6 +784,14 @@ export class AgentSessionWrapper {
     timeout?: number,
     signal?: AbortSignal,
   ): Promise<T> {
+    if (this.externalTurnActive) {
+      this.emit({
+        type: "channel_headless_ui_blocked",
+        feature: request.method,
+        errorMessage: "Interactive extension UI is unavailable for messaging-channel turns.",
+      });
+      return Promise.resolve(defaultValue);
+    }
     if (signal?.aborted) return Promise.resolve(defaultValue);
 
     const id = randomUUID();

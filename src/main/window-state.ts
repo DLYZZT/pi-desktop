@@ -13,6 +13,7 @@ export type UiState = {
   sidebarWidth?: number;
   theme?: "light" | "dark" | "system";
   recentCwds?: string[];
+  backgroundMode?: boolean;
 };
 
 function statePath(): string {

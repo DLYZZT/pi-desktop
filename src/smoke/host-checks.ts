@@ -96,6 +96,10 @@ export async function runSmokeHostChecks(
   try {
     await call("host.ping");
     await call("sessions.list");
+    const channels = await call<{ accounts?: unknown[]; statuses?: unknown[]; bindings?: unknown[] }>("channels.list");
+    if (!Array.isArray(channels.accounts) || !Array.isArray(channels.statuses) || !Array.isArray(channels.bindings)) {
+      throw new Error("channels.list returned an invalid shape");
+    }
     await call("system.allowRoot", { path: process.cwd() });
     const status = await call<{ isGit?: boolean }>("git.status", { path: process.cwd() });
     if (typeof status.isGit !== "boolean") throw new Error("git.status returned an invalid shape");
@@ -198,6 +202,38 @@ export async function runSmokeHostChecks(
             try {
               const root = document.getElementById("root");
               if (window.piBridge && root && root.childElementCount > 0) {
+                const findButton = (text) => Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === text);
+                const settingsButton = document.querySelector('button[title="Settings"],button[title="设置"]');
+                if (!settingsButton) {
+                  if (Date.now() >= deadline) throw new Error("Settings button is unavailable");
+                  setTimeout(check, 50);
+                  return;
+                }
+                settingsButton.click();
+                const settingsDeadline = Date.now() + 3000;
+                let channelsButton;
+                while (!channelsButton && Date.now() < settingsDeadline) {
+                  channelsButton = findButton("Channels") || findButton("消息渠道");
+                  if (!channelsButton) await new Promise((wait) => setTimeout(wait, 25));
+                }
+                if (!channelsButton) throw new Error("Channels settings tab is unavailable");
+                channelsButton.click();
+                const channelDeadline = Date.now() + 3000;
+                let connectButton;
+                while (!connectButton && Date.now() < channelDeadline) {
+                  connectButton = findButton("Connect WeChat") || findButton("连接微信");
+                  if (!connectButton) await new Promise((wait) => setTimeout(wait, 25));
+                }
+                if (!connectButton) throw new Error("WeChat settings UI is unavailable");
+                const activityToggle = document.querySelector('[data-testid="channel-activity-toggle"]');
+                if (!activityToggle || activityToggle.getAttribute("aria-expanded") !== "false") {
+                  throw new Error("Recent channel activity is not collapsed by default");
+                }
+                activityToggle.click();
+                await new Promise((wait) => setTimeout(wait, 0));
+                if (activityToggle.getAttribute("aria-expanded") !== "true") {
+                  throw new Error("Recent channel activity cannot be expanded");
+                }
                 const status = await fetch(${JSON.stringify(`/api/git-status?cwd=${encodeURIComponent(process.cwd())}`)}).then((response) => response.json());
                 const token = "pi-html-preview-smoke-" + Math.random().toString(36).slice(2);
                 const previewUrl = await window.piBridge.createHtmlPreview(
@@ -232,6 +268,7 @@ export async function runSmokeHostChecks(
                   rendered: root.childElementCount > 0,
                   gitStatus: typeof status.isGit === "boolean",
                   htmlPreview: previewRendered,
+                  channelSettings: Boolean(connectButton),
                 });
                 return;
               }
@@ -244,12 +281,19 @@ export async function runSmokeHostChecks(
           };
           void check();
         })
-      `)) as { bridge?: boolean; rendered?: boolean; gitStatus?: boolean; htmlPreview?: boolean };
+      `)) as {
+        bridge?: boolean;
+        rendered?: boolean;
+        gitStatus?: boolean;
+        htmlPreview?: boolean;
+        channelSettings?: boolean;
+      };
       if (
         !rendererResult.bridge ||
         !rendererResult.rendered ||
         !rendererResult.gitStatus ||
-        !rendererResult.htmlPreview
+        !rendererResult.htmlPreview ||
+        !rendererResult.channelSettings
       ) {
         throw new Error(`Renderer smoke returned invalid result: ${JSON.stringify(rendererResult)}`);
       }
@@ -259,7 +303,7 @@ export async function runSmokeHostChecks(
     } finally {
       if (!smokeWindow.isDestroyed()) smokeWindow.destroy();
     }
-    appendMainLog("smoke: renderer/RPC/session/worktree/git/watch/download/skills checks passed");
+    appendMainLog("smoke: renderer/RPC/session/worktree/git/watch/download/skills/channels checks passed");
   } finally {
     for (const entry of pending.values()) {
       clearTimeout(entry.timer);

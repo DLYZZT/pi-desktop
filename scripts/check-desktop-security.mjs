@@ -13,6 +13,9 @@ const preload = read("src/preload/preload.ts");
 const globals = read("src/renderer/global.d.ts");
 const diagnostics = read("src/main/diagnostics.ts");
 const fileViewer = read("src/renderer/components/FileViewer.tsx");
+const credentialVault = read("src/main/credential-vault.ts");
+const channelApi = read("src/agent-host/channels/adapters/weixin/api.ts");
+const channelContract = read("src/contract/api.ts");
 const rendererCsp = protocol.slice(protocol.indexOf("const CSP ="), protocol.indexOf("const HTML_PREVIEW_CSP ="));
 
 const checks = [
@@ -31,6 +34,13 @@ const checks = [
   [!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), "renderer HTML must not contain inline scripts"],
   [preload.includes("../contract/desktop"), "preload must use the shared desktop bridge contract"],
   [globals.includes("../contract/desktop"), "renderer globals must use the shared desktop bridge contract"],
+  [credentialVault.includes("safeStorage.encryptString"), "channel credentials must use Electron safeStorage"],
+  [credentialVault.includes("safeStorage.isEncryptionAvailable"), "channel credential persistence must fail closed"],
+  [!/(createServer|\.listen\s*\()/.test(channelApi), "Weixin MVP must not open a local listener"],
+  [
+    !channelContract.includes("botToken") && !channelContract.includes("appSecret"),
+    "channel RPC must not expose raw secrets",
+  ],
 ];
 
 const failures = checks.filter(([ok]) => !ok).map(([, message]) => message);

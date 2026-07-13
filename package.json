@@ -33,6 +33,7 @@
     "dist": "npm run verify && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --publish never"
   },
   "dependencies": {
+    "@rc-component/qrcode": "^2.0.0",
     "@earendil-works/pi-ai": "^0.80.3",
     "@earendil-works/pi-coding-agent": "^0.80.3",
     "@lobehub/icons": "^5.6.0",

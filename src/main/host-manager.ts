@@ -32,6 +32,7 @@ export class HostManager {
   private onHostMessage: ((msg: HostMessage) => void) | null = null;
   private pendingPorts: MessagePortMain[] = [];
   private wasReadyBeforeExit = false;
+  private requestHandler: ((method: string, params: unknown) => Promise<unknown>) | null = null;
 
   constructor(private readonly hostEntry: string) {}
 
@@ -41,6 +42,10 @@ export class HostManager {
 
   setMessageListener(cb: (msg: HostMessage) => void): void {
     this.onHostMessage = cb;
+  }
+
+  setRequestHandler(cb: (method: string, params: unknown) => Promise<unknown>): void {
+    this.requestHandler = cb;
   }
 
   getStatus(): HostStatus {
@@ -57,11 +62,23 @@ export class HostManager {
     this.status = "stopped";
     if (this.child) {
       try {
-        this.child.kill();
+        this.child.postMessage({ type: "shutdown" });
       } catch {
-        /* ignore */
+        try {
+          this.child.kill();
+        } catch {
+          /* ignore */
+        }
       }
-      this.child = null;
+      const child = this.child;
+      setTimeout(() => {
+        if (this.child !== child) return;
+        try {
+          child.kill();
+        } catch {
+          /* ignore */
+        }
+      }, 1_500).unref();
     }
   }
 
@@ -147,6 +164,8 @@ export class HostManager {
     // Host must NOT run as pure node — it needs parentPort from utilityProcess
     delete env.ELECTRON_RUN_AS_NODE;
     env.PI_AGENT_HOST = "1";
+    env.PI_DESKTOP_USER_DATA = app.getPath("userData");
+    env.PI_DESKTOP_VERSION = app.getVersion();
 
     const child = utilityProcess.fork(this.hostEntry, [], {
       serviceName: "pi-agent-host",
@@ -184,6 +203,34 @@ export class HostManager {
         this.lastPong = Date.now();
       } else if (m?.type === "log") {
         appendMainLog(`[host] ${m.message}`);
+      } else if (m?.type === "host-rpc") {
+        const request = m as HostMessage & { id?: string; method?: string; params?: unknown };
+        const id = String(request.id ?? "");
+        const method = String(request.method ?? "");
+        if (id && method) {
+          void (async () => {
+            try {
+              if (!this.requestHandler) throw new Error("Main request handler is unavailable");
+              const result = await this.requestHandler(method, request.params);
+              try {
+                child.postMessage({ type: "host-rpc-result", id, ok: true, result });
+              } catch {
+                /* child exited while the request was running */
+              }
+            } catch (error) {
+              try {
+                child.postMessage({
+                  type: "host-rpc-result",
+                  id,
+                  ok: false,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              } catch {
+                /* child exited while the request was running */
+              }
+            }
+          })();
+        }
       }
       this.onHostMessage?.(m);
     });

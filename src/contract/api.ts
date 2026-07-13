@@ -22,6 +22,18 @@ import type {
   SkillRecord,
   SkillUpdateParams,
 } from "../shared/api-types";
+import type {
+  ChannelAccountConfig,
+  ChannelBinding,
+  ChannelBindingChange,
+  ChannelLoginEvent,
+  ChannelProbeResult,
+  ChannelsSnapshot,
+  ChannelStatus,
+  ChannelPairingRequest,
+  ChannelActivity,
+  ChannelTestSendResult,
+} from "../shared/channel-types";
 
 /** Request/response API surface (replaces HTTP routes). */
 export interface Api {
@@ -94,6 +106,57 @@ export interface Api {
   "agent.state": {
     params: { sessionId: string };
     result: { running: boolean; state?: unknown };
+  };
+
+  // Messaging channels
+  "channels.list": { params: void; result: ChannelsSnapshot };
+  "channels.accountUpsert": {
+    params: { account: ChannelAccountConfig };
+    result: ChannelsSnapshot;
+  };
+  "channels.accountDelete": {
+    params: { accountId: string };
+    result: ChannelsSnapshot;
+  };
+  "channels.start": { params: { accountId: string }; result: { ok: true } };
+  "channels.stop": { params: { accountId: string }; result: { ok: true } };
+  "channels.restart": { params: { accountId: string }; result: { ok: true } };
+  "channels.probe": { params: { accountId: string }; result: ChannelProbeResult };
+  "channels.loginStart": {
+    params: { channel: "weixin"; force?: boolean };
+    result: ChannelLoginEvent;
+  };
+  "channels.loginWait": {
+    params: { channel: "weixin"; sessionKey: string };
+    result: ChannelLoginEvent;
+  };
+  "channels.loginSubmitCode": {
+    params: { channel: "weixin"; sessionKey: string; code: string };
+    result: { ok: true };
+  };
+  "channels.loginCancel": {
+    params: { channel: "weixin"; sessionKey: string };
+    result: { ok: true };
+  };
+  "channels.pairingApprove": {
+    params: { pairingId: string };
+    result: ChannelsSnapshot;
+  };
+  "channels.pairingReject": {
+    params: { pairingId: string };
+    result: ChannelsSnapshot;
+  };
+  "channels.bindingUpsert": {
+    params: { binding: ChannelBinding };
+    result: ChannelsSnapshot;
+  };
+  "channels.bindingDelete": {
+    params: { bindingId: string };
+    result: ChannelsSnapshot;
+  };
+  "channels.testSend": {
+    params: { accountId: string; peerId: string; message: string };
+    result: ChannelTestSendResult;
   };
 
   // Files
@@ -232,6 +295,11 @@ export interface Streams {
   };
   "host.restarted": { reason: string };
   "host.ready": { ts: number };
+  "channels.status": ChannelStatus;
+  "channels.login": ChannelLoginEvent;
+  "channels.pairing": ChannelPairingRequest;
+  "channels.binding": ChannelBindingChange;
+  "channels.activity": ChannelActivity;
 }
 
 export type ApiMethod = keyof Api;

@@ -7,7 +7,7 @@ import { registerHandlers } from "./handlers";
 import { startSessionWatcher } from "./session-watcher";
 
 const server = createRpcServer();
-registerHandlers(server);
+const stopHandlers = registerHandlers(server);
 const stopWatcher = startSessionWatcher(server);
 
 function log(message: string): void {
@@ -43,7 +43,7 @@ if (parentPort) {
     }
     if (msg?.type === "shutdown") {
       stopWatcher();
-      process.exit(0);
+      void stopHandlers().finally(() => process.exit(0));
     }
   });
 

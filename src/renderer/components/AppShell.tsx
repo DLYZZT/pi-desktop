@@ -1,4 +1,4 @@
-import { listSessions } from "@/lib/api-client";
+import { call, listSessions, subscribe } from "@/lib/api-client";
 import {
   useState,
   useCallback,
@@ -14,6 +14,7 @@ import { FileExplorer } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { SettingsConfig } from "./SettingsConfig";
+import { QuickWeixinBinding } from "./channels/QuickWeixinBinding";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
@@ -23,10 +24,12 @@ import { buildAtMentionText } from "@/lib/file-fuzzy";
 import type { SessionInfo } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
+import type { ChannelsSnapshot } from "@shared/channel-types";
 
 type SessionCopyField = "file" | "id";
 const EXPLORER_TAB_ID = "explorer";
 const RIGHT_PANEL_WIDTH_KEY = "pi-desktop:right-panel-width:v2";
+const EMPTY_CHANNELS: ChannelsSnapshot = { accounts: [], statuses: [], pairings: [], bindings: [], activities: [] };
 
 function initialRightPanelWidth(): number {
   try {
@@ -72,6 +75,7 @@ export function AppShell() {
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [channelSnapshot, setChannelSnapshot] = useState<ChannelsSnapshot>(EMPTY_CHANNELS);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
@@ -84,6 +88,33 @@ export function AppShell() {
     setMobileSidebarReady(true);
   }, []);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
+
+  const refreshChannelSnapshot = useCallback(async () => {
+    try {
+      setChannelSnapshot(await call("channels.list"));
+    } catch {
+      // Channels are optional; the rest of the desktop remains usable if Host is still starting.
+    }
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const unsubs: Array<() => void> = [];
+    void refreshChannelSnapshot();
+    void Promise.all([
+      subscribe("channels.binding", "*", () => void refreshChannelSnapshot()),
+      subscribe("channels.status", "*", () => void refreshChannelSnapshot()),
+    ])
+      .then((items) => {
+        if (disposed) items.forEach((unsubscribe) => unsubscribe());
+        else unsubs.push(...items);
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unsubs.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [refreshChannelSnapshot]);
 
   // Session stats (tokens + cost) — populated by ChatWindow, displayed in top bar
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
@@ -753,6 +784,14 @@ export function AppShell() {
                 </svg>
               )}
             </button>
+            {selectedSession && (
+              <QuickWeixinBinding
+                sessionId={selectedSession.id}
+                snapshot={channelSnapshot}
+                isMobile={isMobile}
+                onSnapshotChange={setChannelSnapshot}
+              />
+            )}
             {/* Session stats — right-aligned in top bar */}
             {showChat &&
               (sessionStats || contextUsage) &&
@@ -1487,6 +1526,7 @@ export function AppShell() {
           onClose={() => setSettingsOpen(false)}
           onModelsChanged={() => setModelsRefreshKey((key) => key + 1)}
           onPluginsReloaded={() => setSessionKey((key) => key + 1)}
+          onChannelsChanged={setChannelSnapshot}
         />
       )}
     </>

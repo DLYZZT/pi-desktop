@@ -5,7 +5,7 @@
  */
 import { app, BrowserWindow, crashReporter, nativeTheme, nativeImage, Notification } from "electron";
 import path from "path";
-import { HostManager, resolveHostEntry } from "./host-manager";
+import { HostManager, getUserDataPath, resolveHostEntry } from "./host-manager";
 import { appendMainLog } from "./logger";
 import { installAppMenu } from "./menu";
 import { handleAppProtocol, registerAppProtocol, rendererRootPath } from "./protocol";
@@ -14,6 +14,7 @@ import { loadUiState } from "./window-state";
 import { createTray, destroyTray, setTrayRunningCount } from "./tray";
 import { createMainWindow } from "./window";
 import { installDesktopIpc } from "./ipc";
+import { createCredentialRequestHandler, CredentialVault } from "./credential-vault";
 
 // Must run before app ready
 registerAppProtocol();
@@ -104,7 +105,7 @@ function createWindow(): BrowserWindow {
       pendingDeepLink = null;
       return sessionId;
     },
-    shouldHideOnClose: () => process.platform === "darwin" && !isQuitting,
+    shouldHideOnClose: () => !isQuitting && loadUiState().backgroundMode !== false,
     onClosed: (closedWindow) => {
       if (mainWindow === closedWindow) mainWindow = null;
     },
@@ -138,6 +139,8 @@ void app.whenReady().then(() => {
   }
 
   hostManager = new HostManager(resolveHostEntry());
+  const credentialVault = new CredentialVault(getUserDataPath("channels.secrets.json"));
+  hostManager.setRequestHandler(createCredentialRequestHandler(credentialVault));
   hostManager.setStatusListener((status, detail) => {
     appendMainLog(`host status=${status} ${detail ?? ""}`);
     for (const win of BrowserWindow.getAllWindows()) {
