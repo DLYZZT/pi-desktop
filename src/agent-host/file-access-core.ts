@@ -28,7 +28,7 @@ export function canonicalPath(filePath: string, useWindowsRules: boolean): strin
       return resolver.normalize(resolver.join(existing, ...missingSegments));
     } catch {
       const parent = resolver.dirname(current);
-      if (parent === current) return resolver.normalize(current);
+      if (parent === current) return resolver.normalize(resolver.join(current, ...missingSegments));
       missingSegments.unshift(resolver.basename(current));
       current = parent;
     }

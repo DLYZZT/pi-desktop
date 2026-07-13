@@ -47,7 +47,8 @@ test("resolves the nearest existing ancestor before appending missing segments",
   symlinkSync(outside, path.join(root, "escape"), process.platform === "win32" ? "junction" : "dir");
 
   const target = path.join(root, "escape", "not-created", "file.txt");
-  assert.equal(canonicalPath(target, false), path.join(realpathSync(outside), "not-created", "file.txt"));
+  const realpath = realpathSync.native ?? realpathSync;
+  assert.equal(canonicalPath(target, false), path.join(realpath(outside), "not-created", "file.txt"));
   assert.equal(isFilePathAllowed(target, new Set([root])), false);
 });
 
