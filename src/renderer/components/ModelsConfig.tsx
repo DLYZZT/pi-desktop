@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
+import { call } from "@/lib/api-client";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
 import OpenAIIcon from "@lobehub/icons/es/OpenAI/components/Mono";
@@ -943,6 +944,7 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
   const [inputValue, setInputValue] = useState("");
   const eventSourceRef = useRef<EventSource | null>(null);
+  const loginAttemptRef = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -951,43 +953,49 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
     }
   }, [loginState.phase]);
 
-  // Reset state when provider changes — ISSUE-008: cancel Host login
+  // Reset state when provider changes and invalidate any in-flight startup.
   useEffect(() => {
+    loginAttemptRef.current += 1;
     setLoginState({ phase: "idle" });
     setInputValue("");
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
-    void fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: `${provider.id}-cancel`, code: "" }),
-    }).catch(() => {});
-    void import("@/lib/api-client").then(({ call }) =>
-      call("auth.loginCancel", { provider: provider.id }).catch(() => {}),
-    );
+    void call("auth.loginCancel", { provider: provider.id }).catch(() => {});
   }, [provider.id]);
 
   useEffect(() => {
     return () => {
+      loginAttemptRef.current += 1;
       eventSourceRef.current?.close();
-      void import("@/lib/api-client").then(({ call }) =>
-        call("auth.loginCancel", { provider: provider.id }).catch(() => {}),
-      );
+      eventSourceRef.current = null;
+      void call("auth.loginCancel", { provider: provider.id }).catch(() => {});
     };
   }, [provider.id]);
 
-  const handleLogin = useCallback(() => {
+  const handleLogin = useCallback(async () => {
+    const attempt = loginAttemptRef.current + 1;
+    loginAttemptRef.current = attempt;
     eventSourceRef.current?.close();
-    void import("@/lib/api-client").then(({ call }) =>
-      call("auth.loginCancel", { provider: provider.id }).catch(() => {}),
-    );
+    eventSourceRef.current = null;
     setLoginState({ phase: "connecting" });
     setInputValue("");
+
+    try {
+      // Do not race cancellation with startup: a late cancel would abort the
+      // brand-new OAuth flow and make the Login button appear unresponsive.
+      await call("auth.loginCancel", { provider: provider.id });
+    } catch (error) {
+      if (loginAttemptRef.current !== attempt) return;
+      setLoginState({ phase: "error", message: error instanceof Error ? error.message : "Unable to reset login" });
+      return;
+    }
+    if (loginAttemptRef.current !== attempt) return;
 
     const es = new EventSource(`/api/auth/login/${encodeURIComponent(provider.id)}`);
     eventSourceRef.current = es;
 
     es.onmessage = (e) => {
+      if (eventSourceRef.current !== es || loginAttemptRef.current !== attempt) return;
       const data = JSON.parse(e.data) as {
         type: string;
         url?: string;
@@ -1037,21 +1045,36 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
         setLoginState({ phase: "progress", message: data.message! });
       } else if (data.type === "success") {
         es.close();
+        eventSourceRef.current = null;
         setLoginState({ phase: "success" });
         onRefresh();
       } else if (data.type === "error") {
         es.close();
+        eventSourceRef.current = null;
         setLoginState({ phase: "error", message: data.message! });
       } else if (data.type === "cancelled") {
         es.close();
+        eventSourceRef.current = null;
         setLoginState({ phase: "idle" });
       }
     };
-    es.onerror = () => {
+    es.onerror = (event) => {
+      if (eventSourceRef.current !== es || loginAttemptRef.current !== attempt) return;
       es.close();
-      setLoginState((prev) => (prev.phase === "success" ? prev : { phase: "error", message: "Connection lost" }));
+      eventSourceRef.current = null;
+      const message = event instanceof ErrorEvent && event.message ? event.message : "Connection lost";
+      setLoginState((prev) => (prev.phase === "success" ? prev : { phase: "error", message }));
     };
   }, [provider.id, onRefresh]);
+
+  const handleCancelLogin = useCallback(() => {
+    loginAttemptRef.current += 1;
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    setLoginState({ phase: "idle" });
+    setInputValue("");
+    void call("auth.loginCancel", { provider: provider.id }).catch(() => {});
+  }, [provider.id]);
 
   const handleLogout = useCallback(async () => {
     await fetch(`/api/auth/logout/${encodeURIComponent(provider.id)}`, { method: "POST" });
@@ -1283,10 +1306,7 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
       <div style={{ display: "flex", gap: 8 }}>
         {isWorking ? (
           <button
-            onClick={() => {
-              eventSourceRef.current?.close();
-              setLoginState({ phase: "idle" });
-            }}
+            onClick={handleCancelLogin}
             style={{
               padding: "5px 12px",
               background: "none",

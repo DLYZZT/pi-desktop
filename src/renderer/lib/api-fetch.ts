@@ -423,7 +423,10 @@ export class ApiEventSource {
           void call("auth.loginCancel", { provider }).catch(() => {});
           return;
         }
-        await call("auth.loginStart", { provider });
+        const result = await call("auth.loginStart", { provider });
+        if (!result.started) {
+          throw new Error("An OAuth login is already active. Cancel it and try again.");
+        }
         if (this.closed || gen !== this.generation) {
           void call("auth.loginCancel", { provider }).catch(() => {});
           return;
@@ -466,10 +469,11 @@ export class ApiEventSource {
 
       this.readyState = ApiEventSource.CLOSED;
       this.onerror?.(new Event("error"));
-    } catch {
+    } catch (error) {
       if (!this.closed) {
         this.readyState = ApiEventSource.CLOSED;
-        this.onerror?.(new Event("error"));
+        const message = error instanceof Error ? error.message : String(error);
+        this.onerror?.(new ErrorEvent("error", { message }));
       }
     }
   }

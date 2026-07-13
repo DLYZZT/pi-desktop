@@ -35,7 +35,12 @@ export function cancelLogin(provider: string): void {
   }
 }
 
-export function createAuthLoginService(server: RpcServer) {
+type AuthStorageFactory = () => Pick<AuthStorage, "getOAuthProviders" | "login">;
+
+export function createAuthLoginService(
+  server: RpcServer,
+  createAuthStorage: AuthStorageFactory = () => AuthStorage.create(),
+) {
   function emit(provider: string, data: Record<string, unknown>) {
     server.emit("auth.login", provider, data as never);
   }
@@ -46,7 +51,7 @@ export function createAuthLoginService(server: RpcServer) {
         return { started: false };
       }
 
-      const authStorage = AuthStorage.create();
+      const authStorage = createAuthStorage();
       const providers = authStorage.getOAuthProviders();
       const providerInfo = providers.find((p) => p.id === provider);
       if (!providerInfo) {
@@ -96,7 +101,11 @@ export function createAuthLoginService(server: RpcServer) {
           loginCallbacks.delete(token);
         }
         activeTokens.clear();
-        activeLogins.delete(provider);
+        // A cancelled flow may finish after its replacement has started.
+        // Only remove this flow's own controller from the provider slot.
+        if (activeLogins.get(provider) === abort) {
+          activeLogins.delete(provider);
+        }
       };
 
       abort.signal.addEventListener("abort", cleanup);
