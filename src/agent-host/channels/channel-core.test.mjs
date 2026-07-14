@@ -16,6 +16,7 @@ await build({
       'export { LaneScheduler } from "./lane-scheduler.ts";',
       'export { splitChannelText } from "./outbound-renderer.ts";',
       'export { evaluateInboundPolicy } from "./policy.ts";',
+      'export { parseChannelCommand } from "./channel-commands.ts";',
       'export { redactChannelValue, safeChannelError } from "./redaction.ts";',
     ].join("\n"),
     resolveDir: import.meta.dirname,
@@ -35,6 +36,7 @@ const {
   LaneScheduler,
   splitChannelText,
   evaluateInboundPolicy,
+  parseChannelCommand,
   redactChannelValue,
   safeChannelError,
 } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
@@ -49,6 +51,7 @@ function account(overrides = {}) {
     dmPolicy: "pairing",
     allowFrom: [],
     groupPolicy: "disabled",
+    groupIds: [],
     groupAllowFrom: [],
     requireMention: true,
     toolNames: [],
@@ -79,6 +82,7 @@ test("channel config persists normalized accounts and bindings", () => {
   const store = new ChannelConfigStore(file);
   const saved = store.upsertAccount(account({ allowFrom: [" user ", "user"] }));
   assert.deepEqual(saved.allowFrom, ["user"]);
+  assert.equal(saved.commandsEnabled, false);
   const binding = store.upsertBinding({
     id: "binding",
     channel: "weixin",
@@ -91,18 +95,44 @@ test("channel config persists normalized accounts and bindings", () => {
     lastUsedAt: saved.createdAt,
   });
   assert.equal(binding.peerId, "user");
+  store.upsertAccount({ ...saved, commandsEnabled: true });
 
   const reopened = new ChannelConfigStore(file);
   assert.equal(reopened.listAccounts().length, 1);
+  assert.equal(reopened.listAccounts()[0].commandsEnabled, true);
   assert.equal(reopened.listBindings()[0].id, "binding");
   assert.equal(JSON.parse(readFileSync(file, "utf8")).version, 1);
+});
+
+test("channel command parser recognizes only the additive built-in command set", () => {
+  assert.deepEqual(parseChannelCommand("/help"), { name: "help", args: "" });
+  assert.deepEqual(parseChannelCommand(" /status@pi_bot "), { name: "status", args: "" });
+  assert.deepEqual(parseChannelCommand("/new"), { name: "new", args: "" });
+  assert.deepEqual(parseChannelCommand("/compact keep decisions"), {
+    name: "compact",
+    args: "keep decisions",
+  });
+  assert.deepEqual(parseChannelCommand("/reload"), { name: "reload", args: "" });
+  assert.equal(parseChannelCommand("/unknown"), null);
+  assert.equal(parseChannelCommand("please /help"), null);
+  assert.equal(parseChannelCommand("/help/extra"), null);
 });
 
 test("versionless config migrates and corrupt config is quarantined", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "pi-channels-migrate-"));
   const file = path.join(dir, "channels.json");
-  writeFileSync(file, JSON.stringify({ accounts: [account()], bindings: [] }));
-  assert.equal(new ChannelConfigStore(file).listAccounts().length, 1);
+  writeFileSync(
+    file,
+    JSON.stringify({
+      accounts: [account({ id: "tg-one", channel: "telegram", name: "", groupIds: undefined })],
+      bindings: [],
+    }),
+  );
+  const migrated = new ChannelConfigStore(file).listAccounts();
+  assert.equal(migrated.length, 1);
+  assert.equal(migrated[0].channel, "telegram");
+  assert.equal(migrated[0].name, "Telegram");
+  assert.deepEqual(migrated[0].groupIds, []);
   assert.equal(JSON.parse(readFileSync(file, "utf8")).version, 1);
 
   writeFileSync(file, "{not-json");
@@ -153,17 +183,29 @@ test("policy defaults to pairing and keeps group authorization independent", () 
   assert.equal(evaluateInboundPolicy(account({ dmPolicy: "allowlist" }), envelope()), "ignore");
   assert.equal(
     evaluateInboundPolicy(
-      account({ groupPolicy: "allowlist", groupAllowFrom: ["user-one"], requireMention: true }),
+      account({ groupPolicy: "allowlist", groupIds: ["group"], groupAllowFrom: ["user-one"], requireMention: true }),
       envelope({ peer: { kind: "group", id: "group" }, mentionsBot: false }),
     ),
     "ignore",
   );
   assert.equal(
     evaluateInboundPolicy(
-      account({ groupPolicy: "allowlist", groupAllowFrom: ["user-one"], requireMention: true }),
+      account({ groupPolicy: "allowlist", groupIds: ["group"], groupAllowFrom: ["user-one"], requireMention: true }),
       envelope({ peer: { kind: "group", id: "group" }, mentionsBot: true }),
     ),
     "allow",
+  );
+  assert.equal(
+    evaluateInboundPolicy(
+      account({
+        groupPolicy: "allowlist",
+        groupIds: ["another-group"],
+        groupAllowFrom: ["user-one"],
+        requireMention: true,
+      }),
+      envelope({ peer: { kind: "group", id: "group" }, mentionsBot: true }),
+    ),
+    "ignore",
   );
 });
 
@@ -217,10 +259,16 @@ test("channel redaction removes structured and inline credentials", () => {
     nested: { contextToken: "[REDACTED]", ok: 1 },
   });
   assert.equal(safeChannelError(new Error("Authorization: Bearer abcdef")), "Authorization: Bearer [REDACTED]");
+  assert.equal(
+    safeChannelError(new Error("request failed: https://api.telegram.org/bot123456:secret/getMe")),
+    "request failed: https://api.telegram.org/bot[REDACTED]/getMe",
+  );
 });
 
 test("outbound text splitting preserves Unicode and readable boundaries", () => {
-  const chunks = splitChannelText(`${"你".repeat(8)}\n\n${"🙂".repeat(8)}`, 10);
-  assert.deepEqual(chunks, ["你".repeat(8), "🙂".repeat(8)]);
+  const text = `${"你".repeat(8)}\n\n${"🙂".repeat(8)}`;
+  const chunks = splitChannelText(text, 10);
+  assert.deepEqual(chunks, [`${"你".repeat(8)}\n\n`, "🙂".repeat(8)]);
+  assert.equal(chunks.join(""), text);
   assert.equal(chunks.join("").includes("�"), false);
 });

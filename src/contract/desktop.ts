@@ -1,4 +1,17 @@
+import type { ChannelId } from "../shared/channel-types";
+
 export type HostStatus = "starting" | "ready" | "crashed" | "stopped";
+
+export interface ChannelCredentialWrite {
+  channel: ChannelId;
+  accountId: string;
+  credential: {
+    token: string;
+    providerAccountId: string;
+    providerUsername?: string;
+    baseUrl: string;
+  };
+}
 
 export interface SaveTextFileOptions {
   content: string;
@@ -21,6 +34,7 @@ export interface PiBridge {
   openExternal: (url: string) => Promise<void>;
   showItemInFolder: (fsPath: string) => Promise<void>;
   selectDirectory: () => Promise<string | null>;
+  setChannelCredential: (payload: ChannelCredentialWrite) => Promise<void>;
   saveFile: (opts: SaveTextFileOptions) => Promise<string | null>;
   saveBinaryFile: (opts: SaveBinaryFileOptions) => Promise<string | null>;
   createHtmlPreview: (content: string, filePath: string, sourceSessionId?: string | null) => Promise<string>;

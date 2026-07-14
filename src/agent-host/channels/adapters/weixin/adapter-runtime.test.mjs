@@ -50,6 +50,7 @@ function account() {
     dmPolicy: "open",
     allowFrom: [],
     groupPolicy: "disabled",
+    groupIds: [],
     groupAllowFrom: [],
     requireMention: true,
     toolNames: [],

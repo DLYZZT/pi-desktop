@@ -14,8 +14,10 @@ const globals = read("src/renderer/global.d.ts");
 const diagnostics = read("src/main/diagnostics.ts");
 const fileViewer = read("src/renderer/components/FileViewer.tsx");
 const credentialVault = read("src/main/credential-vault.ts");
-const channelApi = read("src/agent-host/channels/adapters/weixin/api.ts");
+const weixinChannelApi = read("src/agent-host/channels/adapters/weixin/api.ts");
+const telegramChannelApi = read("src/agent-host/channels/adapters/telegram/api.ts");
 const channelContract = read("src/contract/api.ts");
+const desktopContract = read("src/contract/desktop.ts");
 const rendererCsp = protocol.slice(protocol.indexOf("const CSP ="), protocol.indexOf("const HTML_PREVIEW_CSP ="));
 
 const checks = [
@@ -36,10 +38,15 @@ const checks = [
   [globals.includes("../contract/desktop"), "renderer globals must use the shared desktop bridge contract"],
   [credentialVault.includes("safeStorage.encryptString"), "channel credentials must use Electron safeStorage"],
   [credentialVault.includes("safeStorage.isEncryptionAvailable"), "channel credential persistence must fail closed"],
-  [!/(createServer|\.listen\s*\()/.test(channelApi), "Weixin MVP must not open a local listener"],
+  [!/(createServer|\.listen\s*\()/.test(weixinChannelApi), "Weixin MVP must not open a local listener"],
+  [!/(createServer|\.listen\s*\()/.test(telegramChannelApi), "Telegram polling must not open a local listener"],
   [
     !channelContract.includes("botToken") && !channelContract.includes("appSecret"),
     "channel RPC must not expose raw secrets",
+  ],
+  [
+    desktopContract.includes("setChannelCredential") && !desktopContract.includes("getChannelCredential"),
+    "renderer channel credential bridge must remain write-only",
   ],
 ];
 

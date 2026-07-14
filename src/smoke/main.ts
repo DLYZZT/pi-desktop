@@ -40,9 +40,15 @@ void app.whenReady().then(() => {
   const credentialVault = new CredentialVault(smokeVaultPath);
   hostManager.setRequestHandler(createCredentialRequestHandler(credentialVault));
   if (safeStorage.isEncryptionAvailable()) {
-    const key = "channel:weixin:smoke-test";
-    credentialVault.set(key, { token: "smoke-secret" });
-    if (credentialVault.get(key)?.token !== "smoke-secret") {
+    const key = "channel:telegram:smoke-test";
+    credentialVault.set(key, {
+      token: "smoke-secret",
+      providerAccountId: "42",
+      providerUsername: "@smoke_bot",
+      baseUrl: "https://api.telegram.org",
+    });
+    const savedCredential = credentialVault.get(key);
+    if (savedCredential?.token !== "smoke-secret" || savedCredential.providerAccountId !== "42") {
       finish(1, new Error("Credential vault round-trip failed"));
       return;
     }
@@ -58,6 +64,8 @@ void app.whenReady().then(() => {
     getMainWindow: () => smokeWindow,
     getUnreadBadge: () => 0,
     applyBadgeCount: () => {},
+    setChannelCredential: (payload) =>
+      credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
   });
 
   hostManager.setStatusListener((status, detail) => {

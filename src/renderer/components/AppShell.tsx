@@ -14,7 +14,7 @@ import { FileExplorer } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { SettingsConfig } from "./SettingsConfig";
-import { QuickWeixinBinding } from "./channels/QuickWeixinBinding";
+import { QuickChannelBinding } from "./channels/QuickChannelBinding";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
@@ -785,7 +785,7 @@ export function AppShell() {
               )}
             </button>
             {selectedSession && (
-              <QuickWeixinBinding
+              <QuickChannelBinding
                 sessionId={selectedSession.id}
                 snapshot={channelSnapshot}
                 isMobile={isMobile}

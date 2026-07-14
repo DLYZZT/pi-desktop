@@ -47,6 +47,7 @@ const bridge: PiBridge = {
   openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
   showItemInFolder: (fsPath) => ipcRenderer.invoke("desktop:show-item-in-folder", fsPath),
   selectDirectory: () => ipcRenderer.invoke("desktop:select-directory"),
+  setChannelCredential: (payload) => ipcRenderer.invoke("desktop:set-channel-credential", payload),
   saveFile: (opts) => ipcRenderer.invoke("desktop:save-file", opts),
   saveBinaryFile: (opts) => ipcRenderer.invoke("desktop:save-binary-file", opts),
   createHtmlPreview: (content, filePath, sourceSessionId) =>

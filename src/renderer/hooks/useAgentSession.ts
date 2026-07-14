@@ -16,9 +16,12 @@ import {
   listModels,
   newAgent,
   subscribeAgentEvents,
+  subscribeSessionsChanged,
 } from "@/lib/api-client";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
+import { subscribeActiveSessionLiveSync } from "./active-session-live-sync";
+import { isNearChatBottom, shouldStopChatAutoFollow } from "./chat-scroll-policy";
 
 export interface SessionData {
   sessionId: string;
@@ -386,7 +389,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const userScrollIntentUntilRef = useRef(0);
   const ignoreProgrammaticScrollUntilRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const liveContentEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const lastScrollTopRef = useRef(0);
+  const externalTurnAutoFollowRef = useRef(false);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
@@ -860,6 +866,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleAgentEvent = useCallback(
     (event: AgentEvent) => {
       switch (event.type) {
+        case "channel_turn_start": {
+          const container = scrollContainerRef.current;
+          const shouldFollow = container ? isNearChatBottom(container) : true;
+          externalTurnAutoFollowRef.current = shouldFollow;
+          completionScrollAllowedRef.current = shouldFollow;
+          if (container) lastScrollTopRef.current = container.scrollTop;
+          break;
+        }
+        case "channel_turn_end":
+        case "channel_turn_error":
+          externalTurnAutoFollowRef.current = false;
+          break;
         case "agent_start":
           agentRunningRef.current = true;
           setAgentRunning(true);
@@ -1470,6 +1488,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     messagesEndRef.current?.scrollIntoView({ behavior });
   }, []);
 
+  const scrollLiveContentToBottom = useCallback(() => {
+    ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
+    liveContentEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  }, []);
+
   const scrollUserMsgToTop = useCallback(() => {
     const container = scrollContainerRef.current;
     const el = lastUserMsgRef.current;
@@ -1484,21 +1507,70 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!SCROLL_KEYS.has(event.key)) return;
       if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable='true']")) return;
     }
+    const container = scrollContainerRef.current;
+    if (container) lastScrollTopRef.current = container.scrollTop;
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
   }, []);
 
   const handleScrollPositionChange = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const previousScrollTop = lastScrollTopRef.current;
+    const currentScrollTop = container.scrollTop;
+    lastScrollTopRef.current = currentScrollTop;
     if (!agentRunningRef.current) return;
-    if (Date.now() < ignoreProgrammaticScrollUntilRef.current) return;
-    if (Date.now() > userScrollIntentUntilRef.current) return;
-    completionScrollAllowedRef.current = false;
+    const now = Date.now();
+    // Local prompts deliberately move the user's message to the top; retain
+    // the old programmatic-scroll guard for that path. During external
+    // auto-follow, explicit upward input must win even while follow frames are
+    // producing their own scroll events.
+    if (
+      shouldStopChatAutoFollow({
+        previousScrollTop,
+        currentScrollTop,
+        now,
+        userIntentUntil: userScrollIntentUntilRef.current,
+        programmaticScrollUntil: ignoreProgrammaticScrollUntilRef.current,
+        externalAutoFollow: externalTurnAutoFollowRef.current,
+      })
+    ) {
+      completionScrollAllowedRef.current = false;
+      externalTurnAutoFollowRef.current = false;
+    }
   }, []);
 
   // Load session on mount
   useEffect(() => {
+    let disposed = false;
+    let unsubscribeLiveSync: (() => void) | undefined;
     if (session) {
       sessionIdRef.current = session.id;
+
+      // Subscribe even when the session is currently idle. IM turns can start
+      // without a desktop prompt, so waiting for agentState.running would miss
+      // the entire external turn until this component is remounted.
+      void subscribeActiveSessionLiveSync({
+        sessionId: session.id,
+        connectAgentEvents: async (sessionId) => {
+          const result = await connectEvents(sessionId);
+          if (result.status !== "connected") throw new EventStreamConnectionError(result.status);
+          return result.unsubscribe;
+        },
+        subscribeSessionChanges: subscribeSessionsChanged,
+        onSessionChanged: () => {
+          if (!disposed) void loadSession(session.id);
+        },
+      })
+        .then((unsubscribe) => {
+          if (disposed) unsubscribe();
+          else unsubscribeLiveSync = unsubscribe;
+        })
+        .catch((cause) => {
+          if (!disposed) console.error("Failed to subscribe to active session updates:", cause);
+        });
+
       void loadSession(session.id, true, true).then((agentState) => {
+        if (disposed) return;
         if (agentState?.running) {
           void loadTools(session.id);
           if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
@@ -1506,7 +1578,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             setAgentRunning(true);
             setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
             dispatch({ type: "start" });
-            void connectEvents(session.id);
             if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
               void waitForPromptSettlement(session.id);
             }
@@ -1528,6 +1599,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       });
     }
     return () => {
+      disposed = true;
+      unsubscribeLiveSync?.();
       eventUnsubRef.current?.();
       eventUnsubRef.current = null;
     };
@@ -1579,6 +1652,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     }
   }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
+
+  useEffect(() => {
+    if (!agentRunning || !externalTurnAutoFollowRef.current || !completionScrollAllowedRef.current) return;
+    const frame = requestAnimationFrame(() => {
+      if (!externalTurnAutoFollowRef.current || !completionScrollAllowedRef.current) return;
+      if (Date.now() <= userScrollIntentUntilRef.current) return;
+      scrollLiveContentToBottom();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [agentRunning, agentPhase, messages.length, scrollLiveContentToBottom, streamState.streamingMessage]);
 
   // Load model list
   useEffect(() => {
@@ -1667,6 +1750,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     sessionIdRef,
     eventUnsubRef,
     messagesEndRef,
+    liveContentEndRef,
     scrollContainerRef,
     lastUserMsgRef,
     pendingScrollToUserRef,

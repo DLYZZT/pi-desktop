@@ -14,6 +14,7 @@ import { call, listSessions, subscribe } from "@/lib/api-client";
 import { useI18n } from "@/i18n";
 
 const EMPTY: ChannelsSnapshot = { accounts: [], statuses: [], pairings: [], bindings: [], activities: [] };
+const TELEGRAM_BASE_URL = "https://api.telegram.org";
 const TOOL_PRESETS = {
   none: [],
   read: ["read", "grep", "find", "ls"],
@@ -62,6 +63,8 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
   const [error, setError] = useState("");
   const [login, setLogin] = useState<ChannelLoginEvent | null>(null);
   const [verificationCode, setVerificationCode] = useState("");
+  const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
+  const [telegramError, setTelegramError] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -138,6 +141,49 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
       setLogin(event);
     });
 
+  const connectTelegram = async (token: string) => {
+    setBusy(true);
+    setTelegramError("");
+    try {
+      const now = new Date().toISOString();
+      const accountId = `telegram-${crypto.randomUUID()}`;
+      const account: ChannelAccountConfig = {
+        id: accountId,
+        channel: "telegram",
+        name: "",
+        enabled: false,
+        dmPolicy: "pairing",
+        allowFrom: [],
+        groupPolicy: "disabled",
+        groupIds: [],
+        groupAllowFrom: [],
+        requireMention: true,
+        commandsEnabled: false,
+        toolNames: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      if (typeof window.piBridge.setChannelCredential !== "function") {
+        throw new Error(
+          t("telegramBridgeUnavailable", "The desktop runtime is outdated. Restart Pi Desktop and try again."),
+        );
+      }
+      await window.piBridge.setChannelCredential({
+        channel: "telegram",
+        accountId,
+        credential: { token, providerAccountId: accountId, baseUrl: TELEGRAM_BASE_URL },
+      });
+      const next = await call("channels.accountConnect", { account });
+      setSnapshot(next);
+      onSnapshotChange?.(next);
+      setTelegramDialogOpen(false);
+    } catch (cause) {
+      setTelegramError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const closeLogin = () => {
     if (login && !["confirmed", "already_connected", "expired", "error", "cancelled"].includes(login.phase)) {
       void call("channels.loginCancel", { channel: "weixin", sessionKey: login.sessionKey });
@@ -158,9 +204,22 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
               {t("channelsDescription", "Connect IM accounts, control access, and bind conversations to Pi sessions.")}
             </p>
           </div>
-          <button type="button" disabled={busy} style={buttonStyle(true)} onClick={beginLogin}>
-            {t("connectWeixin", "Connect WeChat")}
-          </button>
+          <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 7 }}>
+            <button
+              type="button"
+              disabled={busy}
+              style={buttonStyle()}
+              onClick={() => {
+                setTelegramError("");
+                setTelegramDialogOpen(true);
+              }}
+            >
+              {t("connectTelegram", "Connect Telegram")}
+            </button>
+            <button type="button" disabled={busy} style={buttonStyle(true)} onClick={beginLogin}>
+              {t("connectWeixin", "Connect WeChat")}
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -204,7 +263,7 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
                 fontSize: 12,
               }}
             >
-              {t("noChannels", "No messaging accounts configured. Connect WeChat to get started.")}
+              {t("noChannels", "No messaging accounts configured. Connect WeChat or Telegram to get started.")}
             </div>
           ) : (
             <div style={{ display: "grid", gap: 12 }}>
@@ -219,6 +278,41 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
                   onStop={() => run(() => call("channels.stop", { accountId: account.id }))}
                   onRestart={() => run(() => call("channels.restart", { accountId: account.id }))}
                   onProbe={() => call("channels.probe", { accountId: account.id })}
+                  onUpdateToken={async (token) => {
+                    await window.piBridge.setChannelCredential({
+                      channel: account.channel,
+                      accountId: account.id,
+                      credential: {
+                        token,
+                        providerAccountId: account.providerAccountId ?? account.id,
+                        ...(account.providerUsername ? { providerUsername: account.providerUsername } : {}),
+                        baseUrl: account.baseUrl || TELEGRAM_BASE_URL,
+                      },
+                    });
+                    const probe = await call("channels.probe", { accountId: account.id });
+                    if (!probe.ok || !probe.providerAccountId) throw new Error(probe.message);
+                    await window.piBridge.setChannelCredential({
+                      channel: account.channel,
+                      accountId: account.id,
+                      credential: {
+                        token,
+                        providerAccountId: probe.providerAccountId,
+                        ...(probe.providerUsername ? { providerUsername: probe.providerUsername } : {}),
+                        baseUrl: account.baseUrl || TELEGRAM_BASE_URL,
+                      },
+                    });
+                    await call("channels.accountUpsert", {
+                      account: {
+                        ...account,
+                        enabled: true,
+                        providerAccountId: probe.providerAccountId,
+                        ...(probe.providerUsername ? { providerUsername: probe.providerUsername } : {}),
+                        name: account.name || probe.providerUsername || probe.displayName || "Telegram",
+                        updatedAt: new Date().toISOString(),
+                      },
+                    });
+                    return probe;
+                  }}
                   onTestSend={(peerId, message) =>
                     run(() => call("channels.testSend", { accountId: account.id, peerId, message }))
                   }
@@ -257,11 +351,19 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
           onClose={closeLogin}
         />
       )}
+      {telegramDialogOpen && (
+        <TelegramTokenDialog
+          busy={busy}
+          error={telegramError}
+          onConnect={(token) => void connectTelegram(token)}
+          onClose={() => setTelegramDialogOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
-function AccountCard({
+export function AccountCard({
   account,
   status,
   busy,
@@ -270,6 +372,7 @@ function AccountCard({
   onStop,
   onRestart,
   onProbe,
+  onUpdateToken,
   onTestSend,
   onDelete,
 }: {
@@ -281,6 +384,7 @@ function AccountCard({
   onStop: () => void;
   onRestart: () => void;
   onProbe: () => Promise<ChannelProbeResult>;
+  onUpdateToken: (token: string) => Promise<ChannelProbeResult>;
   onTestSend: (peerId: string, message: string) => void;
   onDelete: () => void;
 }) {
@@ -289,6 +393,8 @@ function AccountCard({
   const [testPeer, setTestPeer] = useState("");
   const [testMessage, setTestMessage] = useState(() => t("channelTestMessage", "Pi Agent Desktop channel test"));
   const [probing, setProbing] = useState(false);
+  const [telegramToken, setTelegramToken] = useState("");
+  const [updatingToken, setUpdatingToken] = useState(false);
   const [probeFeedback, setProbeFeedback] = useState<{ ok: boolean; message: string; at: number } | null>(null);
   useEffect(() => setDraft(account), [account]);
   useEffect(() => {
@@ -324,6 +430,25 @@ function AccountCard({
     }
   };
 
+  const handleTokenUpdate = async () => {
+    const token = telegramToken.trim();
+    if (!token) return;
+    setUpdatingToken(true);
+    setProbeFeedback(null);
+    try {
+      const result = await onUpdateToken(token);
+      setTelegramToken("");
+      setProbeFeedback({ ok: result.ok, message: result.message, at: Date.now() });
+    } catch (cause) {
+      setProbeFeedback({ ok: false, message: cause instanceof Error ? cause.message : String(cause), at: Date.now() });
+    } finally {
+      setUpdatingToken(false);
+    }
+  };
+
+  const channelAccent = account.channel === "telegram" ? "#229ed9" : "#07c160";
+  const channelLabel = account.channel === "telegram" ? "Telegram" : t("weixin", "WeChat");
+
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 9, background: "var(--bg-panel)", padding: 15 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
@@ -335,18 +460,23 @@ function AccountCard({
               borderRadius: 9,
               display: "grid",
               placeItems: "center",
-              background: "#07c1601a",
-              color: "#07a651",
+              background: `color-mix(in srgb, ${channelAccent} 12%, transparent)`,
+              color: channelAccent,
               fontWeight: 800,
             }}
           >
-            微
+            {account.channel === "telegram" ? "TG" : "微"}
           </div>
           <div>
             <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 700 }}>{account.name}</div>
             <div style={{ color: statusColor(status), fontSize: 11, marginTop: 2 }}>
               {t(`channelStatus_${status?.state ?? "stopped"}`, status?.state ?? "stopped")} ·{" "}
               {account.credentialFingerprint ?? t("notConfigured", "not configured")}
+            </div>
+            <div style={{ color: "var(--text-dim)", fontSize: 10, marginTop: 2 }}>
+              {channelLabel}
+              {account.providerUsername ? ` · ${account.providerUsername}` : ""}
+              {account.providerAccountId ? ` · ${account.providerAccountId}` : ""}
             </div>
           </div>
         </div>
@@ -413,6 +543,21 @@ function AccountCard({
             <option value="open">{t("policyOpenUnsafe", "Open (unsafe)")}</option>
           </select>
         </Field>
+        <Field label={t("allowedGroupIds", "Allowed group IDs")}>
+          <input
+            style={inputStyle}
+            value={draft.groupIds.join(", ")}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                groupIds: event.target.value
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+              })
+            }
+          />
+        </Field>
         <Field label={t("allowedGroupSenderIds", "Allowed group sender IDs")}>
           <input
             style={inputStyle}
@@ -436,6 +581,16 @@ function AccountCard({
               onChange={(event) => setDraft({ ...draft, requireMention: event.target.checked })}
             />
             {t("requireMention", "Require @mention")}
+          </label>
+        </Field>
+        <Field label={t("imCommands", "IM commands")}>
+          <label style={{ display: "flex", alignItems: "center", gap: 7, minHeight: 34, color: "var(--text-muted)" }}>
+            <input
+              type="checkbox"
+              checked={draft.commandsEnabled === true}
+              onChange={(event) => setDraft({ ...draft, commandsEnabled: event.target.checked })}
+            />
+            {t("enableImCommands", "Enable /help, /status, /new, /compact, and /reload")}
           </label>
         </Field>
         <Field label={t("defaultTools", "Default tools")}>
@@ -471,6 +626,41 @@ function AccountCard({
         </Field>
       </div>
 
+      {account.channel === "telegram" && (
+        <div style={{ marginTop: 12 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(220px,1fr) auto",
+              gap: 7,
+            }}
+          >
+            <input
+              type="password"
+              autoComplete="off"
+              style={inputStyle}
+              value={telegramToken}
+              onChange={(event) => setTelegramToken(event.target.value)}
+              placeholder={t("newTelegramBotToken", "New BotFather token")}
+            />
+            <button
+              type="button"
+              disabled={busy || updatingToken || !telegramToken.trim()}
+              style={buttonStyle()}
+              onClick={() => void handleTokenUpdate()}
+            >
+              {updatingToken ? t("saving", "Saving…") : t("updateTelegramToken", "Update token")}
+            </button>
+          </div>
+          <div style={{ marginTop: 6, color: "var(--text-dim)", fontSize: 10, lineHeight: 1.5 }}>
+            {t(
+              "telegramGroupSetupHint",
+              "To allow a group, add the bot and mention it once, then copy the group chat ID from Recent activity into Allowed group IDs.",
+            )}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 13 }}>
         <button
           type="button"
@@ -480,6 +670,7 @@ function AccountCard({
             const elevated =
               draft.dmPolicy === "open" ||
               draft.groupPolicy === "open" ||
+              draft.commandsEnabled === true ||
               draft.toolNames.includes("bash") ||
               draft.toolNames.includes("write");
             if (
@@ -554,7 +745,11 @@ function AccountCard({
           style={inputStyle}
           value={testPeer}
           onChange={(event) => setTestPeer(event.target.value)}
-          placeholder={t("testSendUserId", "User ID for test-send")}
+          placeholder={
+            account.channel === "telegram"
+              ? t("testSendTelegramChatId", "Telegram chat ID for test-send")
+              : t("testSendUserId", "User ID for test-send")
+          }
         />
         <input style={inputStyle} value={testMessage} onChange={(event) => setTestMessage(event.target.value)} />
         <button
@@ -598,7 +793,9 @@ function PairingSection({
             }}
           >
             <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              <div>{pairing.peerId}</div>
+              <div>
+                {pairing.channel === "telegram" ? "Telegram" : t("weixin", "WeChat")} · {pairing.peerId}
+              </div>
               <div style={{ color: "var(--text-dim)", marginTop: 3 }}>
                 {t("pairingCode", "Code")} {pairing.code} · {t("expiresAt", "expires")}{" "}
                 {new Date(pairing.expiresAt).toLocaleTimeString(language)}
@@ -680,7 +877,8 @@ function BindingRow({
       }}
     >
       <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {binding.peerId}
+        {binding.channel === "telegram" ? "Telegram" : t("weixin", "WeChat")} · {binding.peerId}
+        {binding.threadId ? ` · ${t("topic", "topic")} ${binding.threadId}` : ""}
       </div>
       <select style={inputStyle} value={sessionId} onChange={(event) => setSessionId(event.target.value)}>
         <option value="">{t("dedicatedImSession", "Dedicated IM session")}</option>
@@ -792,8 +990,10 @@ function ActivitySection({ snapshot }: { snapshot: ChannelsSnapshot }) {
                 }}
               >
                 <span style={{ color: activity.outcome === "failed" ? "#ef4444" : "var(--text-muted)" }}>
+                  {activity.channel === "telegram" ? "Telegram" : t("weixin", "WeChat")} ·{" "}
                   {t(`activityDirection_${activity.direction}`, activity.direction)} ·{" "}
                   {t(`activityOutcome_${activity.outcome}`, activity.outcome)}
+                  {activity.peerId ? ` · ${activity.peerId}` : ""}
                   {activity.detail ? ` · ${activity.detail}` : ""}
                 </span>
                 <span style={{ color: "var(--text-dim)", whiteSpace: "nowrap" }}>
@@ -816,6 +1016,84 @@ function ActivitySection({ snapshot }: { snapshot: ChannelsSnapshot }) {
         </div>
       )}
     </section>
+  );
+}
+
+export function TelegramTokenDialog({
+  busy,
+  error,
+  onConnect,
+  onClose,
+}: {
+  busy: boolean;
+  error: string;
+  onConnect: (token: string) => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const [token, setToken] = useState("");
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1200,
+        background: "rgba(0,0,0,.45)",
+        display: "grid",
+        placeItems: "center",
+      }}
+    >
+      <div
+        style={{
+          width: 430,
+          maxWidth: "calc(100vw - 28px)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          background: "var(--bg)",
+          padding: 22,
+          boxShadow: "0 14px 45px rgba(0,0,0,.25)",
+        }}
+      >
+        <h3 style={{ margin: 0, color: "var(--text)", fontSize: 16 }}>{t("connectTelegram", "Connect Telegram")}</h3>
+        <p style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6 }}>
+          {t(
+            "telegramTokenDescription",
+            "Create a bot with @BotFather, paste its token here, then Pi Desktop will verify it with getMe and store it using OS encryption.",
+          )}
+        </p>
+        <input
+          autoFocus
+          type="password"
+          autoComplete="off"
+          style={inputStyle}
+          value={token}
+          onChange={(event) => setToken(event.target.value)}
+          placeholder={t("telegramBotToken", "BotFather token")}
+        />
+        {error && (
+          <div
+            role="alert"
+            data-testid="telegram-connect-error"
+            style={{ marginTop: 10, color: "#ef4444", fontSize: 11, lineHeight: 1.5, overflowWrap: "anywhere" }}
+          >
+            {error}
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 7, marginTop: 16 }}>
+          <button type="button" disabled={busy} style={buttonStyle()} onClick={onClose}>
+            {t("cancel", "Cancel")}
+          </button>
+          <button
+            type="button"
+            disabled={busy || !token.trim()}
+            style={buttonStyle(true)}
+            onClick={() => onConnect(token.trim())}
+          >
+            {busy ? t("testingConnection", "Testing…") : t("saveAndConnect", "Save and connect")}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

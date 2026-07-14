@@ -32,6 +32,7 @@ import type {
   ChannelStatus,
   ChannelPairingRequest,
   ChannelActivity,
+  ChannelId,
   ChannelTestSendResult,
 } from "../shared/channel-types";
 
@@ -114,6 +115,10 @@ export interface Api {
     params: { account: ChannelAccountConfig };
     result: ChannelsSnapshot;
   };
+  "channels.accountConnect": {
+    params: { account: ChannelAccountConfig };
+    result: ChannelsSnapshot;
+  };
   "channels.accountDelete": {
     params: { accountId: string };
     result: ChannelsSnapshot;
@@ -123,19 +128,19 @@ export interface Api {
   "channels.restart": { params: { accountId: string }; result: { ok: true } };
   "channels.probe": { params: { accountId: string }; result: ChannelProbeResult };
   "channels.loginStart": {
-    params: { channel: "weixin"; force?: boolean };
+    params: { channel: ChannelId; force?: boolean };
     result: ChannelLoginEvent;
   };
   "channels.loginWait": {
-    params: { channel: "weixin"; sessionKey: string };
+    params: { channel: ChannelId; sessionKey: string };
     result: ChannelLoginEvent;
   };
   "channels.loginSubmitCode": {
-    params: { channel: "weixin"; sessionKey: string; code: string };
+    params: { channel: ChannelId; sessionKey: string; code: string };
     result: { ok: true };
   };
   "channels.loginCancel": {
-    params: { channel: "weixin"; sessionKey: string };
+    params: { channel: ChannelId; sessionKey: string };
     result: { ok: true };
   };
   "channels.pairingApprove": {
@@ -285,7 +290,7 @@ export interface Streams {
   "agent.events": AgentEvent;
   "agent.running": RunningStateEvent;
   "auth.login": LoginProgressEvent;
-  "sessions.changed": { cwd: string | null };
+  "sessions.changed": { cwd: string | null; sessionId?: string };
   "files.changed": {
     path: string;
     event: "connected" | "change" | "error";

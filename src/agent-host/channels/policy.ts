@@ -7,7 +7,8 @@ export function evaluateInboundPolicy(account: ChannelAccountConfig, envelope: I
   if (envelope.peer.kind === "group") {
     if (account.groupPolicy === "disabled") return "ignore";
     if (account.requireMention && !envelope.mentionsBot) return "ignore";
-    if (account.groupPolicy === "allowlist" && !account.groupAllowFrom.includes(senderId)) return "ignore";
+    if (account.groupPolicy === "allowlist" && !account.groupIds.includes(envelope.peer.id)) return "ignore";
+    if (account.groupAllowFrom.length > 0 && !account.groupAllowFrom.includes(senderId)) return "ignore";
     return "allow";
   }
 

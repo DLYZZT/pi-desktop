@@ -59,6 +59,8 @@ type ExtensionBindingOptions = {
   forceEmptySystemPrompt?: boolean;
 };
 
+export type ExternalSessionCommand = "compact" | "reload";
+
 const CODING_TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 
 function withExtensionTools(session: AgentSessionLike, toolNames: string[]): string[] {
@@ -95,6 +97,7 @@ export class AgentSessionWrapper {
   private queuedTurnCount = 0;
   private turnTail: Promise<void> = Promise.resolve();
   private externalTurnActive = false;
+  private externalTurnProgress: ((event: AgentEvent) => void) | null = null;
   private extensionsBound = false;
   private extensionBindingPromise: Promise<void> | null = null;
   private extensionBindingError: unknown = null;
@@ -131,6 +134,11 @@ export class AgentSessionWrapper {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
       this.resetIdleTimer();
       this.emit(event);
+      try {
+        this.externalTurnProgress?.(event);
+      } catch {
+        // Channel progress is best-effort and must never interrupt the Agent.
+      }
       // Streaming / compaction / tool events flow through here; re-broadcast
       // the running-status snapshot so the sidebar can update live.
       notifyRunningChange();
@@ -266,10 +274,15 @@ export class AgentSessionWrapper {
     return run;
   }
 
-  async runExternalTurn(params: { runId: string; message: string }): Promise<{ runId: string; finalText: string }> {
+  async runExternalTurn(params: {
+    runId: string;
+    message: string;
+    onProgress?: (event: AgentEvent) => void;
+  }): Promise<{ runId: string; finalText: string }> {
     return this.enqueueTurn(async () => {
       this.emit({ type: "channel_turn_start", runId: params.runId });
       this.externalTurnActive = true;
+      this.externalTurnProgress = params.onProgress ?? null;
       try {
         await this.inner.prompt(params.message, { source: "rpc" });
         const finalText = this.inner.getLastAssistantText()?.trim() ?? "";
@@ -283,8 +296,30 @@ export class AgentSessionWrapper {
         });
         throw error;
       } finally {
+        this.externalTurnProgress = null;
         this.externalTurnActive = false;
       }
+    });
+  }
+
+  private async reloadSessionResources(): Promise<void> {
+    await this.waitForExtensionsBound();
+    this.extensionStatuses.clear();
+    this.extensionWidgets.clear();
+    await this.inner.reload();
+    if (typeof this.inner.bindExtensions !== "function") {
+      this.inner.extensionRunner.setUIContext?.(this.createExtensionUiContext(), "rpc");
+    }
+    this.applyForcedEmptySystemPrompt();
+  }
+
+  async runExternalCommand(params: { command: ExternalSessionCommand; customInstructions?: string }): Promise<void> {
+    await this.enqueueTurn(async () => {
+      if (params.command === "compact") {
+        await this.inner.compact(params.customInstructions);
+        return;
+      }
+      await this.reloadSessionResources();
     });
   }
 
@@ -445,7 +480,7 @@ export class AgentSessionWrapper {
 
       case "compact": {
         const result = await this.withFinalRunningNotification(() =>
-          this.inner.compact(command.customInstructions as string | undefined),
+          this.enqueueTurn(() => this.inner.compact(command.customInstructions as string | undefined)),
         );
         return result;
       }
@@ -539,14 +574,7 @@ export class AgentSessionWrapper {
       }
 
       case "reload": {
-        await this.waitForExtensionsBound();
-        this.extensionStatuses.clear();
-        this.extensionWidgets.clear();
-        await this.inner.reload();
-        if (typeof this.inner.bindExtensions !== "function") {
-          this.inner.extensionRunner.setUIContext?.(this.createExtensionUiContext(), "rpc");
-        }
-        this.applyForcedEmptySystemPrompt();
+        await this.enqueueTurn(() => this.reloadSessionResources());
         return { success: true };
       }
 

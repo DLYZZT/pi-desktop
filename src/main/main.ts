@@ -118,6 +118,8 @@ function createWindow(): BrowserWindow {
 void app.whenReady().then(() => {
   appendMainLog(`app ready packaged=${app.isPackaged}`);
 
+  const credentialVault = new CredentialVault(getUserDataPath("channels.secrets.json"));
+
   // Always register app:// so we can load the built renderer without Vite
   // (npm start after build, or dev fallback when VITE_DEV_SERVER_URL is unset).
   handleAppProtocol(rendererRootPath());
@@ -127,6 +129,8 @@ void app.whenReady().then(() => {
     getMainWindow,
     getUnreadBadge: () => unreadBadge,
     applyBadgeCount,
+    setChannelCredential: (payload) =>
+      credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
   });
   installAppMenu(getMainWindow);
 
@@ -139,7 +143,6 @@ void app.whenReady().then(() => {
   }
 
   hostManager = new HostManager(resolveHostEntry());
-  const credentialVault = new CredentialVault(getUserDataPath("channels.secrets.json"));
   hostManager.setRequestHandler(createCredentialRequestHandler(credentialVault));
   hostManager.setStatusListener((status, detail) => {
     appendMainLog(`host status=${status} ${detail ?? ""}`);

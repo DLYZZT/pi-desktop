@@ -219,12 +219,18 @@ export async function runSmokeHostChecks(
                 if (!channelsButton) throw new Error("Channels settings tab is unavailable");
                 channelsButton.click();
                 const channelDeadline = Date.now() + 3000;
-                let connectButton;
-                while (!connectButton && Date.now() < channelDeadline) {
-                  connectButton = findButton("Connect WeChat") || findButton("连接微信");
-                  if (!connectButton) await new Promise((wait) => setTimeout(wait, 25));
+                let weixinConnectButton;
+                let telegramConnectButton;
+                while ((!weixinConnectButton || !telegramConnectButton) && Date.now() < channelDeadline) {
+                  weixinConnectButton = findButton("Connect WeChat") || findButton("连接微信");
+                  telegramConnectButton = findButton("Connect Telegram") || findButton("连接 Telegram");
+                  if (!weixinConnectButton || !telegramConnectButton) await new Promise((wait) => setTimeout(wait, 25));
                 }
-                if (!connectButton) throw new Error("WeChat settings UI is unavailable");
+                if (!weixinConnectButton) throw new Error("WeChat settings UI is unavailable");
+                if (!telegramConnectButton) throw new Error("Telegram settings UI is unavailable");
+                if (typeof window.piBridge.setChannelCredential !== "function") {
+                  throw new Error("Write-only channel credential bridge is unavailable");
+                }
                 const activityToggle = document.querySelector('[data-testid="channel-activity-toggle"]');
                 if (!activityToggle || activityToggle.getAttribute("aria-expanded") !== "false") {
                   throw new Error("Recent channel activity is not collapsed by default");
@@ -268,7 +274,8 @@ export async function runSmokeHostChecks(
                   rendered: root.childElementCount > 0,
                   gitStatus: typeof status.isGit === "boolean",
                   htmlPreview: previewRendered,
-                  channelSettings: Boolean(connectButton),
+                  channelSettings: Boolean(weixinConnectButton && telegramConnectButton),
+                  channelCredentialWrite: typeof window.piBridge.setChannelCredential === "function",
                 });
                 return;
               }
@@ -287,13 +294,15 @@ export async function runSmokeHostChecks(
         gitStatus?: boolean;
         htmlPreview?: boolean;
         channelSettings?: boolean;
+        channelCredentialWrite?: boolean;
       };
       if (
         !rendererResult.bridge ||
         !rendererResult.rendered ||
         !rendererResult.gitStatus ||
         !rendererResult.htmlPreview ||
-        !rendererResult.channelSettings
+        !rendererResult.channelSettings ||
+        !rendererResult.channelCredentialWrite
       ) {
         throw new Error(`Renderer smoke returned invalid result: ${JSON.stringify(rendererResult)}`);
       }

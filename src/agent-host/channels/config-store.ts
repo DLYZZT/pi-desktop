@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import path from "node:path";
-import type { ChannelAccountConfig, ChannelBinding } from "../../shared/channel-types";
+import type { ChannelAccountConfig, ChannelBinding, ChannelId } from "../../shared/channel-types";
 
 type ChannelConfigFile = {
   version: 1;
@@ -43,21 +43,28 @@ function readStringArray(value: unknown): string[] {
   ];
 }
 
+function normalizeChannel(value: unknown): ChannelId {
+  return value === "telegram" ? "telegram" : "weixin";
+}
+
 function normalizeAccount(value: ChannelAccountConfig, touchUpdatedAt = false): ChannelAccountConfig {
   const now = new Date().toISOString();
   return {
     id: value.id.trim(),
-    channel: "weixin",
-    name: value.name?.trim() || "微信",
+    channel: normalizeChannel(value.channel),
+    name: value.name?.trim() || (value.channel === "telegram" ? "Telegram" : "微信"),
     enabled: value.enabled !== false,
     ...(value.providerAccountId?.trim() ? { providerAccountId: value.providerAccountId.trim() } : {}),
+    ...(value.providerUsername?.trim() ? { providerUsername: value.providerUsername.trim() } : {}),
     ...(value.userId?.trim() ? { userId: value.userId.trim() } : {}),
     ...(value.baseUrl?.trim() ? { baseUrl: value.baseUrl.trim() } : {}),
     dmPolicy: value.dmPolicy ?? "pairing",
     allowFrom: readStringArray(value.allowFrom),
     groupPolicy: value.groupPolicy ?? "disabled",
+    groupIds: readStringArray(value.groupIds),
     groupAllowFrom: readStringArray(value.groupAllowFrom),
     requireMention: value.requireMention !== false,
+    commandsEnabled: value.commandsEnabled === true,
     ...(value.defaultCwd?.trim() ? { defaultCwd: path.resolve(value.defaultCwd.trim()) } : {}),
     toolNames: readStringArray(value.toolNames),
     createdAt: value.createdAt || now,
@@ -69,7 +76,7 @@ function normalizeBinding(value: ChannelBinding): ChannelBinding {
   const now = new Date().toISOString();
   return {
     id: value.id.trim(),
-    channel: "weixin",
+    channel: normalizeChannel(value.channel),
     accountId: value.accountId.trim(),
     peerKind: value.peerKind === "group" ? "group" : "dm",
     peerId: value.peerId.trim(),

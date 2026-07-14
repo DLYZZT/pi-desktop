@@ -1,4 +1,4 @@
-export type ChannelId = "weixin";
+export type ChannelId = "weixin" | "telegram";
 
 export type ChannelDmPolicy = "pairing" | "allowlist" | "open";
 export type ChannelGroupPolicy = "disabled" | "allowlist" | "open";
@@ -10,13 +10,17 @@ export interface ChannelAccountConfig {
   name: string;
   enabled: boolean;
   providerAccountId?: string;
+  providerUsername?: string;
   userId?: string;
   baseUrl?: string;
   dmPolicy: ChannelDmPolicy;
   allowFrom: string[];
   groupPolicy: ChannelGroupPolicy;
+  groupIds: string[];
   groupAllowFrom: string[];
   requireMention: boolean;
+  /** Opt-in slash commands handled by Pi Desktop before normal Agent routing. */
+  commandsEnabled?: boolean;
   defaultCwd?: string;
   toolNames: string[];
   createdAt: string;
@@ -117,6 +121,9 @@ export interface ChannelProbeResult {
   ok: boolean;
   message: string;
   accountId: string;
+  providerAccountId?: string;
+  providerUsername?: string;
+  displayName?: string;
 }
 
 export interface ChannelTestSendResult {
@@ -139,6 +146,7 @@ export interface InboundEnvelope {
   sender: { id: string; name?: string; username?: string };
   text: string;
   mentionsBot: boolean;
+  replyTo?: { messageId: string; text?: string; senderId?: string };
   attachments: InboundAttachment[];
   timestamp: number;
   providerContext?: {

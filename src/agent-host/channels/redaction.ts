@@ -16,11 +16,24 @@ export function redactChannelValue(value: unknown): unknown {
   return result;
 }
 
-export function safeChannelError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  return raw
+export function redactChannelText(raw: unknown): string {
+  let text = "";
+  if (typeof raw === "string") text = raw;
+  else if (raw !== null && raw !== undefined) {
+    try {
+      text = String(raw);
+    } catch {
+      text = "[无法显示的渠道内容]";
+    }
+  }
+  return text
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]")
     .replace(/([?&](?:token|qrcode|context_token)=)[^&\s]+/gi, "$1[REDACTED]")
-    .replace(/("(?:bot_token|token|context_token|qrcode)"\s*:\s*")[^"]+/gi, "$1[REDACTED]")
-    .slice(0, 500);
+    .replace(/(api\.telegram\.org\/bot)[^/\s]+/gi, "$1[REDACTED]")
+    .replace(/("(?:bot_token|token|context_token|qrcode)"\s*:\s*")[^"]+/gi, "$1[REDACTED]");
+}
+
+export function safeChannelError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return redactChannelText(raw).slice(0, 500);
 }

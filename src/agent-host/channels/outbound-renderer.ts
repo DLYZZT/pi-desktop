@@ -12,10 +12,18 @@ export function splitChannelText(text: string, maxCodePoints = 3_500): string[] 
     const paragraph = candidate.lastIndexOf("\n\n");
     const line = candidate.lastIndexOf("\n");
     const space = candidate.lastIndexOf(" ");
-    const boundary = paragraph >= maxCodePoints / 2 ? paragraph : line >= maxCodePoints / 2 ? line : space;
-    const chunk = boundary > 0 ? candidate.slice(0, boundary) : candidate;
-    chunks.push(chunk.trimEnd());
-    remaining = remaining.slice(chunk.length).trimStart();
+    const boundary =
+      paragraph >= maxCodePoints / 2
+        ? paragraph
+        : line >= maxCodePoints / 2
+          ? line
+          : space >= maxCodePoints / 2
+            ? space
+            : -1;
+    const separatorLength = boundary === paragraph ? 2 : boundary >= 0 ? 1 : 0;
+    const chunk = boundary > 0 ? candidate.slice(0, boundary + separatorLength) : candidate;
+    chunks.push(chunk);
+    remaining = remaining.slice(chunk.length);
   }
   if (remaining) chunks.push(remaining);
   return chunks;

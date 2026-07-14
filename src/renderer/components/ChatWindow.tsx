@@ -247,6 +247,7 @@ export function ChatWindow({
     agentPhase,
     isNew,
     messagesEndRef,
+    liveContentEndRef,
     scrollContainerRef,
     lastUserMsgRef,
     handleSend,
@@ -798,6 +799,8 @@ export function ChatWindow({
                       <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t)}</span>
                     </div>
                   )}
+
+                  <div ref={liveContentEndRef} />
 
                   {agentRunning && (
                     <div

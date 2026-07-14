@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell } from "electron";
-import type { SaveBinaryFileOptions, SaveTextFileOptions } from "../contract/desktop";
+import type { ChannelCredentialWrite, SaveBinaryFileOptions, SaveTextFileOptions } from "../contract/desktop";
 import { exportDiagnostics } from "./diagnostics";
 import type { HostManager } from "./host-manager";
 import { getMainLogPath } from "./logger";
@@ -11,10 +11,11 @@ export type DesktopIpcOptions = {
   getMainWindow: () => BrowserWindow | null;
   getUnreadBadge: () => number;
   applyBadgeCount: (count: number) => void;
+  setChannelCredential: (payload: ChannelCredentialWrite) => void;
 };
 
 export function installDesktopIpc(options: DesktopIpcOptions): void {
-  const { getHostManager, getMainWindow, getUnreadBadge, applyBadgeCount } = options;
+  const { getHostManager, getMainWindow, getUnreadBadge, applyBadgeCount, setChannelCredential } = options;
 
   ipcMain.handle("desktop:get-version", () => app.getVersion());
   ipcMain.handle("desktop:get-host-status", () => getHostManager()?.getStatus() ?? "stopped");
@@ -48,6 +49,14 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     const recent = [directory, ...(ui.recentCwds ?? []).filter((entry) => entry !== directory)].slice(0, 12);
     saveUiState({ recentCwds: recent });
     return directory;
+  });
+
+  ipcMain.handle("desktop:set-channel-credential", (_event, payload: ChannelCredentialWrite) => {
+    if (!payload || typeof payload !== "object") throw new Error("Invalid channel credential payload");
+    if (!payload.credential?.token?.trim() || !payload.credential.baseUrl?.trim()) {
+      throw new Error("Channel credential is incomplete");
+    }
+    setChannelCredential(payload);
   });
 
   ipcMain.handle("desktop:save-file", async (event, saveOptions: SaveTextFileOptions) => {

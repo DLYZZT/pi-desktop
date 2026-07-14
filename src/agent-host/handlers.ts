@@ -523,6 +523,8 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
     "channels.accountUpsert": async (params) => channelManager.upsertAccount(params.account),
 
+    "channels.accountConnect": async (params) => channelManager.connectAccount(params.account),
+
     "channels.accountDelete": async (params) => channelManager.deleteAccount(params.accountId),
 
     "channels.start": async (params) => {
@@ -542,17 +544,17 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
     "channels.probe": async (params) => channelManager.probe(params.accountId),
 
-    "channels.loginStart": async (params) => channelManager.startLogin(params.force),
+    "channels.loginStart": async (params) => channelManager.startLogin(params.channel, params.force),
 
-    "channels.loginWait": async (params) => channelManager.waitLogin(params.sessionKey),
+    "channels.loginWait": async (params) => channelManager.waitLogin(params.channel, params.sessionKey),
 
     "channels.loginSubmitCode": async (params) => {
-      channelManager.submitLoginCode(params.sessionKey, params.code);
+      channelManager.submitLoginCode(params.channel, params.sessionKey, params.code);
       return { ok: true as const };
     },
 
     "channels.loginCancel": async (params) => {
-      channelManager.cancelLogin(params.sessionKey);
+      channelManager.cancelLogin(params.channel, params.sessionKey);
       return { ok: true as const };
     },
 

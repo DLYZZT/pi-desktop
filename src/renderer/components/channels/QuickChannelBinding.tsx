@@ -3,15 +3,17 @@ import type { ChannelBinding, ChannelsSnapshot } from "@shared/channel-types";
 import { call } from "@/lib/api-client";
 import { useI18n } from "@/i18n";
 
-interface QuickWeixinBindingProps {
+interface QuickChannelBindingProps {
   sessionId: string;
   snapshot: ChannelsSnapshot;
   isMobile: boolean;
   onSnapshotChange: (snapshot: ChannelsSnapshot) => void;
 }
 
-export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotChange }: QuickWeixinBindingProps) {
+export function QuickChannelBinding({ sessionId, snapshot, isMobile, onSnapshotChange }: QuickChannelBindingProps) {
   const { t } = useI18n();
+  const channelName = (channel: ChannelBinding["channel"]) =>
+    channel === "telegram" ? "Telegram" : t("weixin", "WeChat");
   const [open, setOpen] = useState(false);
   const [busyBindingId, setBusyBindingId] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -36,6 +38,7 @@ export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotCh
     snapshot.statuses.some((status) => status.accountId === binding.accountId && status.connected),
   );
   const available = snapshot.accounts.some((account) => account.configured) || snapshot.bindings.length > 0;
+  const currentChannels = [...new Set(currentBindings.map((binding) => binding.channel))];
 
   useEffect(() => {
     setOpen(false);
@@ -81,11 +84,15 @@ export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotCh
   };
 
   const bound = currentBindings.length > 0;
+  const singleChannel = currentChannels.length === 1 ? currentChannels[0] : undefined;
+  const accent = singleChannel === "telegram" ? "#229ed9" : singleChannel === "weixin" ? "#07c160" : "var(--accent)";
   const label = bound
     ? online
-      ? t("connectedToWeixin", "Connected to WeChat")
-      : t("boundToWeixinOffline", "Bound to WeChat (offline)")
-    : t("bindWeixin", "Bind WeChat");
+      ? singleChannel
+        ? `${t("connectedToChannel", "Connected to")} ${channelName(singleChannel)}`
+        : t("connectedToMessagingChannels", "Connected to messaging channels")
+      : t("boundToMessagingChannelsOffline", "Bound to messaging channels (offline)")
+    : t("bindMessagingConversation", "Bind messaging conversation");
 
   return (
     <div ref={rootRef} style={{ position: "relative", marginLeft: 10, minWidth: 0, flexShrink: 1 }}>
@@ -94,7 +101,7 @@ export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotCh
         data-testid={bound ? "channel-binding-indicator" : "channel-quick-bind-button"}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={`${bound ? t("channelBindingIndicatorTitle", "This UI session is shared with WeChat") : t("bindWeixinToCurrentSession", "Bind a WeChat conversation to this session")}${accountNames.length > 0 ? ` · ${accountNames.join(", ")}` : ""}`}
+        title={`${bound ? t("channelBindingIndicatorTitle", "This UI session is shared with messaging channels") : t("bindChannelToCurrentSession", "Bind a messaging conversation to this session")}${accountNames.length > 0 ? ` · ${accountNames.join(", ")}` : ""}`}
         onClick={() => {
           setError("");
           setOpen((value) => !value);
@@ -106,9 +113,9 @@ export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotCh
           display: "flex",
           alignItems: "center",
           gap: 6,
-          border: `1px solid ${bound ? "color-mix(in srgb, #07c160 38%, var(--border))" : "var(--border)"}`,
+          border: `1px solid ${bound ? `color-mix(in srgb, ${accent} 38%, var(--border))` : "var(--border)"}`,
           borderRadius: 999,
-          background: bound ? "color-mix(in srgb, #07c160 9%, var(--bg-panel))" : "var(--bg)",
+          background: bound ? `color-mix(in srgb, ${accent} 9%, var(--bg-panel))` : "var(--bg)",
           color: "var(--text-muted)",
           fontSize: 11,
           whiteSpace: "nowrap",
@@ -123,8 +130,8 @@ export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotCh
             height: 7,
             flexShrink: 0,
             borderRadius: "50%",
-            background: bound ? (online ? "#07c160" : "var(--text-dim)") : "#07c160",
-            boxShadow: bound && online ? "0 0 0 2px #07c16022" : "none",
+            background: bound ? (online ? accent : "var(--text-dim)") : "var(--accent)",
+            boxShadow: bound && online ? `0 0 0 2px color-mix(in srgb, ${accent} 18%, transparent)` : "none",
           }}
         />
         <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -141,7 +148,7 @@ export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotCh
       {open && (
         <div
           role="dialog"
-          aria-label={t("quickWeixinBinding", "Quick WeChat binding")}
+          aria-label={t("quickChannelBinding", "Quick messaging-channel binding")}
           data-testid="channel-quick-bind-popover"
           style={{
             position: "absolute",
@@ -159,12 +166,12 @@ export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotCh
           }}
         >
           <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 700 }}>
-            {t("quickWeixinBinding", "Quick WeChat binding")}
+            {t("quickChannelBinding", "Quick messaging-channel binding")}
           </div>
           <div style={{ marginTop: 4, color: "var(--text-dim)", fontSize: 10, lineHeight: 1.5 }}>
             {t(
-              "quickWeixinBindingDescription",
-              "Choose the WeChat conversation that should share this active UI session.",
+              "quickChannelBindingDescription",
+              "Choose the messaging conversation that should share this active UI session.",
             )}
           </div>
 
@@ -185,8 +192,8 @@ export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotCh
                 }}
               >
                 {t(
-                  "noBindableWeixinConversations",
-                  "No WeChat conversations are available yet. Ask an approved user to send the first message.",
+                  "noBindableChannelConversations",
+                  "No messaging conversations are available yet. Ask an approved user to send the first message.",
                 )}
               </div>
             ) : (
@@ -203,9 +210,11 @@ export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotCh
                       gridTemplateColumns: "minmax(0,1fr) auto",
                       alignItems: "center",
                       gap: 10,
-                      border: `1px solid ${boundHere ? "#07c16055" : "var(--border)"}`,
+                      border: `1px solid ${boundHere ? "color-mix(in srgb, var(--accent) 35%, var(--border))" : "var(--border)"}`,
                       borderRadius: 7,
-                      background: boundHere ? "#07c1600d" : "var(--bg-panel)",
+                      background: boundHere
+                        ? "color-mix(in srgb, var(--accent) 7%, var(--bg-panel))"
+                        : "var(--bg-panel)",
                       padding: "9px 10px",
                     }}
                   >
@@ -220,7 +229,7 @@ export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotCh
                           whiteSpace: "nowrap",
                         }}
                       >
-                        {account?.name ?? t("weixinAccount", "WeChat account")} ·{" "}
+                        {account?.name ?? channelName(binding.channel)} ·{" "}
                         {binding.peerKind === "group" ? t("groupConversation", "Group") : t("directConversation", "DM")}
                       </div>
                       <div
@@ -238,7 +247,9 @@ export function QuickWeixinBinding({ sessionId, snapshot, isMobile, onSnapshotCh
                         {binding.peerId}
                       </div>
                       {(boundHere || boundElsewhere) && (
-                        <div style={{ marginTop: 3, color: boundHere ? "#07a651" : "var(--text-dim)", fontSize: 10 }}>
+                        <div
+                          style={{ marginTop: 3, color: boundHere ? "var(--accent)" : "var(--text-dim)", fontSize: 10 }}
+                        >
                           {boundHere
                             ? t("boundToCurrentSession", "Bound to current session")
                             : t("boundToAnotherSession", "Bound to another session")}

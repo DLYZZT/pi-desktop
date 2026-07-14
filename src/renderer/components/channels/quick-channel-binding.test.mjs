@@ -10,14 +10,14 @@ import { build } from "esbuild";
 const output = path.join(
   import.meta.dirname,
   "../../../../.artifacts/test-modules",
-  `quick-weixin-binding-${process.pid}.mjs`,
+  `quick-channel-binding-${process.pid}.mjs`,
 );
 mkdirSync(path.dirname(output), { recursive: true });
 await build({
   stdin: {
-    contents: 'export { QuickWeixinBinding } from "./QuickWeixinBinding.tsx";',
+    contents: 'export { QuickChannelBinding } from "./QuickChannelBinding.tsx";',
     resolveDir: import.meta.dirname,
-    sourcefile: "quick-weixin-binding-test-entry.tsx",
+    sourcefile: "quick-channel-binding-test-entry.tsx",
     loader: "tsx",
   },
   outfile: output,
@@ -29,21 +29,23 @@ await build({
   logLevel: "silent",
 });
 
-const { QuickWeixinBinding } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
+const { QuickChannelBinding } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
-function snapshot(sessionId, connected) {
+function snapshot(sessionId, connected, channel = "weixin") {
   const now = new Date().toISOString();
+  const accountId = channel === "telegram" ? "tg-one" : "wx-one";
   return {
     accounts: [
       {
-        id: "wx-one",
-        channel: "weixin",
-        name: "My WeChat",
+        id: accountId,
+        channel,
+        name: channel === "telegram" ? "@pi_bot" : "My WeChat",
         enabled: true,
         configured: true,
         dmPolicy: "pairing",
         allowFrom: [],
         groupPolicy: "disabled",
+        groupIds: [],
         groupAllowFrom: [],
         requireMention: true,
         toolNames: [],
@@ -51,13 +53,13 @@ function snapshot(sessionId, connected) {
         updatedAt: now,
       },
     ],
-    statuses: [{ channel: "weixin", accountId: "wx-one", state: "running", connected }],
+    statuses: [{ channel, accountId, state: "running", connected }],
     pairings: [],
     bindings: [
       {
         id: "binding-one",
-        channel: "weixin",
-        accountId: "wx-one",
+        channel,
+        accountId,
         peerKind: "dm",
         peerId: "user-one",
         ...(sessionId ? { sessionId } : {}),
@@ -74,14 +76,19 @@ function snapshot(sessionId, connected) {
 test("active session header switches from quick bind to connected status", () => {
   const props = { sessionId: "session-one", isMobile: false, onSnapshotChange() {} };
   const unbound = renderToStaticMarkup(
-    createElement(QuickWeixinBinding, { ...props, snapshot: snapshot(undefined, true) }),
+    createElement(QuickChannelBinding, { ...props, snapshot: snapshot(undefined, true) }),
   );
   assert.match(unbound, /data-testid="channel-quick-bind-button"/);
-  assert.match(unbound, /Bind WeChat/);
+  assert.match(unbound, /Bind messaging conversation/);
 
   const bound = renderToStaticMarkup(
-    createElement(QuickWeixinBinding, { ...props, snapshot: snapshot("session-one", true) }),
+    createElement(QuickChannelBinding, { ...props, snapshot: snapshot("session-one", true) }),
   );
   assert.match(bound, /data-testid="channel-binding-indicator"/);
   assert.match(bound, /Connected to WeChat/);
+
+  const telegramBound = renderToStaticMarkup(
+    createElement(QuickChannelBinding, { ...props, snapshot: snapshot("session-one", true, "telegram") }),
+  );
+  assert.match(telegramBound, /Connected to Telegram/);
 });
