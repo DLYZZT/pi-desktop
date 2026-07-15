@@ -2,24 +2,45 @@ import { readdirSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 import {
+  allowedRootsCacheTtlMs,
   getAdditionalAllowedRoots,
   getAllowedRootsCache,
+  getAllowedRootsGeneration,
   normalizeSlashes,
-  setAllowedRootsCache,
+  setAllowedRootsCacheIfCurrent,
 } from "../shared/allowed-roots";
 import { listAllSessions } from "./session-reader";
-export { allowFileRoot, normalizeSlashes, invalidateAllowedRootsCache } from "../shared/allowed-roots";
+export {
+  allowFileRoot,
+  normalizeSlashes,
+  invalidateAllowedRootsCache,
+  setAllowedRootsWatcherHealthy,
+} from "../shared/allowed-roots";
 export { canonicalPath, isFilePathAllowed, isWindowsAbsolutePath } from "./file-access-core";
 
-// Short-TTL cache avoids re-scanning every session for each file request while
-// allowing newly created working directories to appear promptly.
-
-const ALLOWED_ROOTS_TTL_MS = 5_000;
+// Cache avoids re-scanning every session for each file request. The TTL is
+// watcher-aware (see allowed-roots.ts): long when the session watcher delivers
+// event-driven invalidation, short as a fallback when it cannot.
 export async function getAllowedFileRoots(): Promise<Set<string>> {
-  const now = Date.now();
   const cached = getAllowedRootsCache();
-  if (cached && cached.expiresAt > now) return cached.roots;
+  if (cached && cached.expiresAt > Date.now()) return cached.roots;
 
+  const generation = getAllowedRootsGeneration();
+  let roots = await scanAllowedFileRoots();
+  if (setAllowedRootsCacheIfCurrent({ roots, expiresAt: Date.now() + allowedRootsCacheTtlMs() }, generation)) {
+    return roots;
+  }
+
+  // The watcher invalidated the cache while listAllSessions() was in flight.
+  // Retry once for the current caller. A second collision remains uncached, so
+  // it cannot leave stale roots in place for the long watcher-backed TTL.
+  const retryGeneration = getAllowedRootsGeneration();
+  roots = await scanAllowedFileRoots();
+  setAllowedRootsCacheIfCurrent({ roots, expiresAt: Date.now() + allowedRootsCacheTtlMs() }, retryGeneration);
+  return roots;
+}
+
+async function scanAllowedFileRoots(): Promise<Set<string>> {
   const sessions = await listAllSessions();
   const roots = new Set<string>();
   for (const s of sessions) {
@@ -41,7 +62,5 @@ export async function getAllowedFileRoots(): Promise<Set<string>> {
   }
 
   for (const root of getAdditionalAllowedRoots()) roots.add(root);
-
-  setAllowedRootsCache({ roots, expiresAt: now + ALLOWED_ROOTS_TTL_MS });
   return roots;
 }

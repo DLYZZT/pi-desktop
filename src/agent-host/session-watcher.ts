@@ -5,7 +5,7 @@ import fs from "fs";
 import path from "path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { RpcServer } from "../contract/rpc";
-import { invalidateAllowedRootsCache } from "./file-access";
+import { invalidateAllowedRootsCache, setAllowedRootsWatcherHealthy } from "./file-access";
 
 export function startSessionWatcher(server: RpcServer): () => void {
   let agentDir: string;
@@ -45,6 +45,12 @@ export function startSessionWatcher(server: RpcServer): () => void {
         debounce();
       }
     });
+    watcher.on("error", (err) => {
+      console.error("[agent-host] session watcher error:", err);
+      setAllowedRootsWatcherHealthy(false);
+      invalidateAllowedRootsCache();
+    });
+    setAllowedRootsWatcherHealthy(true);
   } catch (err) {
     console.error("[agent-host] session watcher failed:", err);
   }
@@ -52,6 +58,7 @@ export function startSessionWatcher(server: RpcServer): () => void {
   return () => {
     if (timer) clearTimeout(timer);
     watcher?.close();
+    setAllowedRootsWatcherHealthy(false);
   };
 }
 
