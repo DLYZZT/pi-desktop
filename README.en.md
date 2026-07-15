@@ -44,14 +44,16 @@ Local-first · No local server · Cross-platform
 - Search for, install, and configure Skills
 - Manage Plugins while continuing to use the Pi Agent extension ecosystem
 
-### WeChat and Telegram channels
+### WeChat, Telegram, and Feishu/Lark channels
 
-- Connect a personal WeChat account with QR-code login or a Telegram bot with a BotFather token
-- Protect direct messages with pairing and Telegram groups with allowlists and mention requirements; WeChat groups are not enabled yet, and remote tools are disabled by default
+- Connect personal WeChat with QR login, Telegram with a BotFather token, or a Feishu/Lark self-built app with an App ID and App Secret
+- Protect direct messages with pairing and Telegram or Feishu/Lark groups with allowlists and mention requirements; WeChat groups are not enabled yet, and remote tools are disabled by default
 - Give each external conversation an isolated Pi Session by default, or bind it from the active desktop session to share history and context with the UI
-- Keep channels running in the background with long polling, reconnects, event deduplication, and cursor/offset checkpoints
+- Keep channels running in the background with long polling or WebSocket, reconnects, event deduplication, and cursor/offset checkpoints
 - Stream Rich Message previews in Telegram private chats, preserve Markdown in the final response, and collapse reasoning and tool details; groups receive a rich final response
-- Encrypt channel credentials with Electron `safeStorage`; saved tokens are never returned to the Renderer
+- Receive Feishu/Lark DMs, controlled groups, and threads through the official SDK long connection; Card JSON 2.0 renders Markdown, streams thinking/tool progress, and folds process details in the final card with safe fallback when CardKit is unavailable
+- Show turn-status reactions on the source message in Telegram and Feishu/Lark; Feishu DMs can invoke `/help`, `/status`, `/new`, `/compact`, and `/reload` from a native bot menu
+- Encrypt channel credentials with Electron `safeStorage`; saved tokens and App Secrets are never returned to the Renderer
 
 ### Designed for long-running desktop use
 
@@ -121,7 +123,7 @@ flowchart LR
 - The application does not open an additional local network port for UI communication
 - The Renderer runs in the Electron sandbox with a strict Content Security Policy
 - Preload exposes only controlled bridge APIs, and TypeScript contracts constrain Host RPC
-- WeChat and Telegram use outbound-only long polling without a webhook or local listener
+- WeChat and Telegram use outbound-only long polling, while Feishu/Lark uses an outbound WebSocket; none opens a webhook or local listener
 - Model providers determine how model request data is processed; review the privacy policy of every provider you configure
 
 ## Contributing
@@ -180,7 +182,7 @@ GitHub Actions builds artifacts for macOS arm64, macOS x64, and Windows x64 sepa
 
 - [x] Electron three-process architecture and typed IPC
 - [x] Sessions, project files, models, Skills, Plugins, and OAuth
-- [x] Personal WeChat and Telegram text channels
+- [x] Personal WeChat, Telegram, and Feishu/Lark text channels
 - [x] Tray, notifications, system theme, crash recovery, and diagnostic exports
 - [x] macOS arm64, macOS x64, and Windows x64 CI build matrix
 - [ ] macOS code signing and notarization

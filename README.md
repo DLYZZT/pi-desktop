@@ -44,14 +44,16 @@
 - 搜索、安装和配置 Skills
 - 管理 Plugins，并沿用 Pi Agent 的扩展体系
 
-### 微信与 Telegram 消息渠道
+### 微信、Telegram 与飞书/Lark 消息渠道
 
-- 个人微信二维码登录，以及 Telegram BotFather token 接入
-- 私聊配对，以及 Telegram 群聊白名单与 @触发控制；微信群尚未开放，默认不授予远程工具权限
+- 个人微信二维码登录、Telegram BotFather token，以及飞书/Lark 企业自建应用 App ID/App Secret 接入
+- 私聊配对，以及 Telegram、飞书/Lark 群聊白名单与 @触发控制；微信群尚未开放，默认不授予远程工具权限
 - 外部对话默认使用独立 Pi Session，也可从当前会话顶部快速绑定并与 UI 共用上下文
-- long polling、断线重连、事件去重、cursor/offset checkpoint 和后台运行
+- long polling/WebSocket、断线重连、事件去重、cursor/offset checkpoint 和后台运行
 - Telegram 私聊支持 Rich Messages 流式预览，最终回复保留 Markdown，并折叠思考与工具详情；群聊发送富文本最终消息
-- 渠道凭证由 Electron `safeStorage` 加密；已保存 token 不向 Renderer 回传
+- 飞书/Lark 通过官方 SDK 长连接收取私聊、受控群聊和 thread，并使用 Card JSON 2.0 渲染 Markdown、流式显示思考/工具调用、最终折叠过程；缺少 CardKit 权限时安全回退
+- Telegram 与飞书/Lark 在原消息上显示回合 Reaction 状态；飞书单聊可用原生菜单触发 `/help`、`/status`、`/new`、`/compact` 和 `/reload`
+- 渠道凭证由 Electron `safeStorage` 加密；已保存 token/App Secret 不向 Renderer 回传
 
 ### 为长期运行而设计
 
@@ -121,7 +123,7 @@ flowchart LR
 - 应用不会为了 UI 通信额外开放本地网络端口
 - Renderer 开启 Electron sandbox，并使用严格的 Content Security Policy
 - preload 只暴露受控桥接接口，Host RPC 由 TypeScript 契约约束
-- 微信和 Telegram 连接只发起出站 long polling，不开放 webhook 或本地监听端口
+- 微信和 Telegram 只发起出站 long polling，飞书/Lark 使用出站 WebSocket；均不开放 webhook 或本地监听端口
 - 模型请求的数据处理方式取决于你配置的模型提供商，请同时查看对应服务的隐私政策
 
 ## 参与开发
@@ -180,7 +182,7 @@ GitHub Actions 会分别构建 macOS arm64、macOS x64 和 Windows x64 产物。
 
 - [x] Electron 三进程架构与类型化 IPC
 - [x] 会话、项目文件、模型、Skills、Plugins 与 OAuth
-- [x] 个人微信与 Telegram 文本消息渠道
+- [x] 个人微信、Telegram 与飞书/Lark 文本消息渠道
 - [x] 托盘、通知、系统主题、崩溃恢复与诊断导出
 - [x] macOS arm64、macOS x64、Windows x64 CI 构建矩阵
 - [ ] macOS 签名与 notarization
