@@ -17,6 +17,12 @@ const credentialVault = read("src/main/credential-vault.ts");
 const weixinChannelApi = read("src/agent-host/channels/adapters/weixin/api.ts");
 const telegramChannelApi = read("src/agent-host/channels/adapters/telegram/api.ts");
 const feishuChannelApi = read("src/agent-host/channels/adapters/feishu/api.ts");
+const channelManager = read("src/agent-host/channels/channel-manager.ts");
+const channelMediaStore = read("src/agent-host/channels/media-store.ts");
+const channelOutboundFiles = read("src/agent-host/channels/outbound-files.ts");
+const channelPiBridge = read("src/agent-host/channels/pi-session-bridge.ts");
+const rpcManager = read("src/agent-host/rpc-manager.ts");
+const weixinMedia = read("src/agent-host/channels/adapters/weixin/media.ts");
 const channelContract = read("src/contract/api.ts");
 const desktopContract = read("src/contract/desktop.ts");
 const rendererCsp = protocol.slice(protocol.indexOf("const CSP ="), protocol.indexOf("const HTML_PREVIEW_CSP ="));
@@ -42,6 +48,36 @@ const checks = [
   [!/(createServer|\.listen\s*\()/.test(weixinChannelApi), "Weixin MVP must not open a local listener"],
   [!/(createServer|\.listen\s*\()/.test(telegramChannelApi), "Telegram polling must not open a local listener"],
   [!/(createServer|\.listen\s*\()/.test(feishuChannelApi), "Feishu WebSocket mode must not open a local listener"],
+  [
+    channelManager.indexOf("evaluateInboundPolicy") < channelManager.indexOf("adapter.downloadInbound"),
+    "channel access policy must run before provider media download",
+  ],
+  [
+    channelMediaStore.includes("CHANNEL_MEDIA_MAX_BYTES") &&
+      channelMediaStore.includes("CHANNEL_MEDIA_MAX_ATTACHMENTS") &&
+      channelMediaStore.includes("info.isSymbolicLink()") &&
+      channelMediaStore.includes("mode: 0o600"),
+    "channel media staging must retain byte/count/symlink/private-file controls",
+  ],
+  [
+    channelOutboundFiles.includes("realpath") &&
+      channelOutboundFiles.includes("MARKDOWN_LINK") &&
+      channelOutboundFiles.includes("isInside(canonical, root)") &&
+      channelPiBridge.includes("collectOutboundFiles({ finalText: result.finalText, cwd })"),
+    "linked-file delivery must remain inside the actual bound session workspace",
+  ],
+  [
+    weixinMedia.includes('url.protocol !== "https:"') && weixinMedia.includes('redirect: "error"'),
+    "Weixin media must use trusted HTTPS origins without cross-origin redirects",
+  ],
+  [
+    channelPiBridge.includes("channelPromptText(envelope.text") && !channelPiBridge.includes("[外部消息来源："),
+    "channel user prompts must contain the user's text without transport metadata wrappers",
+  ],
+  [
+    rpcManager.includes("expandPromptTemplates: false") && rpcManager.includes("stripLegacyChannelPrompts"),
+    "channel prompts must avoid local expansion and remove legacy transport metadata from model history",
+  ],
   [
     !channelContract.includes("botToken") && !channelContract.includes("appSecret"),
     "channel RPC must not expose raw secrets",

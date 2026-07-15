@@ -108,6 +108,60 @@ test("runtime checkpoints cursor and suppresses duplicate inbound events", async
   assert.equal(state.isProcessed("wx-runtime", "101"), true);
 });
 
+test("runtime downloads Weixin media only through the private adapter capability", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  const controller = new globalThis.AbortController();
+  const configuredAccount = account();
+  const secret = { token: "secret", providerAccountId: "provider", baseUrl: "https://example.test" };
+  const adapter = new WeixinAdapter();
+  let downloaded;
+  globalThis.fetch = async (url) => {
+    const endpoint = String(url);
+    if (endpoint.includes("getupdates")) {
+      return jsonResponse({
+        ret: 0,
+        msgs: [
+          {
+            message_id: 303,
+            message_type: 1,
+            from_user_id: "user-media",
+            item_list: [
+              {
+                type: 2,
+                image_item: { media: { full_url: "https://novac2c.cdn.weixin.qq.com/c2c/image" } },
+              },
+            ],
+          },
+        ],
+        get_updates_buf: "cursor-media",
+      });
+    }
+    if (endpoint.includes("novac2c.cdn.weixin.qq.com")) {
+      return new globalThis.Response(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]), { status: 200 });
+    }
+    return jsonResponse();
+  };
+  await adapter.start({
+    account: configuredAccount,
+    secret,
+    signal: controller.signal,
+    state: stateStore(),
+    onInbound: async (envelope) => {
+      assert.deepEqual(envelope.attachments, [{ kind: "image" }]);
+      assert.equal(JSON.stringify(envelope).includes("full_url"), false);
+      downloaded = await adapter.downloadInbound({ account: configuredAccount, secret, envelope });
+      controller.abort();
+    },
+    onStatus: () => undefined,
+    log: () => undefined,
+  });
+  assert.equal(downloaded[0].kind, "image");
+  assert.deepEqual(downloaded[0].data, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]));
+});
+
 test("runtime fails closed when Tencent reports a stale login token", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => {

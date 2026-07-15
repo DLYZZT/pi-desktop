@@ -127,7 +127,7 @@ export interface AgentSessionLike {
   readonly modelRegistry: { find: (provider: string, modelId: string) => ModelLike | undefined };
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
-  readonly agent: { state?: { systemPrompt?: string; thinkingLevel?: string } };
+  readonly agent: { state?: { systemPrompt?: string; thinkingLevel?: string; messages?: unknown[] } };
   readonly extensionRunner: ExtensionRunnerLike;
   readonly promptTemplates: readonly PromptTemplateLike[];
   readonly resourceLoader: ResourceLoaderLike;
@@ -139,9 +139,19 @@ export interface AgentSessionLike {
     text: string,
     options?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      expandPromptTemplates?: boolean;
       streamingBehavior?: "steer" | "followUp";
       source?: "interactive" | "rpc";
     },
+  ): Promise<void>;
+  sendCustomMessage(
+    message: {
+      customType: string;
+      content: string | Array<{ type: "text"; text: string }>;
+      display: boolean;
+      details?: unknown;
+    },
+    options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
   ): Promise<void>;
   abort(): Promise<void>;
   setModel(model: ModelLike): Promise<void>;

@@ -19,12 +19,13 @@ import { AdapterRegistry } from "./adapter-registry";
 import { channelCommandHelpText, parseChannelCommand, type ParsedChannelCommand } from "./channel-commands";
 import { ChannelConfigStore } from "./config-store";
 import { LaneScheduler } from "./lane-scheduler";
+import { CHANNEL_MEDIA_MAX_ATTACHMENTS, ChannelMediaStore } from "./media-store";
 import { callMain } from "../parent-rpc";
 import { PiSessionBridge } from "./pi-session-bridge";
 import { evaluateInboundPolicy } from "./policy";
 import { fingerprintSecret, safeChannelError } from "./redaction";
 import { ChannelStateStore } from "./state-store";
-import type { AdapterTurnOutput, ChannelSecret } from "./types";
+import type { AdapterTurnOutput, ChannelSecret, OutboundAttachment, StagedInboundAttachment } from "./types";
 
 type RuntimeEntry = { controller: AbortController; task: Promise<void> };
 type SecretAccess = {
@@ -80,12 +81,46 @@ function workspaceSegment(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 20);
 }
 
+function outboundAttachment(filePath: string): OutboundAttachment {
+  const extension = path.extname(filePath).toLowerCase();
+  const mime =
+    (
+      {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".ogg": "audio/ogg",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".wav": "audio/wav",
+        ".silk": "audio/silk",
+        ".mp4": "video/mp4",
+        ".pdf": "application/pdf",
+        ".txt": "text/plain",
+        ".md": "text/markdown",
+        ".json": "application/json",
+        ".zip": "application/zip",
+      } as Record<string, string>
+    )[extension] ?? undefined;
+  const kind = mime?.startsWith("image/")
+    ? "image"
+    : mime?.startsWith("audio/")
+      ? "voice"
+      : mime?.startsWith("video/")
+        ? "video"
+        : "file";
+  return { kind, path: filePath, name: path.basename(filePath), ...(mime ? { mime } : {}) };
+}
+
 export class ChannelManager {
   private readonly server: RpcServer;
   private readonly config: ChannelConfigStore;
   private readonly state: ChannelStateStore;
   private readonly registry: AdapterRegistry;
   private readonly lanes = new LaneScheduler();
+  private readonly media: ChannelMediaStore;
   private readonly bridge: Pick<PiSessionBridge, "getSessionStatus" | "newSession" | "runCommand" | "runTurn">;
   private readonly secretAccess: SecretAccess;
   private readonly runtimes = new Map<string, RuntimeEntry>();
@@ -101,6 +136,7 @@ export class ChannelManager {
     const base = options.dataDirectory ?? userDataPath();
     this.config = new ChannelConfigStore(path.join(base, "channels.json"));
     this.state = new ChannelStateStore(path.join(base, "channels.state.json"));
+    this.media = new ChannelMediaStore(path.join(base, "channel-media"));
     this.registry = options.registry ?? new AdapterRegistry();
     this.bridge = options.bridge ?? new PiSessionBridge(bindSessionEvents);
     this.secretAccess = options.secretAccess ?? {
@@ -128,6 +164,7 @@ export class ChannelManager {
   initialize(): Promise<void> {
     if (!this.initialized) {
       this.initialized = (async () => {
+        await this.media.initialize();
         for (const account of this.config.listAccounts()) {
           if (account.enabled) await this.startAccount(account.id).catch(() => undefined);
         }
@@ -635,8 +672,8 @@ export class ChannelManager {
         });
         return;
       }
-      if (!envelope.text.trim()) {
-        const label = envelope.attachments.length > 0 ? "当前版本暂不支持处理该媒体消息。" : "消息内容为空。";
+      if (!envelope.text.trim() && envelope.attachments.length === 0) {
+        const label = "消息内容为空。";
         const receipt = await this.registry.get(account.channel).send({
           account,
           secret,
@@ -650,6 +687,52 @@ export class ChannelManager {
         return;
       }
 
+      const binding = this.resolveBinding(account, envelope);
+      const adapter = this.registry.get(account.channel);
+      let stagedAttachments: StagedInboundAttachment[] = [];
+      if (envelope.attachments.length > 0 && adapter.downloadInbound) {
+        try {
+          if (envelope.attachments.length > CHANNEL_MEDIA_MAX_ATTACHMENTS) {
+            throw new Error(`单条消息最多支持 ${CHANNEL_MEDIA_MAX_ATTACHMENTS} 个附件`);
+          }
+          const downloaded = await adapter.downloadInbound({ account, secret, envelope });
+          stagedAttachments = await this.media.stage(account.id, envelope.id, downloaded);
+        } catch (error) {
+          this.log(`[${account.id}] media download failed: ${safeChannelError(error)}`);
+          const receipt = await adapter.send({
+            account,
+            secret,
+            peerId: envelope.peer.id,
+            contextToken: envelope.providerContext?.contextToken,
+            threadId: envelope.threadId,
+            replyToMessageId: envelope.providerContext?.replyToMessageId,
+            text: "附件下载或校验失败。请确认文件不超过 20 MiB，并重新发送受支持的图片、文件或语音。",
+          });
+          this.state.addDelivery(receipt);
+          this.addActivity({
+            channel: account.channel,
+            accountId: account.id,
+            direction: "inbound",
+            outcome: "ignored",
+            peerId: envelope.peer.id,
+            detail: "附件处理失败",
+          });
+          return;
+        }
+      }
+      if (!envelope.text.trim() && stagedAttachments.length === 0) {
+        const receipt = await adapter.send({
+          account,
+          secret,
+          peerId: envelope.peer.id,
+          contextToken: envelope.providerContext?.contextToken,
+          threadId: envelope.threadId,
+          replyToMessageId: envelope.providerContext?.replyToMessageId,
+          text: "当前渠道或消息类型尚不支持该媒体附件。",
+        });
+        this.state.addDelivery(receipt);
+        return;
+      }
       this.addActivity({
         channel: account.channel,
         accountId: account.id,
@@ -657,8 +740,6 @@ export class ChannelManager {
         outcome: "accepted",
         peerId: envelope.peer.id,
       });
-      const binding = this.resolveBinding(account, envelope);
-      const adapter = this.registry.get(account.channel);
       await adapter
         .setTyping?.({
           account,
@@ -687,7 +768,12 @@ export class ChannelManager {
         const turn = command
           ? await this.handleCommand(account, binding, command)
           : {
-              ...(await this.bridge.runTurn(binding, envelope, (event) => progressiveOutput?.update(event))),
+              ...(await this.bridge.runTurn(
+                binding,
+                envelope,
+                (event) => progressiveOutput?.update(event),
+                stagedAttachments,
+              )),
               notifySession: true,
             };
         if (turn.sessionId) this.saveBindingSession(binding, turn.sessionId);
@@ -695,7 +781,8 @@ export class ChannelManager {
         // session id. The active desktop chat uses this durable signal to
         // reload messages if the live agent stream was idle or interrupted.
         if (turn.notifySession && turn.sessionId) {
-          this.server.emit("sessions.changed", "*", { cwd: binding.cwd, sessionId: turn.sessionId });
+          const sessionCwd = "cwd" in turn && typeof turn.cwd === "string" ? turn.cwd : binding.cwd;
+          this.server.emit("sessions.changed", "*", { cwd: sessionCwd, sessionId: turn.sessionId });
         }
         const text = turn.finalText || "Agent 已完成处理，但没有生成文本回复。";
         const receipt = progressiveOutput
@@ -711,6 +798,35 @@ export class ChannelManager {
               runId: envelope.id,
             });
         this.state.addDelivery(receipt);
+        const generatedFiles =
+          "generatedFiles" in turn && Array.isArray(turn.generatedFiles)
+            ? turn.generatedFiles.filter((filePath): filePath is string => typeof filePath === "string")
+            : [];
+        if (!command && generatedFiles.length > 0 && (account.channel === "weixin" || account.channel === "telegram")) {
+          try {
+            const mediaReceipt = await adapter.send({
+              account,
+              secret,
+              peerId: envelope.peer.id,
+              contextToken: envelope.providerContext?.contextToken,
+              threadId: envelope.threadId,
+              attachments: generatedFiles.map(outboundAttachment),
+              text: "",
+              runId: envelope.id,
+            });
+            this.state.addDelivery(mediaReceipt);
+          } catch (error) {
+            this.log(`[${account.id}] generated file delivery failed: ${safeChannelError(error)}`);
+            this.addActivity({
+              channel: account.channel,
+              accountId: account.id,
+              direction: "outbound",
+              outcome: "failed",
+              peerId: envelope.peer.id,
+              detail: "生成文件发送失败",
+            });
+          }
+        }
         this.emitStatus(account, { lastOutboundAt: Date.now(), lastEventAt: Date.now() });
         this.addActivity({
           channel: account.channel,

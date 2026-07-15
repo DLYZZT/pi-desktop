@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
 import type {
   WeixinMessage,
+  WeixinMessageItem,
   WeixinQrStartResponse,
   WeixinQrStatusResponse,
   WeixinUpdatesResponse,
+  WeixinUploadUrlResponse,
 } from "./protocol-types";
 
 export const WEIXIN_DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
@@ -187,6 +189,72 @@ export async function sendText(params: {
   if (response.ret && response.ret !== 0) throw new Error(`Weixin send failed: ${response.errmsg ?? response.ret}`);
 }
 
+export async function getWeixinUploadUrl(params: {
+  baseUrl: string;
+  token: string;
+  filekey: string;
+  mediaType: 1 | 2 | 3 | 4;
+  to: string;
+  rawSize: number;
+  rawMd5: string;
+  encryptedSize: number;
+  aesKeyHex: string;
+}): Promise<WeixinUploadUrlResponse> {
+  return requestJson<WeixinUploadUrlResponse>({
+    baseUrl: params.baseUrl,
+    endpoint: "ilink/bot/getuploadurl",
+    method: "POST",
+    token: params.token,
+    body: {
+      filekey: params.filekey,
+      media_type: params.mediaType,
+      to_user_id: params.to,
+      rawsize: params.rawSize,
+      rawfilemd5: params.rawMd5,
+      filesize: params.encryptedSize,
+      no_need_thumb: true,
+      aeskey: params.aesKeyHex,
+      base_info: baseInfo(),
+    },
+  });
+}
+
+export async function sendWeixinMediaMessage(params: {
+  baseUrl: string;
+  token: string;
+  to: string;
+  text?: string;
+  item: WeixinMessageItem;
+  contextToken?: string;
+  runId?: string;
+  clientId: string;
+}): Promise<void> {
+  const itemList: WeixinMessageItem[] = [];
+  if (params.text?.trim()) itemList.push({ type: 1, text_item: { text: params.text } });
+  itemList.push(params.item);
+  const response = await requestJson<{ ret?: number; errmsg?: string }>({
+    baseUrl: params.baseUrl,
+    endpoint: "ilink/bot/sendmessage",
+    method: "POST",
+    token: params.token,
+    body: {
+      msg: {
+        from_user_id: "",
+        to_user_id: params.to,
+        client_id: params.clientId,
+        message_type: 2,
+        message_state: 2,
+        item_list: itemList,
+        context_token: params.contextToken,
+        run_id: params.runId,
+      },
+      base_info: baseInfo(),
+    },
+  });
+  if (response.ret && response.ret !== 0)
+    throw new Error(`Weixin media send failed: ${response.errmsg ?? response.ret}`);
+}
+
 export async function getTypingTicket(params: {
   baseUrl: string;
   token: string;
@@ -253,7 +321,7 @@ export function bodyFromWeixinMessage(message: WeixinMessage): {
     if (!text && item.type === 1 && item.text_item?.text) text = String(item.text_item.text);
     if (!text && item.type === 3 && item.voice_item?.text) text = String(item.voice_item.text);
     if (item.type === 2) attachments.push({ kind: "image" });
-    if (item.type === 3 && !item.voice_item?.text) attachments.push({ kind: "voice" });
+    if (item.type === 3) attachments.push({ kind: "voice" });
     if (item.type === 4)
       attachments.push({ kind: "file", ...(item.file_item?.file_name ? { name: item.file_item.file_name } : {}) });
     if (item.type === 5) attachments.push({ kind: "video" });

@@ -49,7 +49,10 @@ Local-first · No local server · Cross-platform
 - Connect personal WeChat with QR login, Telegram with a BotFather token, or a Feishu/Lark self-built app with an App ID and App Secret
 - Protect direct messages with pairing and Telegram or Feishu/Lark groups with allowlists and mention requirements; WeChat groups are not enabled yet, and remote tools are disabled by default
 - Give each external conversation an isolated Pi Session by default, or bind it from the active desktop session to share history and context with the UI
+- Send only the user's actual IM text as the model's user prompt; the desktop distinguishes sources with black local, green WeChat, blue Telegram, and orange Feishu/Lark user bubbles without adding user or group IDs to the prompt
 - Keep channels running in the background with long polling or WebSocket, reconnects, event deduplication, and cursor/offset checkpoints
+- Receive images, files, and voice messages from WeChat and Telegram; images enter the model as multimodal input, while files and audio use an isolated staging area and WeChat SILK audio is converted to WAV when possible
+- When the user explicitly requests a file, return an existing or newly created file from the current workspace by linking it in the final answer; each attachment is limited to 20 MiB and four per message, with paths outside the workspace and symlink escapes rejected
 - Stream Rich Message previews in Telegram private chats, preserve Markdown in the final response, and collapse reasoning and tool details; groups receive a rich final response
 - Receive Feishu/Lark DMs, controlled groups, and threads through the official SDK long connection; Card JSON 2.0 renders Markdown, streams thinking/tool progress, and folds process details in the final card with safe fallback when CardKit is unavailable
 - Show turn-status reactions on the source message in Telegram and Feishu/Lark; Feishu DMs can invoke `/help`, `/status`, `/new`, `/compact`, and `/reload` from a native bot menu
@@ -182,7 +185,7 @@ GitHub Actions builds artifacts for macOS arm64, macOS x64, and Windows x64 sepa
 
 - [x] Electron three-process architecture and typed IPC
 - [x] Sessions, project files, models, Skills, Plugins, and OAuth
-- [x] Personal WeChat, Telegram, and Feishu/Lark text channels
+- [x] Personal WeChat, Telegram, and Feishu/Lark text channels, plus WeChat/Telegram images, files, and voice
 - [x] Tray, notifications, system theme, crash recovery, and diagnostic exports
 - [x] macOS arm64, macOS x64, and Windows x64 CI build matrix
 - [ ] macOS code signing and notarization

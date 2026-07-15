@@ -20,10 +20,12 @@ import { safeChannelError } from "../../redaction";
 import {
   escapeTelegramHtml,
   deleteTelegramCommands,
+  downloadTelegramFile,
   getTelegramBot,
   getTelegramUpdates,
   sendTelegramChatAction,
   sendTelegramMessage,
+  sendTelegramMedia,
   sendTelegramMessageDraft,
   sendTelegramRichMessage,
   sendTelegramRichMessageDraft,
@@ -31,7 +33,7 @@ import {
   setTelegramCommands,
   TelegramApiError,
 } from "./api";
-import type { TelegramMessageEntity, TelegramUpdate, TelegramUser } from "./protocol-types";
+import type { TelegramFileAttachment, TelegramMessageEntity, TelegramUpdate, TelegramUser } from "./protocol-types";
 import { TELEGRAM_RICH_SAFE_LIMIT, TelegramRichMessageBuilder } from "./rich-renderer";
 
 const POLL_TIMEOUT_SECONDS = 30;
@@ -257,6 +259,42 @@ function attachmentMetadata(update: TelegramUpdate): InboundAttachment[] {
   return attachments;
 }
 
+function downloadableAttachments(update: TelegramUpdate): Array<{
+  kind: "image" | "voice" | "file";
+  file: TelegramFileAttachment;
+  name?: string;
+  mime?: string;
+}> {
+  const message = update.message;
+  if (!message) return [];
+  const result: Array<{
+    kind: "image" | "voice" | "file";
+    file: TelegramFileAttachment;
+    name?: string;
+    mime?: string;
+  }> = [];
+  const photo = message.photo?.filter((item) => item.file_id).at(-1);
+  if (photo) result.push({ kind: "image", file: photo, mime: "image/jpeg" });
+  if (message.voice?.file_id) {
+    result.push({
+      kind: "voice",
+      file: message.voice,
+      name: "voice.ogg",
+      mime: message.voice.mime_type || "audio/ogg",
+    });
+  }
+  for (const file of [message.document, message.audio]) {
+    if (!file?.file_id) continue;
+    result.push({
+      kind: "file",
+      file,
+      ...(file.file_name ? { name: file.file_name } : {}),
+      ...(file.mime_type ? { mime: file.mime_type } : {}),
+    });
+  }
+  return result;
+}
+
 export function normalizeTelegramUpdate(
   update: TelegramUpdate,
   account: ChannelAccountConfig,
@@ -303,6 +341,7 @@ export function normalizeTelegramUpdate(
 
 export class TelegramAdapter implements ChannelAdapter {
   readonly id = "telegram" as const;
+  private readonly pendingMedia = new Map<string, TelegramUpdate>();
 
   constructor(
     private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void> = delay,
@@ -376,7 +415,12 @@ export class TelegramAdapter implements ChannelAdapter {
               const envelope = normalizeTelegramUpdate(update, account, bot);
               if (envelope) {
                 onStatus({ lastInboundAt: Date.now(), lastEventAt: Date.now() });
-                await onInbound(envelope);
+                this.pendingMedia.set(envelope.id, update);
+                try {
+                  await onInbound(envelope);
+                } finally {
+                  this.pendingMedia.delete(envelope.id);
+                }
               }
               state.markProcessed(account.id, eventId);
             }
@@ -440,6 +484,24 @@ export class TelegramAdapter implements ChannelAdapter {
     };
   }
 
+  async downloadInbound(context: Parameters<NonNullable<ChannelAdapter["downloadInbound"]>>[0]) {
+    const update = this.pendingMedia.get(context.envelope.id);
+    if (!update) throw new Error("Telegram 附件上下文已过期，请重新发送");
+    const attachments = downloadableAttachments(update);
+    return Promise.all(
+      attachments.map(async (attachment) => ({
+        kind: attachment.kind,
+        data: await downloadTelegramFile({
+          baseUrl: context.secret.baseUrl,
+          token: context.secret.token,
+          fileId: attachment.file.file_id!,
+        }),
+        ...(attachment.name ? { name: attachment.name } : {}),
+        ...(attachment.mime ? { mime: attachment.mime } : {}),
+      })),
+    );
+  }
+
   private async sendPlain(context: AdapterSendContext): Promise<DeliveryReceipt> {
     const chunks = splitChannelText(context.text, 4_000);
     if (chunks.length === 0) throw new Error("Cannot send an empty Telegram message");
@@ -487,6 +549,35 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   async send(context: AdapterSendContext): Promise<DeliveryReceipt> {
+    if (context.attachments?.length) {
+      let receipt: DeliveryReceipt | undefined;
+      if (context.text.trim())
+        receipt = await this.sendRichOrFallback(
+          context,
+          new TelegramRichMessageBuilder().renderFinal(context.text),
+          context.text,
+        );
+      for (let index = 0; index < context.attachments.length; index += 1) {
+        const attachment = context.attachments[index];
+        const message = await this.retryRateLimit(() =>
+          sendTelegramMedia({
+            baseUrl: context.secret.baseUrl,
+            token: context.secret.token,
+            chatId: context.peerId,
+            kind: attachment.kind,
+            path: attachment.path,
+            name: attachment.name,
+            mime: attachment.mime,
+            threadId: context.threadId,
+            ...(!receipt && index === 0 && context.replyToMessageId
+              ? { replyToMessageId: context.replyToMessageId }
+              : {}),
+          }),
+        );
+        receipt = this.receipt(context, String(message.message_id));
+      }
+      if (receipt) return receipt;
+    }
     const builder = new TelegramRichMessageBuilder();
     return this.sendRichOrFallback(context, builder.renderFinal(context.text), context.text);
   }

@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -6,7 +10,9 @@ import {
   getTelegramBot,
   getTelegramUpdates,
   deleteTelegramCommands,
+  downloadTelegramFile,
   sendTelegramMessage,
+  sendTelegramMedia,
   sendTelegramMessageDraft,
   sendTelegramRichMessage,
   sendTelegramRichMessageDraft,
@@ -205,4 +211,66 @@ test("Telegram API errors preserve 409 and 429 classification metadata", async (
     getTelegramBot({ token: "token" }),
     (error) => error instanceof TelegramApiError && error.errorCode === 429 && error.retryAfter === 3,
   );
+});
+
+test("getFile downloads provider bytes from the fixed bot file origin with a byte limit", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const urls = [];
+  globalThis.fetch = async (url) => {
+    urls.push(String(url));
+    if (String(url).endsWith("/getFile")) {
+      return jsonResponse({ ok: true, result: { file_id: "photo", file_size: 4, file_path: "photos/a b.jpg" } });
+    }
+    return new globalThis.Response(Buffer.from([1, 2, 3, 4]), {
+      status: 200,
+      headers: { "Content-Length": "4" },
+    });
+  };
+  const data = await downloadTelegramFile({
+    baseUrl: "https://telegram.example",
+    token: "secret-token",
+    fileId: "photo",
+  });
+  assert.deepEqual(data, Buffer.from([1, 2, 3, 4]));
+  assert.equal(urls[1], "https://telegram.example/file/botsecret-token/photos/a%20b.jpg");
+});
+
+test("Telegram media upload uses multipart fields while preserving topic and reply routing", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const directory = mkdtempSync(path.join(tmpdir(), "pi-telegram-upload-"));
+  const filePath = path.join(directory, "voice.ogg");
+  await writeFile(filePath, Buffer.from("voice"));
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), form: init.body };
+    return jsonResponse({
+      ok: true,
+      result: { message_id: 99, date: 1, chat: { id: 7, type: "private" } },
+    });
+  };
+  await sendTelegramMedia({
+    baseUrl: "https://telegram.example",
+    token: "token",
+    chatId: "7",
+    kind: "voice",
+    path: filePath,
+    name: "note.ogg",
+    mime: "audio/ogg",
+    threadId: "9",
+    replyToMessageId: "55",
+  });
+  assert.match(request.url, /\/sendVoice$/);
+  assert.equal(request.form.get("chat_id"), "7");
+  assert.equal(request.form.get("message_thread_id"), "9");
+  assert.deepEqual(JSON.parse(request.form.get("reply_parameters")), {
+    message_id: 55,
+    allow_sending_without_reply: true,
+  });
+  assert.equal(request.form.get("voice").name, "note.ogg");
 });

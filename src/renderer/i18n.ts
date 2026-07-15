@@ -78,6 +78,7 @@ const zhCN: Record<string, string> = {
   telegramGroupSetupHint:
     "普通群和超级群都支持；Topic 仅限论坛超级群。请先在群内发送 /status@机器人用户名，再从“最近活动”复制 Chat ID 到“允许的群 ID”。",
   weixin: "微信",
+  channelAttachment: "附件",
   channelOverview: "渠道总览",
   configured: "已配置",
   configuredAccounts: "个账号已配置",

@@ -208,6 +208,65 @@ test("runtime checkpoints update offset and suppresses replay after Host restart
   assert.deepEqual(offsets, [undefined, 101, 101]);
 });
 
+test("runtime keeps provider media references private while allowing policy-approved download", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  const controller = new globalThis.AbortController();
+  const configuredAccount = account();
+  const secret = {
+    token: "token",
+    providerAccountId: "42",
+    providerUsername: "@pi_bot",
+    baseUrl: "https://telegram.example",
+  };
+  let adapter;
+  let downloaded;
+  let updateDelivered = false;
+  globalThis.fetch = async (url) => {
+    const endpoint = String(url);
+    if (endpoint.endsWith("/getMe")) return jsonResponse(botResult());
+    if (endpoint.endsWith("/getUpdates")) {
+      if (updateDelivered) return jsonResponse({ ok: true, result: [] });
+      updateDelivered = true;
+      return jsonResponse({
+        ok: true,
+        result: [
+          {
+            ...dmUpdate(301, undefined),
+            message: { ...dmUpdate(301, undefined).message, text: undefined, photo: [{ file_id: "photo-one" }] },
+          },
+        ],
+      });
+    }
+    if (endpoint.endsWith("/getFile")) {
+      return jsonResponse({ ok: true, result: { file_id: "photo-one", file_size: 9, file_path: "photos/one.jpg" } });
+    }
+    if (endpoint.includes("/file/bottoken/photos/one.jpg")) {
+      return new globalThis.Response(Buffer.from([0xff, 0xd8, 0xff, 1]), { status: 200 });
+    }
+    throw new Error(`Unexpected Telegram endpoint: ${endpoint}`);
+  };
+  adapter = new TelegramAdapter();
+  await adapter.start({
+    account: configuredAccount,
+    secret,
+    signal: controller.signal,
+    state: new ChannelStateStore(createStatePath()),
+    onInbound: async (envelope) => {
+      assert.deepEqual(envelope.attachments, [{ kind: "image", mime: "image/jpeg" }]);
+      assert.equal(JSON.stringify(envelope).includes("photo-one"), false);
+      downloaded = await adapter.downloadInbound({ account: configuredAccount, secret, envelope });
+      controller.abort();
+    },
+    onStatus: () => undefined,
+    log: () => undefined,
+  });
+  assert.equal(downloaded[0].kind, "image");
+  assert.deepEqual(downloaded[0].data, Buffer.from([0xff, 0xd8, 0xff, 1]));
+});
+
 test("runtime retries a transient getMe failure during offline startup", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -170,6 +171,75 @@ test("fake adapter runs inbound message through binding, Pi bridge, and delivery
   await manager.shutdown();
 });
 
+test("accepted media is staged privately and passed to the existing Pi turn", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-manager-media-"));
+  const fake = createFakeAdapter("telegram");
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+  fake.adapter.downloadInbound = async () => [
+    { kind: "image", data: png, name: "../../photo.png", mime: "image/jpeg" },
+  ];
+  const registry = new AdapterRegistry();
+  registry.register(fake.adapter);
+  let staged;
+  let generatedPath;
+  const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
+    dataDirectory: dir,
+    registry,
+    secretAccess: {
+      get: async () => ({ token: "token", providerAccountId: "42", baseUrl: "https://telegram.example" }),
+      set: async () => {},
+      delete: async () => {},
+    },
+    bridge: {
+      async runTurn(binding, _envelope, _onProgress, attachments) {
+        staged = attachments;
+        await mkdir(binding.cwd, { recursive: true });
+        generatedPath = path.join(binding.cwd, "result.txt");
+        await writeFile(generatedPath, "generated");
+        return { sessionId: "session-media", finalText: "I can see it", generatedFiles: [generatedPath] };
+      },
+    },
+  });
+  const now = new Date().toISOString();
+  await manager.upsertAccount({
+    id: "telegram-media",
+    channel: "telegram",
+    name: "Telegram",
+    enabled: true,
+    dmPolicy: "open",
+    allowFrom: [],
+    groupPolicy: "disabled",
+    groupIds: [],
+    groupAllowFrom: [],
+    requireMention: true,
+    toolNames: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  await fake.emit({
+    id: "media-one",
+    channel: "telegram",
+    accountId: "telegram-media",
+    peer: { kind: "dm", id: "7" },
+    sender: { id: "7" },
+    text: "",
+    mentionsBot: false,
+    attachments: [{ kind: "image", name: "../../photo.png", mime: "image/jpeg" }],
+    timestamp: Date.now(),
+  });
+  assert.equal(staged.length, 1);
+  assert.equal(staged[0].name, "photo.png");
+  assert.equal(staged[0].mime, "image/png");
+  assert.deepEqual(await readFile(staged[0].path), png);
+  assert.match(staged[0].path, /channel-media/);
+  assert.equal(fake.sent[0].text, "I can see it");
+  assert.equal(fake.sent[1].text, "");
+  assert.deepEqual(fake.sent[1].attachments, [
+    { kind: "file", path: generatedPath, name: "result.txt", mime: "text/plain" },
+  ]);
+  await manager.shutdown();
+});
+
 test("progressive adapters receive Agent events and own the final delivery", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-progressive-"));
   const fake = createFakeAdapter("telegram");
@@ -263,6 +333,11 @@ test("unknown sender receives pairing code without invoking Pi", async () => {
   const registry = new AdapterRegistry();
   registry.register(fake.adapter);
   let bridgeCalls = 0;
+  let mediaDownloads = 0;
+  fake.adapter.downloadInbound = async () => {
+    mediaDownloads += 1;
+    return [];
+  };
   const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
     dataDirectory: dir,
     registry,
@@ -300,13 +375,14 @@ test("unknown sender receives pairing code without invoking Pi", async () => {
     accountId: "wx-two",
     peer: { kind: "dm", id: "stranger" },
     sender: { id: "stranger" },
-    text: "hello",
+    text: "",
     mentionsBot: false,
-    attachments: [],
+    attachments: [{ kind: "image", mime: "image/jpeg" }],
     timestamp: Date.now(),
     providerContext: { contextToken: "ctx" },
   });
   assert.equal(bridgeCalls, 0);
+  assert.equal(mediaDownloads, 0, "pairing policy must run before any provider media download");
   assert.match(fake.sent[0].text, /配对码：\d{6}/);
   assert.equal((await manager.snapshot()).pairings.length, 1);
   await manager.shutdown();

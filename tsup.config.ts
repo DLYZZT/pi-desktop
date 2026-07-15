@@ -35,6 +35,8 @@ export default defineConfig([
       "@earendil-works/pi-ai",
       "@earendil-works/pi-agent-core",
       "@earendil-works/pi-tui",
+      // Keep the adjacent silk.wasm asset resolvable from the packaged dependency.
+      "silk-wasm",
     ],
     splitting: false,
     treeshake: true,

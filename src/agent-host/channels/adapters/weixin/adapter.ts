@@ -20,7 +20,8 @@ import {
   sendTyping,
   startQrLogin,
 } from "./api";
-import { WeixinMessageType } from "./protocol-types";
+import { downloadWeixinAttachments, sendWeixinAttachment } from "./media";
+import { WeixinMessageType, type WeixinMessage } from "./protocol-types";
 
 type ActiveLogin = {
   sessionKey: string;
@@ -68,6 +69,7 @@ export class WeixinAdapter implements ChannelAdapter {
   readonly id = "weixin" as const;
   private readonly logins = new Map<string, ActiveLogin>();
   private readonly typingTickets = new Map<string, string>();
+  private readonly pendingMedia = new Map<string, WeixinMessage>();
 
   constructor(private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void> = delay) {}
 
@@ -126,7 +128,12 @@ export class WeixinAdapter implements ChannelAdapter {
             };
             if (message.context_token) state.setContextToken(account.id, peerId, message.context_token);
             onStatus({ lastInboundAt: Date.now(), lastEventAt: Date.now() });
-            await onInbound(envelope);
+            this.pendingMedia.set(envelope.id, message);
+            try {
+              await onInbound(envelope);
+            } finally {
+              this.pendingMedia.delete(envelope.id);
+            }
             state.markProcessed(account.id, eventId);
           }
 
@@ -157,7 +164,7 @@ export class WeixinAdapter implements ChannelAdapter {
 
   async send(context: AdapterSendContext): Promise<DeliveryReceipt> {
     const chunks = splitChannelText(context.text);
-    if (chunks.length === 0) throw new Error("Cannot send an empty Weixin message");
+    if (chunks.length === 0 && !context.attachments?.length) throw new Error("Cannot send an empty Weixin message");
     let clientId = "";
     for (const chunk of chunks) {
       clientId = randomUUID();
@@ -171,6 +178,18 @@ export class WeixinAdapter implements ChannelAdapter {
         clientId,
       });
     }
+    for (const attachment of context.attachments ?? []) {
+      clientId = randomUUID();
+      await sendWeixinAttachment({
+        baseUrl: context.secret.baseUrl,
+        token: context.secret.token,
+        to: context.peerId,
+        attachment,
+        contextToken: context.contextToken,
+        runId: context.runId,
+        clientId,
+      });
+    }
     return {
       id: randomUUID(),
       channel: "weixin",
@@ -179,6 +198,12 @@ export class WeixinAdapter implements ChannelAdapter {
       messageId: clientId,
       deliveredAt: new Date().toISOString(),
     };
+  }
+
+  async downloadInbound(context: Parameters<NonNullable<ChannelAdapter["downloadInbound"]>>[0]) {
+    const message = this.pendingMedia.get(context.envelope.id);
+    if (!message) throw new Error("微信附件上下文已过期，请重新发送");
+    return downloadWeixinAttachments(message);
   }
 
   async setTyping(context: AdapterTypingContext): Promise<void> {

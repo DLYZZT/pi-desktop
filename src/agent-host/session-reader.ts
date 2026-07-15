@@ -3,7 +3,7 @@ import {
   buildSessionContext as piBuildSessionContext,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentMessage, SessionEntry, SessionInfo, SessionContext } from "../shared/types";
+import type { AgentMessage, SessionEntry, SessionInfo, SessionContext, UserMessage } from "../shared/types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "../shared/normalize";
 import { resolveProject, type ProjectInfo } from "../shared/worktree";
@@ -111,9 +111,25 @@ export function buildSessionContext(entries: SessionEntry[], leafId?: string | n
   // inline summary messages so the user still sees where context was compressed.
   const messages: AgentMessage[] = [];
   const entryIds: string[] = [];
+  let pendingChannelSource: { channel: NonNullable<UserMessage["channelSource"]>; runId?: string } | null = null;
   for (const e of path) {
-    const m = entryToUiMessage(e);
+    if (e.type === "custom" && e.customType === "pi-desktop-channel-source") {
+      const marker = parseChannelSourceMarker(e.data);
+      if (marker) pendingChannelSource = marker;
+      continue;
+    }
+    if (e.type === "custom" && e.customType === "pi-desktop-channel-source-cancelled") {
+      const runId = parseRunId(e.data);
+      if (!runId || pendingChannelSource?.runId === runId) pendingChannelSource = null;
+      continue;
+    }
+
+    let m = entryToUiMessage(e);
     if (m) {
+      if (m.role === "user") {
+        m = withUserMessageSource(m, pendingChannelSource?.channel);
+        pendingChannelSource = null;
+      }
       messages.push(m);
       entryIds.push(e.id);
     }
@@ -125,6 +141,62 @@ export function buildSessionContext(entries: SessionEntry[], leafId?: string | n
     thinkingLevel: piCtx.thinkingLevel,
     model: piCtx.model,
   };
+}
+
+function parseRunId(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const runId = (data as { runId?: unknown }).runId;
+  return typeof runId === "string" ? runId : undefined;
+}
+
+function parseChannelSourceMarker(
+  data: unknown,
+): { channel: NonNullable<UserMessage["channelSource"]>; runId?: string } | null {
+  if (!data || typeof data !== "object") return null;
+  const marker = data as { channel?: unknown; runId?: unknown };
+  if (marker.channel !== "weixin" && marker.channel !== "telegram" && marker.channel !== "feishu") return null;
+  return {
+    channel: marker.channel,
+    ...(typeof marker.runId === "string" ? { runId: marker.runId } : {}),
+  };
+}
+
+function withUserMessageSource(message: UserMessage, source?: NonNullable<UserMessage["channelSource"]>): UserMessage {
+  const legacy = parseLegacyChannelMessage(message);
+  return {
+    ...legacy.message,
+    ...(source || legacy.source ? { channelSource: source ?? legacy.source } : {}),
+  };
+}
+
+function parseLegacyChannelMessage(message: UserMessage): {
+  message: UserMessage;
+  source?: NonNullable<UserMessage["channelSource"]>;
+} {
+  const text =
+    typeof message.content === "string"
+      ? message.content
+      : message.content
+          .filter((block): block is { type: "text"; text: string } => block.type === "text")
+          .map((block) => block.text)
+          .join("\n");
+  const sourceLabel = text.match(/^\[外部消息来源：(微信|Telegram|飞书 \/ Lark)\]\n/)?.[1];
+  const delimiter = text.indexOf("\n---\n");
+  if (!sourceLabel || delimiter < 0) return { message };
+
+  const source = sourceLabel === "微信" ? "weixin" : sourceLabel === "Telegram" ? "telegram" : ("feishu" as const);
+  const actualText = text.slice(delimiter + "\n---\n".length);
+  if (typeof message.content === "string") {
+    return { message: { ...message, content: actualText }, source };
+  }
+
+  let replacedText = false;
+  const content = message.content.map((block) => {
+    if (block.type !== "text" || replacedText) return block;
+    replacedText = true;
+    return { ...block, text: actualText };
+  });
+  return { message: { ...message, content }, source };
 }
 
 function parseEntryTimestamp(timestamp: string): number | undefined {
@@ -158,6 +230,7 @@ function entryToUiMessage(entry: SessionEntry): AgentMessage | null {
         timestamp: parseEntryTimestamp(entry.timestamp),
       };
     case "custom_message":
+      if (entry.customType === "pi-desktop-channel-attachment-context") return null;
       return {
         role: "custom",
         customType: entry.customType,

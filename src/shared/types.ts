@@ -48,6 +48,8 @@ export type AssistantContentBlock = TextContent | ImageContent | ThinkingContent
 export interface UserMessage {
   role: "user";
   content: string | (TextContent | ImageContent)[];
+  /** UI-only origin metadata. It is never projected into the model prompt. */
+  channelSource?: "weixin" | "telegram" | "feishu";
   timestamp?: number;
 }
 

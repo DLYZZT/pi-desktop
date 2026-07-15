@@ -36,6 +36,33 @@ export interface AdapterSendContext {
   threadId?: string;
   replyToMessageId?: string;
   runId?: string;
+  /** Optional, explicitly authorized local files. Existing text-only adapters can ignore this capability. */
+  attachments?: OutboundAttachment[];
+}
+
+export interface OutboundAttachment {
+  kind: "image" | "voice" | "file" | "video";
+  path: string;
+  name?: string;
+  mime?: string;
+}
+
+export interface DownloadedInboundAttachment {
+  kind: "image" | "voice" | "file" | "video";
+  data: Buffer;
+  name?: string;
+  mime?: string;
+}
+
+export interface StagedInboundAttachment extends Omit<DownloadedInboundAttachment, "data"> {
+  path: string;
+  size: number;
+}
+
+export interface AdapterDownloadInboundContext {
+  account: ChannelAccountConfig;
+  secret: ChannelSecret;
+  envelope: InboundEnvelope;
 }
 
 export interface AdapterTypingContext {
@@ -72,6 +99,8 @@ export interface ChannelAdapter {
   id: ChannelId;
   start(context: AdapterStartContext): Promise<void>;
   send(context: AdapterSendContext): Promise<DeliveryReceipt>;
+  /** Download provider media only after Channel Core has accepted the sender policy. */
+  downloadInbound?(context: AdapterDownloadInboundContext): Promise<DownloadedInboundAttachment[]>;
   beginTurn?(context: AdapterTurnContext): AdapterTurnOutput;
   setTyping?(context: AdapterTypingContext): Promise<void>;
   probe(account: ChannelAccountConfig, secret: ChannelSecret): Promise<ChannelProbeResult>;

@@ -3,6 +3,8 @@ import { MarkdownBody } from "./MarkdownBody";
 import { copyText } from "@/lib/clipboard";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { isEmptyThinkingBlock } from "@/lib/message-display";
+import { getUserBubbleColor } from "@/lib/channel-message-style";
+import { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER } from "@shared/channel-message";
 import { useI18n } from "@/i18n";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import type {
@@ -130,6 +132,7 @@ function UserMessageView({
   prevAssistantEntryId?: string;
   onEditContent?: (content: string) => void;
 }) {
+  const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -144,12 +147,20 @@ function UserMessageView({
   const imageBlocks: ImageContent[] =
     typeof message.content === "string" ? [] : message.content.filter((b): b is ImageContent => b.type === "image");
 
+  const visibleContent =
+    message.channelSource && content === CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER
+      ? imageBlocks.length > 0
+        ? ""
+        : t("channelAttachment", "Attachment")
+      : content;
+
   const time = formatTime(message.timestamp);
+  const messageSource = message.channelSource ?? "local";
   const canFork = !!entryId && !!onFork;
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
 
   const copyContent = () => {
-    void copyText(content).then(() => {
+    void copyText(visibleContent).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
@@ -172,10 +183,11 @@ function UserMessageView({
         }}
       >
         <div
+          data-message-source={messageSource}
           style={{
             minWidth: 0,
             maxWidth: "100%",
-            background: "var(--user-bg)",
+            background: getUserBubbleColor(message.channelSource),
             borderRadius: "10px 10px 2px 10px",
             padding: "9px 13px",
             fontSize: 13.5,
@@ -185,7 +197,7 @@ function UserMessageView({
           }}
         >
           {imageBlocks.length > 0 && (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: content ? 8 : 0 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: visibleContent ? 8 : 0 }}>
               {imageBlocks.map((img, i) => {
                 // lib/types.ts ImageContent uses {source:{type,data,media_type,url}}
                 // pi-ai on-disk format uses flat {data, mimeType} — handle both
@@ -215,9 +227,9 @@ function UserMessageView({
               })}
             </div>
           )}
-          {content && (
+          {visibleContent && (
             <MarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile}>
-              {content}
+              {visibleContent}
             </MarkdownBody>
           )}
         </div>

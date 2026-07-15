@@ -8,6 +8,7 @@ import { randomUUID } from "crypto";
 import { cacheSessionPath } from "./session-reader";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "../shared/pi-types";
+import type { ChannelId } from "../shared/channel-types";
 import type { ExtensionUiRequest, ExtensionUiResponse, ExtensionWidgetItem } from "../shared/types";
 
 // ============================================================================
@@ -62,6 +63,38 @@ type ExtensionBindingOptions = {
 export type ExternalSessionCommand = "compact" | "reload";
 
 const CODING_TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const LEGACY_CHANNEL_PROMPT = /^\[外部消息来源：(微信|Telegram|飞书 \/ Lark)\]\n/;
+const LEGACY_CHANNEL_PROMPT_DELIMITER = "\n---\n";
+
+function stripLegacyChannelPromptText(text: string): string {
+  if (!LEGACY_CHANNEL_PROMPT.test(text)) return text;
+  const delimiter = text.indexOf(LEGACY_CHANNEL_PROMPT_DELIMITER);
+  return delimiter < 0 ? text : text.slice(delimiter + LEGACY_CHANNEL_PROMPT_DELIMITER.length);
+}
+
+function stripLegacyChannelPrompts(messages: unknown[]): unknown[] {
+  return messages.map((message) => {
+    if (!message || typeof message !== "object" || (message as { role?: unknown }).role !== "user") return message;
+    const user = message as { content?: unknown };
+    if (typeof user.content === "string") {
+      const content = stripLegacyChannelPromptText(user.content);
+      return content === user.content ? message : { ...message, content };
+    }
+    if (!Array.isArray(user.content)) return message;
+
+    let changed = false;
+    const content = user.content.map((block) => {
+      if (!block || typeof block !== "object" || (block as { type?: unknown }).type !== "text") return block;
+      const text = (block as { text?: unknown }).text;
+      if (typeof text !== "string") return block;
+      const stripped = stripLegacyChannelPromptText(text);
+      if (stripped === text) return block;
+      changed = true;
+      return { ...block, text: stripped };
+    });
+    return changed ? { ...message, content } : message;
+  });
+}
 
 function withExtensionTools(session: AgentSessionLike, toolNames: string[]): string[] {
   if (toolNames.length === 0) return [];
@@ -97,6 +130,7 @@ export class AgentSessionWrapper {
   private queuedTurnCount = 0;
   private turnTail: Promise<void> = Promise.resolve();
   private externalTurnActive = false;
+  private externalTurnChannel: ChannelId | null = null;
   private externalTurnProgress: ((event: AgentEvent) => void) | null = null;
   private extensionsBound = false;
   private extensionBindingPromise: Promise<void> | null = null;
@@ -109,6 +143,8 @@ export class AgentSessionWrapper {
 
   constructor(inner: AgentSessionLike) {
     this.inner = inner;
+    const messages = this.inner.agent.state?.messages;
+    if (Array.isArray(messages)) this.inner.agent.state!.messages = stripLegacyChannelPrompts(messages);
   }
 
   get sessionId(): string {
@@ -117,6 +153,11 @@ export class AgentSessionWrapper {
 
   get sessionFile(): string {
     return this.inner.sessionFile ?? "";
+  }
+
+  get cwd(): string {
+    const cwd = this.inner.sessionManager.getHeader()?.cwd;
+    return typeof cwd === "string" ? cwd : "";
   }
 
   isAlive(): boolean {
@@ -133,9 +174,10 @@ export class AgentSessionWrapper {
   start(): void {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
       this.resetIdleTimer();
-      this.emit(event);
+      const displayEvent = this.withExternalChannelSource(event);
+      this.emit(displayEvent);
       try {
-        this.externalTurnProgress?.(event);
+        this.externalTurnProgress?.(displayEvent);
       } catch {
         // Channel progress is best-effort and must never interrupt the Agent.
       }
@@ -145,6 +187,16 @@ export class AgentSessionWrapper {
     });
     this.resetIdleTimer();
     notifyRunningChange();
+  }
+
+  private withExternalChannelSource(event: AgentEvent): AgentEvent {
+    if (!this.externalTurnChannel || (event.type !== "message_start" && event.type !== "message_end")) return event;
+    const message = event.message;
+    if (!message || typeof message !== "object" || (message as { role?: unknown }).role !== "user") return event;
+    return {
+      ...event,
+      message: { ...(message as Record<string, unknown>), channelSource: this.externalTurnChannel },
+    };
   }
 
   setForceEmptySystemPrompt(force: boolean): void {
@@ -277,18 +329,45 @@ export class AgentSessionWrapper {
   async runExternalTurn(params: {
     runId: string;
     message: string;
+    channel: ChannelId;
+    images?: Array<{ type: "image"; data: string; mimeType: string }>;
+    attachmentContext?: string;
     onProgress?: (event: AgentEvent) => void;
   }): Promise<{ runId: string; finalText: string }> {
     return this.enqueueTurn(async () => {
       this.emit({ type: "channel_turn_start", runId: params.runId });
       this.externalTurnActive = true;
+      this.externalTurnChannel = params.channel;
       this.externalTurnProgress = params.onProgress ?? null;
       try {
-        await this.inner.prompt(params.message, { source: "rpc" });
+        this.inner.sessionManager.appendCustomEntry("pi-desktop-channel-source", {
+          runId: params.runId,
+          channel: params.channel,
+        });
+        if (params.attachmentContext) {
+          await this.inner.sendCustomMessage(
+            {
+              customType: "pi-desktop-channel-attachment-context",
+              content: params.attachmentContext,
+              display: false,
+            },
+            { deliverAs: "nextTurn" },
+          );
+        }
+        await this.inner.prompt(params.message, {
+          ...(params.images?.length ? { images: params.images } : {}),
+          expandPromptTemplates: false,
+          source: "rpc",
+        });
         const finalText = this.inner.getLastAssistantText()?.trim() ?? "";
         this.emit({ type: "channel_turn_end", runId: params.runId, finalText });
         return { runId: params.runId, finalText };
       } catch (error) {
+        try {
+          this.inner.sessionManager.appendCustomEntry("pi-desktop-channel-source-cancelled", { runId: params.runId });
+        } catch {
+          // A best-effort UI marker must never hide the original turn failure.
+        }
         this.emit({
           type: "channel_turn_error",
           runId: params.runId,
@@ -298,6 +377,7 @@ export class AgentSessionWrapper {
       } finally {
         this.externalTurnProgress = null;
         this.externalTurnActive = false;
+        this.externalTurnChannel = null;
       }
     });
   }
