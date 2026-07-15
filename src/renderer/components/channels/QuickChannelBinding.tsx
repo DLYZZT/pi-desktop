@@ -12,8 +12,11 @@ interface QuickChannelBindingProps {
 
 export function QuickChannelBinding({ sessionId, snapshot, isMobile, onSnapshotChange }: QuickChannelBindingProps) {
   const { t } = useI18n();
-  const channelName = (channel: ChannelBinding["channel"]) =>
-    channel === "telegram" ? "Telegram" : t("weixin", "WeChat");
+  const channelName = (channel: ChannelBinding["channel"]) => {
+    if (channel === "telegram") return "Telegram";
+    if (channel === "feishu") return t("feishuLark", "Feishu / Lark");
+    return t("weixin", "WeChat");
+  };
   const [open, setOpen] = useState(false);
   const [busyBindingId, setBusyBindingId] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -85,7 +88,14 @@ export function QuickChannelBinding({ sessionId, snapshot, isMobile, onSnapshotC
 
   const bound = currentBindings.length > 0;
   const singleChannel = currentChannels.length === 1 ? currentChannels[0] : undefined;
-  const accent = singleChannel === "telegram" ? "#229ed9" : singleChannel === "weixin" ? "#07c160" : "var(--accent)";
+  const accent =
+    singleChannel === "telegram"
+      ? "#229ed9"
+      : singleChannel === "weixin"
+        ? "#07c160"
+        : singleChannel === "feishu"
+          ? "#3370ff"
+          : "var(--accent)";
   const label = bound
     ? online
       ? singleChannel

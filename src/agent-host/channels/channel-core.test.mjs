@@ -104,6 +104,29 @@ test("channel config persists normalized accounts and bindings", () => {
   assert.equal(JSON.parse(readFileSync(file, "utf8")).version, 1);
 });
 
+test("channel config preserves Feishu App ID and normalizes the Feishu/Lark domain", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-feishu-config-"));
+  const file = path.join(dir, "channels.json");
+  const store = new ChannelConfigStore(file);
+  const saved = store.upsertAccount(
+    account({
+      id: "feishu-one",
+      channel: "feishu",
+      name: "",
+      appId: " cli_1234567890abcdef ",
+      domain: "lark",
+    }),
+  );
+  assert.equal(saved.channel, "feishu");
+  assert.equal(saved.name, "飞书 / Lark");
+  assert.equal(saved.appId, "cli_1234567890abcdef");
+  assert.equal(saved.domain, "lark");
+
+  const reopened = new ChannelConfigStore(file).listAccounts()[0];
+  assert.equal(reopened.appId, "cli_1234567890abcdef");
+  assert.equal(reopened.domain, "lark");
+});
+
 test("channel command parser recognizes only the additive built-in command set", () => {
   assert.deepEqual(parseChannelCommand("/help"), { name: "help", args: "" });
   assert.deepEqual(parseChannelCommand(" /status@pi_bot "), { name: "status", args: "" });
@@ -262,6 +285,10 @@ test("channel redaction removes structured and inline credentials", () => {
   assert.equal(
     safeChannelError(new Error("request failed: https://api.telegram.org/bot123456:secret/getMe")),
     "request failed: https://api.telegram.org/bot[REDACTED]/getMe",
+  );
+  assert.equal(
+    safeChannelError(new Error('request failed?appSecret=abc123 body={"app_secret":"def456"}')),
+    'request failed?appSecret=[REDACTED] body={"app_secret":"[REDACTED]"}',
   );
 });
 

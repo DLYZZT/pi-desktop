@@ -28,9 +28,9 @@ export function redactChannelText(raw: unknown): string {
   }
   return text
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]")
-    .replace(/([?&](?:token|qrcode|context_token)=)[^&\s]+/gi, "$1[REDACTED]")
+    .replace(/([?&](?:token|secret|app_?secret|qrcode|context_token)=)[^&\s]+/gi, "$1[REDACTED]")
     .replace(/(api\.telegram\.org\/bot)[^/\s]+/gi, "$1[REDACTED]")
-    .replace(/("(?:bot_token|token|context_token|qrcode)"\s*:\s*")[^"]+/gi, "$1[REDACTED]");
+    .replace(/("(?:app_?secret|bot_token|context_token|qrcode|secret|token)"\s*:\s*")[^"]+/gi, "$1[REDACTED]");
 }
 
 export function safeChannelError(error: unknown): string {

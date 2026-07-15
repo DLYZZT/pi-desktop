@@ -1,4 +1,5 @@
-export type ChannelId = "weixin" | "telegram";
+export type ChannelId = "weixin" | "telegram" | "feishu";
+export type FeishuDomain = "feishu" | "lark";
 
 export type ChannelDmPolicy = "pairing" | "allowlist" | "open";
 export type ChannelGroupPolicy = "disabled" | "allowlist" | "open";
@@ -13,6 +14,10 @@ export interface ChannelAccountConfig {
   providerUsername?: string;
   userId?: string;
   baseUrl?: string;
+  /** Feishu/Lark self-built application identifier. App Secret stays in the OS credential vault. */
+  appId?: string;
+  /** Selects the China Feishu or international Lark Open Platform endpoints. */
+  domain?: FeishuDomain;
   dmPolicy: ChannelDmPolicy;
   allowFrom: string[];
   groupPolicy: ChannelGroupPolicy;

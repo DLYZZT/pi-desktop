@@ -129,6 +129,30 @@ test("normalizes DM, group topic, mention, reply context, and attachment metadat
   ]);
 });
 
+test("normalizes a basic Telegram group independently of forum topic support", () => {
+  const normalized = normalizeTelegramUpdate(
+    {
+      update_id: 201,
+      message: {
+        message_id: 26,
+        date: 1_700_000_001,
+        chat: { id: -12345, type: "group", title: "Basic group" },
+        from: { id: 9, is_bot: false, first_name: "Carol" },
+        text: "/status@pi_bot",
+        entities: [{ type: "bot_command", offset: 0, length: 14 }],
+      },
+    },
+    account(),
+    { id: 42, username: "pi_bot" },
+  );
+  assert.equal(normalized.peer.kind, "group");
+  assert.equal(normalized.peer.id, "-12345");
+  assert.equal(normalized.threadId, undefined);
+  assert.equal(normalized.sender.id, "9");
+  assert.equal(normalized.mentionsBot, true);
+  assert.equal(normalized.text, "/status");
+});
+
 test("runtime checkpoints update offset and suppresses replay after Host restart", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => {
@@ -472,6 +496,7 @@ test("private turns stream Rich drafts and persist folded process details", asyn
   });
   await new Promise((resolve) => setTimeout(resolve, 5));
   const receipt = await output.finish("## 完成\n\n**最终答案**");
+  await new Promise((resolve) => setImmediate(resolve));
 
   const drafts = requests.filter((request) => request.endpoint === "sendRichMessageDraft");
   assert.equal(drafts.length >= 2, true);
@@ -489,7 +514,44 @@ test("private turns stream Rich drafts and persist folded process details", asyn
   assert.match(final.body.rich_message.markdown, /<details><summary>工具 · read · 完成<\/summary>/);
   assert.match(final.body.rich_message.markdown, /## 完成\n\n\*\*最终答案\*\*/);
   assert.equal(final.body.reply_parameters.message_id, 10);
+  assert.deepEqual(
+    requests
+      .filter((request) => request.endpoint === "setMessageReaction")
+      .map((request) => request.body.reaction[0].emoji),
+    ["👀", "👍"],
+  );
   assert.equal(receipt.messageId, "81");
+});
+
+test("Telegram reaction failures never prevent a durable final reply", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  const endpoints = [];
+  globalThis.fetch = async (url) => {
+    const endpoint = String(url).split("/").at(-1);
+    endpoints.push(endpoint);
+    if (endpoint === "setMessageReaction") {
+      return jsonResponse({ ok: false, error_code: 400, description: "REACTION_INVALID" }, 400);
+    }
+    return jsonResponse({
+      ok: true,
+      result: { message_id: 84, date: 1, chat: { id: 7, type: "private" } },
+    });
+  };
+  const output = new TelegramAdapter(async () => undefined, 0).beginTurn({
+    account: account(),
+    secret: { token: "token", providerAccountId: "42", baseUrl: "https://telegram.example" },
+    peerId: "7",
+    peerKind: "dm",
+    replyToMessageId: "10",
+    runId: "run-reaction-failure",
+  });
+  const receipt = await output.finish("最终答案");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(receipt.messageId, "84");
+  assert.ok(endpoints.includes("sendRichMessage"));
 });
 
 test("group turns skip ephemeral drafts and send only a Rich final message", async (t) => {

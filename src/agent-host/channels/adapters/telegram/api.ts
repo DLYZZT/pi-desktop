@@ -255,6 +255,27 @@ export function sendTelegramChatAction(params: {
   });
 }
 
+export function setTelegramMessageReaction(params: {
+  baseUrl?: string;
+  token: string;
+  chatId: string;
+  messageId: string;
+  emoji: string;
+}): Promise<true> {
+  const messageId = Number(params.messageId);
+  if (!Number.isSafeInteger(messageId)) return Promise.reject(new Error("Invalid Telegram message ID for reaction"));
+  return telegramRequest<true>({
+    baseUrl: params.baseUrl,
+    token: params.token,
+    method: "setMessageReaction",
+    body: {
+      chat_id: params.chatId,
+      message_id: messageId,
+      reaction: [{ type: "emoji", emoji: params.emoji }],
+    },
+  });
+}
+
 export function escapeTelegramHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

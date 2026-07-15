@@ -8,13 +8,36 @@ import type {
   ChannelProbeResult,
   ChannelStatus,
   ChannelsSnapshot,
+  FeishuDomain,
 } from "@shared/channel-types";
 import type { SessionInfo } from "@contract/types";
 import { call, listSessions, subscribe } from "@/lib/api-client";
+import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/i18n";
 
 const EMPTY: ChannelsSnapshot = { accounts: [], statuses: [], pairings: [], bindings: [], activities: [] };
 const TELEGRAM_BASE_URL = "https://api.telegram.org";
+const FEISHU_BASE_URLS: Record<FeishuDomain, string> = {
+  feishu: "https://open.feishu.cn",
+  lark: "https://open.larksuite.com",
+};
+export const FEISHU_PERMISSION_IMPORT_JSON = JSON.stringify(
+  {
+    scopes: {
+      tenant: [
+        "im:message",
+        "im:message.p2p_msg:readonly",
+        "im:message.group_at_msg:readonly",
+        "im:message:send_as_bot",
+        "im:message.reactions:write_only",
+        "cardkit:card:write",
+      ],
+      user: [],
+    },
+  },
+  null,
+  2,
+);
 const TOOL_PRESETS = {
   none: [],
   read: ["read", "grep", "find", "ls"],
@@ -54,6 +77,24 @@ function statusColor(status?: ChannelStatus): string {
   return "var(--text-dim)";
 }
 
+type Translate = (key: string, fallback: string) => string;
+
+function channelLabel(channel: ChannelAccountConfig["channel"], t: Translate, domain?: FeishuDomain): string {
+  if (channel === "telegram") return "Telegram";
+  if (channel === "feishu") {
+    if (domain === "lark") return "Lark";
+    if (domain === "feishu") return t("feishu", "Feishu");
+    return t("feishuLark", "Feishu / Lark");
+  }
+  return t("weixin", "WeChat");
+}
+
+function channelAccent(channel: ChannelAccountConfig["channel"]): string {
+  if (channel === "telegram") return "#229ed9";
+  if (channel === "feishu") return "#3370ff";
+  return "#07c160";
+}
+
 export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snapshot: ChannelsSnapshot) => void }) {
   const { t } = useI18n();
   const [snapshot, setSnapshot] = useState<ChannelsSnapshot>(EMPTY);
@@ -65,6 +106,8 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
   const [verificationCode, setVerificationCode] = useState("");
   const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
   const [telegramError, setTelegramError] = useState("");
+  const [feishuDialogOpen, setFeishuDialogOpen] = useState(false);
+  const [feishuError, setFeishuError] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -184,6 +227,56 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
     }
   };
 
+  const connectFeishu = async (appId: string, appSecret: string, domain: FeishuDomain) => {
+    setBusy(true);
+    setFeishuError("");
+    try {
+      const now = new Date().toISOString();
+      const accountId = `feishu-${crypto.randomUUID()}`;
+      const account: ChannelAccountConfig = {
+        id: accountId,
+        channel: "feishu",
+        name: "",
+        enabled: false,
+        appId,
+        domain,
+        baseUrl: FEISHU_BASE_URLS[domain],
+        dmPolicy: "pairing",
+        allowFrom: [],
+        groupPolicy: "disabled",
+        groupIds: [],
+        groupAllowFrom: [],
+        requireMention: true,
+        commandsEnabled: false,
+        toolNames: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      if (typeof window.piBridge.setChannelCredential !== "function") {
+        throw new Error(
+          t("channelBridgeUnavailable", "The desktop credential bridge is unavailable. Restart Pi Desktop."),
+        );
+      }
+      await window.piBridge.setChannelCredential({
+        channel: "feishu",
+        accountId,
+        credential: {
+          token: appSecret,
+          providerAccountId: accountId,
+          baseUrl: FEISHU_BASE_URLS[domain],
+        },
+      });
+      const next = await call("channels.accountConnect", { account });
+      setSnapshot(next);
+      onSnapshotChange?.(next);
+      setFeishuDialogOpen(false);
+    } catch (cause) {
+      setFeishuError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const closeLogin = () => {
     if (login && !["confirmed", "already_connected", "expired", "error", "cancelled"].includes(login.phase)) {
       void call("channels.loginCancel", { channel: "weixin", sessionKey: login.sessionKey });
@@ -205,6 +298,17 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
             </p>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 7 }}>
+            <button
+              type="button"
+              disabled={busy}
+              style={buttonStyle()}
+              onClick={() => {
+                setFeishuError("");
+                setFeishuDialogOpen(true);
+              }}
+            >
+              {t("connectFeishu", "Connect Feishu / Lark")}
+            </button>
             <button
               type="button"
               disabled={busy}
@@ -263,7 +367,10 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
                 fontSize: 12,
               }}
             >
-              {t("noChannels", "No messaging accounts configured. Connect WeChat or Telegram to get started.")}
+              {t(
+                "noChannels",
+                "No messaging accounts configured. Connect WeChat, Telegram, or Feishu / Lark to get started.",
+              )}
             </div>
           ) : (
             <div style={{ display: "grid", gap: 12 }}>
@@ -313,6 +420,55 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
                     });
                     return probe;
                   }}
+                  onUpdateFeishuCredential={async (nextAccount, appSecret) => {
+                    const appId = nextAccount.appId?.trim();
+                    const domain = nextAccount.domain === "lark" ? "lark" : "feishu";
+                    if (!appId) throw new Error(t("feishuAppIdRequired", "App ID is required."));
+                    await window.piBridge.setChannelCredential({
+                      channel: "feishu",
+                      accountId: account.id,
+                      credential: {
+                        token: appSecret,
+                        providerAccountId: account.providerAccountId ?? account.id,
+                        baseUrl: FEISHU_BASE_URLS[domain],
+                      },
+                    });
+                    await call("channels.accountUpsert", {
+                      account: {
+                        ...nextAccount,
+                        appId,
+                        domain,
+                        baseUrl: FEISHU_BASE_URLS[domain],
+                        enabled: true,
+                        updatedAt: new Date().toISOString(),
+                      },
+                    });
+                    const probe = await call("channels.probe", { accountId: account.id });
+                    if (!probe.ok || !probe.providerAccountId) throw new Error(probe.message);
+                    await window.piBridge.setChannelCredential({
+                      channel: "feishu",
+                      accountId: account.id,
+                      credential: {
+                        token: appSecret,
+                        providerAccountId: probe.providerAccountId,
+                        baseUrl: FEISHU_BASE_URLS[domain],
+                      },
+                    });
+                    await call("channels.accountUpsert", {
+                      account: {
+                        ...nextAccount,
+                        appId,
+                        domain,
+                        baseUrl: FEISHU_BASE_URLS[domain],
+                        enabled: true,
+                        providerAccountId: probe.providerAccountId,
+                        name: nextAccount.name || probe.displayName || channelLabel("feishu", t, domain),
+                        updatedAt: new Date().toISOString(),
+                      },
+                    });
+                    await refresh();
+                    return probe;
+                  }}
                   onTestSend={(peerId, message) =>
                     run(() => call("channels.testSend", { accountId: account.id, peerId, message }))
                   }
@@ -359,6 +515,14 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
           onClose={() => setTelegramDialogOpen(false)}
         />
       )}
+      {feishuDialogOpen && (
+        <FeishuCredentialDialog
+          busy={busy}
+          error={feishuError}
+          onConnect={(appId, appSecret, domain) => void connectFeishu(appId, appSecret, domain)}
+          onClose={() => setFeishuDialogOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -373,6 +537,7 @@ export function AccountCard({
   onRestart,
   onProbe,
   onUpdateToken,
+  onUpdateFeishuCredential,
   onTestSend,
   onDelete,
 }: {
@@ -385,6 +550,7 @@ export function AccountCard({
   onRestart: () => void;
   onProbe: () => Promise<ChannelProbeResult>;
   onUpdateToken: (token: string) => Promise<ChannelProbeResult>;
+  onUpdateFeishuCredential: (account: ChannelAccountConfig, appSecret: string) => Promise<ChannelProbeResult>;
   onTestSend: (peerId: string, message: string) => void;
   onDelete: () => void;
 }) {
@@ -394,6 +560,7 @@ export function AccountCard({
   const [testMessage, setTestMessage] = useState(() => t("channelTestMessage", "Pi Agent Desktop channel test"));
   const [probing, setProbing] = useState(false);
   const [telegramToken, setTelegramToken] = useState("");
+  const [feishuAppSecret, setFeishuAppSecret] = useState("");
   const [updatingToken, setUpdatingToken] = useState(false);
   const [probeFeedback, setProbeFeedback] = useState<{ ok: boolean; message: string; at: number } | null>(null);
   useEffect(() => setDraft(account), [account]);
@@ -446,8 +613,28 @@ export function AccountCard({
     }
   };
 
-  const channelAccent = account.channel === "telegram" ? "#229ed9" : "#07c160";
-  const channelLabel = account.channel === "telegram" ? "Telegram" : t("weixin", "WeChat");
+  const handleFeishuCredentialUpdate = async () => {
+    const appId = draft.appId?.trim();
+    const appSecret = feishuAppSecret.trim();
+    if (!appId || !appSecret) return;
+    setUpdatingToken(true);
+    setProbeFeedback(null);
+    try {
+      const result = await onUpdateFeishuCredential(
+        { ...draft, appId, domain: draft.domain === "lark" ? "lark" : "feishu" },
+        appSecret,
+      );
+      setFeishuAppSecret("");
+      setProbeFeedback({ ok: result.ok, message: result.message, at: Date.now() });
+    } catch (cause) {
+      setProbeFeedback({ ok: false, message: cause instanceof Error ? cause.message : String(cause), at: Date.now() });
+    } finally {
+      setUpdatingToken(false);
+    }
+  };
+
+  const accent = channelAccent(account.channel);
+  const label = channelLabel(account.channel, t, account.domain);
 
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 9, background: "var(--bg-panel)", padding: 15 }}>
@@ -460,12 +647,18 @@ export function AccountCard({
               borderRadius: 9,
               display: "grid",
               placeItems: "center",
-              background: `color-mix(in srgb, ${channelAccent} 12%, transparent)`,
-              color: channelAccent,
+              background: `color-mix(in srgb, ${accent} 12%, transparent)`,
+              color: accent,
               fontWeight: 800,
             }}
           >
-            {account.channel === "telegram" ? "TG" : "微"}
+            {account.channel === "telegram"
+              ? "TG"
+              : account.channel === "feishu"
+                ? account.domain === "lark"
+                  ? "L"
+                  : "飞"
+                : "微"}
           </div>
           <div>
             <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 700 }}>{account.name}</div>
@@ -474,7 +667,7 @@ export function AccountCard({
               {account.credentialFingerprint ?? t("notConfigured", "not configured")}
             </div>
             <div style={{ color: "var(--text-dim)", fontSize: 10, marginTop: 2 }}>
-              {channelLabel}
+              {label}
               {account.providerUsername ? ` · ${account.providerUsername}` : ""}
               {account.providerAccountId ? ` · ${account.providerAccountId}` : ""}
             </div>
@@ -655,7 +848,65 @@ export function AccountCard({
           <div style={{ marginTop: 6, color: "var(--text-dim)", fontSize: 10, lineHeight: 1.5 }}>
             {t(
               "telegramGroupSetupHint",
-              "To allow a group, add the bot and mention it once, then copy the group chat ID from Recent activity into Allowed group IDs.",
+              "Basic groups and supergroups are supported; topics require a forum supergroup. Send /status@bot_username first, then copy the chat ID from Recent activity into Allowed group IDs.",
+            )}
+          </div>
+        </div>
+      )}
+
+      {account.channel === "feishu" && (
+        <div
+          data-testid="feishu-credential-settings"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))",
+            gap: 7,
+            marginTop: 12,
+          }}
+        >
+          <input
+            style={inputStyle}
+            value={draft.appId ?? ""}
+            onChange={(event) => setDraft({ ...draft, appId: event.target.value })}
+            placeholder={t("feishuAppId", "App ID (cli_…)")}
+          />
+          <select
+            style={inputStyle}
+            value={draft.domain === "lark" ? "lark" : "feishu"}
+            onChange={(event) => setDraft({ ...draft, domain: event.target.value as FeishuDomain })}
+          >
+            <option value="feishu">{t("feishuChina", "Feishu (China)")}</option>
+            <option value="lark">Lark</option>
+          </select>
+          <input
+            type="password"
+            autoComplete="off"
+            style={inputStyle}
+            value={feishuAppSecret}
+            onChange={(event) => setFeishuAppSecret(event.target.value)}
+            placeholder={t("newFeishuAppSecret", "New App Secret")}
+          />
+          <button
+            type="button"
+            disabled={busy || updatingToken || !draft.appId?.trim() || !feishuAppSecret.trim()}
+            style={buttonStyle()}
+            onClick={() => void handleFeishuCredentialUpdate()}
+          >
+            {updatingToken ? t("saving", "Saving…") : t("updateFeishuCredential", "Update credentials")}
+          </button>
+          <div style={{ gridColumn: "1 / -1", color: "var(--text-dim)", fontSize: 10, lineHeight: 1.5 }}>
+            {t(
+              "feishuCredentialHint",
+              "Changing the App Secret, App ID, or domain verifies the bot and hot-reloads its WebSocket connection without restarting Pi Desktop.",
+            )}
+          </div>
+          <div
+            data-testid="feishu-rich-card-hint"
+            style={{ gridColumn: "1 / -1", color: "var(--text-dim)", fontSize: 10, lineHeight: 1.5 }}
+          >
+            {t(
+              "feishuRichCardHint",
+              "Markdown final replies use Card JSON 2.0. Streaming also requires cardkit:card:write and Feishu 7.20+; missing card capability falls back safely to a final reply.",
             )}
           </div>
         </div>
@@ -748,7 +999,9 @@ export function AccountCard({
           placeholder={
             account.channel === "telegram"
               ? t("testSendTelegramChatId", "Telegram chat ID for test-send")
-              : t("testSendUserId", "User ID for test-send")
+              : account.channel === "feishu"
+                ? t("testSendFeishuReceiveId", "Feishu open_id or chat_id for test-send")
+                : t("testSendUserId", "User ID for test-send")
           }
         />
         <input style={inputStyle} value={testMessage} onChange={(event) => setTestMessage(event.target.value)} />
@@ -794,7 +1047,12 @@ function PairingSection({
           >
             <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
               <div>
-                {pairing.channel === "telegram" ? "Telegram" : t("weixin", "WeChat")} · {pairing.peerId}
+                {channelLabel(
+                  pairing.channel,
+                  t,
+                  snapshot.accounts.find((account) => account.id === pairing.accountId)?.domain,
+                )}{" "}
+                · {pairing.peerId}
               </div>
               <div style={{ color: "var(--text-dim)", marginTop: 3 }}>
                 {t("pairingCode", "Code")} {pairing.code} · {t("expiresAt", "expires")}{" "}
@@ -877,7 +1135,7 @@ function BindingRow({
       }}
     >
       <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {binding.channel === "telegram" ? "Telegram" : t("weixin", "WeChat")} · {binding.peerId}
+        {channelLabel(binding.channel, t)} · {binding.peerId}
         {binding.threadId ? ` · ${t("topic", "topic")} ${binding.threadId}` : ""}
       </div>
       <select style={inputStyle} value={sessionId} onChange={(event) => setSessionId(event.target.value)}>
@@ -990,7 +1248,7 @@ function ActivitySection({ snapshot }: { snapshot: ChannelsSnapshot }) {
                 }}
               >
                 <span style={{ color: activity.outcome === "failed" ? "#ef4444" : "var(--text-muted)" }}>
-                  {activity.channel === "telegram" ? "Telegram" : t("weixin", "WeChat")} ·{" "}
+                  {channelLabel(activity.channel, t)} ·{" "}
                   {t(`activityDirection_${activity.direction}`, activity.direction)} ·{" "}
                   {t(`activityOutcome_${activity.outcome}`, activity.outcome)}
                   {activity.peerId ? ` · ${activity.peerId}` : ""}
@@ -1088,6 +1346,199 @@ export function TelegramTokenDialog({
             disabled={busy || !token.trim()}
             style={buttonStyle(true)}
             onClick={() => onConnect(token.trim())}
+          >
+            {busy ? t("testingConnection", "Testing…") : t("saveAndConnect", "Save and connect")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function FeishuCredentialDialog({
+  busy,
+  error,
+  onConnect,
+  onClose,
+}: {
+  busy: boolean;
+  error: string;
+  onConnect: (appId: string, appSecret: string, domain: FeishuDomain) => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const [appId, setAppId] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+  const [domain, setDomain] = useState<FeishuDomain>("feishu");
+  const [permissionCopyState, setPermissionCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const docsBase = domain === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
+  const copyPermissionJson = async () => {
+    try {
+      await copyText(FEISHU_PERMISSION_IMPORT_JSON);
+      setPermissionCopyState("copied");
+    } catch {
+      setPermissionCopyState("error");
+    }
+  };
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1200,
+        background: "rgba(0,0,0,.45)",
+        display: "grid",
+        placeItems: "center",
+      }}
+    >
+      <div
+        data-testid="feishu-connect-dialog"
+        style={{
+          width: 560,
+          maxWidth: "calc(100vw - 28px)",
+          maxHeight: "calc(100dvh - 32px)",
+          overflowY: "auto",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          background: "var(--bg)",
+          padding: 22,
+          boxShadow: "0 14px 45px rgba(0,0,0,.25)",
+        }}
+      >
+        <h3 style={{ margin: 0, color: "var(--text)", fontSize: 16 }}>{t("connectFeishu", "Connect Feishu / Lark")}</h3>
+        <p style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6 }}>
+          {t(
+            "feishuCredentialDescription",
+            "Connect a self-built app through the official WebSocket long connection. App Secret is stored with OS encryption and is never returned to the UI.",
+          )}
+        </p>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 150px", gap: 8 }}>
+          <input
+            autoFocus
+            autoComplete="off"
+            style={inputStyle}
+            value={appId}
+            onChange={(event) => setAppId(event.target.value)}
+            placeholder={t("feishuAppId", "App ID (cli_…)")}
+          />
+          <select style={inputStyle} value={domain} onChange={(event) => setDomain(event.target.value as FeishuDomain)}>
+            <option value="feishu">{t("feishuChina", "Feishu (China)")}</option>
+            <option value="lark">Lark</option>
+          </select>
+        </div>
+        <input
+          type="password"
+          autoComplete="off"
+          style={{ ...inputStyle, marginTop: 8 }}
+          value={appSecret}
+          onChange={(event) => setAppSecret(event.target.value)}
+          placeholder={t("feishuAppSecret", "App Secret")}
+        />
+
+        <div
+          style={{
+            marginTop: 14,
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            background: "var(--bg-panel)",
+            padding: "11px 13px",
+            color: "var(--text-muted)",
+            fontSize: 11,
+            lineHeight: 1.6,
+          }}
+        >
+          <div style={{ color: "var(--text)", fontWeight: 700 }}>{t("feishuSetupChecklist", "Quick setup")}</div>
+          <ol style={{ margin: "7px 0 0", paddingLeft: 19 }}>
+            <li>{t("feishuSetupBot", "Create an enterprise self-built app and enable Bot capability.")}</li>
+            <li>
+              {t(
+                "feishuSetupPermissionImport",
+                "Copy the permission JSON below, then paste it under Permissions & Scopes → Batch import/export scopes and apply for access.",
+              )}
+            </li>
+            <li>
+              {t(
+                "feishuSetupConnection",
+                "Under Events and Callbacks, select long connection mode and subscribe to im.message.receive_v1 and application.bot.menu_v6.",
+              )}
+            </li>
+            <li>
+              {t(
+                "feishuSetupMenu",
+                "Optional native menu: enable commands in this account's settings, then add event actions with keys pi_help, pi_status, pi_new, pi_compact, and pi_reload under Bot → Custom menu.",
+              )}
+            </li>
+            <li>
+              {t(
+                "feishuSetupPublish",
+                "Publish a new app version, configure availability, and add the bot to each allowed group.",
+              )}
+            </li>
+          </ol>
+          <pre
+            data-testid="feishu-permission-json"
+            style={{
+              margin: "9px 0 0",
+              maxHeight: 176,
+              overflow: "auto",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              background: "var(--bg)",
+              color: "var(--text-muted)",
+              padding: "9px 10px",
+              fontSize: 10,
+              lineHeight: 1.45,
+              whiteSpace: "pre",
+              userSelect: "text",
+            }}
+          >
+            {FEISHU_PERMISSION_IMPORT_JSON}
+          </pre>
+          {permissionCopyState === "error" && (
+            <div role="alert" style={{ marginTop: 6, color: "#ef4444" }}>
+              {t("feishuPermissionCopyFailed", "Copy failed. Select and copy the JSON above manually.")}
+            </div>
+          )}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 9 }}>
+            <button
+              type="button"
+              data-testid="copy-feishu-permission-json"
+              style={buttonStyle(true)}
+              onClick={() => void copyPermissionJson()}
+            >
+              {permissionCopyState === "copied"
+                ? t("feishuPermissionJsonCopied", "Permission JSON copied")
+                : t("copyFeishuPermissionJson", "Copy permission JSON")}
+            </button>
+            <button
+              type="button"
+              style={buttonStyle()}
+              onClick={() => void window.piBridge.openExternal(`${docsBase}/app`)}
+            >
+              {t("openDeveloperConsole", "Open developer console")}
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div
+            role="alert"
+            data-testid="feishu-connect-error"
+            style={{ marginTop: 10, color: "#ef4444", fontSize: 11, lineHeight: 1.5, overflowWrap: "anywhere" }}
+          >
+            {error}
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 7, marginTop: 16 }}>
+          <button type="button" disabled={busy} style={buttonStyle()} onClick={onClose}>
+            {t("cancel", "Cancel")}
+          </button>
+          <button
+            type="button"
+            disabled={busy || !appId.trim() || !appSecret.trim()}
+            style={buttonStyle(true)}
+            onClick={() => onConnect(appId.trim(), appSecret.trim(), domain)}
           >
             {busy ? t("testingConnection", "Testing…") : t("saveAndConnect", "Save and connect")}
           </button>

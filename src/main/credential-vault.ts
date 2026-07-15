@@ -9,7 +9,7 @@ type VaultFile = {
 
 function validateKey(key: string): string {
   const trimmed = key.trim();
-  if (!/^channel:(weixin|telegram):[a-z0-9._-]{1,160}$/i.test(trimmed)) {
+  if (!/^channel:(weixin|telegram|feishu):[a-z0-9._-]{1,160}$/i.test(trimmed)) {
     throw new Error("Invalid channel credential key");
   }
   return trimmed;

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import path from "node:path";
-import type { ChannelAccountConfig, ChannelBinding, ChannelId } from "../../shared/channel-types";
+import type { ChannelAccountConfig, ChannelBinding, ChannelId, FeishuDomain } from "../../shared/channel-types";
 
 type ChannelConfigFile = {
   version: 1;
@@ -44,20 +44,34 @@ function readStringArray(value: unknown): string[] {
 }
 
 function normalizeChannel(value: unknown): ChannelId {
-  return value === "telegram" ? "telegram" : "weixin";
+  if (value === "telegram" || value === "feishu") return value;
+  return "weixin";
+}
+
+function normalizeFeishuDomain(value: unknown): FeishuDomain {
+  return value === "lark" ? "lark" : "feishu";
+}
+
+function defaultChannelName(channel: ChannelId): string {
+  if (channel === "telegram") return "Telegram";
+  if (channel === "feishu") return "飞书 / Lark";
+  return "微信";
 }
 
 function normalizeAccount(value: ChannelAccountConfig, touchUpdatedAt = false): ChannelAccountConfig {
   const now = new Date().toISOString();
+  const channel = normalizeChannel(value.channel);
   return {
     id: value.id.trim(),
-    channel: normalizeChannel(value.channel),
-    name: value.name?.trim() || (value.channel === "telegram" ? "Telegram" : "微信"),
+    channel,
+    name: value.name?.trim() || defaultChannelName(channel),
     enabled: value.enabled !== false,
     ...(value.providerAccountId?.trim() ? { providerAccountId: value.providerAccountId.trim() } : {}),
     ...(value.providerUsername?.trim() ? { providerUsername: value.providerUsername.trim() } : {}),
     ...(value.userId?.trim() ? { userId: value.userId.trim() } : {}),
     ...(value.baseUrl?.trim() ? { baseUrl: value.baseUrl.trim() } : {}),
+    ...(value.appId?.trim() ? { appId: value.appId.trim() } : {}),
+    ...(channel === "feishu" ? { domain: normalizeFeishuDomain(value.domain) } : {}),
     dmPolicy: value.dmPolicy ?? "pairing",
     allowFrom: readStringArray(value.allowFrom),
     groupPolicy: value.groupPolicy ?? "disabled",

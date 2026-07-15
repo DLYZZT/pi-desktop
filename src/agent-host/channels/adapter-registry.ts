@@ -2,6 +2,7 @@ import type { ChannelId } from "../../shared/channel-types";
 import type { ChannelAdapter } from "./types";
 import { WeixinAdapter } from "./adapters/weixin/adapter";
 import { TelegramAdapter } from "./adapters/telegram/adapter";
+import { FeishuAdapter } from "./adapters/feishu/adapter";
 
 export class AdapterRegistry {
   private readonly adapters = new Map<ChannelId, ChannelAdapter>();
@@ -9,6 +10,7 @@ export class AdapterRegistry {
   constructor() {
     this.register(new WeixinAdapter());
     this.register(new TelegramAdapter());
+    this.register(new FeishuAdapter());
   }
 
   register(adapter: ChannelAdapter): void {

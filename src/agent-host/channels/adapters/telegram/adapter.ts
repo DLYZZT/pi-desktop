@@ -27,6 +27,7 @@ import {
   sendTelegramMessageDraft,
   sendTelegramRichMessage,
   sendTelegramRichMessageDraft,
+  setTelegramMessageReaction,
   setTelegramCommands,
   TelegramApiError,
 } from "./api";
@@ -53,6 +54,7 @@ class TelegramTurnOutput implements AdapterTurnOutput {
   private lastDraft = "";
   private mode: "rich" | "plain" | "disabled";
   private finished = false;
+  private reactionTail: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly context: AdapterTurnContext,
@@ -64,10 +66,17 @@ class TelegramTurnOutput implements AdapterTurnOutput {
       markdown: string,
       fallbackText: string,
     ) => Promise<DeliveryReceipt>,
+    private readonly setReaction: (context: AdapterTurnContext, emoji: string) => Promise<void>,
   ) {
     const chatId = Number(context.peerId);
     this.mode = context.peerKind === "dm" && Number.isSafeInteger(chatId) ? "rich" : "disabled";
+    this.queueReaction("👀");
     this.schedule(0);
+  }
+
+  private queueReaction(emoji: string): void {
+    if (!this.context.replyToMessageId) return;
+    this.reactionTail = this.reactionTail.then(() => this.setReaction(this.context, emoji)).catch(() => undefined);
   }
 
   update(event: ChannelTurnProgressEvent): void {
@@ -128,7 +137,14 @@ class TelegramTurnOutput implements AdapterTurnOutput {
     } catch {
       // Preserve the final reply through the established plain-text fallback.
     }
-    return this.sendFinal(this.context, markdown, text);
+    try {
+      const result = await this.sendFinal(this.context, markdown, text);
+      this.queueReaction("👍");
+      return result;
+    } catch (error) {
+      this.queueReaction("👎");
+      throw error;
+    }
   }
 
   async cancel(): Promise<void> {
@@ -136,6 +152,7 @@ class TelegramTurnOutput implements AdapterTurnOutput {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     await this.tail;
+    this.queueReaction("👎");
   }
 }
 
@@ -503,6 +520,16 @@ export class TelegramAdapter implements ChannelAdapter {
       },
       (turn, markdown, fallbackText) =>
         this.sendRichOrFallback({ ...turn, text: fallbackText }, markdown, fallbackText),
+      async (turn, emoji) => {
+        if (!turn.replyToMessageId) return;
+        await setTelegramMessageReaction({
+          baseUrl: turn.secret.baseUrl,
+          token: turn.secret.token,
+          chatId: turn.peerId,
+          messageId: turn.replyToMessageId,
+          emoji,
+        });
+      },
     );
   }
 

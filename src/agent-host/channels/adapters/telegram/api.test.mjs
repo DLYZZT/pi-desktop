@@ -10,6 +10,7 @@ import {
   sendTelegramMessageDraft,
   sendTelegramRichMessage,
   sendTelegramRichMessageDraft,
+  setTelegramMessageReaction,
   setTelegramCommands,
   TelegramApiError,
 } from "./api.ts";
@@ -166,6 +167,31 @@ test("Telegram command menu can be installed and removed", async (t) => {
   assert.deepEqual(requests[0].body, { commands });
   assert.match(requests[1].url, /\/deleteMyCommands$/);
   assert.deepEqual(requests[1].body, {});
+});
+
+test("Telegram message reaction replaces the bot status on the source message", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), body: JSON.parse(init.body) };
+    return jsonResponse({ ok: true, result: true });
+  };
+  await setTelegramMessageReaction({
+    baseUrl: "https://telegram.example",
+    token: "token",
+    chatId: "-1001",
+    messageId: "55",
+    emoji: "👀",
+  });
+  assert.match(request.url, /\/setMessageReaction$/);
+  assert.deepEqual(request.body, {
+    chat_id: "-1001",
+    message_id: 55,
+    reaction: [{ type: "emoji", emoji: "👀" }],
+  });
 });
 
 test("Telegram API errors preserve 409 and 429 classification metadata", async (t) => {

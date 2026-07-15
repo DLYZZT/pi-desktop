@@ -16,6 +16,7 @@ const fileViewer = read("src/renderer/components/FileViewer.tsx");
 const credentialVault = read("src/main/credential-vault.ts");
 const weixinChannelApi = read("src/agent-host/channels/adapters/weixin/api.ts");
 const telegramChannelApi = read("src/agent-host/channels/adapters/telegram/api.ts");
+const feishuChannelApi = read("src/agent-host/channels/adapters/feishu/api.ts");
 const channelContract = read("src/contract/api.ts");
 const desktopContract = read("src/contract/desktop.ts");
 const rendererCsp = protocol.slice(protocol.indexOf("const CSP ="), protocol.indexOf("const HTML_PREVIEW_CSP ="));
@@ -40,6 +41,7 @@ const checks = [
   [credentialVault.includes("safeStorage.isEncryptionAvailable"), "channel credential persistence must fail closed"],
   [!/(createServer|\.listen\s*\()/.test(weixinChannelApi), "Weixin MVP must not open a local listener"],
   [!/(createServer|\.listen\s*\()/.test(telegramChannelApi), "Telegram polling must not open a local listener"],
+  [!/(createServer|\.listen\s*\()/.test(feishuChannelApi), "Feishu WebSocket mode must not open a local listener"],
   [
     !channelContract.includes("botToken") && !channelContract.includes("appSecret"),
     "channel RPC must not expose raw secrets",

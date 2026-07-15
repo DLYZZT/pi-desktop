@@ -563,3 +563,110 @@ test("Telegram DMs and forum topics resolve to isolated sessions and reply route
   );
   await manager.shutdown();
 });
+
+test("Feishu and Lark accounts isolate the same open_id and hot-reload account changes", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-feishu-routes-"));
+  const inboundByAccount = new Map();
+  const starts = new Map();
+  const aborts = new Map();
+  const sent = [];
+  const adapter = {
+    id: "feishu",
+    async start(context) {
+      const id = context.account.id;
+      starts.set(id, (starts.get(id) ?? 0) + 1);
+      inboundByAccount.set(id, context.onInbound);
+      context.onStatus({ state: "running", connected: true });
+      await new Promise((resolve) => context.signal.addEventListener("abort", resolve, { once: true }));
+      aborts.set(id, (aborts.get(id) ?? 0) + 1);
+    },
+    async send(context) {
+      sent.push(context);
+      return {
+        id: `receipt-${sent.length}`,
+        channel: "feishu",
+        accountId: context.account.id,
+        peerId: context.peerId,
+        messageId: `om-${sent.length}`,
+        deliveredAt: new Date().toISOString(),
+      };
+    },
+    async probe(account) {
+      return { ok: true, message: "ok", accountId: account.id, providerAccountId: account.providerAccountId };
+    },
+  };
+  const registry = new AdapterRegistry();
+  registry.register(adapter);
+  const bindingsSeen = [];
+  const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
+    dataDirectory: dir,
+    registry,
+    secretAccess: {
+      get: async (_channel, id) => ({
+        token: `secret-${id}`,
+        providerAccountId: id === "feishu-cn" ? "ou_bot_cn" : "ou_bot_lark",
+        baseUrl: id === "feishu-cn" ? "https://open.feishu.cn" : "https://open.larksuite.com",
+      }),
+      set: async () => {},
+      delete: async () => {},
+    },
+    bridge: {
+      async runTurn(binding) {
+        bindingsSeen.push(binding);
+        return { sessionId: `session-${binding.id}`, finalText: "reply", generatedFiles: [] };
+      },
+    },
+  });
+  const now = new Date().toISOString();
+  const makeAccount = (id, domain) => ({
+    id,
+    channel: "feishu",
+    name: id,
+    enabled: true,
+    providerAccountId: id === "feishu-cn" ? "ou_bot_cn" : "ou_bot_lark",
+    appId: id === "feishu-cn" ? "cli_1234567890abcdef" : "cli_fedcba0987654321",
+    domain,
+    dmPolicy: "open",
+    allowFrom: [],
+    groupPolicy: "disabled",
+    groupIds: [],
+    groupAllowFrom: [],
+    requireMention: true,
+    toolNames: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const feishuAccount = makeAccount("feishu-cn", "feishu");
+  const larkAccount = makeAccount("lark-global", "lark");
+  await manager.upsertAccount(feishuAccount);
+  await manager.upsertAccount(larkAccount);
+
+  const emitDm = (accountId, id) =>
+    inboundByAccount.get(accountId)({
+      id,
+      channel: "feishu",
+      accountId,
+      peer: { kind: "dm", id: "ou_same_user" },
+      sender: { id: "ou_same_user" },
+      text: "hello",
+      mentionsBot: false,
+      attachments: [],
+      timestamp: Date.now(),
+      providerContext: { replyToMessageId: id },
+    });
+  await emitDm("feishu-cn", "om-cn");
+  await emitDm("lark-global", "om-lark");
+
+  const snapshot = await manager.snapshot();
+  assert.equal(snapshot.bindings.length, 2);
+  assert.equal(new Set(snapshot.bindings.map((binding) => binding.id)).size, 2);
+  assert.equal(new Set(snapshot.bindings.map((binding) => binding.sessionId)).size, 2);
+  assert.equal(new Set(bindingsSeen.map((binding) => binding.accountId)).size, 2);
+
+  await manager.upsertAccount({ ...feishuAccount, name: "Rotated Feishu Bot" });
+  assert.equal(starts.get("feishu-cn"), 2);
+  assert.equal(aborts.get("feishu-cn"), 1);
+  assert.equal((await manager.snapshot()).accounts.find((item) => item.id === "feishu-cn").name, "Rotated Feishu Bot");
+  await manager.shutdown();
+});

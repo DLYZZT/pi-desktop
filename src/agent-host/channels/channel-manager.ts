@@ -42,6 +42,12 @@ export type ChannelManagerOptions = {
 
 const PAIRING_TTL_MS = 10 * 60_000;
 
+function channelDisplayName(channel: ChannelId): string {
+  if (channel === "weixin") return "微信";
+  if (channel === "telegram") return "Telegram";
+  return "飞书 / Lark";
+}
+
 function userDataPath(): string {
   return (
     process.env.PI_DESKTOP_USER_DATA?.trim() ||
@@ -347,7 +353,7 @@ export class ChannelManager {
       this.config.upsertAccount({
         id: accountId,
         channel,
-        name: existing?.name || (channel === "weixin" ? `微信 ${accountId.slice(-6)}` : `Telegram ${accountId}`),
+        name: existing?.name || `${channelDisplayName(channel)} ${accountId.slice(-6)}`,
         enabled: true,
         providerAccountId: result.credential.providerAccountId,
         ...(result.credential.providerUsername ? { providerUsername: result.credential.providerUsername } : {}),
@@ -526,7 +532,7 @@ export class ChannelManager {
     if (command.name === "status") {
       const runtime = this.statuses.get(account.id);
       const session = this.bridge.getSessionStatus(binding);
-      const channelName = account.channel === "weixin" ? "微信" : "Telegram";
+      const channelName = channelDisplayName(account.channel);
       return {
         finalText: [
           `渠道：${channelName} · ${runtime?.connected ? "已连接" : "未连接"}`,
