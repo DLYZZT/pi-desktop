@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import type { FeishuDomain } from "../../../../shared/channel-types";
+import type { DownloadedInboundAttachment, OutboundAttachment } from "../../types";
 import type { FeishuCard } from "./rich-renderer";
 import type { FeishuBotIdentity, FeishuMenuEvent, FeishuMessageEvent } from "./protocol-types";
 
 export const FEISHU_BASE_URL = "https://open.feishu.cn";
 export const LARK_BASE_URL = "https://open.larksuite.com";
+export const FEISHU_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
+const FEISHU_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
 export interface FeishuCredentials {
   appId: string;
@@ -23,6 +28,17 @@ export interface FeishuSendRequest {
 export interface FeishuCardRequest extends Omit<FeishuSendRequest, "text"> {
   card: FeishuCard;
 }
+
+export interface FeishuResourceRequest {
+  messageId: string;
+  fileKey: string;
+  resourceType: "image" | "file";
+  kind: DownloadedInboundAttachment["kind"];
+  name?: string;
+  mime?: string;
+}
+
+export interface FeishuMediaRequest extends Omit<FeishuSendRequest, "text">, OutboundAttachment {}
 
 export interface FeishuRichCardSession {
   readonly cardId: string;
@@ -50,6 +66,11 @@ export interface FeishuAdapterDependencies {
   getBotIdentity(credentials: FeishuCredentials): Promise<FeishuBotIdentity>;
   sendText(credentials: FeishuCredentials, request: FeishuSendRequest): Promise<string>;
   sendCard(credentials: FeishuCredentials, request: FeishuCardRequest): Promise<string>;
+  downloadResource(
+    credentials: FeishuCredentials,
+    request: FeishuResourceRequest,
+  ): Promise<DownloadedInboundAttachment>;
+  sendMedia(credentials: FeishuCredentials, request: FeishuMediaRequest): Promise<string>;
   startRichCard(credentials: FeishuCredentials, request: FeishuCardRequest): Promise<FeishuRichCardSession>;
   addReaction(credentials: FeishuCredentials, messageId: string, emojiType: string): Promise<string>;
   removeReaction(credentials: FeishuCredentials, messageId: string, reactionId: string): Promise<void>;
@@ -190,7 +211,7 @@ function receiveIdType(peerId: string): "open_id" | "union_id" | "chat_id" {
 async function sendFeishuPayload(
   client: Lark.Client,
   request: Omit<FeishuSendRequest, "text">,
-  msgType: "text" | "interactive",
+  msgType: "text" | "interactive" | "image" | "file" | "audio" | "media",
   content: string,
 ): Promise<string> {
   const response: FeishuApiResponse = request.replyToMessageId
@@ -241,6 +262,116 @@ export async function sendFeishuCard(
     );
   } catch (error) {
     throw normalizeThrownError(error, "发送飞书/Lark Markdown 卡片", credentials.appSecret, true);
+  }
+}
+
+function responseHeader(headers: unknown, name: string): string | undefined {
+  if (!headers || typeof headers !== "object") return undefined;
+  const candidate = headers as Record<string, unknown> & { get?: (key: string) => unknown };
+  const fromGetter = candidate.get?.(name);
+  if (typeof fromGetter === "string") return fromGetter;
+  const entry = Object.entries(candidate).find(([key]) => key.toLowerCase() === name.toLowerCase());
+  return typeof entry?.[1] === "string" || typeof entry?.[1] === "number" ? String(entry[1]) : undefined;
+}
+
+async function readLimitedStream(stream: NodeJS.ReadableStream, declaredBytes?: number): Promise<Buffer> {
+  const destroy = () => (stream as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.();
+  if (declaredBytes !== undefined && declaredBytes > FEISHU_MEDIA_MAX_BYTES) {
+    destroy();
+    throw new Error("飞书/Lark 附件超过 20 MiB 下载限制");
+  }
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream as NodeJS.ReadableStream & AsyncIterable<Buffer | Uint8Array | string>) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > FEISHU_MEDIA_MAX_BYTES) {
+      destroy();
+      throw new Error("飞书/Lark 附件超过 20 MiB 下载限制");
+    }
+    chunks.push(buffer);
+  }
+  if (total === 0) throw new Error("飞书/Lark 附件内容为空");
+  return Buffer.concat(chunks, total);
+}
+
+export async function downloadFeishuResource(
+  credentials: FeishuCredentials,
+  request: FeishuResourceRequest,
+  httpInstance?: Lark.HttpInstance,
+): Promise<DownloadedInboundAttachment> {
+  try {
+    if (!request.messageId.trim() || !request.fileKey.trim()) throw new Error("消息资源标识无效");
+    const response = await createClient(credentials, httpInstance).im.v1.messageResource.get({
+      path: { message_id: request.messageId, file_key: request.fileKey },
+      params: { type: request.resourceType },
+    });
+    const declaredHeader = responseHeader(response.headers, "content-length");
+    const declaredBytes = declaredHeader === undefined ? undefined : Number(declaredHeader);
+    const data = await readLimitedStream(
+      response.getReadableStream(),
+      Number.isFinite(declaredBytes) && declaredBytes! >= 0 ? declaredBytes : undefined,
+    );
+    const contentType = responseHeader(response.headers, "content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    return {
+      kind: request.kind,
+      data,
+      ...(request.name ? { name: request.name } : {}),
+      ...(contentType || request.mime ? { mime: contentType || request.mime } : {}),
+    };
+  } catch (error) {
+    throw normalizeThrownError(error, "下载飞书/Lark 消息附件", credentials.appSecret);
+  }
+}
+
+function nativeFeishuMedia(
+  request: FeishuMediaRequest,
+  size: number,
+): {
+  fileType: "opus" | "mp4" | "stream";
+  messageType: "file" | "audio" | "media";
+} {
+  const extension = path.extname(request.name || request.path).toLowerCase();
+  if (request.kind === "voice" && [".opus", ".ogg"].includes(extension)) {
+    return { fileType: "opus", messageType: "audio" };
+  }
+  if (request.kind === "video" && (extension === ".mp4" || request.mime === "video/mp4")) {
+    return { fileType: "mp4", messageType: "media" };
+  }
+  if (request.kind === "image" && size > FEISHU_IMAGE_MAX_BYTES) {
+    return { fileType: "stream", messageType: "file" };
+  }
+  return { fileType: "stream", messageType: "file" };
+}
+
+export async function sendFeishuMedia(
+  credentials: FeishuCredentials,
+  request: FeishuMediaRequest,
+  httpInstance?: Lark.HttpInstance,
+): Promise<string> {
+  try {
+    const info = await stat(request.path);
+    if (!info.isFile() || info.size <= 0) throw new Error("飞书/Lark 出站附件不是有效文件");
+    if (info.size > FEISHU_MEDIA_MAX_BYTES) throw new Error("飞书/Lark 出站附件超过 20 MiB 限制");
+    const data = await readFile(request.path);
+    const client = createClient(credentials, httpInstance);
+    if (request.kind === "image" && info.size <= FEISHU_IMAGE_MAX_BYTES) {
+      const uploaded = await client.im.v1.image.create({ data: { image_type: "message", image: data } });
+      const imageKey = uploaded?.image_key?.trim();
+      if (!imageKey) throw new FeishuApiError("上传飞书/Lark 图片失败：接口未返回 image_key");
+      return await sendFeishuPayload(client, request, "image", JSON.stringify({ image_key: imageKey }));
+    }
+
+    const native = nativeFeishuMedia(request, info.size);
+    const fileName = request.name?.trim() || path.basename(request.path);
+    const uploaded = await client.im.v1.file.create({
+      data: { file_type: native.fileType, file_name: fileName, file: data },
+    });
+    const fileKey = uploaded?.file_key?.trim();
+    if (!fileKey) throw new FeishuApiError("上传飞书/Lark 文件失败：接口未返回 file_key");
+    return await sendFeishuPayload(client, request, native.messageType, JSON.stringify({ file_key: fileKey }));
+  } catch (error) {
+    throw normalizeThrownError(error, "发送飞书/Lark 媒体附件", credentials.appSecret, true);
   }
 }
 
@@ -470,6 +601,8 @@ export const defaultFeishuDependencies: FeishuAdapterDependencies = {
   getBotIdentity: getFeishuBotIdentity,
   sendText: sendFeishuText,
   sendCard: sendFeishuCard,
+  downloadResource: downloadFeishuResource,
+  sendMedia: sendFeishuMedia,
   startRichCard: startFeishuRichCard,
   addReaction: addFeishuReaction,
   removeReaction: removeFeishuReaction,

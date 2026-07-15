@@ -113,6 +113,7 @@ test("Feishu setup dialog provides one-click batch permission import and concise
   assert.match(html, /im:message\.group_at_msg:readonly/);
   assert.match(html, /im:message:send_as_bot/);
   assert.match(html, /im:message\.reactions:write_only/);
+  assert.match(html, /im:resource/);
   assert.match(html, /cardkit:card:write/);
   assert.match(html, /Batch import\/export scopes/);
   assert.match(html, /Copy permission JSON/);
@@ -130,6 +131,7 @@ test("Feishu permission import JSON contains only tenant scopes required by the 
         "im:message.group_at_msg:readonly",
         "im:message:send_as_bot",
         "im:message.reactions:write_only",
+        "im:resource",
         "cardkit:card:write",
       ],
       user: [],

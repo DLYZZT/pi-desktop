@@ -14,6 +14,7 @@ const MIME_EXTENSIONS: Record<string, string> = {
   "image/gif": ".gif",
   "image/webp": ".webp",
   "audio/ogg": ".ogg",
+  "audio/opus": ".opus",
   "audio/mpeg": ".mp3",
   "audio/mp4": ".m4a",
   "audio/wav": ".wav",

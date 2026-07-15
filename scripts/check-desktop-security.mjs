@@ -49,6 +49,12 @@ const checks = [
   [!/(createServer|\.listen\s*\()/.test(telegramChannelApi), "Telegram polling must not open a local listener"],
   [!/(createServer|\.listen\s*\()/.test(feishuChannelApi), "Feishu WebSocket mode must not open a local listener"],
   [
+    feishuChannelApi.includes("im.v1.messageResource.get") &&
+      feishuChannelApi.includes("FEISHU_MEDIA_MAX_BYTES") &&
+      feishuChannelApi.includes("readLimitedStream"),
+    "Feishu inbound media must use the message resource API with a local byte limit",
+  ],
+  [
     channelManager.indexOf("evaluateInboundPolicy") < channelManager.indexOf("adapter.downloadInbound"),
     "channel access policy must run before provider media download",
   ],

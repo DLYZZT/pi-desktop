@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { Readable } from "node:stream";
 import test from "node:test";
 
 import * as Lark from "@larksuiteoapi/node-sdk";
 import {
   addFeishuReaction,
   connectFeishuWebSocket,
+  downloadFeishuResource,
   getFeishuBotIdentity,
   removeFeishuReaction,
   sendFeishuCard,
+  sendFeishuMedia,
   sendFeishuText,
   startFeishuRichCard,
 } from "./api.ts";
@@ -86,6 +92,125 @@ test("message create/reply requests preserve receive ID, content, source message
     msg_type: "text",
     reply_in_thread: true,
   });
+});
+
+test("message resources download through the official API with MIME and size enforcement", async () => {
+  const calls = [];
+  const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  const resource = await downloadFeishuResource(
+    credentials({ appId: "cli_1234567890abcda1" }),
+    {
+      messageId: "om_image",
+      fileKey: "img_v2_fixture",
+      resourceType: "image",
+      kind: "image",
+    },
+    fakeHttp(async (options) => {
+      calls.push(options);
+      if (String(options.url).includes("tenant_access_token")) {
+        return { code: 0, tenant_access_token: "tenant-token", expire: 7_200 };
+      }
+      return {
+        data: Readable.from([bytes]),
+        headers: { "content-type": "image/png", "content-length": String(bytes.length) },
+      };
+    }),
+  );
+  assert.equal(resource.kind, "image");
+  assert.equal(resource.mime, "image/png");
+  assert.deepEqual(resource.data, bytes);
+  const request = calls.find((call) => String(call.url).includes("/messages/om_image/resources/img_v2_fixture"));
+  assert.deepEqual(request.params, { type: "image" });
+  assert.equal(request.responseType, "stream");
+
+  await assert.rejects(
+    downloadFeishuResource(
+      credentials({ appId: "cli_1234567890abcda2" }),
+      {
+        messageId: "om_large",
+        fileKey: "file_large",
+        resourceType: "file",
+        kind: "file",
+      },
+      fakeHttp(async (options) => {
+        if (String(options.url).includes("tenant_access_token")) {
+          return { code: 0, tenant_access_token: "tenant-token", expire: 7_200 };
+        }
+        return {
+          data: Readable.from([Buffer.from("not-read")]),
+          headers: { "content-length": String(20 * 1024 * 1024 + 1) },
+        };
+      }),
+    ),
+    /超过 20 MiB 下载限制/,
+  );
+});
+
+test("image, voice, video, and file uploads send the matching Feishu message types", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "pi-feishu-media-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const imagePath = path.join(directory, "fixture.png");
+  const voicePath = path.join(directory, "fixture.ogg");
+  const videoPath = path.join(directory, "fixture.mp4");
+  const filePath = path.join(directory, "fixture.txt");
+  await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]));
+  await writeFile(voicePath, Buffer.from("opus-fixture"));
+  await writeFile(videoPath, Buffer.from("mp4-fixture"));
+  await writeFile(filePath, Buffer.from("file-fixture"));
+  const calls = [];
+  let sent = 0;
+  const http = fakeHttp(async (options) => {
+    calls.push(options);
+    const url = String(options.url);
+    if (url.includes("tenant_access_token")) return { code: 0, tenant_access_token: "tenant-token", expire: 7_200 };
+    if (url.endsWith("/open-apis/im/v1/images")) return { data: { image_key: "img_uploaded" } };
+    if (url.endsWith("/open-apis/im/v1/files")) return { data: { file_key: `file_uploaded_${calls.length}` } };
+    sent += 1;
+    return { code: 0, data: { message_id: `om_media_${sent}` } };
+  });
+
+  await sendFeishuMedia(
+    credentials({ appId: "cli_1234567890abcda3" }),
+    { peerId: "oc_group", path: imagePath, kind: "image", name: "fixture.png" },
+    http,
+  );
+  await sendFeishuMedia(
+    credentials({ appId: "cli_1234567890abcda4" }),
+    {
+      peerId: "oc_group",
+      replyToMessageId: "om_source",
+      replyInThread: true,
+      path: voicePath,
+      kind: "voice",
+      name: "fixture.ogg",
+      mime: "audio/ogg",
+    },
+    http,
+  );
+  await sendFeishuMedia(
+    credentials({ appId: "cli_1234567890abcda5" }),
+    { peerId: "oc_group", path: videoPath, kind: "video", name: "fixture.mp4", mime: "video/mp4" },
+    http,
+  );
+  await sendFeishuMedia(
+    credentials({ appId: "cli_1234567890abcda6" }),
+    { peerId: "ou_user", path: filePath, kind: "file", name: "fixture.txt" },
+    http,
+  );
+
+  const messages = calls.filter(
+    (call) => String(call.url).endsWith("/open-apis/im/v1/messages") || String(call.url).endsWith("/reply"),
+  );
+  assert.equal(messages[0].data.msg_type, "image");
+  assert.deepEqual(JSON.parse(messages[0].data.content), { image_key: "img_uploaded" });
+  assert.equal(messages[1].data.msg_type, "audio");
+  assert.equal(messages[1].data.reply_in_thread, true);
+  assert.equal(messages[2].data.msg_type, "media");
+  assert.equal(messages[3].data.msg_type, "file");
+  const uploads = calls.filter((call) => String(call.url).endsWith("/open-apis/im/v1/files"));
+  assert.equal(uploads[0].data.file_type, "opus");
+  assert.equal(uploads[1].data.file_type, "mp4");
+  assert.equal(uploads[2].data.file_type, "stream");
 });
 
 test("SDK errors never expose the App Secret", async () => {

@@ -22,6 +22,7 @@ import {
   defaultFeishuDependencies,
   type FeishuAdapterDependencies,
   type FeishuCredentials,
+  type FeishuResourceRequest,
   type FeishuRichCardSession,
   type FeishuWsConnection,
 } from "./api";
@@ -142,6 +143,65 @@ function contentAndAttachments(
   if (type === "audio") return { text: "", attachments: [{ kind: "voice" }] };
   if (type === "media" || type === "video") return { text: "", attachments: [{ kind: "video" }] };
   return { text: "", attachments: [] };
+}
+
+function pendingResourceKey(accountId: string, envelopeId: string): string {
+  return `${accountId}:${envelopeId}`;
+}
+
+function downloadableResources(event: FeishuMessageEvent): FeishuResourceRequest[] {
+  const content = parseContent(event.message.content);
+  if (!content) return [];
+  const fileKey = typeof content.file_key === "string" ? content.file_key.trim() : "";
+  const imageKey = typeof content.image_key === "string" ? content.image_key.trim() : "";
+  const fileName = typeof content.file_name === "string" ? content.file_name : undefined;
+  switch (event.message.message_type) {
+    case "image":
+      return imageKey
+        ? [{ messageId: event.message.message_id, fileKey: imageKey, resourceType: "image", kind: "image" }]
+        : [];
+    case "file":
+      return fileKey
+        ? [
+            {
+              messageId: event.message.message_id,
+              fileKey,
+              resourceType: "file",
+              kind: "file",
+              ...(fileName ? { name: fileName } : {}),
+            },
+          ]
+        : [];
+    case "audio":
+      return fileKey
+        ? [
+            {
+              messageId: event.message.message_id,
+              fileKey,
+              resourceType: "file",
+              kind: "voice",
+              name: fileName || "voice.opus",
+              mime: "audio/ogg",
+            },
+          ]
+        : [];
+    case "media":
+    case "video":
+      return fileKey
+        ? [
+            {
+              messageId: event.message.message_id,
+              fileKey,
+              resourceType: "file",
+              kind: "video",
+              name: fileName || "video.mp4",
+              mime: "video/mp4",
+            },
+          ]
+        : [];
+    default:
+      return [];
+  }
 }
 
 function receipt(context: Pick<AdapterSendContext, "account" | "peerId">, messageId: string): DeliveryReceipt {
@@ -353,6 +413,7 @@ export function normalizeFeishuMenuEvent(
 
 export class FeishuAdapter implements ChannelAdapter {
   readonly id = "feishu" as const;
+  private readonly pendingMedia = new Map<string, FeishuMessageEvent>();
 
   constructor(
     private readonly dependencies: FeishuAdapterDependencies = defaultFeishuDependencies,
@@ -381,16 +442,22 @@ export class FeishuAdapter implements ChannelAdapter {
       if (signal.aborted) return;
       const inFlight = new Set<string>();
 
-      const dispatchInbound = (eventId: string, envelope: InboundEnvelope) => {
+      const dispatchInbound = (eventId: string, envelope: InboundEnvelope, sourceEvent?: FeishuMessageEvent) => {
         if (state.isProcessed(account.id, eventId) || inFlight.has(eventId)) return;
         inFlight.add(eventId);
+        if (sourceEvent && envelope.attachments.length > 0) {
+          this.pendingMedia.set(pendingResourceKey(account.id, envelope.id), sourceEvent);
+        }
         onStatus({ lastInboundAt: Date.now(), lastEventAt: Date.now() });
         void onInbound(envelope)
           .then(() => state.markProcessed(account.id, eventId))
           .catch((error) => {
             context.log(`飞书/Lark 入站消息处理失败：${safeChannelError(error)}`);
           })
-          .finally(() => inFlight.delete(eventId));
+          .finally(() => {
+            this.pendingMedia.delete(pendingResourceKey(account.id, envelope.id));
+            inFlight.delete(eventId);
+          });
       };
 
       const onMessage = (event: FeishuMessageEvent) => {
@@ -405,7 +472,7 @@ export class FeishuAdapter implements ChannelAdapter {
         // The SDK callback must return within three seconds, while an Agent turn can take
         // much longer. Suppress concurrent redelivery in memory, then persist the provider
         // message ID only after Channel Core has accepted/handled the envelope successfully.
-        dispatchInbound(eventId, envelope);
+        dispatchInbound(eventId, envelope, event);
       };
 
       const onMenu = (event: FeishuMenuEvent) => {
@@ -464,7 +531,40 @@ export class FeishuAdapter implements ChannelAdapter {
     }
   }
 
+  async downloadInbound(context: Parameters<NonNullable<ChannelAdapter["downloadInbound"]>>[0]) {
+    const event = this.pendingMedia.get(pendingResourceKey(context.account.id, context.envelope.id));
+    if (!event) throw new Error("飞书/Lark 附件上下文已过期，请重新发送");
+    const resources = downloadableResources(event);
+    if (resources.length === 0) throw new Error("飞书/Lark 消息没有可下载的媒体资源标识");
+    return Promise.all(
+      resources.map((request) =>
+        this.dependencies.downloadResource(credentials(context.account, context.secret), request),
+      ),
+    );
+  }
+
   async send(context: AdapterSendContext): Promise<DeliveryReceipt> {
+    if (context.attachments?.length) {
+      let result: DeliveryReceipt | undefined;
+      if (context.text.trim()) result = await this.sendMessage(context);
+      for (let index = 0; index < context.attachments.length; index += 1) {
+        const attachment = context.attachments[index];
+        const keepThreadRoute = Boolean(context.threadId && context.replyToMessageId);
+        const replyToMessageId = keepThreadRoute || (!result && index === 0) ? context.replyToMessageId : undefined;
+        const messageId = await this.dependencies.sendMedia(credentials(context.account, context.secret), {
+          peerId: context.peerId,
+          ...attachment,
+          ...(replyToMessageId ? { replyToMessageId } : {}),
+          ...(keepThreadRoute ? { replyInThread: true } : {}),
+        });
+        result = receipt(context, messageId);
+      }
+      if (result) return result;
+    }
+    return this.sendMessage(context);
+  }
+
+  private async sendMessage(context: AdapterSendContext): Promise<DeliveryReceipt> {
     if (context.runId && this.dependencies.sendCard) {
       const final = new FeishuRichMessageBuilder().renderFinal(context.text);
       if (!final.answerTruncated) {

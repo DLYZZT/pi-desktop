@@ -95,6 +95,12 @@ function dependencies(overrides = {}) {
     async sendCard() {
       return "om_card";
     },
+    async downloadResource() {
+      return { kind: "file", data: Buffer.from("fixture") };
+    },
+    async sendMedia() {
+      return "om_media";
+    },
     async startRichCard() {
       return {
         cardId: "card_fixture",
@@ -162,6 +168,104 @@ test("normalizes Feishu group mentions, thread routes, DMs, post text, and media
     { openId: "ou_bot", name: "Pi Bot" },
   );
   assert.deepEqual(file.attachments, [{ kind: "file", name: "notes.txt" }]);
+});
+
+test("downloads accepted Feishu image, file, audio, and video resources before the Agent turn", async () => {
+  const controller = new globalThis.AbortController();
+  const state = stateStore();
+  const requests = [];
+  const downloaded = [];
+  const events = [
+    {
+      messageId: "om_image",
+      messageType: "image",
+      content: { image_key: "img_v2_fixture" },
+      expected: { resourceType: "image", kind: "image", fileKey: "img_v2_fixture" },
+    },
+    {
+      messageId: "om_file",
+      messageType: "file",
+      content: { file_key: "file_v2_fixture", file_name: "notes.txt" },
+      expected: { resourceType: "file", kind: "file", fileKey: "file_v2_fixture", name: "notes.txt" },
+    },
+    {
+      messageId: "om_audio",
+      messageType: "audio",
+      content: { file_key: "file_audio_fixture" },
+      expected: {
+        resourceType: "file",
+        kind: "voice",
+        fileKey: "file_audio_fixture",
+        name: "voice.opus",
+        mime: "audio/ogg",
+      },
+    },
+    {
+      messageId: "om_video",
+      messageType: "media",
+      content: { file_key: "file_video_fixture", file_name: "clip.mp4" },
+      expected: {
+        resourceType: "file",
+        kind: "video",
+        fileKey: "file_video_fixture",
+        name: "clip.mp4",
+        mime: "video/mp4",
+      },
+    },
+  ];
+  let index = 0;
+  const adapter = new FeishuAdapter(
+    dependencies({
+      async downloadResource(_credentials, request) {
+        requests.push(request);
+        return { kind: request.kind, data: Buffer.from(request.fileKey), name: request.name, mime: request.mime };
+      },
+      async connect(_credentials, handlers) {
+        for (const item of events) {
+          handlers.onMessage(
+            messageEvent({
+              message: {
+                message_id: item.messageId,
+                create_time: String(1700000000000 + index++),
+                chat_id: "oc_dm",
+                chat_type: "p2p",
+                message_type: item.messageType,
+                content: JSON.stringify(item.content),
+              },
+            }),
+          );
+        }
+        return { close() {} };
+      },
+    }),
+  );
+  await adapter.start({
+    account: account(),
+    secret: { token: "app-secret", providerAccountId: "ou_bot", baseUrl: "https://open.feishu.cn" },
+    signal: controller.signal,
+    state,
+    onInbound: async (envelope) => {
+      downloaded.push(
+        ...(await adapter.downloadInbound({
+          account: account(),
+          secret: { token: "app-secret", providerAccountId: "ou_bot", baseUrl: "https://open.feishu.cn" },
+          envelope,
+        })),
+      );
+      if (downloaded.length === events.length) controller.abort();
+    },
+    onStatus: () => undefined,
+    log: () => undefined,
+  });
+  assert.equal(downloaded.length, 4);
+  assert.deepEqual(
+    requests.map((request) => Object.fromEntries(Object.entries(request).filter(([key]) => key !== "messageId"))),
+    events.map((item) => item.expected),
+  );
+  assert.deepEqual(
+    requests.map((request) => request.messageId),
+    events.map((item) => item.messageId),
+  );
 });
 
 test("normalizes supported Feishu native menu events into existing DM commands", () => {
@@ -342,6 +446,40 @@ test("text replies preserve the source message and thread across chunks", async 
   );
   assert.equal(receipt.messageId, "om_sent_2");
   assert.equal(receipt.channel, "feishu");
+});
+
+test("media replies preserve Feishu thread routing and return the final attachment receipt", async () => {
+  const requests = [];
+  const adapter = new FeishuAdapter(
+    dependencies({
+      async sendMedia(_credentials, request) {
+        requests.push(request);
+        return `om_media_${requests.length}`;
+      },
+    }),
+  );
+  const result = await adapter.send({
+    account: account(),
+    secret: { token: "app-secret", providerAccountId: "ou_bot", baseUrl: "https://open.feishu.cn" },
+    peerId: "oc_group",
+    text: "",
+    threadId: "omt_thread",
+    replyToMessageId: "om_source",
+    attachments: [
+      { kind: "image", path: "/workspace/chart.png", name: "chart.png", mime: "image/png" },
+      { kind: "file", path: "/workspace/report.pdf", name: "report.pdf", mime: "application/pdf" },
+    ],
+  });
+  assert.equal(requests.length, 2);
+  assert.equal(
+    requests.every((request) => request.replyToMessageId === "om_source"),
+    true,
+  );
+  assert.equal(
+    requests.every((request) => request.replyInThread === true),
+    true,
+  );
+  assert.equal(result.messageId, "om_media_2");
 });
 
 test("progressive turns stream process and Markdown then fold details in the final card", async () => {

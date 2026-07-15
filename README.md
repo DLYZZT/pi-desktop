@@ -51,7 +51,7 @@
 - 外部对话默认使用独立 Pi Session，也可从当前会话顶部快速绑定并与 UI 共用上下文
 - 模型用户正文只包含 IM 实际文本；桌面端用本地黑、微信绿、Telegram 蓝、飞书/Lark 橙的用户气泡区分来源，不向模型附加用户或群聊标识
 - long polling/WebSocket、断线重连、事件去重、cursor/offset checkpoint 和后台运行
-- 微信与 Telegram 支持入站图片、文件和语音；图片直接作为多模态输入，文件/语音进入隔离暂存区，微信 SILK 语音优先转为 WAV
+- 微信、Telegram 与飞书/Lark 支持入站图片、文件和语音；飞书/Lark 还支持视频资源，图片直接作为多模态输入，其他附件进入隔离暂存区，微信 SILK 语音优先转为 WAV
 - 用户明确索取文件时，Agent 可回传当前工作区内在最终回复中明确链接的新文件或既有文件；单附件 20 MiB、单消息 4 个，禁止工作区外路径和 symlink escape
 - Telegram 私聊支持 Rich Messages 流式预览，最终回复保留 Markdown，并折叠思考与工具详情；群聊发送富文本最终消息
 - 飞书/Lark 通过官方 SDK 长连接收取私聊、受控群聊和 thread，并使用 Card JSON 2.0 渲染 Markdown、流式显示思考/工具调用、最终折叠过程；缺少 CardKit 权限时安全回退
@@ -185,7 +185,7 @@ GitHub Actions 会分别构建 macOS arm64、macOS x64 和 Windows x64 产物。
 
 - [x] Electron 三进程架构与类型化 IPC
 - [x] 会话、项目文件、模型、Skills、Plugins 与 OAuth
-- [x] 个人微信、Telegram 与飞书/Lark 文本消息渠道，以及微信/Telegram 图片、文件和语音
+- [x] 个人微信、Telegram 与飞书/Lark 文本、图片、文件和语音消息渠道，以及飞书/Lark 视频资源
 - [x] 托盘、通知、系统主题、崩溃恢复与诊断导出
 - [x] macOS arm64、macOS x64、Windows x64 CI 构建矩阵
 - [ ] macOS 签名与 notarization

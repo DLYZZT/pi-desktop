@@ -30,6 +30,7 @@ export const FEISHU_PERMISSION_IMPORT_JSON = JSON.stringify(
         "im:message.group_at_msg:readonly",
         "im:message:send_as_bot",
         "im:message.reactions:write_only",
+        "im:resource",
         "cardkit:card:write",
       ],
       user: [],

@@ -240,6 +240,68 @@ test("accepted media is staged privately and passed to the existing Pi turn", as
   await manager.shutdown();
 });
 
+test("Feishu generated files use the shared outbound capability and preserve the source reply route", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-manager-feishu-media-"));
+  const fake = createFakeAdapter("feishu");
+  const registry = new AdapterRegistry();
+  registry.register(fake.adapter);
+  let generatedPath;
+  const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
+    dataDirectory: dir,
+    registry,
+    secretAccess: {
+      get: async () => ({ token: "secret", providerAccountId: "ou_bot", baseUrl: "https://open.feishu.cn" }),
+      set: async () => {},
+      delete: async () => {},
+    },
+    bridge: {
+      async runTurn(binding) {
+        await mkdir(binding.cwd, { recursive: true });
+        generatedPath = path.join(binding.cwd, "report.pdf");
+        await writeFile(generatedPath, "pdf-fixture");
+        return { sessionId: "session-feishu-media", finalText: "报告如下", generatedFiles: [generatedPath] };
+      },
+    },
+  });
+  const now = new Date().toISOString();
+  await manager.upsertAccount({
+    id: "feishu-media",
+    channel: "feishu",
+    name: "Feishu",
+    enabled: true,
+    appId: "cli_1234567890abcdef",
+    domain: "feishu",
+    dmPolicy: "open",
+    allowFrom: [],
+    groupPolicy: "disabled",
+    groupIds: [],
+    groupAllowFrom: [],
+    requireMention: true,
+    toolNames: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  await fake.emit({
+    id: "om_feishu_media",
+    channel: "feishu",
+    accountId: "feishu-media",
+    peer: { kind: "dm", id: "ou_user" },
+    sender: { id: "ou_user" },
+    text: "把报告发给我",
+    mentionsBot: false,
+    attachments: [],
+    timestamp: Date.now(),
+    providerContext: { replyToMessageId: "om_source" },
+  });
+  assert.equal(fake.sent[0].text, "报告如下");
+  assert.equal(fake.sent[1].text, "");
+  assert.equal(fake.sent[1].replyToMessageId, "om_source");
+  assert.deepEqual(fake.sent[1].attachments, [
+    { kind: "file", path: generatedPath, name: "report.pdf", mime: "application/pdf" },
+  ]);
+  await manager.shutdown();
+});
+
 test("progressive adapters receive Agent events and own the final delivery", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-progressive-"));
   const fake = createFakeAdapter("telegram");

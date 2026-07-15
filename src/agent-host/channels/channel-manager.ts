@@ -92,6 +92,7 @@ function outboundAttachment(filePath: string): OutboundAttachment {
         ".gif": "image/gif",
         ".webp": "image/webp",
         ".ogg": "audio/ogg",
+        ".opus": "audio/ogg",
         ".mp3": "audio/mpeg",
         ".m4a": "audio/mp4",
         ".wav": "audio/wav",
@@ -802,7 +803,11 @@ export class ChannelManager {
           "generatedFiles" in turn && Array.isArray(turn.generatedFiles)
             ? turn.generatedFiles.filter((filePath): filePath is string => typeof filePath === "string")
             : [];
-        if (!command && generatedFiles.length > 0 && (account.channel === "weixin" || account.channel === "telegram")) {
+        if (
+          !command &&
+          generatedFiles.length > 0 &&
+          (account.channel === "weixin" || account.channel === "telegram" || account.channel === "feishu")
+        ) {
           try {
             const mediaReceipt = await adapter.send({
               account,
@@ -810,6 +815,9 @@ export class ChannelManager {
               peerId: envelope.peer.id,
               contextToken: envelope.providerContext?.contextToken,
               threadId: envelope.threadId,
+              ...(account.channel === "feishu" && envelope.providerContext?.replyToMessageId
+                ? { replyToMessageId: envelope.providerContext.replyToMessageId }
+                : {}),
               attachments: generatedFiles.map(outboundAttachment),
               text: "",
               runId: envelope.id,
