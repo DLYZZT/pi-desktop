@@ -25,10 +25,12 @@ Local-first · No local server · Cross-platform
 ### A complete agent workspace
 
 - Create, switch, rename, and delete sessions with continuously streamed responses
+- Search and browse sessions by date while using stable titles in both the sidebar and conversation header
 - Inspect tool calls, execution progress, and context compaction status
 - Queue messages and use Steer or Follow-up interaction modes
 - Quickly switch models, reasoning levels, tool presets, and notification sounds
 - Attach images, run slash commands, and reference project files with `@`
+- Keep chat and composer content aligned to one reading width, with a mouse- and keyboard-resizable file panel that remembers its width
 
 ### A project-focused file experience
 
@@ -48,7 +50,7 @@ Local-first · No local server · Cross-platform
 
 - Connect personal WeChat with QR login, Telegram with a BotFather token, or a Feishu/Lark self-built app with an App ID and App Secret
 - Protect direct messages with pairing and Telegram or Feishu/Lark groups with allowlists and mention requirements; WeChat groups are not enabled yet, and remote tools are disabled by default
-- Give each external conversation an isolated Pi Session by default, or bind it from the active desktop session to share history and context with the UI
+- Give each external conversation an isolated Pi Session by default, or bind it from the active desktop session to share history and context with the UI; the binding list stays within the window and scrolls internally when long
 - Send only the user's actual IM text as the model's user prompt; the desktop distinguishes sources with black local, green WeChat, blue Telegram, and orange Feishu/Lark user bubbles without adding user or group IDs to the prompt
 - Keep channels running in the background with long polling or WebSocket, reconnects, event deduplication, and cursor/offset checkpoints
 - Receive images, files, and voice messages from WeChat, Telegram, and Feishu/Lark, plus Feishu/Lark video resources; images enter the model as multimodal input, while other attachments use an isolated staging area and WeChat SILK audio is converted to WAV when possible
