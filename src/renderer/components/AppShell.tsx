@@ -6,6 +6,7 @@ import {
   useEffect,
   useSyncExternalStore,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { SessionSidebar } from "./SessionSidebar";
@@ -20,7 +21,19 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
+import { getSessionDisplayTitle } from "@/lib/session-list";
 import { buildAtMentionText } from "@/lib/file-fuzzy";
+import {
+  RIGHT_PANEL_DEFAULT_WIDTH,
+  RIGHT_PANEL_MIN_WIDTH,
+  clampRightPanelWidth,
+  getKeyboardAdjustedRightPanelWidth,
+  getRightPanelWidthBounds,
+  loadRightPanelPreferredWidth,
+  saveRightPanelPreferredWidth,
+  shouldCollapseSidebarForRightPanel,
+  type RightPanelResizeKey,
+} from "@/lib/layout-preferences";
 import type { SessionInfo } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -28,17 +41,22 @@ import type { ChannelsSnapshot } from "@shared/channel-types";
 
 type SessionCopyField = "file" | "id";
 const EXPLORER_TAB_ID = "explorer";
-const RIGHT_PANEL_WIDTH_KEY = "pi-desktop:right-panel-width:v2";
 const EMPTY_CHANNELS: ChannelsSnapshot = { accounts: [], statuses: [], pairings: [], bindings: [], activities: [] };
 
-function initialRightPanelWidth(): number {
+function initialRightPanelPreferredWidth(): number {
   try {
-    const stored = Number(localStorage.getItem(RIGHT_PANEL_WIDTH_KEY));
-    if (Number.isFinite(stored) && stored >= 280) return stored;
+    return loadRightPanelPreferredWidth(window.localStorage);
   } catch {
-    // Storage can be unavailable in privacy-restricted renderer contexts.
+    return RIGHT_PANEL_DEFAULT_WIDTH;
   }
-  return 360;
+}
+
+function persistRightPanelPreferredWidth(width: number): void {
+  try {
+    saveRightPanelPreferredWidth(window.localStorage, width);
+  } catch {
+    // Storage can become unavailable after startup; keep the in-memory preference.
+  }
 }
 
 function useSearchParamsCompat() {
@@ -171,7 +189,15 @@ export function AppShell() {
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(EXPLORER_TAB_ID);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [rightPanelWidth, setRightPanelWidth] = useState(initialRightPanelWidth);
+  const [rightPanelBounds, setRightPanelBounds] = useState(() =>
+    getRightPanelWidthBounds(window.innerWidth, sidebarOpen),
+  );
+  const rightPanelPreferredWidthRef = useRef(RIGHT_PANEL_DEFAULT_WIDTH);
+  const [rightPanelWidth, setRightPanelWidth] = useState(() => {
+    const preferredWidth = initialRightPanelPreferredWidth();
+    rightPanelPreferredWidthRef.current = preferredWidth;
+    return clampRightPanelWidth(preferredWidth, window.innerWidth, sidebarOpen);
+  });
   const [rightPanelResizing, setRightPanelResizing] = useState(false);
   const rightPanelResizeCleanupRef = useRef<(() => void) | null>(null);
 
@@ -184,34 +210,37 @@ export function AppShell() {
       const startX = event.clientX;
       const startWidth = rightPanelWidth;
       let finalWidth = startWidth;
-      const maxWidth = () => Math.max(280, window.innerWidth - (sidebarOpen ? 280 : 0) - 420);
+      let didResize = false;
 
       const handleMove = (moveEvent: PointerEvent) => {
-        finalWidth = Math.min(maxWidth(), Math.max(280, startWidth + startX - moveEvent.clientX));
+        if (moveEvent.clientX !== startX) didResize = true;
+        finalWidth = clampRightPanelWidth(startWidth + startX - moveEvent.clientX, window.innerWidth, sidebarOpen);
+        setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, sidebarOpen));
         setRightPanelWidth(finalWidth);
       };
-      const cleanup = () => {
+      const cleanup = (commit: boolean) => {
         window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", cleanup);
-        window.removeEventListener("pointercancel", cleanup);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerCancel);
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
         setRightPanelResizing(false);
         rightPanelResizeCleanupRef.current = null;
-        try {
-          localStorage.setItem(RIGHT_PANEL_WIDTH_KEY, String(Math.round(finalWidth)));
-        } catch {
-          // Ignore storage failures; resizing still works for this session.
+        if (commit && didResize && finalWidth >= RIGHT_PANEL_MIN_WIDTH) {
+          rightPanelPreferredWidthRef.current = finalWidth;
+          persistRightPanelPreferredWidth(finalWidth);
         }
       };
+      const handlePointerUp = () => cleanup(true);
+      const handlePointerCancel = () => cleanup(false);
 
-      rightPanelResizeCleanupRef.current = cleanup;
+      rightPanelResizeCleanupRef.current = () => cleanup(false);
       setRightPanelResizing(true);
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
       window.addEventListener("pointermove", handleMove);
-      window.addEventListener("pointerup", cleanup);
-      window.addEventListener("pointercancel", cleanup);
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerCancel);
     },
     [isMobile, rightPanelWidth, sidebarOpen],
   );
@@ -221,13 +250,55 @@ export function AppShell() {
   useEffect(() => {
     if (isMobile) return;
     const fitToWindow = () => {
-      const maxWidth = Math.max(280, window.innerWidth - (sidebarOpen ? 280 : 0) - 420);
-      setRightPanelWidth((width) => Math.min(width, maxWidth));
+      setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, sidebarOpen));
+      setRightPanelWidth(clampRightPanelWidth(rightPanelPreferredWidthRef.current, window.innerWidth, sidebarOpen));
     };
     fitToWindow();
     window.addEventListener("resize", fitToWindow);
     return () => window.removeEventListener("resize", fitToWindow);
   }, [isMobile, sidebarOpen]);
+
+  const openRightPanel = useCallback(() => {
+    const closeSidebar = isMobile || shouldCollapseSidebarForRightPanel(window.innerWidth);
+    const nextSidebarOpen = closeSidebar ? false : sidebarOpen;
+    if (closeSidebar) setSidebarOpen(false);
+    if (!isMobile) {
+      setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, nextSidebarOpen));
+      setRightPanelWidth(clampRightPanelWidth(rightPanelPreferredWidthRef.current, window.innerWidth, nextSidebarOpen));
+    }
+    setRightPanelOpen(true);
+  }, [isMobile, sidebarOpen]);
+
+  const handleRightPanelToggle = useCallback(() => {
+    if (rightPanelOpen) setRightPanelOpen(false);
+    else openRightPanel();
+  }, [openRightPanel, rightPanelOpen]);
+
+  const handleRightPanelResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (
+        isMobile ||
+        !(["ArrowLeft", "ArrowRight", "Home", "End"] as const).includes(event.key as RightPanelResizeKey)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      const nextWidth = getKeyboardAdjustedRightPanelWidth(
+        rightPanelWidth,
+        event.key as RightPanelResizeKey,
+        window.innerWidth,
+        sidebarOpen,
+        event.shiftKey,
+      );
+      setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, sidebarOpen));
+      setRightPanelWidth(nextWidth);
+      if (nextWidth >= RIGHT_PANEL_MIN_WIDTH) {
+        rightPanelPreferredWidthRef.current = nextWidth;
+        persistRightPanelPreferredWidth(nextWidth);
+      }
+    },
+    [isMobile, rightPanelWidth, sidebarOpen],
+  );
 
   // Same @mention format as the chat input's @ autocomplete, so the agent's
   // read tool resolves it the same way (it strips the @ prefix).
@@ -424,11 +495,9 @@ export function AppShell() {
         return prev.map((t) => (t.id === tabId ? { ...t, sourceSessionId } : t));
       });
       setActiveFileTabId(tabId);
-      setRightPanelOpen(true);
-      // On mobile the file panel is full-screen; close the drawer so it shows.
-      if (isMobile) setSidebarOpen(false);
+      openRightPanel();
     },
-    [isMobile],
+    [openRightPanel],
   );
 
   const handleOpenLinkedFile = useCallback(
@@ -465,7 +534,6 @@ export function AppShell() {
 
   useEffect(() => {
     if (!activeCwd || isMobile) return;
-    setRightPanelOpen(true);
     setActiveFileTabId(EXPLORER_TAB_ID);
   }, [activeCwd, isMobile]);
 
@@ -784,6 +852,26 @@ export function AppShell() {
                 </svg>
               )}
             </button>
+            {selectedSession && !isMobile && (
+              <div
+                role="heading"
+                aria-level={1}
+                title={getSessionDisplayTitle(selectedSession, 240)}
+                style={{
+                  flex: "1 1 auto",
+                  minWidth: 0,
+                  padding: "0 12px",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  color: "var(--text)",
+                  fontSize: 13,
+                  fontWeight: 650,
+                }}
+              >
+                {getSessionDisplayTitle(selectedSession)}
+              </div>
+            )}
             {selectedSession && (
               <QuickChannelBinding
                 sessionId={selectedSession.id}
@@ -804,8 +892,6 @@ export function AppShell() {
                     : n >= 1000
                       ? `${(n / 1000).toFixed(0)}k`
                       : String(n);
-                const costStr = c > 0 ? (c >= 0.01 ? `$${c.toFixed(2)}` : `<$0.01`) : null;
-
                 let ctxColor = "var(--text-muted)";
                 let ctxStr: string | null = null;
                 if (contextUsage?.contextWindow) {
@@ -849,14 +935,14 @@ export function AppShell() {
                       marginLeft: "auto",
                       display: "flex",
                       alignItems: "center",
-                      gap: 10,
+                      gap: 8,
                       paddingLeft: 12,
                       paddingRight: rightPanelOpen ? 12 : 48,
                       height: "100%",
                       background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
                       border: "none",
                       borderTop: activeTopPanel === "session" ? "2px solid var(--accent)" : "2px solid transparent",
-                      fontSize: 11,
+                      fontSize: 12,
                       color: "var(--text-muted)",
                       whiteSpace: "nowrap",
                       cursor: "pointer",
@@ -870,80 +956,24 @@ export function AppShell() {
                       e.currentTarget.style.color = activeTopPanel === "session" ? "var(--text)" : "var(--text-muted)";
                     }}
                   >
-                    {isMobile && (
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <circle cx="12" cy="12" r="10" />
-                        <line x1="12" y1="16" x2="12" y2="12" />
-                        <line x1="12" y1="8" x2="12.01" y2="8" />
-                      </svg>
-                    )}
-                    {!isMobile && tokenStats && tokenStats.input > 0 && (
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="16" x2="12" y2="12" />
+                      <line x1="12" y1="8" x2="12.01" y2="8" />
+                    </svg>
+                    {!isMobile && tokenStats && tokenStats.total > 0 && (
                       <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 10 10"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <line x1="5" y1="8.5" x2="5" y2="1.5" />
-                          <polyline points="2 4 5 1.5 8 4" />
-                        </svg>
-                        {fmt(tokenStats.input)}
-                      </span>
-                    )}
-                    {!isMobile && tokenStats && tokenStats.output > 0 && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 10 10"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <line x1="5" y1="1.5" x2="5" y2="8.5" />
-                          <polyline points="2 6 5 8.5 8 6" />
-                        </svg>
-                        {fmt(tokenStats.output)}
-                      </span>
-                    )}
-                    {!isMobile && tokenStats && tokenStats.cacheRead > 0 && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 10 10"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <path d="M8.5 5a3.5 3.5 0 1 1-1-2.45" />
-                          <polyline points="6.5 1.5 8.5 2.5 7.5 4.5" />
-                        </svg>
-                        {fmt(tokenStats.cacheRead)}
-                      </span>
-                    )}
-                    {!isMobile && costStr && (
-                      <span style={{ display: "flex", alignItems: "center", color: "var(--text)", fontWeight: 500 }}>
-                        {costStr}
+                        {fmt(tokenStats.total)} {t("tokens", "tokens")}
                       </span>
                     )}
                     {ctxStr && (
@@ -957,6 +987,7 @@ export function AppShell() {
                           strokeWidth="1.2"
                           strokeLinecap="round"
                           strokeLinejoin="round"
+                          aria-hidden="true"
                         >
                           <path d="M1 9 L1 5 Q1 1 5 1 Q9 1 9 5 L9 9" />
                           <line x1="1" y1="9" x2="9" y2="9" />
@@ -1053,7 +1084,7 @@ export function AppShell() {
                           compact = false,
                         ) => (
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
                               {title}
                             </div>
                             <div
@@ -1159,7 +1190,7 @@ export function AppShell() {
                         };
                         const sessionInfoSection = (
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
                               {t("sessionInfo", "Session Info")}
                             </div>
                             <div
@@ -1308,6 +1339,7 @@ export function AppShell() {
               borderLeft: "1px solid var(--border)",
               background: "var(--bg)",
               "--right-panel-width": `${rightPanelWidth}px`,
+              "--right-panel-min-width": `${rightPanelBounds.minWidth}px`,
             } as CSSProperties
           }
         >
@@ -1316,9 +1348,13 @@ export function AppShell() {
             role="separator"
             aria-label={t("resizeRightPanel", "Resize right panel")}
             aria-orientation="vertical"
-            aria-valuemin={280}
+            aria-valuemin={rightPanelBounds.minWidth}
+            aria-valuemax={rightPanelBounds.maxWidth}
             aria-valuenow={Math.round(rightPanelWidth)}
+            aria-valuetext={`${Math.round(rightPanelWidth)} pixels`}
+            tabIndex={isMobile ? -1 : 0}
             onPointerDown={handleRightPanelResizeStart}
+            onKeyDown={handleRightPanelResizeKeyDown}
           />
           {/* Right panel tab bar */}
           <div
@@ -1476,7 +1512,7 @@ export function AppShell() {
       </div>
       {/* File panel toggle — always visible at top-right */}
       <button
-        onClick={() => setRightPanelOpen((v) => !v)}
+        onClick={handleRightPanelToggle}
         title={rightPanelOpen ? t("hideFilePanel", "Hide file panel") : t("showFilePanel", "Show file panel")}
         aria-label={rightPanelOpen ? t("hideFilePanel", "Hide file panel") : t("showFilePanel", "Show file panel")}
         style={{

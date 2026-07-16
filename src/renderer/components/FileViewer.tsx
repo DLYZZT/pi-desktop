@@ -38,6 +38,7 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
     <button
       type="button"
       title="Download file"
+      aria-label="Download file"
       disabled={busy}
       onClick={() => {
         setBusy(true);
@@ -50,8 +51,9 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        height: 20,
-        padding: "0 5px",
+        width: 32,
+        height: 32,
+        padding: 0,
         background: "var(--bg-panel)",
         border: "1px solid var(--border)",
         borderRadius: 4,
@@ -69,6 +71,7 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
         strokeWidth="2.2"
         strokeLinecap="round"
         strokeLinejoin="round"
+        aria-hidden="true"
       >
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
         <polyline points="7 10 12 15 17 10" />
@@ -441,12 +444,15 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
           display: "flex",
           alignItems: "center",
           gap: 12,
-          padding: "4px 16px",
+          minHeight: 40,
+          padding: "4px 12px",
           borderBottom: "1px solid var(--border)",
-          fontSize: 11,
+          fontSize: 12,
           color: "var(--text-dim)",
           background: "var(--bg)",
           flexShrink: 0,
+          overflowX: "auto",
+          whiteSpace: "nowrap",
         }}
       >
         <span style={{ fontFamily: "var(--font-mono)" }} title={filePath}>
@@ -550,12 +556,15 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
           display: "flex",
           alignItems: "center",
           gap: 12,
-          padding: "4px 16px",
+          minHeight: 40,
+          padding: "4px 12px",
           borderBottom: "1px solid var(--border)",
-          fontSize: 11,
+          fontSize: 12,
           color: "var(--text-dim)",
           background: "var(--bg)",
           flexShrink: 0,
+          overflowX: "auto",
+          whiteSpace: "nowrap",
         }}
       >
         <span style={{ fontFamily: "var(--font-mono)" }} title={filePath}>
@@ -710,12 +719,15 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
           display: "flex",
           alignItems: "center",
           gap: 12,
-          padding: "4px 16px",
+          minHeight: 40,
+          padding: "4px 12px",
           borderBottom: "1px solid var(--border)",
-          fontSize: 11,
+          fontSize: 12,
           color: "var(--text-dim)",
           background: "var(--bg)",
           flexShrink: 0,
+          overflowX: "auto",
+          whiteSpace: "nowrap",
         }}
       >
         <span
@@ -963,12 +975,15 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
           display: "flex",
           alignItems: "center",
           gap: 12,
-          padding: "4px 16px",
+          minHeight: 40,
+          padding: "4px 12px",
           borderBottom: "1px solid var(--border)",
-          fontSize: 11,
+          fontSize: 12,
           color: "var(--text-dim)",
           background: "var(--bg)",
           flexShrink: 0,
+          overflowX: "auto",
+          whiteSpace: "nowrap",
         }}
       >
         <span style={{ fontFamily: "var(--font-mono)" }} title={filePath}>
@@ -1000,10 +1015,12 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
         {hasDiff && (
           <div style={{ display: "flex", borderRadius: 5, overflow: "hidden", border: "1px solid var(--border)" }}>
             <button
+              type="button"
               onClick={() => setViewMode("source")}
               style={{
-                padding: "2px 8px",
-                fontSize: 11,
+                minHeight: 32,
+                padding: "0 10px",
+                fontSize: 12,
                 border: "none",
                 cursor: "pointer",
                 background: viewMode === "source" ? "var(--bg-selected)" : "var(--bg-hover)",
@@ -1014,10 +1031,12 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
               Source
             </button>
             <button
+              type="button"
               onClick={() => setViewMode("diff")}
               style={{
-                padding: "2px 8px",
-                fontSize: 11,
+                minHeight: 32,
+                padding: "0 10px",
+                fontSize: 12,
                 border: "none",
                 borderLeft: "1px solid var(--border)",
                 cursor: "pointer",
@@ -1034,11 +1053,13 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
         {/* Word wrap toggle */}
         {viewMode === "source" && !previewMode && (
           <button
+            type="button"
             onClick={() => setWrapLines((v) => !v)}
             title={wrapLines ? "Disable word wrap" : "Enable word wrap"}
             style={{
-              padding: "2px 8px",
-              fontSize: 11,
+              minHeight: 32,
+              padding: "0 10px",
+              fontSize: 12,
               cursor: "pointer",
               background: wrapLines ? "var(--bg-selected)" : "var(--bg-hover)",
               color: wrapLines ? "var(--text)" : "var(--text-muted)",
@@ -1055,10 +1076,12 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
         {isHtml && viewMode === "source" && (
           <div style={{ display: "flex", borderRadius: 5, overflow: "hidden", border: "1px solid var(--border)" }}>
             <button
+              type="button"
               onClick={() => setPreviewMode(false)}
               style={{
-                padding: "2px 8px",
-                fontSize: 11,
+                minHeight: 32,
+                padding: "0 10px",
+                fontSize: 12,
                 border: "none",
                 cursor: "pointer",
                 background: !previewMode ? "var(--bg-selected)" : "var(--bg-hover)",
@@ -1069,10 +1092,12 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
               Code
             </button>
             <button
+              type="button"
               onClick={() => setPreviewMode(true)}
               style={{
-                padding: "2px 8px",
-                fontSize: 11,
+                minHeight: 32,
+                padding: "0 10px",
+                fontSize: 12,
                 border: "none",
                 borderLeft: "1px solid var(--border)",
                 cursor: "pointer",
@@ -1090,10 +1115,12 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
         {isMarkdown && viewMode === "source" && (
           <div style={{ display: "flex", borderRadius: 5, overflow: "hidden", border: "1px solid var(--border)" }}>
             <button
+              type="button"
               onClick={() => setPreviewMode(true)}
               style={{
-                padding: "2px 8px",
-                fontSize: 11,
+                minHeight: 32,
+                padding: "0 10px",
+                fontSize: 12,
                 border: "none",
                 cursor: "pointer",
                 background: previewMode ? "var(--bg-selected)" : "var(--bg-hover)",
@@ -1104,10 +1131,12 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
               Preview
             </button>
             <button
+              type="button"
               onClick={() => setPreviewMode(false)}
               style={{
-                padding: "2px 8px",
-                fontSize: 11,
+                minHeight: 32,
+                padding: "0 10px",
+                fontSize: 12,
                 border: "none",
                 borderLeft: "1px solid var(--border)",
                 cursor: "pointer",

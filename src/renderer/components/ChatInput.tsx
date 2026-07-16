@@ -265,6 +265,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const toolDropdownRef = useRef<HTMLDivElement>(null);
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
   const controlsMenuRef = useRef<HTMLDivElement>(null);
+  const controlsMenuButtonRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
@@ -960,6 +961,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     full: t("permissionFull", "Full access"),
   };
   const toolPresetLabel = toolPresetLabels[toolPresetKey];
+  const controlsMenuId = React.useId();
+  const hasControlsMenuItems =
+    (!isStreaming && Boolean(onThinkingLevelChange || onToolPresetChange || onCompact)) ||
+    Boolean(onSoundToggle) ||
+    Boolean(onCompact && isCompacting);
+
+  const closeControlsMenu = useCallback((restoreFocus = false) => {
+    setThinkingDropdownOpen(false);
+    setToolDropdownOpen(false);
+    setControlsMenuOpen(false);
+    if (restoreFocus) {
+      requestAnimationFrame(() => controlsMenuButtonRef.current?.focus());
+    }
+  }, []);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -979,16 +994,28 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         setThinkingDropdownOpen(false);
       }
       if (controlsMenuRef.current && !controlsMenuRef.current.contains(e.target as Node)) {
-        setControlsMenuOpen(false);
+        closeControlsMenu();
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, []);
+  }, [closeControlsMenu]);
 
   useEffect(() => {
-    if (!isMobile) setControlsMenuOpen(false);
-  }, [isMobile]);
+    closeControlsMenu();
+  }, [closeControlsMenu, isMobile, isStreaming]);
+
+  useEffect(() => {
+    if (!controlsMenuOpen) return;
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeControlsMenu(true);
+    };
+    document.addEventListener("keydown", handleEscape, true);
+    return () => document.removeEventListener("keydown", handleEscape, true);
+  }, [closeControlsMenu, controlsMenuOpen]);
 
   return (
     <div
@@ -1013,7 +1040,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
           e.target.value = "";
         }}
       />
-      <div style={{ maxWidth: 820, margin: "0 auto" }}>
+      <div style={{ maxWidth: "var(--chat-content-max-width)", margin: "0 auto" }}>
         {/* Queued steering / follow-up messages (delivered by pi on upcoming turns) */}
         {(queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0) > 0 && (
           <div
@@ -1887,105 +1914,166 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
           {/* spacer */}
           {!isMobile && <div style={{ flex: 1 }} />}
 
-          {/* RIGHT: thinking + tools preset + compact + sound (idle) | Stop + sound (streaming) */}
+          {/* RIGHT: Stop stays visible while streaming; lower-frequency controls live in More. */}
           <div
             ref={controlsMenuRef}
             style={{
               flex: "0 0 auto",
               display: "flex",
               alignItems: "center",
+              gap: 6,
               justifyContent: "flex-end",
               position: "relative",
               marginLeft: isMobile ? 0 : "auto",
             }}
           >
-            {isMobile && (
+            {isStreaming && (
               <button
                 type="button"
-                title={controlsMenuOpen ? undefined : t("moreControls", "More controls")}
-                aria-label={t("moreControls", "More controls")}
+                onClick={() => {
+                  closeControlsMenu();
+                  onAbort();
+                }}
+                title={t("stopAgent", "Stop agent")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 14px",
+                  height: 32,
+                  background: "rgba(239,68,68,0.08)",
+                  border: "1px solid rgba(239,68,68,0.3)",
+                  borderRadius: 9,
+                  color: "#ef4444",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                  letterSpacing: "-0.01em",
+                  transition: "background 0.12s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(239,68,68,0.16)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(239,68,68,0.08)";
+                }}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" />
+                </svg>
+                {t("stop", "Stop")}
+              </button>
+            )}
+            {hasControlsMenuItems && (
+              <button
+                ref={controlsMenuButtonRef}
+                type="button"
+                title={`${t("moreControls", "More controls")}${toolPresetKey === "full" ? ` · ${t("changePermission", "Change permission settings")}: ${toolPresetLabel}` : ""}`}
+                aria-label={`${t("moreControls", "More controls")}${toolPresetKey === "full" ? ` · ${toolPresetLabel}` : ""}`}
+                aria-haspopup="menu"
+                aria-controls={controlsMenuId}
                 aria-expanded={controlsMenuOpen}
-                aria-hidden={controlsMenuOpen || undefined}
-                tabIndex={controlsMenuOpen ? -1 : undefined}
                 onClick={() => {
                   setModelDropdownOpen(false);
-                  setControlsMenuOpen(true);
+                  if (controlsMenuOpen) closeControlsMenu();
+                  else setControlsMenuOpen(true);
                 }}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  width: "100%",
+                  gap: 6,
+                  minWidth: 36,
                   height: 32,
-                  padding: "8px 10px",
-                  background: "none",
-                  border: "none",
+                  padding: "0 10px",
+                  background: controlsMenuOpen ? "var(--bg-selected)" : "var(--bg-panel)",
+                  border: "1px solid var(--border)",
                   borderRadius: 9,
-                  color: "var(--text-muted)",
-                  cursor: controlsMenuOpen ? "default" : "pointer",
+                  color: controlsMenuOpen ? "var(--text)" : "var(--text-muted)",
+                  cursor: "pointer",
                   fontSize: 12,
                   fontWeight: 500,
-                  visibility: controlsMenuOpen ? "hidden" : "visible",
-                  pointerEvents: controlsMenuOpen ? "none" : "auto",
                   transition: "background 0.12s, color 0.12s",
                 }}
                 onMouseEnter={(e) => {
-                  if (controlsMenuOpen) return;
                   e.currentTarget.style.background = "var(--bg-hover)";
                   e.currentTarget.style.color = "var(--text)";
                 }}
                 onMouseLeave={(e) => {
-                  if (controlsMenuOpen) return;
-                  e.currentTarget.style.background = "none";
-                  e.currentTarget.style.color = "var(--text-muted)";
+                  e.currentTarget.style.background = controlsMenuOpen ? "var(--bg-selected)" : "var(--bg-panel)";
+                  e.currentTarget.style.color = controlsMenuOpen ? "var(--text)" : "var(--text-muted)";
                 }}
               >
-                {t("more", "More")}
+                <span>{t("more", "More")}</span>
+                {toolPresetKey === "full" && (
+                  <span
+                    style={{
+                      padding: "1px 5px",
+                      borderRadius: 999,
+                      background: "rgba(239,68,68,0.10)",
+                      color: "#ef4444",
+                      fontSize: 10,
+                      fontWeight: 650,
+                      lineHeight: 1.4,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {toolPresetLabel}
+                  </span>
+                )}
               </button>
             )}
             <div
+              id={controlsMenuId}
+              role="menu"
+              aria-label={t("moreControls", "More controls")}
+              hidden={!hasControlsMenuItems || !controlsMenuOpen}
               style={{
-                display: isMobile ? (controlsMenuOpen ? "flex" : "none") : "flex",
-                alignItems: "center",
-                gap: isMobile ? 2 : 6,
-                ...(isMobile
-                  ? {
-                      position: "absolute",
-                      right: 0,
-                      bottom: 0,
-                      zIndex: 60,
-                      padding: 1,
-                      width: "max-content",
-                      maxWidth: "calc(100vw - 32px)",
-                      flexWrap: "nowrap",
-                      justifyContent: "flex-end",
-                      border: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
-                      borderRadius: 10,
-                      background: "color-mix(in srgb, var(--bg-panel) 92%, var(--bg))",
-                      boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
-                      backdropFilter: "blur(10px)",
-                    }
-                  : null),
+                position: "absolute",
+                right: 0,
+                bottom: "calc(100% + 6px)",
+                zIndex: 60,
+                display: hasControlsMenuItems && controlsMenuOpen ? "flex" : "none",
+                flexDirection: "column",
+                alignItems: "stretch",
+                gap: 2,
+                padding: 5,
+                width: 240,
+                maxWidth: "calc(100vw - 32px)",
+                border: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
+                borderRadius: 10,
+                background: "color-mix(in srgb, var(--bg-panel) 96%, var(--bg))",
+                boxShadow: "0 10px 28px rgba(0,0,0,0.16)",
+                backdropFilter: "blur(10px)",
               }}
             >
               {!isStreaming && onThinkingLevelChange && (
-                <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
+                <div ref={thinkingDropdownRef} role="none" style={{ position: "relative" }}>
                   <button
-                    onClick={() => !isStreaming && setThinkingDropdownOpen((v) => !v)}
+                    type="button"
+                    role="menuitem"
+                    aria-haspopup="menu"
+                    aria-expanded={thinkingDropdownOpen}
+                    onClick={() => {
+                      if (isStreaming) return;
+                      setToolDropdownOpen(false);
+                      setThinkingDropdownOpen((v) => !v);
+                    }}
                     disabled={isStreaming}
                     title={`${t("changeThinkingLevel", "Change reasoning level")}: ${thinkingDisplayLabel}`}
-                    aria-label={t("changeThinkingLevel", "Change reasoning level")}
+                    aria-label={`${t("changeThinkingLevel", "Change reasoning level")}: ${thinkingDisplayLabel}`}
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      justifyContent: "center",
+                      justifyContent: "flex-start",
                       gap: 5,
-                      padding: isMobile ? "0 6px" : "8px 12px",
-                      width: isMobile ? "auto" : undefined,
-                      height: 32,
+                      padding: "0 10px",
+                      width: "100%",
+                      minHeight: 36,
                       background: thinkingDropdownOpen ? "var(--bg-selected)" : "var(--bg-panel)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 9,
+                      border: "none",
+                      borderRadius: 7,
                       color: "var(--text-muted)",
                       cursor: isStreaming ? "not-allowed" : "pointer",
                       fontSize: 12,
@@ -2018,12 +2106,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                       <line x1="7" y1="18" x2="12" y2="18" />
                       <line x1="8" y1="21" x2="11" y2="21" />
                     </svg>
-                    {(!isMobile || controlsMenuOpen) && (
-                      <span style={{ whiteSpace: "nowrap" }}>{thinkingDisplayLabel}</span>
-                    )}
+                    <span style={{ whiteSpace: "nowrap" }}>{thinkingDisplayLabel}</span>
                   </button>
                   {thinkingDropdownOpen && (
                     <div
+                      role="menu"
+                      aria-label={t("changeThinkingLevel", "Change reasoning level")}
                       style={{
                         position: "absolute",
                         bottom: "calc(100% + 6px)",
@@ -2052,9 +2140,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         return (
                           <button
                             key={lvl}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={isActive}
                             onClick={() => {
-                              setThinkingDropdownOpen(false);
                               if (!isActive) onThinkingLevelChange(lvl);
+                              closeControlsMenu(true);
                             }}
                             style={{
                               display: "flex",
@@ -2119,23 +2210,31 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 </div>
               )}
               {!isStreaming && onToolPresetChange && (
-                <div ref={toolDropdownRef} style={{ position: "relative" }}>
+                <div ref={toolDropdownRef} role="none" style={{ position: "relative" }}>
                   <button
-                    onClick={() => !isStreaming && setToolDropdownOpen((v) => !v)}
+                    type="button"
+                    role="menuitem"
+                    aria-haspopup="menu"
+                    aria-expanded={toolDropdownOpen}
+                    onClick={() => {
+                      if (isStreaming) return;
+                      setThinkingDropdownOpen(false);
+                      setToolDropdownOpen((v) => !v);
+                    }}
                     disabled={isStreaming}
                     title={`${t("changePermission", "Change permission settings")}: ${toolPresetLabel}`}
-                    aria-label={t("changePermission", "Change permission settings")}
+                    aria-label={`${t("changePermission", "Change permission settings")}: ${toolPresetLabel}`}
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      justifyContent: "center",
+                      justifyContent: "flex-start",
                       gap: 5,
-                      padding: isMobile ? "0 6px" : "8px 12px",
-                      width: isMobile ? "auto" : undefined,
-                      height: 32,
+                      padding: "0 10px",
+                      width: "100%",
+                      minHeight: 36,
                       background: toolDropdownOpen ? "var(--bg-selected)" : "var(--bg-panel)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 9,
+                      border: "none",
+                      borderRadius: 7,
                       color: "var(--text-muted)",
                       cursor: isStreaming ? "not-allowed" : "pointer",
                       fontSize: 12,
@@ -2164,10 +2263,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     >
                       <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
                     </svg>
-                    {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{toolPresetLabel}</span>}
+                    <span style={{ whiteSpace: "nowrap" }}>{toolPresetLabel}</span>
                   </button>
                   {toolDropdownOpen && (
                     <div
+                      role="menu"
+                      aria-label={t("changePermission", "Change permission settings")}
                       style={{
                         position: "absolute",
                         bottom: "calc(100% + 6px)",
@@ -2193,9 +2294,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         return (
                           <button
                             key={lvl}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={isActive}
                             onClick={() => {
-                              setToolDropdownOpen(false);
                               if (!isActive) onToolPresetChange(preset);
+                              closeControlsMenu(true);
                             }}
                             style={{
                               display: "flex",
@@ -2247,7 +2351,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
               )}
 
               {onCompact && (!isStreaming || isCompacting) && (
-                <div style={{ position: "relative" }}>
+                <div role="none" style={{ position: "relative" }}>
                   {compactError && (
                     <div
                       style={{
@@ -2269,19 +2373,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     </div>
                   )}
                   <button
-                    onClick={isCompacting ? onAbortCompaction : onCompact}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      closeControlsMenu(true);
+                      if (isCompacting) onAbortCompaction?.();
+                      else onCompact();
+                    }}
                     disabled={isStreaming && !isCompacting}
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      justifyContent: "center",
+                      justifyContent: "flex-start",
                       gap: 5,
-                      padding: isMobile ? "0 6px" : "8px 12px",
-                      width: isMobile ? "auto" : undefined,
-                      height: 32,
+                      padding: "0 10px",
+                      width: "100%",
+                      minHeight: 36,
                       background: isCompacting ? "rgba(239,68,68,0.08)" : "var(--bg-panel)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 9,
+                      border: "none",
+                      borderRadius: 7,
                       color: isCompacting ? "#ef4444" : "var(--text-muted)",
                       cursor: isStreaming && !isCompacting ? "not-allowed" : "pointer",
                       fontSize: 12,
@@ -2305,9 +2415,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                           <rect x="2" y="2" width="6" height="6" rx="1" fill="currentColor" />
                         </svg>
-                        {(!isMobile || controlsMenuOpen) && (
-                          <span style={{ whiteSpace: "nowrap" }}>{t("compacting", "Compacting…")}</span>
-                        )}
+                        <span style={{ whiteSpace: "nowrap" }}>{t("compacting", "Compacting…")}</span>
                       </>
                     ) : (
                       <>
@@ -2326,53 +2434,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                           <line x1="10" y1="14" x2="3" y2="21" />
                           <line x1="21" y1="3" x2="14" y2="10" />
                         </svg>
-                        {(!isMobile || controlsMenuOpen) && (
-                          <span style={{ whiteSpace: "nowrap" }}>{t("compact", "Compact")}</span>
-                        )}
+                        <span style={{ whiteSpace: "nowrap" }}>{t("compact", "Compact")}</span>
                       </>
                     )}
                   </button>
                 </div>
               )}
 
-              {isStreaming && (
-                <button
-                  onClick={onAbort}
-                  title={t("stopAgent", "Stop agent")}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "8px 14px",
-                    height: 32,
-                    background: "rgba(239,68,68,0.08)",
-                    border: "1px solid rgba(239,68,68,0.3)",
-                    borderRadius: 9,
-                    color: "#ef4444",
-                    cursor: "pointer",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                    letterSpacing: "-0.01em",
-                    transition: "background 0.12s",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "rgba(239,68,68,0.16)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "rgba(239,68,68,0.08)";
-                  }}
-                >
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                    <rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" />
-                  </svg>
-                  {t("stop", "Stop")}
-                </button>
-              )}
-
               {onSoundToggle !== undefined && (
                 <button
-                  onClick={onSoundToggle}
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={soundEnabled === true}
+                  onClick={() => {
+                    closeControlsMenu(true);
+                    onSoundToggle();
+                  }}
                   title={
                     soundEnabled
                       ? t("disableCompletionSound", "Disable completion sound")
@@ -2386,14 +2463,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    justifyContent: "center",
-                    gap: 5,
-                    width: isMobile ? 32 : 32,
-                    height: 32,
-                    padding: 0,
+                    justifyContent: "flex-start",
+                    gap: 7,
+                    width: "100%",
+                    minHeight: 36,
+                    padding: "0 10px",
                     background: soundEnabled ? "var(--bg-panel)" : "var(--bg-hover)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 9,
+                    border: "none",
+                    borderRadius: 7,
                     color: soundEnabled ? "var(--text-muted)" : "var(--text-dim)",
                     cursor: "pointer",
                     opacity: soundEnabled ? 1 : 0.55,
@@ -2441,54 +2518,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                       <line x1="17" y1="9" x2="23" y2="15" />
                     </svg>
                   )}
-                </button>
-              )}
-              {isMobile && controlsMenuOpen && (
-                <button
-                  type="button"
-                  title={t("collapseControls", "Collapse controls")}
-                  aria-label={t("collapseControls", "Collapse controls")}
-                  aria-expanded={true}
-                  onClick={() => {
-                    setToolDropdownOpen(false);
-                    setThinkingDropdownOpen(false);
-                    setControlsMenuOpen(false);
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 36,
-                    height: 32,
-                    padding: 0,
-                    marginLeft: 0,
-                    background: "var(--bg-hover)",
-                    border: "none",
-                    borderLeft: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
-                    borderRadius: "0 9px 9px 0",
-                    color: "var(--text)",
-                    cursor: "pointer",
-                    transition: "background 0.12s, color 0.12s",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "var(--bg-selected)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "var(--bg-hover)";
-                  }}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                  >
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
+                  <span style={{ whiteSpace: "nowrap" }}>
+                    {soundEnabled
+                      ? t("disableCompletionSound", "Disable completion sound")
+                      : t("enableCompletionSound", "Enable completion sound")}
+                  </span>
                 </button>
               )}
             </div>

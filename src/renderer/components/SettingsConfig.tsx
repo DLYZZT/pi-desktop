@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n, type AppLanguage } from "@/i18n";
@@ -107,7 +107,13 @@ export function SettingsConfig({
               cursor: "pointer",
               fontSize: 20,
               lineHeight: 1,
-              padding: "4px 7px",
+              width: 36,
+              height: 36,
+              padding: 0,
+              borderRadius: 7,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
           >
             ×
@@ -318,6 +324,9 @@ function GeneralSettings({
 }) {
   const { t } = useI18n();
   const [backgroundMode, setBackgroundMode] = useState(true);
+  const languageControlId = useId();
+  const backgroundModeControlId = useId();
+  const themeControlId = useId();
   useEffect(() => {
     void window.piBridge.getUiState().then((state) => setBackgroundMode(state.backgroundMode !== false));
   }, []);
@@ -330,8 +339,9 @@ function GeneralSettings({
         <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
           {t("interfaceLanguageDescription", "Choose the language used by the app. Changes take effect immediately.")}
         </p>
-        <SettingRow label={t("language", "Language")}>
+        <SettingRow label={t("language", "Language")} controlId={languageControlId}>
           <select
+            id={languageControlId}
             value={language}
             onChange={(event) => onLanguageChange(event.target.value as AppLanguage)}
             style={selectStyle}
@@ -349,16 +359,30 @@ function GeneralSettings({
         <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
           {t("backgroundModeDescription", "Keep messaging channels connected when the window is closed.")}
         </p>
-        <SettingRow label={t("closeToTray", "Close window to tray")}>
-          <input
-            type="checkbox"
-            checked={backgroundMode}
-            onChange={(event) => {
-              const next = event.target.checked;
-              setBackgroundMode(next);
-              void window.piBridge.setUiState({ backgroundMode: next });
+        <SettingRow label={t("closeToTray", "Close window to tray")} controlId={backgroundModeControlId}>
+          <label
+            htmlFor={backgroundModeControlId}
+            style={{
+              width: 36,
+              height: 36,
+              display: "grid",
+              placeItems: "center",
+              flexShrink: 0,
+              cursor: "pointer",
             }}
-          />
+          >
+            <input
+              id={backgroundModeControlId}
+              type="checkbox"
+              checked={backgroundMode}
+              onChange={(event) => {
+                const next = event.target.checked;
+                setBackgroundMode(next);
+                void window.piBridge.setUiState({ backgroundMode: next });
+              }}
+              style={{ width: 18, height: 18, margin: 0, accentColor: "var(--accent)", cursor: "pointer" }}
+            />
+          </label>
         </SettingRow>
       </section>
 
@@ -369,8 +393,9 @@ function GeneralSettings({
         <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
           {t("appearanceDescription", "Choose the color mode used by the app.")}
         </p>
-        <SettingRow label={t("theme", "Theme")}>
+        <SettingRow label={t("theme", "Theme")} controlId={themeControlId}>
           <select
+            id={themeControlId}
             value={isDark ? "dark" : "light"}
             onChange={(event) => onThemeChange(event.target.value === "dark")}
             style={selectStyle}
@@ -384,7 +409,7 @@ function GeneralSettings({
   );
 }
 
-function SettingRow({ label, children }: { label: string; children: React.ReactNode }) {
+function SettingRow({ label, controlId, children }: { label: string; controlId: string; children: React.ReactNode }) {
   return (
     <div
       style={{
@@ -399,7 +424,9 @@ function SettingRow({ label, children }: { label: string; children: React.ReactN
         background: "var(--bg-panel)",
       }}
     >
-      <span style={{ fontSize: 13, color: "var(--text-muted)" }}>{label}</span>
+      <label htmlFor={controlId} style={{ fontSize: 13, color: "var(--text-muted)", cursor: "pointer" }}>
+        {label}
+      </label>
       {children}
     </div>
   );
@@ -435,11 +462,12 @@ function ProjectRequired() {
 
 const selectStyle: React.CSSProperties = {
   minWidth: 160,
+  minHeight: 36,
   padding: "7px 30px 7px 10px",
   border: "1px solid var(--border)",
   borderRadius: 6,
   background: "var(--bg)",
   color: "var(--text)",
-  fontSize: 12,
+  fontSize: 13,
   cursor: "pointer",
 };

@@ -53,6 +53,11 @@
   --selection: #fed7aa;
   --thinking-bg: #fbfaf8;
   --thinking-border: #d6d3cd;
+  --font-size-caption: 12px;
+  --font-size-control: 13px;
+  --font-size-body: 14px;
+  --control-height-compact: 32px;
+  --chat-content-max-width: 760px;
 }
 
 html.dark {
@@ -131,6 +136,24 @@ body {
 :where(button, a, input, textarea, select, [tabindex]):focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 82%, white) !important;
   outline-offset: 2px;
+}
+
+.session-actions-summary::marker,
+.session-actions-summary::-webkit-details-marker {
+  display: none;
+  content: "";
+}
+
+.session-menu-item:hover,
+.session-menu-item:focus-visible {
+  background: var(--bg-hover) !important;
+  color: var(--text) !important;
+}
+
+.message-hover-actions:focus-within,
+.message-hover-action:focus-visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }
 
 .chat-composer-shell:focus-within {
@@ -905,7 +928,7 @@ span.linenumber {
   }
   .right-panel-container.right-panel-open {
     width: var(--right-panel-width, 360px);
-    min-width: 280px;
+    min-width: var(--right-panel-min-width, 280px);
   }
   .right-panel-container.right-panel-closed {
     width: 0;
@@ -915,7 +938,7 @@ span.linenumber {
   /* keep inner content at fixed width so it doesn't reflow during animation */
   .right-panel-container > :not(.right-panel-resizer) {
     width: var(--right-panel-width, 360px);
-    min-width: 280px;
+    min-width: var(--right-panel-min-width, 280px);
   }
   .right-panel-resizer {
     position: absolute;

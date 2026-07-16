@@ -247,6 +247,7 @@ function UserMessageView({
           }}
         >
           <div
+            className="message-hover-actions"
             style={{
               display: "flex",
               gap: 3,
@@ -256,6 +257,7 @@ function UserMessageView({
             }}
           >
             <button
+              type="button"
               onClick={copyContent}
               title="Copy message"
               style={{
@@ -263,13 +265,13 @@ function UserMessageView({
                 alignItems: "center",
                 gap: 4,
                 padding: "3px 8px",
-                height: 22,
+                height: 32,
                 background: "none",
                 border: "none",
                 borderRadius: 5,
                 color: copied ? "var(--accent)" : "var(--text-dim)",
                 cursor: "pointer",
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 400,
                 whiteSpace: "nowrap",
                 transition: "color 0.12s",
@@ -314,6 +316,7 @@ function UserMessageView({
           </div>
           {(canFork || canNavigate) && (
             <div
+              className="message-hover-actions"
               style={{
                 display: "flex",
                 gap: 3,
@@ -324,6 +327,7 @@ function UserMessageView({
             >
               {canNavigate && (
                 <button
+                  type="button"
                   onClick={() => {
                     onNavigate!(prevAssistantEntryId!);
                     onEditContent?.(content);
@@ -334,13 +338,13 @@ function UserMessageView({
                     alignItems: "center",
                     gap: 4,
                     padding: "3px 8px",
-                    height: 22,
+                    height: 32,
                     background: "none",
                     border: "none",
                     borderRadius: 5,
                     color: "var(--text-dim)",
                     cursor: "pointer",
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: 400,
                     whiteSpace: "nowrap",
                     transition: "color 0.12s",
@@ -370,6 +374,7 @@ function UserMessageView({
               )}
               {canFork && (
                 <button
+                  type="button"
                   onClick={() => {
                     onFork!(entryId!);
                   }}
@@ -380,13 +385,13 @@ function UserMessageView({
                     alignItems: "center",
                     gap: 4,
                     padding: "3px 8px",
-                    height: 22,
+                    height: 32,
                     background: "none",
                     border: "none",
                     borderRadius: 5,
                     color: forking ? "var(--accent)" : "var(--text-dim)",
                     cursor: forking ? "not-allowed" : "pointer",
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: 400,
                     whiteSpace: "nowrap",
                     transition: "color 0.12s",
@@ -418,7 +423,7 @@ function UserMessageView({
               )}
             </div>
           )}
-          {time && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{time}</span>}
+          {time && <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{time}</span>}
         </div>
       )}
     </div>
@@ -563,7 +568,7 @@ function AssistantMessageView({
       {/* Model label */}
       <div
         style={{
-          fontSize: 11,
+          fontSize: 12,
           color: "var(--text-dim)",
           marginBottom: 4,
           display: "flex",
@@ -593,7 +598,7 @@ function AssistantMessageView({
                     style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text)" }}
                     title="Estimated token count while streaming"
                   >
-                    <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 11, fontWeight: 400 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 12, fontWeight: 400 }}>
                       <svg
                         width="10"
                         height="10"
@@ -662,10 +667,12 @@ function AssistantMessageView({
         }}
       >
         {message.usage && !isStreaming && (
-          <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{formatUsage(message.usage)}</div>
+          <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{formatUsage(message.usage)}</div>
         )}
         {textContent && !isStreaming && (
           <button
+            type="button"
+            className="message-hover-action"
             onClick={copyContent}
             title="Copy message"
             style={{
@@ -673,13 +680,13 @@ function AssistantMessageView({
               alignItems: "center",
               gap: 4,
               padding: "3px 8px",
-              height: 22,
+              height: 32,
               background: "none",
               border: "none",
               borderRadius: 5,
               color: copied ? "var(--accent)" : "var(--text-dim)",
               cursor: "pointer",
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 400,
               whiteSpace: "nowrap",
               opacity: hovered ? 1 : 0,
@@ -725,7 +732,7 @@ function AssistantMessageView({
           </button>
         )}
         {time && !isStreaming && (
-          <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>
+          <span style={{ fontSize: 12, color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>
         )}
       </div>
     </div>

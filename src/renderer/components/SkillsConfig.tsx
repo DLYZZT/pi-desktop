@@ -31,14 +31,18 @@ function sourceLabel(skill: Skill): string {
 function Toggle({ enabled, loading, onToggle }: { enabled: boolean; loading: boolean; onToggle: () => void }) {
   return (
     <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label={enabled ? "Disable skill in model prompt" : "Enable skill in model prompt"}
       onClick={onToggle}
       disabled={loading}
       title={enabled ? "Visible in model prompt — click to disable" : "Hidden from model prompt — click to enable"}
       style={{
         flexShrink: 0,
-        width: 40,
-        height: 22,
-        borderRadius: 11,
+        width: 48,
+        height: 32,
+        borderRadius: 16,
         border: "none",
         padding: 0,
         cursor: loading ? "wait" : "pointer",
@@ -51,10 +55,10 @@ function Toggle({ enabled, loading, onToggle }: { enabled: boolean; loading: boo
       <span
         style={{
           position: "absolute",
-          top: 3,
-          left: enabled ? 21 : 3,
-          width: 16,
-          height: 16,
+          top: 6,
+          left: enabled ? 25 : 5,
+          width: 20,
+          height: 20,
           borderRadius: "50%",
           background: "var(--bg)",
           boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
@@ -192,13 +196,14 @@ function SkillDetail({
             onClick={() => void saveContent()}
             disabled={contentLoading || contentSaving || content === savedContent}
             style={{
-              padding: "5px 10px",
+              minHeight: 32,
+              padding: "0 11px",
               borderRadius: 5,
               border: "1px solid var(--border)",
               background: content !== savedContent ? "var(--accent)" : "var(--bg-panel)",
               color: content !== savedContent ? "#fff" : "var(--text-dim)",
               cursor: contentLoading || contentSaving || content === savedContent ? "default" : "pointer",
-              fontSize: 11,
+              fontSize: 12,
             }}
           >
             {contentSaving ? "Saving…" : "Save changes"}
@@ -327,6 +332,7 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
         {/* Search row */}
         <div style={{ display: "flex", gap: 8 }}>
           <input
+            type="search"
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -334,8 +340,10 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
               if (e.key === "Enter") void search(query);
             }}
             placeholder="e.g. react, testing, deploy"
+            aria-label="Search skills"
             style={{
               flex: 1,
+              minHeight: 36,
               padding: "7px 10px",
               fontSize: 13,
               background: "var(--bg-panel)",
@@ -346,9 +354,11 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
             }}
           />
           <button
+            type="button"
             onClick={() => search(query)}
             disabled={searching || !query.trim()}
             style={{
+              minHeight: 36,
               padding: "7px 16px",
               fontSize: 13,
               borderRadius: 6,

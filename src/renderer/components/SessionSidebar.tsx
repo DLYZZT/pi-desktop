@@ -6,6 +6,12 @@ import {
   loadUnreadSessionIds as loadStoredUnreadSessionIds,
   saveUnreadSessionIds as saveStoredUnreadSessionIds,
 } from "@/lib/unread-session-storage";
+import {
+  filterSessionsForQuery,
+  getSessionDisplayTitle,
+  sessionDateGroup,
+  type SessionDateGroup,
+} from "@/lib/session-list";
 
 interface Props {
   selectedSessionId: string | null;
@@ -350,6 +356,7 @@ export function SessionSidebar({
   const [homeDir, setHomeDir] = useState<string>("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [projectFilter, setProjectFilter] = useState("");
+  const [sessionFilter, setSessionFilter] = useState("");
   const [customPathOpen, setCustomPathOpen] = useState(false);
   const [customPathValue, setCustomPathValue] = useState("");
   const [customPathError, setCustomPathError] = useState<string | null>(null);
@@ -799,9 +806,10 @@ export function SessionSidebar({
 
   // Sessions of every worktree in the selected project are shown together
   const selectedProject = projectRootFor(selectedCwd);
-  const filteredSessions = selectedProject
+  const projectSessions = selectedProject
     ? allSessions.filter((s) => (s.projectRoot ?? s.cwd) === selectedProject)
     : allSessions;
+  const filteredSessions = filterSessionsForQuery(projectSessions, sessionFilter);
   const showWorktreeSwitcher = Boolean(
     worktreeState?.isGit && worktreeState.isTopLevel && selectedCwd && selectedProject === worktreeState.projectRoot,
   );
@@ -829,6 +837,14 @@ export function SessionSidebar({
 
   // Build parent-child tree within the filtered set
   const sessionTree = buildSessionTree(filteredSessions);
+  const sessionGroups: { id: SessionDateGroup; label: string; nodes: SessionTreeNode[] }[] = [
+    { id: "today", label: t("sessionsToday", "Today"), nodes: [] },
+    { id: "recent", label: t("sessionsRecent", "Last 7 days"), nodes: [] },
+    { id: "older", label: t("sessionsOlder", "Older"), nodes: [] },
+  ];
+  for (const node of sessionTree) {
+    sessionGroups.find((group) => group.id === sessionDateGroup(node.session.modified))?.nodes.push(node);
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1770,43 +1786,144 @@ export function SessionSidebar({
       </div>
 
       {/* Session list */}
-      <div style={{ flex: "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
-        <div
-          style={{
-            padding: "10px 14px 4px",
-            fontFamily: "var(--font-mono)",
-            fontSize: 10.5,
-            color: "var(--text-dim)",
-            letterSpacing: "0.6px",
-            textTransform: "uppercase",
-          }}
-        >
-          sessions // {filteredSessions.length}
+      <nav
+        aria-label={t("sessions", "Sessions")}
+        style={{ flex: "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}
+      >
+        <div style={{ padding: "10px 10px 6px" }}>
+          <div
+            style={{
+              padding: "0 4px 7px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              color: "var(--text-dim)",
+              letterSpacing: "0.5px",
+              textTransform: "uppercase",
+            }}
+          >
+            <span>{t("sessions", "Sessions")}</span>
+            <span aria-label={`${filteredSessions.length} ${t("sessions", "sessions")}`}>
+              {filteredSessions.length}
+            </span>
+          </div>
+          <div style={{ position: "relative" }}>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                left: 10,
+                top: "50%",
+                transform: "translateY(-50%)",
+                color: "var(--text-dim)",
+                pointerEvents: "none",
+              }}
+            >
+              <circle cx="11" cy="11" r="7" />
+              <line x1="20" y1="20" x2="16.5" y2="16.5" />
+            </svg>
+            <input
+              type="search"
+              value={sessionFilter}
+              onChange={(event) => setSessionFilter(event.target.value)}
+              placeholder={t("searchSessions", "Search sessions…")}
+              aria-label={t("searchSessions", "Search sessions")}
+              style={{
+                width: "100%",
+                height: 34,
+                padding: "0 30px 0 32px",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                background: "var(--bg-panel)",
+                color: "var(--text)",
+                fontSize: 13,
+                outline: "none",
+              }}
+            />
+            {sessionFilter && (
+              <button
+                type="button"
+                onClick={() => setSessionFilter("")}
+                title={t("clearSessionSearch", "Clear session search")}
+                aria-label={t("clearSessionSearch", "Clear session search")}
+                style={{
+                  position: "absolute",
+                  top: 1,
+                  right: 1,
+                  width: 32,
+                  height: 32,
+                  border: 0,
+                  borderRadius: 7,
+                  background: "transparent",
+                  color: "var(--text-dim)",
+                  cursor: "pointer",
+                  fontSize: 18,
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
         </div>
         {loading && <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>Loading...</div>}
         {error && <div style={{ padding: "12px 14px", color: "var(--danger)", fontSize: 12 }}>{error}</div>}
         {!loading && !error && filteredSessions.length === 0 && (
-          <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>No sessions found</div>
+          <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 13 }}>
+            {sessionFilter.trim()
+              ? t("noMatchingSessions", "No matching sessions")
+              : t("noSessionsFound", "No sessions found")}
+          </div>
         )}
-        <div style={{ padding: "2px 6px 10px", display: "flex", flexDirection: "column" }}>
-          {sessionTree.map((node) => (
-            <SessionTreeItem
-              key={node.session.id}
-              node={node}
-              selectedSessionId={selectedSessionId}
-              runningSessionIds={runningSessionIds}
-              unreadSessionIds={unreadSessionIds}
-              onSelectSession={handleSelectSessionFromList}
-              onRenamed={loadSessions}
-              onSessionDeleted={(id) => {
-                onSessionDeleted?.(id);
-                void loadSessions();
-              }}
-              depth={0}
-            />
-          ))}
+        <div style={{ padding: "0 6px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
+          {sessionGroups.map(
+            (group) =>
+              group.nodes.length > 0 && (
+                <section key={group.id} aria-labelledby={`session-group-${group.id}`}>
+                  <div
+                    id={`session-group-${group.id}`}
+                    style={{
+                      padding: "7px 8px 4px",
+                      color: "var(--text-dim)",
+                      fontSize: 12,
+                      fontWeight: 650,
+                    }}
+                  >
+                    {group.label}
+                  </div>
+                  <div role="list" style={{ display: "flex", flexDirection: "column" }}>
+                    {group.nodes.map((node) => (
+                      <SessionTreeItem
+                        key={node.session.id}
+                        node={node}
+                        selectedSessionId={selectedSessionId}
+                        runningSessionIds={runningSessionIds}
+                        unreadSessionIds={unreadSessionIds}
+                        onSelectSession={handleSelectSessionFromList}
+                        onRenamed={loadSessions}
+                        onSessionDeleted={(id) => {
+                          onSessionDeleted?.(id);
+                          void loadSessions();
+                        }}
+                        depth={0}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ),
+          )}
         </div>
-      </div>
+      </nav>
     </div>
   );
 }
@@ -1943,6 +2060,22 @@ function UnreadSessionIndicator() {
   );
 }
 
+const sessionMenuItemStyle: CSSProperties = {
+  width: "100%",
+  minHeight: 34,
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "0 9px",
+  border: 0,
+  borderRadius: 6,
+  background: "transparent",
+  color: "var(--text-muted)",
+  cursor: "pointer",
+  fontSize: 13,
+  textAlign: "left",
+};
+
 function SessionItem({
   session,
   isSelected,
@@ -1968,23 +2101,35 @@ function SessionItem({
   collapsed?: boolean;
   onToggleCollapse?: () => void;
 }) {
+  const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const actionsSummaryRef = useRef<HTMLButtonElement>(null);
 
-  const title = session.name || session.firstMessage.slice(0, 50) || session.id.slice(0, 12);
+  const closeActionsMenu = useCallback((restoreFocus = false) => {
+    setActionsOpen(false);
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => actionsSummaryRef.current?.focus());
+    }
+  }, []);
+
+  const title = getSessionDisplayTitle(session);
 
   const startRename = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
+      closeActionsMenu();
       setRenameValue(session.name ?? "");
       setRenaming(true);
       setTimeout(() => inputRef.current?.select(), 0);
     },
-    [session.name],
+    [closeActionsMenu, session.name],
   );
 
   const commitRename = useCallback(async () => {
@@ -2011,6 +2156,7 @@ function SessionItem({
   const handleDeleteClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
+      closeActionsMenu();
       // ISSUE-001: block delete while agent is running
       if (isRunning) {
         window.alert("This session is still running. Stop it before deleting.");
@@ -2018,7 +2164,7 @@ function SessionItem({
       }
       setConfirmDelete(true);
     },
-    [isRunning],
+    [closeActionsMenu, isRunning],
   );
 
   const handleDeleteConfirm = useCallback(
@@ -2060,19 +2206,21 @@ function SessionItem({
 
   return (
     <div
-      onClick={confirmDelete || renaming ? undefined : onClick}
+      role="listitem"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => {
         setHovered(false);
       }}
       style={{
         height: ITEM_HEIGHT,
+        position: "relative",
+        zIndex: actionsOpen ? 20 : undefined,
         display: "flex",
         alignItems: "center",
         margin: "0 4px 3px",
         paddingLeft: depth > 0 ? depth * 12 + 10 : 10,
         paddingRight: 8,
-        cursor: confirmDelete || renaming ? "default" : "pointer",
+        cursor: "default",
         background: confirmDelete
           ? "color-mix(in srgb, var(--danger) 8%, transparent)"
           : isSelected
@@ -2089,7 +2237,7 @@ function SessionItem({
         transition: "background 0.1s, border-color 0.1s",
         opacity: deleting ? 0.5 : 1,
         gap: 6,
-        overflow: "hidden",
+        overflow: "visible",
       }}
     >
       {confirmDelete ? (
@@ -2121,7 +2269,7 @@ function SessionItem({
                 alignItems: "center",
                 justifyContent: "center",
                 gap: 4,
-                height: 30,
+                height: 32,
                 padding: "0 11px",
                 background: "#ef4444",
                 border: "none",
@@ -2156,7 +2304,7 @@ function SessionItem({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                height: 30,
+                height: 32,
                 padding: "0 11px",
                 background: "var(--bg)",
                 border: "1px solid var(--border)",
@@ -2186,155 +2334,190 @@ function SessionItem({
           autoFocus
           style={{
             flex: 1,
-            fontSize: 12,
+            fontSize: 13,
             padding: "5px 8px",
             border: "1px solid var(--accent)",
             borderRadius: 5,
             outline: "none",
             background: "var(--bg)",
             color: "var(--text)",
-            height: 30,
+            height: 34,
           }}
         />
       ) : (
         /* ── Normal view ── */
         <>
-          {/* Fork indicator for child sessions */}
-          {depth > 0 && (
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="var(--text-dim)"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              style={{ flexShrink: 0 }}
-            >
-              <line x1="6" y1="3" x2="6" y2="15" />
-              <circle cx="18" cy="6" r="3" />
-              <circle cx="6" cy="18" r="3" />
-              <path d="M18 9a9 9 0 0 1-9 9" />
-            </svg>
-          )}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 7,
-                minWidth: 0,
-                fontSize: 12.5,
-                fontWeight: isSelected ? 600 : 500,
-                lineHeight: 1.4,
-                color: "var(--text)",
-              }}
-              title={isRunning ? `${title} · Agent running…` : isUnread ? `${title} · New activity` : title}
-            >
-              {isRunning ? (
-                <RunningSessionIndicator />
-              ) : isUnread ? (
-                <UnreadSessionIndicator />
-              ) : (
-                <span
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    flexShrink: 0,
-                    background: isSelected ? "var(--success)" : "var(--text-dim)",
-                    opacity: isSelected ? 1 : 0.55,
-                  }}
-                />
-              )}
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-                {title}
-              </span>
-            </div>
-            <div
-              style={{
-                marginTop: 2,
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-                color: "var(--text-dim)",
-                fontSize: 11,
-                minWidth: 0,
-                paddingLeft: 13,
-              }}
-            >
-              <span title={session.modified}>{formatRelativeTime(session.modified)}</span>
-              <span
+          <button
+            type="button"
+            onClick={() => {
+              closeActionsMenu();
+              onClick();
+            }}
+            aria-current={isSelected ? "page" : undefined}
+            aria-label={
+              isRunning
+                ? `${title} · ${t("agentRunning", "Agent running")}`
+                : isUnread
+                  ? `${title} · ${t("newSessionActivity", "New activity")}`
+                  : title
+            }
+            style={{
+              alignSelf: "stretch",
+              flex: 1,
+              minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: 0,
+              border: 0,
+              background: "transparent",
+              color: "inherit",
+              cursor: "pointer",
+              font: "inherit",
+              textAlign: "left",
+            }}
+          >
+            {/* Fork indicator for child sessions */}
+            {depth > 0 && (
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="var(--text-dim)"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ flexShrink: 0 }}
+                aria-hidden="true"
+              >
+                <line x1="6" y1="3" x2="6" y2="15" />
+                <circle cx="18" cy="6" r="3" />
+                <circle cx="6" cy="18" r="3" />
+                <path d="M18 9a9 9 0 0 1-9 9" />
+              </svg>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
                 style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 10,
-                  color: "var(--accent-chip-fg)",
-                  background: "var(--accent-chip-bg)",
-                  padding: "1px 6px",
-                  borderRadius: 4,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  minWidth: 0,
+                  fontSize: 13,
+                  fontWeight: isSelected ? 600 : 500,
+                  lineHeight: 1.4,
+                  color: "var(--text)",
+                }}
+                title={isRunning ? `${title} · Agent running…` : isUnread ? `${title} · New activity` : title}
+              >
+                {isRunning ? (
+                  <RunningSessionIndicator />
+                ) : isUnread ? (
+                  <UnreadSessionIndicator />
+                ) : (
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      flexShrink: 0,
+                      background: isSelected ? "var(--success)" : "var(--text-dim)",
+                      opacity: isSelected ? 1 : 0.55,
+                    }}
+                  />
+                )}
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                  {title}
+                </span>
+              </div>
+              <div
+                style={{
+                  marginTop: 2,
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  color: "var(--text-dim)",
+                  fontSize: 12,
+                  minWidth: 0,
+                  paddingLeft: 13,
                 }}
               >
-                {session.messageCount} msgs
-              </span>
-              {session.worktreeBranch && (
+                <span title={session.modified}>{formatRelativeTime(session.modified)}</span>
                 <span
-                  title={`Worktree: ${session.cwd}`}
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 3,
-                    color: "var(--accent)",
-                    minWidth: 0,
-                    overflow: "hidden",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 11,
+                    color: "var(--accent-chip-fg)",
+                    background: "var(--accent-chip-bg)",
+                    padding: "1px 6px",
+                    borderRadius: 4,
                   }}
                 >
-                  <svg
-                    width="9"
-                    height="9"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.4"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    style={{ flexShrink: 0 }}
-                  >
-                    <line x1="6" y1="3" x2="6" y2="15" />
-                    <circle cx="18" cy="6" r="3" />
-                    <circle cx="6" cy="18" r="3" />
-                    <path d="M18 9a9 9 0 0 1-9 9" />
-                  </svg>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {session.worktreeBranch}
-                  </span>
+                  {session.messageCount} msgs
                 </span>
-              )}
+                {session.worktreeBranch && (
+                  <span
+                    title={`Worktree: ${session.cwd}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 3,
+                      color: "var(--accent)",
+                      minWidth: 0,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <svg
+                      width="9"
+                      height="9"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{ flexShrink: 0 }}
+                    >
+                      <line x1="6" y1="3" x2="6" y2="15" />
+                      <circle cx="18" cy="6" r="3" />
+                      <circle cx="6" cy="18" r="3" />
+                      <path d="M18 9a9 9 0 0 1-9 9" />
+                    </svg>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {session.worktreeBranch}
+                    </span>
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
+          </button>
 
           {/* Collapse toggle — always visible when has children */}
           {hasChildren && (
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onToggleCollapse?.();
               }}
-              title={collapsed ? "Expand forks" : "Collapse forks"}
+              title={collapsed ? t("expandForks", "Expand forks") : t("collapseForks", "Collapse forks")}
+              aria-label={collapsed ? t("expandForks", "Expand forks") : t("collapseForks", "Collapse forks")}
+              aria-expanded={!collapsed}
               style={{
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                width: 20,
-                height: 20,
+                width: 32,
+                height: 32,
                 padding: 0,
                 flexShrink: 0,
-                background: "none",
+                background: hovered ? "var(--bg-hover)" : "none",
                 border: "none",
+                borderRadius: 7,
                 color: "var(--text-dim)",
                 cursor: "pointer",
-                transform: collapsed ? "rotate(-90deg)" : "none",
-                transition: "transform 0.15s",
+                transition: "background 0.12s, color 0.12s",
               }}
             >
               <svg
@@ -2346,104 +2529,129 @@ function SessionItem({
                 strokeWidth="1.8"
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                aria-hidden="true"
+                style={{
+                  transform: collapsed ? "rotate(-90deg)" : "none",
+                  transition: "transform 0.15s",
+                }}
               >
                 <polyline points="2 3.5 5 6.5 8 3.5" />
               </svg>
             </button>
           )}
 
-          {/* Action buttons — shown on hover */}
-          {hovered && (
-            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-              <button
-                onClick={startRename}
-                title="Rename"
+          <div
+            ref={actionsRef}
+            onBlur={(event) => {
+              if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+              closeActionsMenu();
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || !actionsOpen) return;
+              event.preventDefault();
+              closeActionsMenu(true);
+            }}
+            style={{ position: "relative", flexShrink: 0 }}
+          >
+            <button
+              type="button"
+              ref={actionsSummaryRef}
+              className="session-actions-summary"
+              title={t("sessionActions", "Session actions")}
+              aria-label={t("sessionActionsFor", "Session actions for {title}").replace("{title}", title)}
+              aria-haspopup="menu"
+              aria-expanded={actionsOpen}
+              onClick={(event) => {
+                event.stopPropagation();
+                setActionsOpen((open) => !open);
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 32,
+                height: 32,
+                padding: 0,
+                background: actionsOpen || hovered ? "var(--bg-hover)" : "transparent",
+                border: actionsOpen ? "1px solid var(--border)" : "1px solid transparent",
+                borderRadius: 7,
+                color: actionsOpen ? "var(--text)" : "var(--text-dim)",
+                cursor: "pointer",
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.7" />
+                <circle cx="12" cy="12" r="1.7" />
+                <circle cx="19" cy="12" r="1.7" />
+              </svg>
+            </button>
+            {actionsOpen && (
+              <div
+                role="menu"
+                aria-label={t("sessionActions", "Session actions")}
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 32,
-                  height: 32,
-                  padding: 0,
-                  background: "var(--bg-hover)",
+                  position: "absolute",
+                  top: 36,
+                  right: 0,
+                  zIndex: 50,
+                  minWidth: 132,
+                  padding: 4,
                   border: "1px solid var(--border)",
-                  borderRadius: 7,
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  transition: "background 0.12s, color 0.12s, border-color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-selected)";
-                  e.currentTarget.style.color = "var(--accent)";
-                  e.currentTarget.style.borderColor = "var(--accent-soft-border)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.borderColor = "var(--border)";
+                  borderRadius: 8,
+                  background: "var(--bg)",
+                  boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
                 }}
               >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="session-menu-item"
+                  onClick={startRename}
+                  style={sessionMenuItemStyle}
                 >
-                  <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-                </svg>
-              </button>
-              <button
-                onClick={handleDeleteClick}
-                title="Delete"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 32,
-                  height: 32,
-                  padding: 0,
-                  background: "var(--bg-hover)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 7,
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  transition: "background 0.12s, color 0.12s, border-color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(239,68,68,0.08)";
-                  e.currentTarget.style.color = "#ef4444";
-                  e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.borderColor = "var(--border)";
-                }}
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                  </svg>
+                  {t("rename", "Rename")}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="session-menu-item"
+                  onClick={handleDeleteClick}
+                  style={{ ...sessionMenuItemStyle, color: "var(--danger)" }}
                 >
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                  <path d="M10 11v6M14 11v6" />
-                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                </svg>
-              </button>
-            </div>
-          )}
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6M14 11v6" />
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  </svg>
+                  {t("delete", "Delete")}
+                </button>
+              </div>
+            )}
+          </div>
         </>
       )}
     </div>

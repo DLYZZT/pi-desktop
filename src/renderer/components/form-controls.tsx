@@ -2,24 +2,46 @@
  * Shared form controls for settings-style panels (fields, inputs, selects).
  * Extracted from ModelsConfig so detail panes can stay focused on domain logic.
  */
-import { useEffect, useState, type CSSProperties, type KeyboardEventHandler, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useState,
+  type CSSProperties,
+  type KeyboardEventHandler,
+  type ReactNode,
+} from "react";
+
+const FieldControlIdContext = createContext<string | undefined>(undefined);
+
+function useFieldControlId(): string | undefined {
+  return useContext(FieldControlIdContext);
+}
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
+  const controlId = useId();
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 500 }}>{label}</label>
-      {children}
-    </div>
+    <FieldControlIdContext.Provider value={controlId}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <label htmlFor={controlId} style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>
+          {label}
+        </label>
+        {children}
+      </div>
+    </FieldControlIdContext.Provider>
   );
 }
 
 export const inputStyle = {
-  padding: "6px 9px",
+  minHeight: 36,
+  padding: "7px 10px",
   background: "var(--bg-panel)",
   border: "1px solid var(--border)",
   borderRadius: 5,
   color: "var(--text)",
-  fontSize: 12,
+  fontSize: 13,
   outline: "none",
   width: "100%",
   boxSizing: "border-box" as const,
@@ -36,8 +58,11 @@ export function TextInput({
   placeholder?: string;
   mono?: boolean;
 }) {
+  const controlId = useFieldControlId();
+
   return (
     <input
+      id={controlId}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
@@ -66,6 +91,7 @@ export function SecretTextInput({
   style?: CSSProperties;
 }) {
   const [visible, setVisible] = useState(false);
+  const controlId = useFieldControlId();
 
   useEffect(() => {
     if (!value) setVisible(false);
@@ -74,12 +100,13 @@ export function SecretTextInput({
   return (
     <div style={{ position: "relative", width: "100%", ...style }}>
       <input
+        id={controlId}
         type={visible ? "text" : "password"}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
         placeholder={placeholder}
-        style={{ ...inputStyle, paddingRight: 34, fontFamily: mono ? "var(--font-mono)" : "inherit" }}
+        style={{ ...inputStyle, paddingRight: 40, fontFamily: mono ? "var(--font-mono)" : "inherit" }}
         autoComplete={autoComplete}
         spellCheck={spellCheck}
       />
@@ -90,11 +117,11 @@ export function SecretTextInput({
         title={visible ? "Hide API key" : "Show API key"}
         style={{
           position: "absolute",
-          right: 5,
+          right: 2,
           top: "50%",
           transform: "translateY(-50%)",
-          width: 24,
-          height: 24,
+          width: 32,
+          height: 32,
           padding: 0,
           border: "none",
           background: "transparent",
@@ -150,8 +177,11 @@ export function NumInput({
   onChange: (v: string) => void;
   placeholder?: string;
 }) {
+  const controlId = useFieldControlId();
+
   return (
     <input
+      id={controlId}
       type="number"
       value={value}
       onChange={(e) => onChange(e.target.value)}
@@ -172,8 +202,11 @@ export function Select({
   options: readonly string[];
   required?: boolean;
 }) {
+  const controlId = useFieldControlId();
+
   return (
     <select
+      id={controlId}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       style={{ ...inputStyle, color: value ? "var(--text)" : "var(--text-dim)" }}
@@ -203,8 +236,10 @@ export function Check({
         display: "flex",
         alignItems: "center",
         gap: 6,
+        minHeight: 36,
+        padding: "4px 0",
         cursor: "pointer",
-        fontSize: 12,
+        fontSize: 13,
         color: "var(--text-muted)",
       }}
     >
@@ -212,7 +247,7 @@ export function Check({
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        style={{ width: 13, height: 13, accentColor: "var(--accent)", cursor: "pointer" }}
+        style={{ width: 18, height: 18, margin: 0, accentColor: "var(--accent)", cursor: "pointer" }}
       />
       {label}
     </label>

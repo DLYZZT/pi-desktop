@@ -187,15 +187,17 @@ function ProviderDetail({
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <SectionTitle>Provider</SectionTitle>
         <button
+          type="button"
           onClick={onDelete}
           style={{
-            padding: "3px 8px",
+            minHeight: 32,
+            padding: "0 10px",
             background: "none",
             border: "1px solid rgba(239,68,68,0.3)",
             borderRadius: 4,
             color: "#ef4444",
             cursor: "pointer",
-            fontSize: 11,
+            fontSize: 12,
           }}
         >
           Delete
@@ -206,16 +208,18 @@ function ProviderDetail({
         <TextInput value={editingName} onChange={setEditingName} placeholder="provider-name" mono />
         {editingName !== name && editingName.trim() && (
           <button
+            type="button"
             onClick={() => onRename(editingName.trim())}
             style={{
               marginTop: 4,
-              padding: "3px 10px",
+              minHeight: 32,
+              padding: "0 12px",
               background: "var(--accent)",
               border: "none",
               borderRadius: 4,
               color: "#fff",
               cursor: "pointer",
-              fontSize: 11,
+              fontSize: 12,
               alignSelf: "flex-start",
             }}
           >
@@ -300,8 +304,9 @@ function ThinkingLevelMapEditor({
         const color = LEVEL_COLORS[level];
 
         const btnBase: React.CSSProperties = {
-          padding: "4px 10px",
-          fontSize: 10,
+          minHeight: 32,
+          padding: "0 10px",
+          fontSize: 12,
           border: "none",
           cursor: "pointer",
           fontWeight: 400,
@@ -561,12 +566,13 @@ function ModelDetail({
             </span>
           )}
           <button
+            type="button"
             onClick={handleTest}
             disabled={!model.id.trim() || testState.phase === "testing"}
             title="Test model connection"
             style={{
-              height: 24,
-              padding: "0 8px",
+              height: 32,
+              padding: "0 10px",
               background: testState.phase === "success" ? "#16a34a" : "none",
               border: `1px solid ${testState.phase === "success" ? "#16a34a" : "var(--border)"}`,
               borderRadius: 4,
@@ -577,7 +583,7 @@ function ModelDetail({
                     ? "var(--text-dim)"
                     : "var(--text-muted)",
               cursor: !model.id.trim() || testState.phase === "testing" ? "not-allowed" : "pointer",
-              fontSize: 11,
+              fontSize: 12,
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
@@ -602,16 +608,17 @@ function ModelDetail({
             {testState.phase === "testing" ? "Testing…" : testState.phase === "success" ? "OK" : "Test"}
           </button>
           <button
+            type="button"
             onClick={onDelete}
             style={{
-              height: 24,
-              padding: "0 8px",
+              height: 32,
+              padding: "0 10px",
               background: "none",
               border: "1px solid rgba(239,68,68,0.3)",
               borderRadius: 4,
               color: "#ef4444",
               cursor: "pointer",
-              fontSize: 11,
+              fontSize: 12,
               boxSizing: "border-box",
             }}
           >
@@ -662,10 +669,12 @@ function ModelDetail({
               <SectionTitle>Thinking level map</SectionTitle>
               {model.thinkingLevelMap && (
                 <button
+                  type="button"
                   onClick={() => set("thinkingLevelMap", undefined)}
                   style={{
-                    fontSize: 10,
-                    padding: "2px 7px",
+                    minHeight: 32,
+                    fontSize: 12,
+                    padding: "0 9px",
                     background: "none",
                     border: "1px solid var(--border)",
                     borderRadius: 4,
@@ -1951,7 +1960,10 @@ export function ModelsConfig({
                 </code>
               </div>
               <button
+                type="button"
                 onClick={onClose}
+                title="Close models"
+                aria-label="Close models"
                 style={{
                   background: "none",
                   border: "none",
@@ -1959,7 +1971,10 @@ export function ModelsConfig({
                   cursor: "pointer",
                   fontSize: 20,
                   lineHeight: 1,
-                  padding: "2px 6px",
+                  width: 36,
+                  height: 36,
+                  padding: 0,
+                  borderRadius: 7,
                 }}
               >
                 ×

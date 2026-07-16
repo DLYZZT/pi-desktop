@@ -491,7 +491,7 @@ export function ChatWindow({
 
       {isEmptyNew ? (
         <div className="relative z-[1] flex min-h-0 flex-[1_1_0] flex-col items-center justify-end overflow-y-auto px-4 pt-8">
-          <div className="w-full max-w-[820px]">
+          <div className="w-full" style={{ maxWidth: "var(--chat-content-max-width)" }}>
             <div
               className="mb-3"
               style={{
@@ -546,10 +546,10 @@ export function ChatWindow({
                 </span>
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
                   app <span style={{ color: "var(--text)" }}>v{APP_VERSION}</span>
                 </span>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
                   pi <span style={{ color: "var(--text)" }}>v{PI_VERSION}</span>
                 </span>
               </div>
@@ -571,13 +571,13 @@ export function ChatWindow({
                 pointerEvents: "none",
               }}
             >
-              <div style={{ maxWidth: 820, margin: "0 auto" }}>
+              <div style={{ maxWidth: "var(--chat-content-max-width)", margin: "0 auto" }}>
                 <NoticeShelf notices={notices} floating align="right" />
               </div>
             </div>
             <div ref={scrollContainerRef} className="relative z-[1] flex-1 overflow-y-auto pt-4 [scrollbar-width:none]">
               <div style={{ padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
-                <div style={{ maxWidth: 820, margin: "0 auto" }}>
+                <div style={{ maxWidth: "var(--chat-content-max-width)", margin: "0 auto" }}>
                   <ExtensionStatusBar statuses={extensionStatuses} />
                   <ExtensionWidgets widgets={aboveEditorWidgets} />
 
@@ -824,7 +824,8 @@ export function ChatWindow({
       )}
 
       <div
-        className="chat-input-transition-dock relative z-[2] w-full max-w-[820px] flex-shrink-0 self-center"
+        className="chat-input-transition-dock relative z-[2] w-full flex-shrink-0 self-center"
+        style={{ maxWidth: "var(--chat-content-max-width)" }}
         data-position={isEmptyNew ? "welcome" : "conversation"}
       >
         {!isEmptyNew && belowEditorWidgets.length > 0 && (

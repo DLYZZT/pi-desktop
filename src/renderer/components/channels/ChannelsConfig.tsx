@@ -51,8 +51,9 @@ function buttonStyle(primary = false): React.CSSProperties {
     borderRadius: 6,
     background: primary ? "var(--accent)" : "var(--bg)",
     color: primary ? "white" : "var(--text-muted)",
-    fontSize: 12,
-    padding: "7px 11px",
+    minHeight: 36,
+    fontSize: 13,
+    padding: "0 12px",
     cursor: "pointer",
   };
 }
@@ -63,7 +64,8 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 6,
   background: "var(--bg)",
   color: "var(--text)",
-  fontSize: 12,
+  minHeight: 36,
+  fontSize: 13,
   padding: "8px 9px",
 };
 
@@ -679,6 +681,7 @@ export function AccountCard({
             type="checkbox"
             checked={draft.enabled}
             onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })}
+            style={{ width: 18, height: 18, margin: 0, accentColor: "var(--accent)", cursor: "pointer" }}
           />{" "}
           {t("enabled", "Enabled")}
         </label>
@@ -691,6 +694,7 @@ export function AccountCard({
       >
         <Field label={t("channelName", "Name")}>
           <input
+            aria-label={t("channelName", "Name")}
             style={inputStyle}
             value={draft.name}
             onChange={(event) => setDraft({ ...draft, name: event.target.value })}
@@ -698,6 +702,7 @@ export function AccountCard({
         </Field>
         <Field label={t("dmAccess", "Direct-message access")}>
           <select
+            aria-label={t("dmAccess", "Direct-message access")}
             style={inputStyle}
             value={draft.dmPolicy}
             onChange={(event) =>
@@ -711,6 +716,7 @@ export function AccountCard({
         </Field>
         <Field label={t("allowedUserIds", "Allowed user IDs")}>
           <input
+            aria-label={t("allowedUserIds", "Allowed user IDs")}
             style={inputStyle}
             value={draft.allowFrom.join(", ")}
             onChange={(event) =>
@@ -726,6 +732,7 @@ export function AccountCard({
         </Field>
         <Field label={t("groupAccess", "Group access")}>
           <select
+            aria-label={t("groupAccess", "Group access")}
             style={inputStyle}
             value={draft.groupPolicy}
             onChange={(event) =>
@@ -739,6 +746,7 @@ export function AccountCard({
         </Field>
         <Field label={t("allowedGroupIds", "Allowed group IDs")}>
           <input
+            aria-label={t("allowedGroupIds", "Allowed group IDs")}
             style={inputStyle}
             value={draft.groupIds.join(", ")}
             onChange={(event) =>
@@ -754,6 +762,7 @@ export function AccountCard({
         </Field>
         <Field label={t("allowedGroupSenderIds", "Allowed group sender IDs")}>
           <input
+            aria-label={t("allowedGroupSenderIds", "Allowed group sender IDs")}
             style={inputStyle}
             value={draft.groupAllowFrom.join(", ")}
             onChange={(event) =>
@@ -773,6 +782,7 @@ export function AccountCard({
               type="checkbox"
               checked={draft.requireMention}
               onChange={(event) => setDraft({ ...draft, requireMention: event.target.checked })}
+              style={{ width: 18, height: 18, margin: 0, accentColor: "var(--accent)", cursor: "pointer" }}
             />
             {t("requireMention", "Require @mention")}
           </label>
@@ -783,12 +793,14 @@ export function AccountCard({
               type="checkbox"
               checked={draft.commandsEnabled === true}
               onChange={(event) => setDraft({ ...draft, commandsEnabled: event.target.checked })}
+              style={{ width: 18, height: 18, margin: 0, accentColor: "var(--accent)", cursor: "pointer" }}
             />
             {t("enableImCommands", "Enable /help, /status, /new, /compact, and /reload")}
           </label>
         </Field>
         <Field label={t("defaultTools", "Default tools")}>
           <select
+            aria-label={t("defaultTools", "Default tools")}
             style={inputStyle}
             value={preset}
             onChange={(event) =>
@@ -803,6 +815,7 @@ export function AccountCard({
         <Field label={t("defaultProjectDirectory", "Default project directory")}>
           <div style={{ display: "flex", gap: 6 }}>
             <input
+              aria-label={t("defaultProjectDirectory", "Default project directory")}
               style={inputStyle}
               readOnly
               value={draft.defaultCwd ?? t("isolatedChannelWorkspace", "Isolated channel workspace")}
@@ -1638,10 +1651,10 @@ function LoginDialog({
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label style={{ display: "grid", gap: 5, color: "var(--text-dim)", fontSize: 11 }}>
-      {label}
+    <div style={{ display: "grid", gap: 5, color: "var(--text-dim)", fontSize: 12 }}>
+      <span>{label}</span>
       {children}
-    </label>
+    </div>
   );
 }
 
