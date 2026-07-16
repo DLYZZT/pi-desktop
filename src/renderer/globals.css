@@ -142,6 +142,42 @@ body {
   outline: none !important;
 }
 
+.chat-input-bottom-spacer {
+  flex: 1 1 0;
+  min-height: 0;
+  pointer-events: none;
+  transition: flex-grow 440ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.chat-input-bottom-spacer[data-expanded="false"] {
+  flex-grow: 0;
+}
+
+.chat-input-transition-dock {
+  transition:
+    filter 280ms ease,
+    opacity 220ms ease;
+}
+
+.chat-input-transition-dock[data-position="conversation"] {
+  filter: drop-shadow(0 -2px 8px color-mix(in srgb, #000 3%, transparent));
+}
+
+.chat-conversation-enter {
+  animation: chat-conversation-enter 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes chat-conversation-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -783,6 +819,18 @@ span.linenumber {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .chat-input-bottom-spacer {
+    transition-duration: 0.001ms !important;
+  }
+
+  .chat-input-transition-dock {
+    transition-duration: 0.001ms !important;
+  }
+
+  .chat-conversation-enter {
+    animation-duration: 0.001ms !important;
+  }
+
   .notice-shelf-item {
     animation-duration: 0.001ms !important;
   }

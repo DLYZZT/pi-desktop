@@ -7,8 +7,10 @@ import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ChannelsConfig } from "./channels/ChannelsConfig";
 import type { ChannelsSnapshot } from "@shared/channel-types";
+import { APP_AUTHOR, APP_DISPLAY_NAME, APP_GITHUB_URL, APP_VERSION, PI_VERSION } from "@/lib/app-version";
+import appIconUrl from "../../../build/icon.png";
 
-type SettingsTab = "general" | "channels" | "models" | "skills" | "plugins";
+type SettingsTab = "general" | "channels" | "models" | "skills" | "plugins" | "about";
 
 interface SettingsConfigProps {
   cwd: string | null;
@@ -38,6 +40,7 @@ export function SettingsConfig({
     { id: "models", label: t("models", "Models") },
     { id: "skills", label: t("skills", "Skills") },
     { id: "plugins", label: t("plugins", "Plugins") },
+    { id: "about", label: t("about", "About") },
   ];
 
   return (
@@ -178,8 +181,126 @@ export function SettingsConfig({
             ) : (
               <ProjectRequired />
             ))}
+          {activeTab === "about" && <AboutSettings />}
         </div>
       </div>
+    </div>
+  );
+}
+
+function AboutSettings() {
+  const { t } = useI18n();
+
+  return (
+    <div
+      style={{
+        width: "100%",
+        overflowY: "auto",
+        padding: "28px clamp(18px, 5vw, 52px)",
+        display: "flex",
+      }}
+    >
+      <div style={{ width: "100%", maxWidth: 620, margin: "auto" }}>
+        <section
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 16,
+            paddingBottom: 26,
+          }}
+        >
+          <img
+            aria-hidden="true"
+            src={appIconUrl}
+            alt=""
+            style={{
+              width: 64,
+              height: 64,
+              objectFit: "contain",
+              flexShrink: 0,
+              filter: "drop-shadow(0 4px 10px color-mix(in srgb, #000 12%, transparent))",
+            }}
+          />
+          <div>
+            <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>{APP_DISPLAY_NAME}</h2>
+            <p style={{ margin: "5px 0 0", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
+              {t("aboutDescription", "App, Pi, and project information.")}
+            </p>
+          </div>
+        </section>
+
+        <section>
+          <h2 style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text)" }}>
+            {t("applicationInformation", "Application information")}
+          </h2>
+          <div
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              background: "var(--bg-panel)",
+              overflow: "hidden",
+            }}
+          >
+            <AboutRow label={t("softwareVersion", "Software version")} value={`v${APP_VERSION}`} />
+            <AboutRow label={t("piVersion", "Pi version")} value={`v${PI_VERSION}`} />
+            <AboutRow label={t("author", "Author")} value={APP_AUTHOR} />
+            <AboutRow
+              label={t("githubRepository", "GitHub repository")}
+              value={
+                <button
+                  type="button"
+                  title={t("openGithubRepository", "Open GitHub repository")}
+                  onClick={() => void window.piBridge.openExternal(APP_GITHUB_URL)}
+                  style={{
+                    maxWidth: "100%",
+                    padding: 0,
+                    border: 0,
+                    background: "none",
+                    color: "var(--accent)",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 12,
+                    cursor: "pointer",
+                    overflowWrap: "anywhere",
+                    textAlign: "right",
+                  }}
+                >
+                  github.com/DLYZZT/pi-desktop ↗
+                </button>
+              }
+              last
+            />
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function AboutRow({ label, value, last = false }: { label: string; value: React.ReactNode; last?: boolean }) {
+  return (
+    <div
+      style={{
+        minHeight: 52,
+        padding: "10px 12px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 20,
+        borderBottom: last ? "none" : "1px solid var(--border)",
+      }}
+    >
+      <span style={{ flexShrink: 0, fontSize: 13, color: "var(--text-muted)" }}>{label}</span>
+      <span
+        style={{
+          minWidth: 0,
+          color: "var(--text)",
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+          textAlign: "right",
+        }}
+      >
+        {value}
+      </span>
     </div>
   );
 }

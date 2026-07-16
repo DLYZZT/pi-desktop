@@ -490,7 +490,7 @@ export function ChatWindow({
       {extensionCustomUi && <ExtensionCustomPanel request={extensionCustomUi} onInput={sendExtensionCustomInput} />}
 
       {isEmptyNew ? (
-        <div className="relative z-[1] flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
+        <div className="relative z-[1] flex min-h-0 flex-[1_1_0] flex-col items-center justify-end overflow-y-auto px-4 pt-8">
           <div className="w-full max-w-[820px]">
             <div
               className="mb-3"
@@ -555,12 +555,11 @@ export function ChatWindow({
               </div>
             </div>
             <NoticeShelf notices={notices} align="right" />
-            {chatInputElement}
           </div>
         </div>
       ) : (
         <>
-          <div className="relative z-[1] flex flex-1 overflow-hidden">
+          <div className="chat-conversation-enter relative z-[1] flex min-h-0 flex-[1_1_0] overflow-hidden">
             <div
               style={{
                 position: "absolute",
@@ -821,25 +820,27 @@ export function ChatWindow({
               />
             )}
           </div>
-
-          <div
-            className="relative z-[1]"
-            style={{ borderTop: "1px solid var(--border)", background: "var(--bg-panel)" }}
-          >
-            <div
-              style={{
-                padding: `0 ${CHAT_COLUMN_PADDING}px`,
-                paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
-              }}
-            >
-              <div style={{ maxWidth: 820, margin: "0 auto" }}>
-                <ExtensionWidgets widgets={belowEditorWidgets} />
-              </div>
-            </div>
-            {chatInputElement}
-          </div>
         </>
       )}
+
+      <div
+        className="chat-input-transition-dock relative z-[2] w-full max-w-[820px] flex-shrink-0 self-center"
+        data-position={isEmptyNew ? "welcome" : "conversation"}
+      >
+        {!isEmptyNew && belowEditorWidgets.length > 0 && (
+          <div
+            style={{
+              padding: `0 ${CHAT_COLUMN_PADDING}px`,
+              paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
+            }}
+          >
+            <ExtensionWidgets widgets={belowEditorWidgets} />
+          </div>
+        )}
+        {chatInputElement}
+      </div>
+
+      <div className="chat-input-bottom-spacer" data-expanded={isEmptyNew ? "true" : "false"} aria-hidden="true" />
     </div>
   );
 }

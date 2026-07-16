@@ -13,3 +13,5 @@ export const PI_VERSION =
   "0.80.0";
 
 export const APP_DISPLAY_NAME = "Pi Agent Desktop";
+export const APP_AUTHOR = "DLYZZT";
+export const APP_GITHUB_URL = "https://github.com/DLYZZT/pi-desktop";
