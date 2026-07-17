@@ -14,6 +14,7 @@ export type UiState = {
   theme?: "light" | "dark" | "system";
   recentCwds?: string[];
   backgroundMode?: boolean;
+  automaticUpdateChecks?: boolean;
 };
 
 function statePath(): string {

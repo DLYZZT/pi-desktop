@@ -142,10 +142,88 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  release-contract:
+    name: Validate release contract
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: [quality, test-platforms]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Verify tag and package versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$release_commit" origin/main; then
+            echo "Release tag must point to a commit contained in main" >&2
+            exit 1
+          fi
+
+          node <<'NODE'
+          const packageJson = require("./package.json");
+          const packageLock = require("./package-lock.json");
+
+          if (!/^\d+\.\d+\.\d+$/.test(packageJson.version)) {
+            throw new Error(
+              `Stable release versions must use x.y.z without a prerelease suffix: ${packageJson.version}`,
+            );
+          }
+
+          const expectedTag = `v${packageJson.version}`;
+          const versions = [
+            ["package-lock.json.version", packageLock.version],
+            [
+              'package-lock.json.packages[""].version',
+              packageLock.packages?.[""]?.version,
+            ],
+          ];
+
+          for (const [source, version] of versions) {
+            if (version !== packageJson.version) {
+              throw new Error(
+                `${source} (${String(version)}) does not match package.json (${packageJson.version})`,
+              );
+            }
+          }
+
+          if (process.env.GITHUB_REF_NAME !== expectedTag) {
+            throw new Error(
+              `Release tag ${process.env.GITHUB_REF_NAME} must exactly match ${expectedTag}`,
+            );
+          }
+
+          console.log(`Validated release ${expectedTag}`);
+          NODE
+
+      - name: Refuse an existing public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if is_draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            if [ "$is_draft" != "true" ]; then
+              echo "Release $GITHUB_REF_NAME is already public; published assets are immutable" >&2
+              exit 1
+            fi
+          fi
+
   release-macos:
     name: Sign and notarize macOS
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
-    needs: [quality, test-platforms]
+    needs: [release-contract]
     runs-on: macos-15
     timeout-minutes: 90
     environment:
@@ -173,6 +251,8 @@ jobs:
         run: npm run dist:mac:notarized -- --arm64 --x64
 
       - name: Verify both signed and notarized apps
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -200,6 +280,8 @@ jobs:
             codesign --verify --deep --strict --verbose=2 "$app"
             xcrun stapler validate "$app"
             spctl --assess --type execute --verbose=4 "$app"
+            codesign -dv --verbose=4 "$app" 2>&1 | grep -Fq "TeamIdentifier=$APPLE_TEAM_ID"
+            codesign -dv --verbose=4 "$app" 2>&1 | grep -Fq "Authority=Developer ID Application:"
             entitlements="$(codesign -d --entitlements - "$renderer" 2>&1)"
             grep -q 'com.apple.security.cs.allow-jit' <<<"$entitlements"
           }
@@ -208,6 +290,110 @@ jobs:
           x64_app="$(find_app_for_arch x86_64)"
           verify_app "$arm64_app" arm64
           verify_app "$x64_app" x86_64
+
+      - name: Verify packaged macOS update configuration
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          function findUpdateConfigs(directory, matches = []) {
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              const entryPath = path.join(directory, entry.name);
+              if (entry.isDirectory()) {
+                findUpdateConfigs(entryPath, matches);
+              } else if (
+                entry.isFile() &&
+                entry.name === "app-update.yml" &&
+                entryPath
+                  .split(path.sep)
+                  .join("/")
+                  .endsWith(".app/Contents/Resources/app-update.yml")
+              ) {
+                matches.push(entryPath);
+              }
+            }
+            return matches;
+          }
+
+          function readScalar(document, key) {
+            const match = document.match(
+              new RegExp(`^\\s*${key}\\s*:\\s*([^#\\r\\n]+)`, "mi"),
+            );
+            if (!match) {
+              throw new Error(`Missing ${key}`);
+            }
+
+            const value = match[1].trim();
+            if (
+              (value.startsWith('"') && value.endsWith('"')) ||
+              (value.startsWith("'") && value.endsWith("'"))
+            ) {
+              return value.slice(1, -1);
+            }
+            return value;
+          }
+
+          function verifyUpdateConfig(file) {
+            const document = fs.readFileSync(file, "utf8");
+            const [expectedOwner, expectedRepo] =
+              process.env.GITHUB_REPOSITORY.split("/");
+            const expected = {
+              provider: "github",
+              owner: expectedOwner,
+              repo: expectedRepo,
+            };
+
+            for (const [key, value] of Object.entries(expected)) {
+              const actual = readScalar(document, key);
+              if (actual !== value) {
+                throw new Error(
+                  `${file}: ${key} does not match the expected release repository`,
+                );
+              }
+            }
+
+            const forbidden = [
+              [
+                "feed override field",
+                /^\s*(?:channel|host|protocol|requestHeaders|url)\s*:/im,
+              ],
+              [
+                "credential field",
+                /^\s*(?:auth(?:orization)?|headers?|password|passphrase|private[-_]?token|secret|token|(?:api|access)[-_]?key|(?:gh|github)[-_]?token)\s*:/im,
+              ],
+              [
+                "credential-bearing URL",
+                /https?:\/\/[^/\s:@]+:[^@\s/]+@/i,
+              ],
+              [
+                "authorization value",
+                /\b(?:Basic|Bearer)\s+[A-Za-z0-9+/_.=-]{8,}/i,
+              ],
+              [
+                "GitHub token",
+                /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/i,
+              ],
+            ];
+
+            for (const [label, pattern] of forbidden) {
+              if (pattern.test(document)) {
+                throw new Error(`${file}: contains a forbidden ${label}`);
+              }
+            }
+
+            console.log(`Validated ${file}`);
+          }
+
+          const configs = findUpdateConfigs("dist").sort();
+          if (configs.length !== 2) {
+            throw new Error(
+              `Expected two packaged macOS app-update.yml files, found ${configs.length}`,
+            );
+          }
+          configs.forEach(verifyUpdateConfig);
+          NODE
 
       - name: Verify macOS release artifacts and metadata
         shell: bash
@@ -224,10 +410,13 @@ jobs:
             test -s "$file"
           done
 
-          grep -Fq "Pi-Agent-Desktop-${version}-arm64.dmg" dist/latest-mac.yml
-          grep -Fq "Pi-Agent-Desktop-${version}-arm64.zip" dist/latest-mac.yml
-          grep -Fq "Pi-Agent-Desktop-${version}-x64.dmg" dist/latest-mac.yml
-          grep -Fq "Pi-Agent-Desktop-${version}-x64.zip" dist/latest-mac.yml
+          node scripts/verify-update-metadata.mjs \
+            dist/latest-mac.yml \
+            "$version" \
+            "dist/Pi-Agent-Desktop-${version}-arm64.dmg" \
+            "dist/Pi-Agent-Desktop-${version}-arm64.zip" \
+            "dist/Pi-Agent-Desktop-${version}-x64.dmg" \
+            "dist/Pi-Agent-Desktop-${version}-x64.zip"
 
       - name: Upload signed and notarized macOS artifacts
         uses: actions/upload-artifact@v7
@@ -242,11 +431,13 @@ jobs:
           retention-days: 14
 
   release-windows:
-    name: Package Windows release
+    name: Package unsigned Windows candidate (not published)
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
-    needs: [quality, test-platforms]
+    needs: [release-contract]
     runs-on: windows-2025
     timeout-minutes: 45
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -263,13 +454,142 @@ jobs:
       - name: Build application
         run: npm run build
 
-      - name: Package Windows x64
+      - name: Package unsigned Windows x64
         run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Verify Windows installer is unsigned
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem -Path dist -File -Filter '*.exe')
+          if ($installers.Count -ne 1) {
+            throw "Expected one Windows installer, found $($installers.Count)"
+          }
+
+          foreach ($installer in $installers) {
+            $signature = Get-AuthenticodeSignature -FilePath $installer.FullName
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+              throw "$($installer.Name) must remain explicitly unsigned until Windows signing is implemented; status: $($signature.Status)"
+            }
+            Write-Host "Verified unsigned installer: $($installer.Name)"
+          }
+
+      - name: Verify packaged Windows update configuration
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          function findUpdateConfigs(directory, matches = []) {
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              const entryPath = path.join(directory, entry.name);
+              if (entry.isDirectory()) {
+                findUpdateConfigs(entryPath, matches);
+              } else if (
+                entry.isFile() &&
+                entry.name === "app-update.yml" &&
+                /\/win(?:-[^/]+)?-unpacked\/resources\/app-update\.yml$/i.test(
+                  `/${entryPath.split(path.sep).join("/")}`,
+                )
+              ) {
+                matches.push(entryPath);
+              }
+            }
+            return matches;
+          }
+
+          function readScalar(document, key) {
+            const match = document.match(
+              new RegExp(`^\\s*${key}\\s*:\\s*([^#\\r\\n]+)`, "mi"),
+            );
+            if (!match) {
+              throw new Error(`Missing ${key}`);
+            }
+
+            const value = match[1].trim();
+            if (
+              (value.startsWith('"') && value.endsWith('"')) ||
+              (value.startsWith("'") && value.endsWith("'"))
+            ) {
+              return value.slice(1, -1);
+            }
+            return value;
+          }
+
+          function verifyUpdateConfig(file) {
+            const document = fs.readFileSync(file, "utf8");
+            const [expectedOwner, expectedRepo] =
+              process.env.GITHUB_REPOSITORY.split("/");
+            const expected = {
+              provider: "github",
+              owner: expectedOwner,
+              repo: expectedRepo,
+            };
+
+            for (const [key, value] of Object.entries(expected)) {
+              const actual = readScalar(document, key);
+              if (actual !== value) {
+                throw new Error(
+                  `${file}: ${key} does not match the expected release repository`,
+                );
+              }
+            }
+
+            const forbidden = [
+              [
+                "feed override field",
+                /^\s*(?:channel|host|protocol|requestHeaders|url)\s*:/im,
+              ],
+              [
+                "credential field",
+                /^\s*(?:auth(?:orization)?|headers?|password|passphrase|private[-_]?token|secret|token|(?:api|access)[-_]?key|(?:gh|github)[-_]?token)\s*:/im,
+              ],
+              [
+                "credential-bearing URL",
+                /https?:\/\/[^/\s:@]+:[^@\s/]+@/i,
+              ],
+              [
+                "authorization value",
+                /\b(?:Basic|Bearer)\s+[A-Za-z0-9+/_.=-]{8,}/i,
+              ],
+              [
+                "GitHub token",
+                /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/i,
+              ],
+            ];
+
+            for (const [label, pattern] of forbidden) {
+              if (pattern.test(document)) {
+                throw new Error(`${file}: contains a forbidden ${label}`);
+              }
+            }
+
+            console.log(`Validated ${file}`);
+          }
+
+          const configs = findUpdateConfigs("dist").sort();
+          if (configs.length !== 1) {
+            throw new Error(
+              `Expected one packaged Windows app-update.yml file, found ${configs.length}`,
+            );
+          }
+          configs.forEach(verifyUpdateConfig);
+          NODE
+
+      - name: Verify Windows release artifacts and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          installer="dist/Pi-Agent-Desktop-Setup-${version}.exe"
+          test -s "$installer"
+          test -s dist/latest.yml
+          node scripts/verify-update-metadata.mjs dist/latest.yml "$version" "$installer"
 
       - name: Upload Windows release artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: pi-desktop-windows-release
+          name: pi-desktop-windows-unsigned-candidate
           path: |
             dist/*.exe
             dist/*.blockmap
@@ -278,7 +598,7 @@ jobs:
           retention-days: 14
 
   release:
-    name: Create draft release
+    name: Create macOS draft release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [release-macos, release-windows]
     runs-on: ubuntu-24.04
@@ -297,10 +617,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
+          set -euo pipefail
+
           files=()
+          mac_artifacts="release-artifacts/pi-desktop-macos-release"
+          test -d "$mac_artifacts"
           while IFS= read -r -d '' file; do
             files+=("$file")
-          done < <(find release-artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.blockmap' -o -name '*.yml' -o -name '*.yaml' \) -print0)
+          done < <(find "$mac_artifacts" -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.yml' -o -name '*.yaml' \) -print0)
 
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release files were downloaded" >&2
@@ -315,9 +639,24 @@ jobs:
           fi
 
           test "$(find release-artifacts -type f -name 'latest-mac.yml' | wc -l | tr -d ' ')" -eq 1
-          test "$(find release-artifacts -type f -name 'latest.yml' | wc -l | tr -d ' ')" -eq 1
 
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          if is_draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            if [ "$is_draft" != "true" ]; then
+              echo "Release $GITHUB_REF_NAME is already public; published assets are immutable" >&2
+              exit 1
+            fi
+
+            declare -A expected_assets=()
+            for file in "${files[@]}"; do
+              expected_assets["${file##*/}"]=1
+            done
+            while IFS= read -r existing_asset; do
+              if [ -n "$existing_asset" ] && [ -z "${expected_assets[$existing_asset]+present}" ]; then
+                echo "Removing stale draft asset: $existing_asset"
+                gh release delete-asset "$GITHUB_REF_NAME" "$existing_asset" --yes
+              fi
+            done < <(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
+
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
           else
             gh release create "$GITHUB_REF_NAME" "${files[@]}" --draft --generate-notes --verify-tag

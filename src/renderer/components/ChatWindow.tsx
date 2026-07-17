@@ -18,7 +18,6 @@ import { useAudio } from "@/hooks/useAudio";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
-import { APP_VERSION, PI_VERSION } from "@/lib/app-version";
 import { useI18n } from "@/i18n";
 
 interface Props {
@@ -497,8 +496,7 @@ export function ChatWindow({
               style={{
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
+                justifyContent: "center",
                 marginLeft: 16,
                 marginRight: 52,
                 fontFamily: "var(--font-mono)",
@@ -509,10 +507,7 @@ export function ChatWindow({
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
-                  minWidth: 0,
-                  flex: 1,
                   lineHeight: 1.4,
-                  overflow: "hidden",
                 }}
               >
                 <span
@@ -543,14 +538,6 @@ export function ChatWindow({
                   }}
                 >
                   Pi Agent Desktop
-                </span>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
-                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  app <span style={{ color: "var(--text)" }}>v{APP_VERSION}</span>
-                </span>
-                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  pi <span style={{ color: "var(--text)" }}>v{PI_VERSION}</span>
                 </span>
               </div>
             </div>

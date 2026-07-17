@@ -8,6 +8,8 @@ import { handleAppProtocol, registerAppProtocol, rendererRootPath } from "../mai
 import { createMainWindow } from "../main/window";
 import { runSmokeHostChecks } from "./host-checks";
 import { createCredentialRequestHandler, CredentialVault } from "../main/credential-vault";
+import { createProductionUpdateAdapter } from "../main/update-adapter";
+import { createUpdateManager, type UpdateManager } from "../main/update-manager";
 
 registerAppProtocol();
 crashReporter.start({
@@ -19,6 +21,7 @@ crashReporter.start({
 const runtimeMainDirectory = path.join(process.cwd(), "out", "main");
 let hostManager: HostManager | null = null;
 let smokeWindow: BrowserWindow | null = null;
+let updateManager: UpdateManager | null = null;
 let checksStarted = false;
 
 function finish(exitCode: number, error?: unknown): void {
@@ -27,13 +30,21 @@ function finish(exitCode: number, error?: unknown): void {
   }
   hostManager?.stop();
   hostManager = null;
+  updateManager?.dispose();
+  updateManager = null;
   if (smokeWindow && !smokeWindow.isDestroyed()) smokeWindow.destroy();
   smokeWindow = null;
   app.exit(exitCode);
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   handleAppProtocol(rendererRootPath(runtimeMainDirectory));
+  const updateAdapter = await createProductionUpdateAdapter();
+  updateManager = createUpdateManager({
+    adapter: updateAdapter,
+    currentVersion: app.getVersion(),
+    isPackaged: false,
+  });
 
   hostManager = new HostManager(resolveHostEntry(runtimeMainDirectory));
   const smokeVaultPath = path.join(app.getPath("userData"), "smoke-channel-secrets.json");
@@ -66,6 +77,7 @@ void app.whenReady().then(() => {
     applyBadgeCount: () => {},
     setChannelCredential: (payload) =>
       credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
+    updateManager,
   });
 
   hostManager.setStatusListener((status, detail) => {

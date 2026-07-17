@@ -65,6 +65,7 @@ Local-first · No local server · Cross-platform
 - Single-instance behavior, system tray, desktop notifications, and Dock/taskbar badges
 - Window-state persistence, system theme integration, and custom protocol handling
 - Agent Host crash recovery, crash reports, and diagnostic exports
+- Periodic or manual stable-release checks on enabled platforms, with user-approved downloads and restart installation after active tasks finish
 - Electron `sandbox: true`, a strict Content Security Policy, and typed IPC contracts
 
 ## Quick start
@@ -106,7 +107,7 @@ PR/main CI currently produces the following unsigned preview installers:
 - macOS Intel (x64): DMG and ZIP
 - Windows (x64): NSIS installer
 
-Download artifacts from a successful [GitHub Actions build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml). Artifacts are retained for 14 days. These previews may trigger unknown-developer or security warnings; only the `v*` tag release job uses protected credentials to sign and notarize the macOS packages. The tag workflow creates or updates a matching Draft Release and never publishes it automatically.
+Download artifacts from a successful [GitHub Actions build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml). Artifacts are retained for 14 days. These previews may trigger unknown-developer or security warnings; only the `v*` tag release job uses protected credentials to sign and notarize the macOS packages. The tag workflow creates or updates a matching Draft Release containing only production macOS assets and never publishes it automatically. Windows artifacts remain unsigned candidates and are excluded from the Draft Release; Windows client updates stay disabled until Windows code signing is complete.
 
 ## Architecture
 
@@ -125,7 +126,7 @@ flowchart LR
     Host <--> Data
 ```
 
-- **Main** manages the window lifecycle, menus, tray, notifications, custom protocols, and Agent Host supervision
+- **Main** manages the window lifecycle, menus, tray, notifications, software updates, custom protocols, and Agent Host supervision
 - **Agent Host** runs Pi Coding Agent in an isolated `utilityProcess` and handles sessions, files, configuration, and extensions
 - **Renderer** hosts the React UI and communicates only through controlled preload bridges
 - **No local service** means production does not listen on TCP ports or bundle a web server
@@ -136,6 +137,7 @@ flowchart LR
 - The application does not open an additional local network port for UI communication
 - The Renderer runs in the Electron sandbox with a strict Content Security Policy
 - Preload exposes only controlled bridge APIs, and TypeScript contracts constrain Host RPC
+- The update client uses only the public GitHub Release configuration embedded in production builds; it accepts neither update URLs nor release credentials from the Renderer
 - WeChat and Telegram use outbound-only long polling, while Feishu/Lark uses an outbound WebSocket; none opens a webhook or local listener
 - Model providers determine how model request data is processed; review the privacy policy of every provider you configure
 
@@ -185,7 +187,8 @@ npm run verify
 - [x] Local macOS signing/notarization tooling and the `v*` tag release workflow
 - [ ] First end-to-end `v*` tag validation for both macOS architectures and the Draft Release
 - [ ] Windows code signing
-- [ ] Implement Main-process automatic updates and validate the end-to-end upgrade flow
+- [x] Implement Main-process stable-release checks, user-approved downloads, restart installation, and update settings
+- [ ] Validate updater-enabled baseline-to-target upgrades end to end on all three platform targets
 - [ ] Expanded cross-platform E2E and pre-release testing
 
 ## Relationship to the Pi ecosystem

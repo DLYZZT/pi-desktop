@@ -11,7 +11,9 @@ export default defineConfig([
     outDir: "out/main",
     clean: true,
     sourcemap: true,
-    external: ["electron"],
+    // electron-updater is a production runtime dependency and resolves its
+    // provider/platform implementation dynamically from the packaged app.
+    external: ["electron", "electron-updater"],
     splitting: false,
     treeshake: true,
     outExtension() {

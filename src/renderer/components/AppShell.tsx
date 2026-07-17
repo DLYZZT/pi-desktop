@@ -14,7 +14,7 @@ import { ChatWindow } from "./ChatWindow";
 import { FileExplorer } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
-import { SettingsConfig } from "./SettingsConfig";
+import { SettingsConfig, type SettingsTab } from "./SettingsConfig";
 import { QuickChannelBinding } from "./channels/QuickChannelBinding";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -93,6 +93,8 @@ export function AppShell() {
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("general");
+  const [settingsNavigationRequestId, setSettingsNavigationRequestId] = useState(0);
   const [channelSnapshot, setChannelSnapshot] = useState<ChannelsSnapshot>(EMPTY_CHANNELS);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -340,6 +342,19 @@ export function AppShell() {
       }
     });
     const offSettings = window.piBridge?.onMenu?.("settings", () => {
+      setSettingsInitialTab("general");
+      setSettingsNavigationRequestId((id) => id + 1);
+      setSettingsOpen(true);
+    });
+    const offCheckForUpdates = window.piBridge?.onMenu?.("check-for-updates", () => {
+      setSettingsInitialTab("about");
+      setSettingsNavigationRequestId((id) => id + 1);
+      setSettingsOpen(true);
+      void window.piBridge.checkForUpdates().catch(() => undefined);
+    });
+    const offShowUpdate = window.piBridge?.onMenu?.("show-update", () => {
+      setSettingsInitialTab("about");
+      setSettingsNavigationRequestId((id) => id + 1);
       setSettingsOpen(true);
     });
     // ISSUE-016: Switch Session palette — focus sidebar / open project list
@@ -352,6 +367,8 @@ export function AppShell() {
       offDeep?.();
       offNew?.();
       offSettings?.();
+      offCheckForUpdates?.();
+      offShowUpdate?.();
       offSwitch?.();
     };
   }, [activeCwd, router]);
@@ -1559,7 +1576,12 @@ export function AppShell() {
         <SettingsConfig
           cwd={activeCwd ?? selectedSession?.cwd ?? newSessionCwd ?? null}
           sessionId={selectedSession?.id ?? null}
-          onClose={() => setSettingsOpen(false)}
+          initialTab={settingsInitialTab}
+          navigationRequestId={settingsNavigationRequestId}
+          onClose={() => {
+            setSettingsOpen(false);
+            setSettingsInitialTab("general");
+          }}
           onModelsChanged={() => setModelsRefreshKey((key) => key + 1)}
           onPluginsReloaded={() => setSessionKey((key) => key + 1)}
           onChannelsChanged={setChannelSnapshot}

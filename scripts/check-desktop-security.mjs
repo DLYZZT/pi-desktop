@@ -25,6 +25,9 @@ const rpcManager = read("src/agent-host/rpc-manager.ts");
 const weixinMedia = read("src/agent-host/channels/adapters/weixin/media.ts");
 const channelContract = read("src/contract/api.ts");
 const desktopContract = read("src/contract/desktop.ts");
+const desktopIpc = read("src/main/ipc.ts");
+const updateAdapter = read("src/main/update-adapter.ts");
+const updateManager = read("src/main/update-manager.ts");
 const rendererCsp = protocol.slice(protocol.indexOf("const CSP ="), protocol.indexOf("const HTML_PREVIEW_CSP ="));
 
 const checks = [
@@ -91,6 +94,51 @@ const checks = [
   [
     desktopContract.includes("setChannelCredential") && !desktopContract.includes("getChannelCredential"),
     "renderer channel credential bridge must remain write-only",
+  ],
+  [
+    desktopContract.includes("getUpdateState") &&
+      desktopContract.includes("checkForUpdates") &&
+      desktopContract.includes("downloadUpdate") &&
+      desktopContract.includes("installUpdate") &&
+      !/(?:setFeedURL|feedUrl|feedURL)/.test(desktopContract),
+    "renderer updater contract must expose fixed actions without a configurable feed",
+  ],
+  [
+    preload.includes('ipcRenderer.invoke("desktop:update:check")') &&
+      preload.includes('ipcRenderer.invoke("desktop:update:download")') &&
+      preload.includes('ipcRenderer.invoke("desktop:update:install")') &&
+      preload.includes('ipcRenderer.on("update:state"'),
+    "preload updater bridge must use fixed IPC channels",
+  ],
+  [
+    desktopIpc.includes('ipcMain.handle("desktop:update:set-automatic-checks"') &&
+      desktopIpc.includes('typeof enabled !== "boolean"') &&
+      !/(?:setFeedURL|feedUrl|feedURL)/.test(desktopIpc),
+    "updater IPC must validate its only mutable preference and reject feed configuration",
+  ],
+  [
+    updateAdapter.includes("updater.autoDownload = false") &&
+      updateAdapter.includes("updater.autoInstallOnAppQuit = true") &&
+      updateAdapter.includes("updater.allowPrerelease = false") &&
+      updateAdapter.includes("updater.allowDowngrade = false") &&
+      updateAdapter.includes("updater.logger = null") &&
+      updateAdapter.includes("WINDOWS_UPDATES_RELEASE_READY = false") &&
+      !updateAdapter.includes("process.env"),
+    "production updater must remain stable-only, consent-first, and use redacted application logging",
+  ],
+  [
+    updateManager.includes('platform === "darwin" || platform === "win32"') &&
+      updateManager.includes("options.isPackaged || explicitlyEnabledForDevelopment") &&
+      updateManager.includes("redactUpdateError") &&
+      updateManager.includes("setRunningSessionCount"),
+    "updater manager must retain platform/package gating, redaction, and active-session protection",
+  ],
+  [
+    main.includes("createProductionUpdateAdapter") &&
+      main.includes('win.webContents.send("update:state", state)') &&
+      main.includes("updateManager?.setRunningSessionCount(ids.length)") &&
+      main.includes("updateManager.startAutomaticChecks()"),
+    "main process must own updater initialization, state publication, and session-aware scheduling",
   ],
 ];
 

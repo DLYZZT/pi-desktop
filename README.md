@@ -65,6 +65,7 @@
 - 单实例、系统托盘、桌面通知与 Dock / 任务栏角标
 - 窗口状态记忆、系统主题跟随和自定义协议
 - Agent Host 异常恢复、崩溃报告与诊断信息导出
+- 已启用平台的正式安装版可定时或手工检查稳定版更新，由用户确认下载，并在任务结束后重启安装
 - `sandbox: true`、严格 CSP 与类型化 IPC 契约
 
 ## 快速开始
@@ -106,7 +107,7 @@ PR/main CI 当前生成以下未签名预览包：
 - macOS Intel（x64）：DMG + ZIP
 - Windows（x64）：NSIS 安装程序
 
-可以在 [GitHub Actions](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml) 的成功构建中下载 Artifacts，产物保留 14 天。这些预览包可能触发未知开发者或安全警告；`v*` tag 的 release job 才会使用受保护凭据签名并公证 macOS 包。tag 流程会创建或更新对应的 Draft Release，不会自动公开发布。
+可以在 [GitHub Actions](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml) 的成功构建中下载 Artifacts，产物保留 14 天。这些预览包可能触发未知开发者或安全警告；`v*` tag 的 release job 才会使用受保护凭据签名并公证 macOS 包。tag 流程会创建或更新仅含 macOS 正式产物的 Draft Release，不会自动公开发布。Windows 产物仍是未签名候选包，不会进入 Draft Release；完成 Windows 代码签名前，Windows 客户端更新保持禁用。
 
 ## 架构设计
 
@@ -125,7 +126,7 @@ flowchart LR
     Host <--> Data
 ```
 
-- **Main**：负责窗口生命周期、菜单、托盘、通知、自定义协议和 Agent Host 监督
+- **Main**：负责窗口生命周期、菜单、托盘、通知、软件更新、自定义协议和 Agent Host 监督
 - **Agent Host**：在独立 `utilityProcess` 中运行 Pi Coding Agent，处理会话、文件、配置与扩展
 - **Renderer**：运行 React UI，只通过受控的 preload bridge 与 Host 交互
 - **无本地服务**：生产环境不监听 TCP 端口，也不需要附带 Web Server
@@ -136,6 +137,7 @@ flowchart LR
 - 应用不会为了 UI 通信额外开放本地网络端口
 - Renderer 开启 Electron sandbox，并使用严格的 Content Security Policy
 - preload 只暴露受控桥接接口，Host RPC 由 TypeScript 契约约束
+- 更新客户端只使用正式包内固定的公开 GitHub Release 配置，不接收 Renderer 提供的更新地址或发布凭证
 - 微信和 Telegram 只发起出站 long polling，飞书/Lark 使用出站 WebSocket；均不开放 webhook 或本地监听端口
 - 模型请求的数据处理方式取决于你配置的模型提供商，请同时查看对应服务的隐私政策
 
@@ -185,7 +187,8 @@ npm run verify
 - [x] macOS 本地签名/公证工具与 `v*` tag release workflow
 - [ ] 首次 `v*` tag 双架构签名、公证与 Draft Release 端到端验收
 - [ ] Windows 代码签名
-- [ ] 实现主进程自动更新并完成端到端升级验证
+- [x] 实现主进程稳定版检查、用户确认下载、重启安装和设置界面
+- [ ] 完成 updater-enabled 基线到更高版本的三平台端到端升级验证
 - [ ] 扩充跨平台 E2E 测试与发布前检查
 
 ## 与 Pi 生态的关系

@@ -5,7 +5,7 @@
  * breaks the port. Use window.postMessage transfer instead (Electron docs).
  */
 import { contextBridge, ipcRenderer } from "electron";
-import type { HostStatus, PiBridge } from "../contract/desktop";
+import type { DesktopMenuEvent, DesktopUpdateState, HostStatus, PiBridge } from "../contract/desktop";
 
 // Deliver MessagePort to the page via window.postMessage (transferable).
 ipcRenderer.on("desktop:host-port", (event) => {
@@ -21,6 +21,17 @@ ipcRenderer.on("desktop:host-port", (event) => {
 // ISSUE-016: buffer deep-link until renderer subscribes
 let pendingDeepLinkSession: string | null = null;
 const deepLinkListeners = new Set<(sessionId: string) => void>();
+const menuEvents = [
+  "new-session",
+  "settings",
+  "check-for-updates",
+  "show-update",
+  "switch-session",
+  "export-diagnostics",
+] as const satisfies readonly DesktopMenuEvent[];
+const menuEventSet = new Set<string>(menuEvents);
+const menuListeners = new Map<DesktopMenuEvent, Set<() => void>>();
+const pendingMenuEvents = new Set<DesktopMenuEvent>();
 
 ipcRenderer.on("deep-link:session", (_e, sessionId: string) => {
   if (deepLinkListeners.size === 0) {
@@ -36,10 +47,35 @@ ipcRenderer.on("deep-link:session", (_e, sessionId: string) => {
   }
 });
 
+// Main can send a menu command as soon as a newly created page finishes
+// loading, before React effects subscribe. Buffer one pending command per
+// fixed event so notification/menu navigation is not lost during startup.
+for (const event of menuEvents) {
+  ipcRenderer.on(`menu:${event}`, () => {
+    const listeners = menuListeners.get(event);
+    if (!listeners || listeners.size === 0) {
+      pendingMenuEvents.add(event);
+      return;
+    }
+    for (const listener of [...listeners]) {
+      try {
+        listener();
+      } catch {
+        /* ignore renderer listener failures */
+      }
+    }
+  });
+}
+
 const bridge: PiBridge = {
   platform: process.platform,
   isDesktop: true,
   getVersion: () => ipcRenderer.invoke("desktop:get-version"),
+  getUpdateState: () => ipcRenderer.invoke("desktop:update:get-state"),
+  checkForUpdates: () => ipcRenderer.invoke("desktop:update:check"),
+  downloadUpdate: () => ipcRenderer.invoke("desktop:update:download"),
+  installUpdate: () => ipcRenderer.invoke("desktop:update:install"),
+  setAutomaticUpdateChecks: (enabled) => ipcRenderer.invoke("desktop:update:set-automatic-checks", enabled),
   getHostStatus: () => ipcRenderer.invoke("desktop:get-host-status"),
   requestHostPort: () => {
     ipcRenderer.send("desktop:connect-host");
@@ -83,6 +119,11 @@ const bridge: PiBridge = {
     ipcRenderer.on("host:crashed", handler);
     return () => ipcRenderer.removeListener("host:crashed", handler);
   },
+  onUpdateState: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, state: DesktopUpdateState) => cb(state);
+    ipcRenderer.on("update:state", handler);
+    return () => ipcRenderer.removeListener("update:state", handler);
+  },
   onDeepLinkSession: (cb) => {
     deepLinkListeners.add(cb);
     if (pendingDeepLinkSession) {
@@ -99,10 +140,22 @@ const bridge: PiBridge = {
     };
   },
   onMenu: (event, cb) => {
-    const channel = `menu:${event}`;
-    const handler = () => cb();
-    ipcRenderer.on(channel, handler);
-    return () => ipcRenderer.removeListener(channel, handler);
+    if (!menuEventSet.has(event)) return () => undefined;
+    const fixedEvent = event as DesktopMenuEvent;
+    const listeners = menuListeners.get(fixedEvent) ?? new Set<() => void>();
+    listeners.add(cb);
+    menuListeners.set(fixedEvent, listeners);
+    if (pendingMenuEvents.delete(fixedEvent)) {
+      try {
+        cb();
+      } catch {
+        /* ignore renderer listener failures */
+      }
+    }
+    return () => {
+      listeners.delete(cb);
+      if (listeners.size === 0) menuListeners.delete(fixedEvent);
+    };
   },
 };
 

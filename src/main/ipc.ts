@@ -1,5 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell } from "electron";
-import type { ChannelCredentialWrite, SaveBinaryFileOptions, SaveTextFileOptions } from "../contract/desktop";
+import type {
+  ChannelCredentialWrite,
+  DesktopUpdateState,
+  SaveBinaryFileOptions,
+  SaveTextFileOptions,
+} from "../contract/desktop";
 import { exportDiagnostics } from "./diagnostics";
 import type { HostManager } from "./host-manager";
 import { getMainLogPath } from "./logger";
@@ -12,12 +17,29 @@ export type DesktopIpcOptions = {
   getUnreadBadge: () => number;
   applyBadgeCount: (count: number) => void;
   setChannelCredential: (payload: ChannelCredentialWrite) => void;
+  updateManager: {
+    getState: () => DesktopUpdateState;
+    checkForUpdates: () => Promise<DesktopUpdateState>;
+    downloadUpdate: () => Promise<DesktopUpdateState>;
+    installUpdate: () => Promise<void>;
+    setAutomaticChecksEnabled: (enabled: boolean) => DesktopUpdateState;
+  };
 };
 
 export function installDesktopIpc(options: DesktopIpcOptions): void {
-  const { getHostManager, getMainWindow, getUnreadBadge, applyBadgeCount, setChannelCredential } = options;
+  const { getHostManager, getMainWindow, getUnreadBadge, applyBadgeCount, setChannelCredential, updateManager } =
+    options;
 
   ipcMain.handle("desktop:get-version", () => app.getVersion());
+  ipcMain.handle("desktop:update:get-state", () => updateManager.getState());
+  ipcMain.handle("desktop:update:check", () => updateManager.checkForUpdates());
+  ipcMain.handle("desktop:update:download", () => updateManager.downloadUpdate());
+  ipcMain.handle("desktop:update:install", () => updateManager.installUpdate());
+  ipcMain.handle("desktop:update:set-automatic-checks", (_event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") throw new Error("Automatic update checks must be a boolean");
+    saveUiState({ automaticUpdateChecks: enabled });
+    return updateManager.setAutomaticChecksEnabled(enabled);
+  });
   ipcMain.handle("desktop:get-host-status", () => getHostManager()?.getStatus() ?? "stopped");
 
   ipcMain.on("desktop:connect-host", (event) => {

@@ -1,7 +1,8 @@
 import { app, Menu, shell, type BrowserWindow } from "electron";
 
-export function installAppMenu(getWindow: () => BrowserWindow | null): void {
+export function installAppMenu(getWindow: () => BrowserWindow | null, onCheckForUpdates?: () => void): void {
   const isMac = process.platform === "darwin";
+  const isWindows = process.platform === "win32";
 
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
@@ -10,6 +11,19 @@ export function installAppMenu(getWindow: () => BrowserWindow | null): void {
             label: app.name,
             submenu: [
               { role: "about" as const },
+              {
+                label: "Check for Updates…",
+                click: () => {
+                  if (onCheckForUpdates) {
+                    onCheckForUpdates();
+                    return;
+                  }
+                  const win = getWindow();
+                  win?.show();
+                  win?.focus();
+                  win?.webContents.send("menu:check-for-updates");
+                },
+              },
               { type: "separator" as const },
               {
                 label: "Settings…",
@@ -100,6 +114,24 @@ export function installAppMenu(getWindow: () => BrowserWindow | null): void {
     {
       label: "Help",
       submenu: [
+        ...(isWindows
+          ? [
+              {
+                label: "Check for Updates…",
+                click: () => {
+                  if (onCheckForUpdates) {
+                    onCheckForUpdates();
+                    return;
+                  }
+                  const win = getWindow();
+                  win?.show();
+                  win?.focus();
+                  win?.webContents.send("menu:check-for-updates");
+                },
+              },
+              { type: "separator" as const },
+            ]
+          : []),
         {
           label: "Open Logs Folder",
           click: () => {

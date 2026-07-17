@@ -10,7 +10,7 @@ export default defineConfig({
   outDir: ".artifacts/smoke",
   clean: true,
   sourcemap: true,
-  external: ["electron"],
+  external: ["electron", "electron-updater"],
   splitting: false,
   treeshake: true,
   outExtension() {

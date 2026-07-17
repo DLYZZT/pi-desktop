@@ -15,6 +15,8 @@ import { createTray, destroyTray, setTrayRunningCount } from "./tray";
 import { createMainWindow } from "./window";
 import { installDesktopIpc } from "./ipc";
 import { createCredentialRequestHandler, CredentialVault } from "./credential-vault";
+import { createProductionUpdateAdapter, isProductionUpdatePlatformEnabled } from "./update-adapter";
+import { createUpdateManager, redactUpdateError, type UpdateManager } from "./update-manager";
 
 // Must run before app ready
 registerAppProtocol();
@@ -28,9 +30,11 @@ const isDev = !app.isPackaged;
 
 let mainWindow: BrowserWindow | null = null;
 let hostManager: HostManager | null = null;
+let updateManager: UpdateManager | null = null;
 let isQuitting = false;
 let unreadBadge = 0;
 let pendingDeepLink: string | null = null;
+let lastNotifiedUpdateVersion: string | null = null;
 
 function getMainWindow(): BrowserWindow | null {
   return mainWindow;
@@ -115,10 +119,96 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
-void app.whenReady().then(() => {
+function openUpdateSettings(checkForUpdates: boolean): void {
+  const win = getMainWindow() ?? createWindow();
+  win.show();
+  win.focus();
+  const send = () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send(checkForUpdates ? "menu:check-for-updates" : "menu:show-update");
+    }
+  };
+  if (win.webContents.isLoadingMainFrame()) {
+    win.webContents.once("did-finish-load", send);
+  } else {
+    send();
+  }
+}
+
+void app.whenReady().then(async () => {
   appendMainLog(`app ready packaged=${app.isPackaged}`);
 
   const credentialVault = new CredentialVault(getUserDataPath("channels.secrets.json"));
+  const ui = loadUiState();
+  const updaterTestMode = !app.isPackaged && process.env.PI_DESKTOP_TEST_UPDATER === "1";
+  const updaterSupported =
+    isProductionUpdatePlatformEnabled(process.platform) ||
+    (updaterTestMode && (process.platform === "darwin" || process.platform === "win32"));
+  const updaterRequested = app.isPackaged || updaterTestMode;
+  let updateAdapter = null;
+  if (updaterSupported && updaterRequested) {
+    try {
+      updateAdapter = await createProductionUpdateAdapter({
+        useDevelopmentConfig: updaterTestMode,
+      });
+    } catch (error) {
+      appendMainLog(`updater unavailable: ${redactUpdateError(error)}`);
+    }
+  }
+  updateManager = createUpdateManager({
+    adapter: updateAdapter,
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    automaticChecksEnabled: ui.automaticUpdateChecks !== false,
+    prepareToInstall: () => {
+      isQuitting = true;
+      destroyTray();
+      hostManager?.stop();
+    },
+    recoverFromInstallFailure: () => {
+      isQuitting = false;
+      createTray(getMainWindow);
+      const manager = hostManager;
+      if (manager) {
+        let remainingAttempts = 12;
+        const restartHost = () => {
+          if (isQuitting) return;
+          manager.start();
+          if (manager.getStatus() === "stopped" && remainingAttempts-- > 0) {
+            const restartTimer = setTimeout(restartHost, 250);
+            restartTimer.unref();
+          }
+        };
+        restartHost();
+      }
+    },
+    log: (level, message) => appendMainLog(`updater[${level}] ${message}`),
+  });
+  updateManager.subscribe((state) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send("update:state", state);
+    }
+    if (state.phase === "available") {
+      const notificationKey = state.availableVersion ?? "unknown";
+      if (lastNotifiedUpdateVersion !== notificationKey) {
+        lastNotifiedUpdateVersion = notificationKey;
+        const win = getMainWindow();
+        const shouldNotify = !win || !win.isVisible() || !win.isFocused();
+        if (shouldNotify && Notification.isSupported()) {
+          const notification = new Notification({
+            title: "Pi Agent Desktop update available",
+            body: state.availableVersion
+              ? `Version ${state.availableVersion} is ready to download.`
+              : "A new version is ready to download.",
+          });
+          notification.on("click", () => {
+            openUpdateSettings(false);
+          });
+          notification.show();
+        }
+      }
+    }
+  });
 
   // Always register app:// so we can load the built renderer without Vite
   // (npm start after build, or dev fallback when VITE_DEV_SERVER_URL is unset).
@@ -131,13 +221,13 @@ void app.whenReady().then(() => {
     applyBadgeCount,
     setChannelCredential: (payload) =>
       credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
+    updateManager,
   });
-  installAppMenu(getMainWindow);
+  installAppMenu(getMainWindow, () => openUpdateSettings(true));
 
   createTray(getMainWindow);
 
   // Apply persisted theme preference
-  const ui = loadUiState();
   if (ui.theme === "light" || ui.theme === "dark" || ui.theme === "system") {
     nativeTheme.themeSource = ui.theme;
   }
@@ -146,6 +236,10 @@ void app.whenReady().then(() => {
   hostManager.setRequestHandler(createCredentialRequestHandler(credentialVault));
   hostManager.setStatusListener((status, detail) => {
     appendMainLog(`host status=${status} ${detail ?? ""}`);
+    if (status !== "ready") {
+      setTrayRunningCount(0, getMainWindow);
+      updateManager?.setRunningSessionCount(0);
+    }
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send("host:status", { status, detail });
       if (status === "ready" && detail?.includes("restart")) {
@@ -161,6 +255,7 @@ void app.whenReady().then(() => {
     if (msg.type === "running-sessions") {
       const ids = (msg.sessionIds as string[]) ?? [];
       setTrayRunningCount(ids.length, getMainWindow);
+      updateManager?.setRunningSessionCount(ids.length);
     } else if (msg.type === "agent-end") {
       const sessionId = String(msg.sessionId ?? "");
       // Notify if no focused window or window is hidden (desktop value-add)
@@ -192,6 +287,7 @@ void app.whenReady().then(() => {
   hostManager.start();
 
   createWindow();
+  updateManager.startAutomaticChecks();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -204,6 +300,7 @@ void app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  updateManager?.stopAutomaticChecks();
   destroyTray();
   hostManager?.stop();
 });

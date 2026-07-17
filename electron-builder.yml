@@ -13,8 +13,9 @@ files:
   - LICENSE
   - build/icon.png
   - build/entitlements.mac.plist
-  - "!out/**/*.map"
-  - "!**/*.{md,ts,tsx}"
+  - "!**/*.map"
+  - "!**/*.{md,markdown,ts,tsx}"
+  - "!**/*.d.{mts,cts}"
   - "!scripts/**"
   - "!src/**"
   - "!dist/**"
