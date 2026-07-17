@@ -66,6 +66,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Electron binary
+        run: npx install-electron --no
+
       - name: Configure Electron sandbox
         run: |
           sudo chown root:root node_modules/electron/dist/chrome-sandbox

@@ -41,7 +41,10 @@ test("media staging randomizes disk names, sanitizes display names, and uses pri
   assert.equal(path.basename(saved.path).includes("secret"), false);
   assert.equal(path.extname(saved.path), ".png");
   assert.deepEqual(await readFile(saved.path), png);
-  assert.equal((await stat(saved.path)).mode & 0o777, 0o600);
+  // Windows exposes synthesized POSIX mode bits; its access control is governed by ACLs.
+  if (process.platform !== "win32") {
+    assert.equal((await stat(saved.path)).mode & 0o777, 0o600);
+  }
 });
 
 test("media staging rejects invalid images, oversized data, and attachment floods", async () => {
