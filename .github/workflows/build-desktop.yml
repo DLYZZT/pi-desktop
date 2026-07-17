@@ -76,6 +76,7 @@ jobs:
 
   package:
     name: ${{ matrix.name }}
+    if: github.ref_type != 'tag'
     needs: [quality, test-platforms]
     strategy:
       fail-fast: false
@@ -138,10 +139,145 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  release-macos:
+    name: Sign and notarize macOS
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: [quality, test-platforms]
+    runs-on: macos-15
+    timeout-minutes: 90
+    environment:
+      name: release
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build, sign, and notarize macOS
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run dist:mac:notarized -- --arm64 --x64
+
+      - name: Verify both signed and notarized apps
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          find_app_for_arch() {
+            local expected_arch="$1"
+            local app binary
+            while IFS= read -r -d '' app; do
+              binary="$app/Contents/MacOS/Pi Agent Desktop"
+              if [ -f "$binary" ] && lipo -archs "$binary" | grep -qw "$expected_arch"; then
+                printf '%s\n' "$app"
+                return 0
+              fi
+            done < <(find dist -maxdepth 3 -type d -name 'Pi Agent Desktop.app' -print0)
+            return 1
+          }
+
+          verify_app() {
+            local app="$1"
+            local expected_arch="$2"
+            local renderer="$app/Contents/Frameworks/Pi Agent Desktop Helper (Renderer).app"
+            local entitlements
+
+            echo "Verifying $expected_arch app: $app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            xcrun stapler validate "$app"
+            spctl --assess --type execute --verbose=4 "$app"
+            entitlements="$(codesign -d --entitlements - "$renderer" 2>&1)"
+            grep -q 'com.apple.security.cs.allow-jit' <<<"$entitlements"
+          }
+
+          arm64_app="$(find_app_for_arch arm64)"
+          x64_app="$(find_app_for_arch x86_64)"
+          verify_app "$arm64_app" arm64
+          verify_app "$x64_app" x86_64
+
+      - name: Verify macOS release artifacts and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+
+          for file in \
+            "dist/Pi-Agent-Desktop-${version}-arm64.dmg" \
+            "dist/Pi-Agent-Desktop-${version}-arm64.zip" \
+            "dist/Pi-Agent-Desktop-${version}-x64.dmg" \
+            "dist/Pi-Agent-Desktop-${version}-x64.zip" \
+            "dist/latest-mac.yml"; do
+            test -s "$file"
+          done
+
+          grep -Fq "Pi-Agent-Desktop-${version}-arm64.dmg" dist/latest-mac.yml
+          grep -Fq "Pi-Agent-Desktop-${version}-arm64.zip" dist/latest-mac.yml
+          grep -Fq "Pi-Agent-Desktop-${version}-x64.dmg" dist/latest-mac.yml
+          grep -Fq "Pi-Agent-Desktop-${version}-x64.zip" dist/latest-mac.yml
+
+      - name: Upload signed and notarized macOS artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: pi-desktop-macos-release
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  release-windows:
+    name: Package Windows release
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: [quality, test-platforms]
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Package Windows x64
+        run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Upload Windows release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: pi-desktop-windows-release
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Create draft release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
+    needs: [release-macos, release-windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -161,12 +297,22 @@ jobs:
           files=()
           while IFS= read -r -d '' file; do
             files+=("$file")
-          done < <(find release-artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.blockmap' \) -print0)
+          done < <(find release-artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.blockmap' -o -name '*.yml' -o -name '*.yaml' \) -print0)
 
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release files were downloaded" >&2
             exit 1
           fi
+
+          duplicates="$(printf '%s\n' "${files[@]##*/}" | sort | uniq -d)"
+          if [ -n "$duplicates" ]; then
+            echo "Duplicate release asset names:" >&2
+            echo "$duplicates" >&2
+            exit 1
+          fi
+
+          test "$(find release-artifacts -type f -name 'latest-mac.yml' | wc -l | tr -d ' ')" -eq 1
+          test "$(find release-artifacts -type f -name 'latest.yml' | wc -l | tr -d ' ')" -eq 1
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber

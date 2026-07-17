@@ -41,7 +41,6 @@ mac:
         - arm64
         - x64
   artifactName: Pi-Agent-Desktop-${version}-${arch}.${ext}
-  identity: null
 
 win:
   target:

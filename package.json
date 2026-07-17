@@ -30,7 +30,9 @@
     "prepare": "husky",
     "start": "electron .",
     "pack": "npm run verify && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
-    "dist": "npm run verify && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --publish never"
+    "dist": "npm run verify && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --publish never",
+    "dist:mac:signed": "node scripts/build-mac-release.mjs",
+    "dist:mac:notarized": "node scripts/build-mac-release.mjs --notarize"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.80.8",
