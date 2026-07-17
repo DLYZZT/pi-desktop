@@ -6,7 +6,7 @@ export default defineConfig({
   },
   format: ["cjs"],
   platform: "node",
-  target: "node20",
+  target: "node22",
   outDir: ".artifacts/smoke",
   clean: true,
   sourcemap: true,

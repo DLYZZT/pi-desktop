@@ -1,9 +1,10 @@
 /**
  * OAuth login progress service for Streams["auth.login"].
  */
-import { AuthStorage } from "@earendil-works/pi-coding-agent";
+import type { AuthEvent, AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
 import type { RpcServer } from "../contract/rpc";
 import { RpcError } from "../contract/types";
+import { getSharedModelRuntime } from "./model-runtime";
 
 type Pending = {
   resolve: (v: string) => void;
@@ -35,11 +36,16 @@ export function cancelLogin(provider: string): void {
   }
 }
 
-type AuthStorageFactory = () => Pick<AuthStorage, "getOAuthProviders" | "login">;
+type OAuthRuntime = {
+  getProvider(provider: string): { auth: { oauth?: unknown } } | undefined;
+  login(provider: string, type: "oauth", interaction: AuthInteraction): Promise<unknown>;
+};
+
+type ModelRuntimeFactory = () => OAuthRuntime | Promise<OAuthRuntime>;
 
 export function createAuthLoginService(
   server: RpcServer,
-  createAuthStorage: AuthStorageFactory = () => AuthStorage.create(),
+  createModelRuntime: ModelRuntimeFactory = getSharedModelRuntime,
 ) {
   function emit(provider: string, data: Record<string, unknown>) {
     server.emit("auth.login", provider, data as never);
@@ -51,10 +57,9 @@ export function createAuthLoginService(
         return { started: false };
       }
 
-      const authStorage = createAuthStorage();
-      const providers = authStorage.getOAuthProviders();
-      const providerInfo = providers.find((p) => p.id === provider);
-      if (!providerInfo) {
+      const modelRuntime = await createModelRuntime();
+      const providerInfo = modelRuntime.getProvider(provider);
+      if (!providerInfo?.auth.oauth) {
         throw new RpcError({ code: "NOT_FOUND", message: `Unknown provider: ${provider}` });
       }
 
@@ -62,30 +67,40 @@ export function createAuthLoginService(
       activeLogins.set(provider, abort);
       const activeTokens = new Set<string>();
 
-      const createClientInputRequest = () => {
+      const createClientInputRequest = (signal?: AbortSignal) => {
         const token = `${provider}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         activeTokens.add(token);
         const promise = new Promise<string>((resolve, reject) => {
-          loginCallbacks.set(token, {
+          let removeAbortListener = () => {};
+          const pending: Pending = {
             resolve: (value) => {
               activeTokens.delete(token);
               loginCallbacks.delete(token);
+              removeAbortListener();
               resolve(value);
             },
             reject: (error) => {
               activeTokens.delete(token);
               loginCallbacks.delete(token);
+              removeAbortListener();
               reject(error);
             },
-          });
+          };
+          loginCallbacks.set(token, pending);
+          if (signal) {
+            const onAbort = () => pending.reject(new Error("Prompt cancelled"));
+            removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+            if (signal.aborted) onAbort();
+            else signal.addEventListener("abort", onAbort, { once: true });
+          }
         });
         return { token, promise };
       };
 
       let pendingManualRequest: { token: string; promise: Promise<string> } | undefined;
-      const getManualInputRequest = () => {
+      const getManualInputRequest = (signal?: AbortSignal) => {
         if (!pendingManualRequest) {
-          pendingManualRequest = createClientInputRequest();
+          pendingManualRequest = createClientInputRequest(signal);
           pendingManualRequest.promise
             .finally(() => {
               pendingManualRequest = undefined;
@@ -110,60 +125,70 @@ export function createAuthLoginService(
 
       abort.signal.addEventListener("abort", cleanup);
 
+      const notify = (event: AuthEvent) => {
+        switch (event.type) {
+          case "auth_url": {
+            const request = getManualInputRequest();
+            emit(provider, {
+              type: "auth",
+              url: event.url,
+              instructions: event.instructions ?? null,
+              token: request.token,
+            });
+            break;
+          }
+          case "device_code":
+            emit(provider, {
+              type: "device_code",
+              userCode: event.userCode,
+              verificationUri: event.verificationUri,
+              intervalSeconds: event.intervalSeconds ?? null,
+              expiresInSeconds: event.expiresInSeconds ?? null,
+            });
+            break;
+          case "progress":
+            emit(provider, { type: "progress", message: event.message });
+            break;
+          case "info":
+            emit(provider, { type: "progress", message: event.message, links: event.links ?? [] });
+            break;
+        }
+      };
+
+      const prompt = async (request: AuthPrompt): Promise<string> => {
+        if (request.type === "select") {
+          const pending = createClientInputRequest(request.signal);
+          emit(provider, {
+            type: "select_request",
+            message: request.message,
+            options: request.options.map(({ id, label }) => ({ id, label })),
+            token: pending.token,
+          });
+          return pending.promise;
+        }
+
+        const pending =
+          request.type === "manual_code"
+            ? getManualInputRequest(request.signal)
+            : createClientInputRequest(request.signal);
+        emit(provider, {
+          type: "prompt_request",
+          message: request.message,
+          placeholder: request.placeholder ?? null,
+          token: pending.token,
+          secret: request.type === "secret",
+        });
+        return pending.promise;
+      };
+
       // Fire-and-forget; stream progress via auth.login
       void (async () => {
         try {
-          await authStorage.login(provider, {
-            onAuth: (info: { url: string; instructions?: string }) => {
-              const request = getManualInputRequest();
-              emit(provider, {
-                type: "auth",
-                url: info.url,
-                instructions: info.instructions ?? null,
-                token: request.token,
-              });
-            },
-            onDeviceCode: (info: {
-              userCode: string;
-              verificationUri: string;
-              intervalSeconds?: number;
-              expiresInSeconds?: number;
-            }) => {
-              emit(provider, {
-                type: "device_code",
-                userCode: info.userCode,
-                verificationUri: info.verificationUri,
-                intervalSeconds: info.intervalSeconds ?? null,
-                expiresInSeconds: info.expiresInSeconds ?? null,
-              });
-            },
-            onPrompt: async (prompt: { message: string; placeholder?: string }) => {
-              const request = getManualInputRequest();
-              emit(provider, {
-                type: "prompt_request",
-                message: prompt.message,
-                placeholder: prompt.placeholder ?? null,
-                token: request.token,
-              });
-              return request.promise;
-            },
-            onProgress: (message: string) => {
-              emit(provider, { type: "progress", message });
-            },
-            onSelect: async (prompt: { message: string; options: { id: string; label: string }[] }) => {
-              const request = createClientInputRequest();
-              emit(provider, {
-                type: "select_request",
-                message: prompt.message,
-                options: prompt.options,
-                token: request.token,
-              });
-              const value = await request.promise;
-              return value || undefined;
-            },
-            onManualCodeInput: () => getManualInputRequest().promise,
+          await modelRuntime.login(provider, "oauth", {
             signal: abort.signal,
-          } as never);
+            notify,
+            prompt,
+          });
 
           emit(provider, { type: "success" });
         } catch (err) {

@@ -42,7 +42,7 @@ test("UI prompts and messaging-channel turns share one serial session scheduler"
     autoCompactionEnabled: true,
     autoRetryEnabled: true,
     model: undefined,
-    modelRegistry: { find: () => undefined },
+    modelRuntime: { getModel: () => undefined },
     sessionManager: {
       getHeader: () => ({ cwd: "/tmp/shared-workspace" }),
       appendCustomEntry(customType, data) {

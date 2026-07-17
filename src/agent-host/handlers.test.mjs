@@ -10,6 +10,7 @@ const root = path.resolve(import.meta.dirname, "..", "..");
 const isolatedAgentDirectory = mkdtempSync(path.join(tmpdir(), "pi-handler-agent-"));
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDirectory;
 process.env.PI_CODING_AGENT_SESSION_DIR = path.join(isolatedAgentDirectory, "sessions");
+process.env.PI_OFFLINE = "1";
 process.once("exit", () => rmSync(isolatedAgentDirectory, { recursive: true, force: true }));
 let modulePromise;
 
@@ -147,10 +148,7 @@ test("session, model configuration, and auth handlers isolate state and preserve
   );
 
   assert.deepEqual(await handlers["modelsConfig.get"](), { providers: {} });
-  assert.throws(
-    () => handlers["modelsConfig.set"]({}),
-    (error) => error.code === "BAD_REQUEST",
-  );
+  await assert.rejects(handlers["modelsConfig.set"]({}), (error) => error.code === "BAD_REQUEST");
   assert.deepEqual(await handlers["modelsConfig.set"]({ providers: {} }), { ok: true });
 
   const invalidModelTest = await handlers["modelsConfig.test"]({});
@@ -161,9 +159,13 @@ test("session, model configuration, and auth handlers isolate state and preserve
   const allProviders = await handlers["auth.allProviders"]();
   assert.equal(Array.isArray(allProviders.providers), true);
 
-  assert.deepEqual(await handlers["auth.setApiKey"]({ provider: "handler-test", key: "secret" }), { ok: true });
-  assert.deepEqual(await handlers["auth.deleteApiKey"]({ provider: "handler-test" }), { ok: true });
-  assert.deepEqual(await handlers["auth.logout"]({ provider: "handler-test" }), { ok: true });
+  assert.deepEqual(await handlers["auth.setApiKey"]({ provider: "openai", key: "secret" }), { ok: true });
+  await assert.rejects(
+    handlers["auth.setApiKey"]({ provider: "amazon-bedrock", key: "not-a-bearer-token" }),
+    (error) => error.code === "BAD_REQUEST" && /interactive, multi-field/.test(error.message),
+  );
+  assert.deepEqual(await handlers["auth.deleteApiKey"]({ provider: "openai" }), { ok: true });
+  assert.deepEqual(await handlers["auth.logout"]({ provider: "openai" }), { ok: true });
   assert.deepEqual(await handlers["auth.loginCancel"]({ provider: "handler-test" }), { ok: true });
   await assert.rejects(
     handlers["auth.loginSubmit"]({ provider: "one", token: "two-token", code: "code" }),

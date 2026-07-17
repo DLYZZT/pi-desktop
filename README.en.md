@@ -9,7 +9,7 @@
 Local-first · No local server · Cross-platform
 
 [![Desktop Build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml/badge.svg)](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml)
-![Electron 35](https://img.shields.io/badge/Electron-35-47848F?logo=electron&logoColor=white)
+![Electron 43](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=0B1F2A)
 ![macOS & Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
 ![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
@@ -75,9 +75,15 @@ Pi Agent Desktop bundles the Pi Coding Agent runtime. Regular users do not need 
 
 The application reads sessions and configuration from `~/.pi/agent/`. If you already use the Pi CLI, your existing data is available without migration. The desktop application also works if you have never used the CLI. Installing some Skills or npm Plugins from the internet may still require Node.js and npm.
 
+### Desktop system requirements
+
+- macOS 12 Monterey or later, on Apple Silicon (arm64) or Intel (x64)
+- 64-bit Windows 10 or Windows 11 on x64; Windows 11 is recommended because it remains under regular security support
+- Windows 32-bit (x86) and Windows ARM64 installers are not currently provided
+
 ### Development requirements
 
-- Node.js 20 or later
+- Node.js 22.19 or later
 - npm, included with Node.js
 - macOS or Windows; Linux can be used for development, but official Linux builds are not currently published
 
@@ -145,7 +151,7 @@ flowchart LR
 | `npm run verify`         | Run the complete pre-commit quality gate              |
 | `npm run build`          | Build Main, preload, and Renderer                     |
 | `npm run pack`           | Generate the unpacked application directory           |
-| `npm run dist`           | Build installers for the current platform             |
+| `npm run dist`           | Build every configured architecture for this platform |
 
 ### Project structure
 
@@ -178,8 +184,10 @@ Local build commands:
 ```bash
 npm run build  # Build the application
 npm run pack   # Generate an unpacked application directory
-npm run dist   # Build installers for the current platform
+npm run dist   # Build every configured architecture for this platform
 ```
+
+On an Apple Silicon Mac, the macOS configuration builds both arm64 and x64, so the first package run also downloads the x64 Electron archive into `~/Library/Caches/electron/`. An `EOF` while downloading from `release-assets.githubusercontent.com` normally indicates an interrupted GitHub Release CDN transfer; rerunning can reuse completed architectures and the local cache. The trailing `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE` is an electron-builder wrapper error and does not necessarily mean that a local executable lacks permission. For repeated failures, follow the cache verification and recovery steps in [`docs/learn.md`](./docs/learn.md#83-packdist-与跨架构-electron-缓存).
 
 GitHub Actions builds artifacts for macOS arm64, macOS x64, and Windows x64 separately. Current artifacts are unsigned. A public release still requires macOS notarization, Windows code signing, and installation testing on each target platform.
 

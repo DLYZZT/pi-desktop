@@ -20,17 +20,15 @@ import { promisify } from "util";
 import { homedir, tmpdir } from "os";
 import path from "path";
 import {
-  AuthStorage,
   DefaultResourceLoader,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   createAgentSessionServices,
   getAgentDir,
   parseFrontmatter,
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { completeSimple, type AssistantMessage } from "@earendil-works/pi-ai/compat";
+import { getSupportedThinkingLevels, type AuthInteraction } from "@earendil-works/pi-ai";
 import type { RpcServer } from "../contract/rpc";
 import { RpcError } from "../contract/types";
 import { allowFileRoot, getAllowedFileRoots, invalidateAllowedRootsCache, isFilePathAllowed } from "./file-access";
@@ -57,6 +55,7 @@ import {
 } from "../shared/file-types";
 import { createFileWatchService } from "./file-watch";
 import { createAuthLoginService, resolveLoginCode } from "./auth-login";
+import { getSharedModelRuntime, reloadSharedModelRuntimeConfig } from "./model-runtime";
 import { applyPluginAction, readPlugins } from "./plugins-service";
 import { installSkill, searchSkills } from "./skills-service";
 import { projectTreeForResponse } from "./project-tree";
@@ -849,8 +848,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
       const agentDir = getAgentDir();
       const services = await createAgentSessionServices({ cwd, agentDir });
-      const registry = services.modelRegistry;
-      const available = registry.getAvailable();
+      const available = [...(await services.modelRuntime.getAvailable())];
       const settings: SettingsManager = services.settingsManager;
       const enabledModels = settings.getEnabledModels();
       const visible = filterByExactEnabledModels(available, enabledModels);
@@ -883,13 +881,14 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     },
 
     "modelsConfig.get": () => readModelsJson() as never,
-    "modelsConfig.set": (params) => {
+    "modelsConfig.set": async (params) => {
       const body = params as Record<string, unknown>;
       // ISSUE-009: refuse to persist empty overwrite without explicit providers key from a real load
       if (!body || typeof body !== "object" || !("providers" in body)) {
         throw new RpcError({ code: "BAD_REQUEST", message: "Invalid models config payload" });
       }
       writeModelsJson(body);
+      await reloadSharedModelRuntimeConfig();
       return { ok: true as const };
     },
     "modelsConfig.test": async (params) => {
@@ -930,16 +929,15 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
           "utf8",
         );
 
-        const registry = ModelRegistry.create(AuthStorage.create(), modelsPath);
-        const loadError = registry.getError();
+        const modelRuntime = await ModelRuntime.create({ modelsPath, allowModelNetwork: false });
+        const loadError = modelRuntime.getError();
         if (loadError) return { ok: false, error: loadError };
 
-        const model = registry.find(providerName, modelId);
+        const model = modelRuntime.getModel(providerName, modelId);
         if (!model) return { ok: false, error: `Model not found: ${providerName}/${modelId}` };
 
-        const auth = await registry.getApiKeyAndHeaders(model);
-        if (!auth.ok) return { ok: false, error: auth.error };
-        if (!auth.apiKey) return { ok: false, error: `No API key found for "${providerName}"` };
+        const auth = await modelRuntime.getAuth(model);
+        if (!auth) return { ok: false, error: `No authentication found for "${providerName}"` };
 
         const TEST_TIMEOUT_MS = 20_000;
         const controller = new AbortController();
@@ -947,7 +945,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         let status: number | undefined;
         const startedAt = Date.now();
         try {
-          const message = (await completeSimple(
+          const message = await modelRuntime.completeSimple(
             model,
             {
               messages: [
@@ -959,8 +957,6 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
               ],
             },
             {
-              apiKey: auth.apiKey,
-              headers: auth.headers,
               maxTokens: 16,
               timeoutMs: TEST_TIMEOUT_MS,
               maxRetries: 0,
@@ -970,7 +966,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
                 status = response.status;
               },
             },
-          )) as AssistantMessage;
+          );
 
           const latencyMs = Date.now() - startedAt;
           if (message.stopReason === "error" || message.stopReason === "aborted") {
@@ -1004,29 +1000,33 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     },
 
     "auth.providers": async () => {
-      const authStorage = AuthStorage.create();
-      const providers = authStorage.getOAuthProviders();
+      const modelRuntime = await getSharedModelRuntime();
+      const storedProviders = new Set(
+        (await modelRuntime.listCredentials())
+          .filter((entry) => entry.type === "oauth")
+          .map((entry) => entry.providerId),
+      );
       const EXCLUDED = new Set(["anthropic"]);
       const DISPLAY_NAMES: Record<string, string> = {
         "openai-codex": "ChatGPT Plus/Pro",
         "github-copilot": "GitHub Copilot",
       };
-      const result = providers
-        .filter((p) => !EXCLUDED.has(p.id))
+      const result = modelRuntime
+        .getProviders()
+        .filter((p) => p.auth.oauth && !EXCLUDED.has(p.id))
         .map((p) => ({
           id: p.id,
           name: DISPLAY_NAMES[p.id] ?? p.name,
-          usesCallbackServer: p.usesCallbackServer ?? false,
-          authenticated: authStorage.has(p.id),
-          loggedIn: authStorage.has(p.id),
+          usesCallbackServer: false,
+          authenticated: storedProviders.has(p.id),
+          loggedIn: storedProviders.has(p.id),
         }));
       return { providers: result };
     },
 
     "auth.allProviders": async () => {
-      const authStorage = AuthStorage.create();
-      const registry = ModelRegistry.create(authStorage);
-      const all = registry.getAll();
+      const modelRuntime = await getSharedModelRuntime();
+      const all = modelRuntime.getModels();
       const OAUTH_PROVIDER_IDS = new Set(["anthropic", "github-copilot", "openai-codex"]);
       const seen = new Set<string>();
       const result: Array<{
@@ -1036,18 +1036,20 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         source?: string;
         modelCount: number;
       }> = [];
-      for (const m of all) {
-        if (seen.has(m.provider)) continue;
-        seen.add(m.provider);
-        if (OAUTH_PROVIDER_IDS.has(m.provider)) continue;
-        const status = registry.getProviderAuthStatus(m.provider);
+      for (const model of all) {
+        if (seen.has(model.provider)) continue;
+        seen.add(model.provider);
+        if (OAUTH_PROVIDER_IDS.has(model.provider)) continue;
+        const provider = modelRuntime.getProvider(model.provider);
+        if (!provider?.auth.apiKey) continue;
+        const status = modelRuntime.getProviderAuthStatus(model.provider);
         if (status.source === "models_json_key") continue;
         result.push({
-          id: m.provider,
-          displayName: registry.getProviderDisplayName(m.provider),
+          id: model.provider,
+          displayName: provider.name,
           configured: status.configured,
-          source: status.source,
-          modelCount: all.filter((x) => x.provider === m.provider).length,
+          source: status.label ?? status.source,
+          modelCount: all.filter((candidate) => candidate.provider === model.provider).length,
         });
       }
       return { providers: result as never };
@@ -1058,12 +1060,28 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       if (!provider || !key?.trim()) {
         throw new RpcError({ code: "BAD_REQUEST", message: "provider and key required" });
       }
-      // ISSUE-002: SDK requires AuthCredential object, not bare string
-      const authStorage = AuthStorage.create();
-      authStorage.set(provider, { type: "api_key", key: key.trim() });
-      // Verify read-back so UI "Saved" is honest
-      const verify = AuthStorage.create();
-      if (!verify.has(provider)) {
+      const modelRuntime = await getSharedModelRuntime();
+      let promptCount = 0;
+      const interaction: AuthInteraction = {
+        async prompt(request) {
+          promptCount += 1;
+          if (promptCount !== 1 || request.type !== "secret") {
+            throw new Error(`${provider} requires an interactive, multi-field login flow`);
+          }
+          return key.trim();
+        },
+        notify() {},
+      };
+      try {
+        await modelRuntime.login(provider, "api_key", interaction);
+      } catch (error) {
+        throw new RpcError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      const stored = await modelRuntime.listCredentials();
+      if (!stored.some((entry) => entry.providerId === provider && entry.type === "api_key")) {
         throw new RpcError({
           code: "INTERNAL",
           message: `Key for ${provider} was written but not readable back`,
@@ -1075,8 +1093,8 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     "auth.deleteApiKey": async (params) => {
       const { provider } = params as { provider: string };
       try {
-        const authStorage = AuthStorage.create();
-        if (typeof authStorage.logout === "function") authStorage.logout(provider);
+        const modelRuntime = await getSharedModelRuntime();
+        await modelRuntime.logout(provider);
       } catch {
         /* ignore */
       }
@@ -1085,10 +1103,8 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
     "auth.logout": async (params) => {
       const { provider } = params as { provider: string };
-      const authStorage = AuthStorage.create();
-      if (typeof authStorage.logout === "function") {
-        authStorage.logout(provider);
-      }
+      const modelRuntime = await getSharedModelRuntime();
+      await modelRuntime.logout(provider);
       return { ok: true as const };
     },
 
