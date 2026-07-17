@@ -1,6 +1,7 @@
 /**
- * Lightweight MessagePort RPC (~200 lines, no external framework).
- * Three message kinds: request / response / event.
+ * Lightweight MessagePort RPC (no external framework).
+ * Five message kinds: request / response / subscribe / unsubscribe / event.
+ * Protocol spec: docs/rpc-protocol.md
  */
 
 import type { ApiMethod, ApiParams, ApiResult, StreamTopic, Streams } from "./api";
