@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  isProductionUpdatePlatformEnabled,
-  WINDOWS_UPDATES_RELEASE_READY,
-  wrapElectronUpdater,
-} from "./update-adapter.ts";
+import { isProductionUpdatePlatformEnabled, wrapElectronUpdater } from "./update-adapter.ts";
 
 class FakeElectronUpdater {
   constructor() {
@@ -15,6 +11,7 @@ class FakeElectronUpdater {
     this.autoInstallOnAppQuit = false;
     this.allowPrerelease = true;
     this.allowDowngrade = true;
+    this.disableWebInstaller = false;
     this.forceDevUpdateConfig = false;
     this.logger = { info() {} };
   }
@@ -57,6 +54,7 @@ test("production adapter applies the stable, consent-first updater policy", asyn
     assert.equal(updater.autoInstallOnAppQuit, true);
     assert.equal(updater.allowPrerelease, false);
     assert.equal(updater.allowDowngrade, false);
+    assert.equal(updater.disableWebInstaller, true);
     assert.equal(updater.forceDevUpdateConfig, false);
     assert.equal(updater.logger, null);
 
@@ -87,9 +85,8 @@ test("development update config requires an explicit adapter option", () => {
   assert.equal(developmentUpdater.forceDevUpdateConfig, true);
 });
 
-test("production platform policy keeps Windows fail-closed until signing is ready", () => {
-  assert.equal(WINDOWS_UPDATES_RELEASE_READY, false);
+test("production platform policy enables macOS and unsigned Windows releases", () => {
   assert.equal(isProductionUpdatePlatformEnabled("darwin"), true);
-  assert.equal(isProductionUpdatePlatformEnabled("win32"), false);
+  assert.equal(isProductionUpdatePlatformEnabled("win32"), true);
   assert.equal(isProductionUpdatePlatformEnabled("linux"), false);
 });

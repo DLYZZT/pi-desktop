@@ -28,6 +28,8 @@ const desktopContract = read("src/contract/desktop.ts");
 const desktopIpc = read("src/main/ipc.ts");
 const updateAdapter = read("src/main/update-adapter.ts");
 const updateManager = read("src/main/update-manager.ts");
+const electronBuilderConfig = read("electron-builder.yml");
+const desktopBuildWorkflow = read(".github/workflows/build-desktop.yml");
 const rendererCsp = protocol.slice(protocol.indexOf("const CSP ="), protocol.indexOf("const HTML_PREVIEW_CSP ="));
 
 const checks = [
@@ -121,10 +123,19 @@ const checks = [
       updateAdapter.includes("updater.autoInstallOnAppQuit = true") &&
       updateAdapter.includes("updater.allowPrerelease = false") &&
       updateAdapter.includes("updater.allowDowngrade = false") &&
+      updateAdapter.includes("updater.disableWebInstaller = true") &&
       updateAdapter.includes("updater.logger = null") &&
-      updateAdapter.includes("WINDOWS_UPDATES_RELEASE_READY = false") &&
+      updateAdapter.includes('platform === "darwin"') &&
+      updateAdapter.includes('platform === "win32"') &&
+      !updateAdapter.includes("WINDOWS_UPDATES_RELEASE_READY") &&
       !updateAdapter.includes("process.env"),
-    "production updater must remain stable-only, consent-first, and use redacted application logging",
+    "production updater must support macOS and Windows while remaining stable-only, consent-first, and using redacted application logging",
+  ],
+  [
+    !/^\s*publisherName\s*:/im.test(electronBuilderConfig) &&
+      desktopBuildWorkflow.includes("publisherName field in an unsigned Windows release") &&
+      desktopBuildWorkflow.includes("/^\\s*publisherName\\s*:/im"),
+    "unsigned Windows updates must omit publisher verification in both build configuration and packaged release checks",
   ],
   [
     updateManager.includes('platform === "darwin" || platform === "win32"') &&

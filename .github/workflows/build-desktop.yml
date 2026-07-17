@@ -557,7 +557,15 @@ jobs:
               `Expected one packaged Windows app-update.yml file, found ${configs.length}`,
             );
           }
-          configs.forEach(verifyUpdateConfig);
+          for (const file of configs) {
+            const document = fs.readFileSync(file, "utf8");
+            if (/^\s*publisherName\s*:/im.test(document)) {
+              throw new Error(
+                `${file}: contains a publisherName field in an unsigned Windows release`,
+              );
+            }
+            verifyUpdateConfig(file);
+          }
           NODE
 
       - name: Verify Windows release artifacts and metadata

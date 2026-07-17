@@ -28,12 +28,12 @@ export interface ProductionUpdateAdapterOptions {
   useDevelopmentConfig?: boolean;
 }
 
-// Windows updates stay fail-closed until the release workflow signs both the
-// installed application and every NSIS update with the configured publisher.
-export const WINDOWS_UPDATES_RELEASE_READY = false;
-
 export function isProductionUpdatePlatformEnabled(platform: NodeJS.Platform): boolean {
-  return platform === "darwin" || (platform === "win32" && WINDOWS_UPDATES_RELEASE_READY);
+  // Windows releases intentionally omit publisherName while Authenticode
+  // signing is unavailable. electron-updater therefore skips publisher
+  // verification, but still validates the downloaded NSIS file against the
+  // SHA-512 digest in latest.yml before running the interactive installer.
+  return platform === "darwin" || platform === "win32";
 }
 
 class ProductionUpdateAdapter implements UpdateAdapter {
@@ -74,6 +74,7 @@ export function wrapElectronUpdater(updater: AppUpdater, options: ProductionUpda
   updater.autoInstallOnAppQuit = true;
   updater.allowPrerelease = false;
   updater.allowDowngrade = false;
+  updater.disableWebInstaller = true;
   updater.forceDevUpdateConfig = options.useDevelopmentConfig === true;
 
   // Avoid leaking request headers, URLs, or cache paths through the library's

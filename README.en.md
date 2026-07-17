@@ -109,8 +109,6 @@ Pushes to `main` run only the Linux, macOS, and Windows tests plus the full qual
 
 Download temporary artifacts from a successful [GitHub Actions build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml). Artifacts are retained for 14 days. A `v*` tag release job uses protected credentials to sign and notarize the macOS packages and also produces the production Windows x64 NSIS installer. The Draft Release contains installers, blockmaps, and update metadata for both platforms and still requires manual review before publication.
 
-The production Windows installer does not currently use Authenticode code signing, so Windows may display an unknown-publisher or SmartScreen prompt during installation, but the installer is not labeled as a preview. In-app updates remain disabled on Windows; users can manually install new versions from GitHub Releases.
-
 ## Architecture
 
 Pi Agent Desktop uses a three-process Electron architecture to isolate privileged desktop capabilities, the Agent runtime, and the UI.
@@ -189,9 +187,9 @@ npm run verify
 - [x] Local macOS signing/notarization tooling and the `v*` tag release workflow
 - [x] First end-to-end `v*` tag signing, notarization, and production Release validation
 - [x] Production Windows x64 Release asset pipeline (currently without code signing)
-- [ ] Validate the first Release containing both macOS and Windows production assets
+- [x] Validate the first Release containing both macOS and Windows production assets (v0.1.1)
 - [x] Implement Main-process stable-release checks, user-approved downloads, restart installation, and update settings
-- [ ] Validate updater-enabled baseline-to-target upgrades end to end on macOS
+- [ ] Validate updater-enabled baseline-to-target upgrades end to end on macOS and Windows
 - [ ] Expanded cross-platform E2E and pre-release testing
 
 ## Relationship to the Pi ecosystem

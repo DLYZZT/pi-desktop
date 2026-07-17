@@ -109,8 +109,6 @@ Electron 43 不再在 `npm ci` 阶段下载 Electron 二进制；首次执行真
 
 可以在 [GitHub Actions](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml) 的成功构建中下载临时 Artifacts，产物保留 14 天。`v*` tag 的 release job 会使用受保护凭据签名并公证 macOS 包，同时生成 Windows x64 NSIS 正式安装包；Draft Release 会同时包含两个平台的安装包、blockmap 和更新元数据，仍需人工验收后公开发布。
 
-Windows 正式安装包当前未配置 Authenticode 代码签名，安装时可能显示“未知发布者”或 SmartScreen 提示，但不会再被标记为预览版。Windows 应用内自动更新仍保持禁用；用户可以从 GitHub Release 手动下载安装新版本。
-
 ## 架构设计
 
 Pi Agent Desktop 使用 Electron 三进程模型，将高权限桌面能力、Agent 运行时和 UI 隔离开来。
@@ -189,9 +187,9 @@ npm run verify
 - [x] macOS 本地签名/公证工具与 `v*` tag release workflow
 - [x] 首次 `v*` tag 双架构签名、公证与正式 Release 端到端验收
 - [x] Windows x64 正式 Release 资产管线（当前不配置代码签名）
-- [ ] 首个同时包含 macOS 与 Windows 正式资产的 Release 验收
+- [x] 首个同时包含 macOS 与 Windows 正式资产的 Release 验收（v0.1.1）
 - [x] 实现主进程稳定版检查、用户确认下载、重启安装和设置界面
-- [ ] 完成 updater-enabled 基线到更高版本的 macOS 端到端升级验证
+- [ ] 完成 updater-enabled 基线到更高版本的 macOS 与 Windows 端到端升级验证
 - [ ] 扩充跨平台 E2E 测试与发布前检查
 
 ## 与 Pi 生态的关系
