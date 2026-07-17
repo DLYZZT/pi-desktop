@@ -99,15 +99,17 @@ npm run dev
 
 Electron 43 不再在 `npm ci` 阶段下载 Electron 二进制；首次执行真正需要 Electron 的命令（例如 `npm run dev` 或 `npm run smoke`）时会按需下载。需要在运行前确定性预取时可执行 `npx install-electron --no`；Linux CI 的完整质量门会先显式执行该命令，再配置 `chrome-sandbox` 权限并运行 `npm run verify`。
 
-### 获取预览构建
+### CI 与发布构建
 
-PR/main CI 当前生成以下未签名预览包：
+`main` push 只运行 Linux、macOS、Windows 测试与完整质量门，不生成安装包。Pull Request 和手动触发的 workflow 可以生成以下临时构建产物：
 
 - macOS Apple Silicon（arm64）：DMG + ZIP
 - macOS Intel（x64）：DMG + ZIP
 - Windows（x64）：NSIS 安装程序
 
-可以在 [GitHub Actions](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml) 的成功构建中下载 Artifacts，产物保留 14 天。这些预览包可能触发未知开发者或安全警告；`v*` tag 的 release job 才会使用受保护凭据签名并公证 macOS 包。tag 流程会创建或更新仅含 macOS 正式产物的 Draft Release，不会自动公开发布。Windows 产物仍是未签名候选包，不会进入 Draft Release；完成 Windows 代码签名前，Windows 客户端更新保持禁用。
+可以在 [GitHub Actions](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml) 的成功构建中下载临时 Artifacts，产物保留 14 天。`v*` tag 的 release job 会使用受保护凭据签名并公证 macOS 包，同时生成 Windows x64 NSIS 正式安装包；Draft Release 会同时包含两个平台的安装包、blockmap 和更新元数据，仍需人工验收后公开发布。
+
+Windows 正式安装包当前未配置 Authenticode 代码签名，安装时可能显示“未知发布者”或 SmartScreen 提示，但不会再被标记为预览版。Windows 应用内自动更新仍保持禁用；用户可以从 GitHub Release 手动下载安装新版本。
 
 ## 架构设计
 
@@ -183,12 +185,13 @@ npm run verify
 - [x] 会话、项目文件、模型、Skills、Plugins 与 OAuth
 - [x] 个人微信、Telegram 与飞书/Lark 文本、图片、文件和语音消息渠道，以及飞书/Lark 视频资源
 - [x] 托盘、通知、系统主题、崩溃恢复与诊断导出
-- [x] macOS arm64、macOS x64、Windows x64 CI 构建矩阵
+- [x] Linux、macOS、Windows CI 测试与正式发布构建矩阵
 - [x] macOS 本地签名/公证工具与 `v*` tag release workflow
-- [ ] 首次 `v*` tag 双架构签名、公证与 Draft Release 端到端验收
-- [ ] Windows 代码签名
+- [x] 首次 `v*` tag 双架构签名、公证与正式 Release 端到端验收
+- [x] Windows x64 正式 Release 资产管线（当前不配置代码签名）
+- [ ] 首个同时包含 macOS 与 Windows 正式资产的 Release 验收
 - [x] 实现主进程稳定版检查、用户确认下载、重启安装和设置界面
-- [ ] 完成 updater-enabled 基线到更高版本的三平台端到端升级验证
+- [ ] 完成 updater-enabled 基线到更高版本的 macOS 端到端升级验证
 - [ ] 扩充跨平台 E2E 测试与发布前检查
 
 ## 与 Pi 生态的关系

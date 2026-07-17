@@ -99,15 +99,17 @@ npm run dev
 
 Electron 43 no longer downloads the Electron binary during `npm ci`. The first command that actually needs Electron, such as `npm run dev` or `npm run smoke`, downloads it on demand. Run `npx install-electron --no` when the binary must be prefetched deterministically; the Linux CI quality gate runs that command explicitly, configures the `chrome-sandbox` permissions, and then runs `npm run verify`.
 
-### Download a preview build
+### CI and release builds
 
-PR/main CI currently produces the following unsigned preview installers:
+Pushes to `main` run only the Linux, macOS, and Windows tests plus the full quality gate; they do not package installers. Pull requests and manually dispatched workflows can produce these temporary build artifacts:
 
 - macOS Apple Silicon (arm64): DMG and ZIP
 - macOS Intel (x64): DMG and ZIP
 - Windows (x64): NSIS installer
 
-Download artifacts from a successful [GitHub Actions build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml). Artifacts are retained for 14 days. These previews may trigger unknown-developer or security warnings; only the `v*` tag release job uses protected credentials to sign and notarize the macOS packages. The tag workflow creates or updates a matching Draft Release containing only production macOS assets and never publishes it automatically. Windows artifacts remain unsigned candidates and are excluded from the Draft Release; Windows client updates stay disabled until Windows code signing is complete.
+Download temporary artifacts from a successful [GitHub Actions build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml). Artifacts are retained for 14 days. A `v*` tag release job uses protected credentials to sign and notarize the macOS packages and also produces the production Windows x64 NSIS installer. The Draft Release contains installers, blockmaps, and update metadata for both platforms and still requires manual review before publication.
+
+The production Windows installer does not currently use Authenticode code signing, so Windows may display an unknown-publisher or SmartScreen prompt during installation, but the installer is not labeled as a preview. In-app updates remain disabled on Windows; users can manually install new versions from GitHub Releases.
 
 ## Architecture
 
@@ -183,12 +185,13 @@ npm run verify
 - [x] Sessions, project files, models, Skills, Plugins, and OAuth
 - [x] Personal WeChat, Telegram, and Feishu/Lark text, image, file, and voice channels, plus Feishu/Lark video resources
 - [x] Tray, notifications, system theme, crash recovery, and diagnostic exports
-- [x] macOS arm64, macOS x64, and Windows x64 CI build matrix
+- [x] Linux, macOS, and Windows CI tests plus the production release build matrix
 - [x] Local macOS signing/notarization tooling and the `v*` tag release workflow
-- [ ] First end-to-end `v*` tag validation for both macOS architectures and the Draft Release
-- [ ] Windows code signing
+- [x] First end-to-end `v*` tag signing, notarization, and production Release validation
+- [x] Production Windows x64 Release asset pipeline (currently without code signing)
+- [ ] Validate the first Release containing both macOS and Windows production assets
 - [x] Implement Main-process stable-release checks, user-approved downloads, restart installation, and update settings
-- [ ] Validate updater-enabled baseline-to-target upgrades end to end on all three platform targets
+- [ ] Validate updater-enabled baseline-to-target upgrades end to end on macOS
 - [ ] Expanded cross-platform E2E and pre-release testing
 
 ## Relationship to the Pi ecosystem

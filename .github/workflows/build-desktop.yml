@@ -79,7 +79,7 @@ jobs:
 
   package:
     name: ${{ matrix.name }}
-    if: github.ref_type != 'tag'
+    if: github.ref_type != 'tag' && github.event_name != 'push'
     needs: [quality, test-platforms]
     strategy:
       fail-fast: false
@@ -431,7 +431,7 @@ jobs:
           retention-days: 14
 
   release-windows:
-    name: Package unsigned Windows candidate (not published)
+    name: Package Windows x64
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     needs: [release-contract]
     runs-on: windows-2025
@@ -454,24 +454,8 @@ jobs:
       - name: Build application
         run: npm run build
 
-      - name: Package unsigned Windows x64
+      - name: Package Windows x64
         run: npx electron-builder --win nsis --x64 --publish never
-
-      - name: Verify Windows installer is unsigned
-        shell: pwsh
-        run: |
-          $installers = @(Get-ChildItem -Path dist -File -Filter '*.exe')
-          if ($installers.Count -ne 1) {
-            throw "Expected one Windows installer, found $($installers.Count)"
-          }
-
-          foreach ($installer in $installers) {
-            $signature = Get-AuthenticodeSignature -FilePath $installer.FullName
-            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
-              throw "$($installer.Name) must remain explicitly unsigned until Windows signing is implemented; status: $($signature.Status)"
-            }
-            Write-Host "Verified unsigned installer: $($installer.Name)"
-          }
 
       - name: Verify packaged Windows update configuration
         shell: bash
@@ -583,13 +567,14 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           installer="dist/Pi-Agent-Desktop-Setup-${version}.exe"
           test -s "$installer"
+          test "$(find dist -maxdepth 1 -type f -name '*.exe' | wc -l | tr -d ' ')" -eq 1
           test -s dist/latest.yml
           node scripts/verify-update-metadata.mjs dist/latest.yml "$version" "$installer"
 
       - name: Upload Windows release artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: pi-desktop-windows-unsigned-candidate
+          name: pi-desktop-windows-release
           path: |
             dist/*.exe
             dist/*.blockmap
@@ -598,7 +583,7 @@ jobs:
           retention-days: 14
 
   release:
-    name: Create macOS draft release
+    name: Create desktop draft release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [release-macos, release-windows]
     runs-on: ubuntu-24.04
@@ -621,10 +606,12 @@ jobs:
 
           files=()
           mac_artifacts="release-artifacts/pi-desktop-macos-release"
+          windows_artifacts="release-artifacts/pi-desktop-windows-release"
           test -d "$mac_artifacts"
+          test -d "$windows_artifacts"
           while IFS= read -r -d '' file; do
             files+=("$file")
-          done < <(find "$mac_artifacts" -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.yml' -o -name '*.yaml' \) -print0)
+          done < <(find "$mac_artifacts" "$windows_artifacts" -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.blockmap' -o -name '*.yml' -o -name '*.yaml' \) -print0)
 
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release files were downloaded" >&2
@@ -638,7 +625,10 @@ jobs:
             exit 1
           fi
 
-          test "$(find release-artifacts -type f -name 'latest-mac.yml' | wc -l | tr -d ' ')" -eq 1
+          test "$(find "$mac_artifacts" -type f -name 'latest-mac.yml' | wc -l | tr -d ' ')" -eq 1
+          test "$(find "$windows_artifacts" -type f -name '*.exe' | wc -l | tr -d ' ')" -eq 1
+          test "$(find "$windows_artifacts" -type f -name '*.exe.blockmap' | wc -l | tr -d ' ')" -eq 1
+          test "$(find "$windows_artifacts" -type f -name 'latest.yml' | wc -l | tr -d ' ')" -eq 1
 
           if is_draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
             if [ "$is_draft" != "true" ]; then

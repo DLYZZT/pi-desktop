@@ -1,6 +1,6 @@
 {
   "name": "@dlyzzt/pi-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi Agent Desktop — pure Electron desktop app for the pi coding agent",
   "homepage": "https://github.com/DLYZZT/pi-desktop#readme",
   "license": "Apache-2.0",

@@ -9,7 +9,12 @@ import type {
   ToolResultMessage,
 } from "@/lib/types";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
-import { countToolCallBlocks, getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/message-display";
+import {
+  countToolCallBlocks,
+  getDisplayableAssistantBlocks,
+  isAssistantFailure,
+  splitFinalAssistantBlocks,
+} from "@/lib/message-display";
 import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
@@ -62,6 +67,7 @@ const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 
 function hasFinalAssistantAnswer(message: AgentMessage): boolean {
   if (message.role !== "assistant") return false;
+  if (isAssistantFailure(message as AssistantMessage)) return true;
   return splitFinalAssistantBlocks(message as AssistantMessage).answerBlocks.some(
     (block) => block.type === "image" || (block.type === "text" && block.text.trim().length > 0),
   );
@@ -97,10 +103,14 @@ function hasDisplayableProcessMessage(message: AgentMessage): boolean {
 function withAssistantBlocks(
   message: AssistantMessage,
   content: AssistantContentBlock[],
-  options: { omitUsage?: boolean } = {},
+  options: { omitUsage?: boolean; omitFailure?: boolean } = {},
 ): AssistantMessage {
   const next = { ...message, content };
   if (options.omitUsage) next.usage = undefined;
+  if (options.omitFailure) {
+    next.stopReason = undefined;
+    next.errorMessage = undefined;
+  }
   return next;
 }
 
@@ -709,12 +719,17 @@ export function ChatWindow({
                       const finalSplit = splitFinalAssistantBlocks(finalAssistant);
                       const finalProcessMessage =
                         finalSplit.processBlocks.length > 0
-                          ? withAssistantBlocks(finalAssistant, finalSplit.processBlocks, { omitUsage: true })
+                          ? withAssistantBlocks(finalAssistant, finalSplit.processBlocks, {
+                              omitUsage: true,
+                              omitFailure: true,
+                            })
                           : null;
                       const finalAnswerMessage =
                         finalSplit.answerBlocks.length > 0
                           ? withAssistantBlocks(finalAssistant, finalSplit.answerBlocks)
-                          : null;
+                          : isAssistantFailure(finalAssistant)
+                            ? withAssistantBlocks(finalAssistant, [])
+                            : null;
 
                       const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
                       if (processCount > 0) {

@@ -308,6 +308,8 @@ const zhCN: Record<string, string> = {
   runningTool: "正在运行工具…",
   runningTools: "正在运行",
   thinking: "正在思考…",
+  modelRequestFailed: "模型请求失败",
+  modelRequestFailedFallback: "模型服务未返回错误详情，请检查 API 密钥、服务地址和模型配置。",
   moreControls: "更多控制项",
   collapseControls: "收起控制项",
   compact: "压缩上下文",

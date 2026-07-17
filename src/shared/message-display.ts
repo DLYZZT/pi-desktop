@@ -4,6 +4,16 @@ interface DisplayOptions {
   isStreaming?: boolean;
 }
 
+export function isAssistantFailure(message: AssistantMessage): boolean {
+  return message.stopReason === "error";
+}
+
+export function getAssistantFailureDetail(message: AssistantMessage): string | null {
+  if (!isAssistantFailure(message)) return null;
+  const detail = message.errorMessage?.trim();
+  return detail ? detail : null;
+}
+
 export function isEmptyThinkingBlock(
   block: AssistantContentBlock,
   options: DisplayOptions = {},
@@ -16,6 +26,10 @@ export function getDisplayableAssistantBlocks(
   options: DisplayOptions = {},
 ): AssistantContentBlock[] {
   return (message.content ?? []).filter((block) => !isEmptyThinkingBlock(block, options));
+}
+
+export function hasRenderableAssistantMessage(message: AssistantMessage, options: DisplayOptions = {}): boolean {
+  return isAssistantFailure(message) || getDisplayableAssistantBlocks(message, options).length > 0;
 }
 
 function isFinalAnswerBlock(block: AssistantContentBlock): boolean {

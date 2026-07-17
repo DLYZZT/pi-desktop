@@ -5,6 +5,7 @@ dist/
 *.log
 .tsbuildinfo
 .cache/
+temp/
 .env
 .env.*
 .artifacts/

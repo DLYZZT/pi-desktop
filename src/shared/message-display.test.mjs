@@ -111,3 +111,25 @@ test("keeps empty thinking while streaming", async () => {
     ["thinking"],
   );
 });
+
+test("keeps an empty failed assistant message renderable and exposes its provider detail", async () => {
+  const { getAssistantFailureDetail, hasRenderableAssistantMessage, isAssistantFailure } = await loadSubject();
+  const message = {
+    ...assistant([]),
+    stopReason: "error",
+    errorMessage: "401: invalid API key",
+  };
+
+  assert.equal(isAssistantFailure(message), true);
+  assert.equal(getAssistantFailureDetail(message), "401: invalid API key");
+  assert.equal(hasRenderableAssistantMessage(message), true);
+  assert.equal(hasRenderableAssistantMessage(assistant([])), false);
+});
+
+test("renders a generic failure state when the provider omits error detail", async () => {
+  const { getAssistantFailureDetail, hasRenderableAssistantMessage } = await loadSubject();
+  const message = { ...assistant([]), stopReason: "error", errorMessage: "   " };
+
+  assert.equal(getAssistantFailureDetail(message), null);
+  assert.equal(hasRenderableAssistantMessage(message), true);
+});

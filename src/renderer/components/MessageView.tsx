@@ -2,7 +2,12 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { MarkdownBody } from "./MarkdownBody";
 import { copyText } from "@/lib/clipboard";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
-import { isEmptyThinkingBlock } from "@/lib/message-display";
+import {
+  getAssistantFailureDetail,
+  hasRenderableAssistantMessage,
+  isAssistantFailure,
+  isEmptyThinkingBlock,
+} from "@/lib/message-display";
 import { getUserBubbleColor } from "@/lib/channel-message-style";
 import { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER } from "@shared/channel-message";
 import { useI18n } from "@/i18n";
@@ -449,6 +454,7 @@ function AssistantMessageView({
   showTimestamp?: boolean;
   prevTimestamp?: number;
 }) {
+  const { t } = useI18n();
   const time = showTimestamp ? formatTime(message.timestamp) : null;
   const blockItems = (message.content ?? [])
     .map((block, originalIndex) => ({ block, originalIndex }))
@@ -460,6 +466,13 @@ function AssistantMessageView({
   const [tps, setTps] = useState<number | null>(null);
   const blockItemsRef = useRef(blockItems);
   blockItemsRef.current = blockItems;
+  const failureDetail = isAssistantFailure(message)
+    ? (getAssistantFailureDetail(message) ??
+      t(
+        "modelRequestFailedFallback",
+        "The model service did not return error details. Check the API key, service URL, and model configuration.",
+      ))
+    : null;
 
   // Streaming-based timing for thinking blocks
   const blockStartTimesRef = useRef<Map<number, number>>(new Map());
@@ -557,7 +570,7 @@ function AssistantMessageView({
     return () => clearInterval(id);
   }, [isStreaming]);
 
-  if (blocks.length === 0 && !isStreaming) return null;
+  if (!hasRenderableAssistantMessage(message, { isStreaming }) && !isStreaming) return null;
 
   return (
     <div
@@ -656,6 +669,26 @@ function AssistantMessageView({
             onOpenFile={onOpenFile}
           />
         ))}
+        {failureDetail && !isStreaming && (
+          <div
+            role="alert"
+            data-testid="assistant-error-message"
+            style={{
+              border: "1px solid color-mix(in srgb, var(--danger) 45%, var(--border))",
+              borderRadius: 9,
+              background: "color-mix(in srgb, var(--danger) 8%, var(--assistant-bg))",
+              color: "var(--danger)",
+              padding: "10px 12px",
+              fontSize: 13,
+              lineHeight: 1.55,
+              overflowWrap: "anywhere",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 3 }}>{t("modelRequestFailed", "Model request failed")}</div>
+            <div>{failureDetail}</div>
+          </div>
+        )}
       </div>
 
       <div
