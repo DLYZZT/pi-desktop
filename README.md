@@ -16,7 +16,7 @@
 
 [English](./README.en.md) · **简体中文**
 
-[功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [参与开发](#参与开发) · [发布](#构建与发布)
+[功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [参与开发](#参与开发) · [路线图](#路线图)
 
 </div>
 
@@ -96,15 +96,17 @@ npm ci
 npm run dev
 ```
 
+Electron 43 不再在 `npm ci` 阶段下载 Electron 二进制；首次执行真正需要 Electron 的命令（例如 `npm run dev` 或 `npm run smoke`）时会按需下载。需要在运行前确定性预取时可执行 `npx install-electron --no`；Linux CI 的完整质量门会先显式执行该命令，再配置 `chrome-sandbox` 权限并运行 `npm run verify`。
+
 ### 获取预览构建
 
-CI 当前生成以下未签名安装包：
+PR/main CI 当前生成以下未签名预览包：
 
 - macOS Apple Silicon（arm64）：DMG + ZIP
 - macOS Intel（x64）：DMG + ZIP
 - Windows（x64）：NSIS 安装程序
 
-可以在 [GitHub Actions](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml) 的成功构建中下载 Artifacts，产物保留 14 天。由于尚未签名，系统可能显示未知开发者或安全警告；现阶段更推荐从源码运行。
+可以在 [GitHub Actions](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml) 的成功构建中下载 Artifacts，产物保留 14 天。这些预览包可能触发未知开发者或安全警告；`v*` tag 的 release job 才会使用受保护凭据签名并公证 macOS 包。tag 流程会创建或更新对应的 Draft Release，不会自动公开发布。
 
 ## 架构设计
 
@@ -141,17 +143,19 @@ flowchart LR
 
 ### 常用命令
 
-| 命令                     | 说明                                  |
-| ------------------------ | ------------------------------------- |
-| `npm run dev`            | 启动 Vite、主进程构建监听与 Electron  |
-| `npm run typecheck`      | 执行 TypeScript 类型检查              |
-| `npm run test`           | 运行自动化测试套件                    |
-| `npm run check:contract` | 检查 API 方法与 Host handler 覆盖关系 |
-| `npm run smoke`          | 运行 Electron 冒烟测试                |
-| `npm run verify`         | 执行提交前的完整质量检查              |
-| `npm run build`          | 构建 main、preload 与 renderer        |
-| `npm run pack`           | 生成未封装的应用目录                  |
-| `npm run dist`           | 生成当前平台配置的全部架构安装包      |
+| 命令                         | 说明                                    |
+| ---------------------------- | --------------------------------------- |
+| `npm run dev`                | 启动 Vite、主进程构建监听与 Electron    |
+| `npm run typecheck`          | 执行 TypeScript 类型检查                |
+| `npm run test`               | 运行自动化测试套件                      |
+| `npm run check:contract`     | 检查 API 方法与 Host handler 覆盖关系   |
+| `npm run smoke`              | 运行 Electron 冒烟测试                  |
+| `npm run verify`             | 执行提交前的完整质量检查                |
+| `npm run build`              | 构建 main、preload 与 renderer          |
+| `npm run pack`               | 生成未封装的应用目录                    |
+| `npm run dist`               | 生成当前平台配置的全部架构安装包        |
+| `npm run dist:mac:signed`    | 生成当前 Mac 架构的 Developer ID 签名包 |
+| `npm run dist:mac:notarized` | 生成签名并经 Apple 公证的 macOS 包      |
 
 ### 项目结构
 
@@ -171,26 +175,6 @@ src/
 npm run verify
 ```
 
-## 构建与发布
-
-提交或制作安装包前先运行完整质量门：
-
-```bash
-npm run verify
-```
-
-本地构建命令：
-
-```bash
-npm run build  # 构建应用代码
-npm run pack   # 生成未封装应用目录
-npm run dist   # 生成当前平台配置的全部架构安装包
-```
-
-在 Apple Silicon Mac 上，macOS 配置会同时构建 arm64 与 x64，因此首次打包还会下载 x64 Electron 到 `~/Library/Caches/electron/`。如果下载 `release-assets.githubusercontent.com` 时出现 `EOF`，通常是 GitHub Release CDN 传输中断；重新运行即可复用已完成的架构和本地缓存。日志末尾的 `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE` 是 electron-builder 的包装错误，不一定表示本地二进制没有执行权限。重复失败时请按 [`docs/learn.md`](./docs/learn.md#83-packdist-与跨架构-electron-缓存) 的步骤校验并补齐对应架构缓存。
-
-GitHub Actions 会分别构建 macOS arm64、macOS x64 和 Windows x64 产物。当前产物尚未签名；对外发布前仍需完成 macOS notarization、Windows 代码签名和对应平台的安装验证。
-
 ## 路线图
 
 - [x] Electron 三进程架构与类型化 IPC
@@ -198,9 +182,10 @@ GitHub Actions 会分别构建 macOS arm64、macOS x64 和 Windows x64 产物。
 - [x] 个人微信、Telegram 与飞书/Lark 文本、图片、文件和语音消息渠道，以及飞书/Lark 视频资源
 - [x] 托盘、通知、系统主题、崩溃恢复与诊断导出
 - [x] macOS arm64、macOS x64、Windows x64 CI 构建矩阵
-- [ ] macOS 签名与 notarization
+- [x] macOS 本地签名/公证工具与 `v*` tag release workflow
+- [ ] 首次 `v*` tag 双架构签名、公证与 Draft Release 端到端验收
 - [ ] Windows 代码签名
-- [ ] 自动更新端到端验证
+- [ ] 实现主进程自动更新并完成端到端升级验证
 - [ ] 扩充跨平台 E2E 测试与发布前检查
 
 ## 与 Pi 生态的关系

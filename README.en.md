@@ -16,7 +16,7 @@ Local-first · No local server · Cross-platform
 
 **English** · [简体中文](./README.md)
 
-[Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Contributing](#contributing) · [Build and release](#build-and-release)
+[Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Contributing](#contributing) · [Roadmap](#roadmap)
 
 </div>
 
@@ -96,15 +96,17 @@ npm ci
 npm run dev
 ```
 
+Electron 43 no longer downloads the Electron binary during `npm ci`. The first command that actually needs Electron, such as `npm run dev` or `npm run smoke`, downloads it on demand. Run `npx install-electron --no` when the binary must be prefetched deterministically; the Linux CI quality gate runs that command explicitly, configures the `chrome-sandbox` permissions, and then runs `npm run verify`.
+
 ### Download a preview build
 
-CI currently produces the following unsigned installers:
+PR/main CI currently produces the following unsigned preview installers:
 
 - macOS Apple Silicon (arm64): DMG and ZIP
 - macOS Intel (x64): DMG and ZIP
 - Windows (x64): NSIS installer
 
-Download artifacts from a successful [GitHub Actions build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml). Artifacts are retained for 14 days. Because the builds are not signed yet, the operating system may show an unknown-developer or security warning. Running from source is currently recommended.
+Download artifacts from a successful [GitHub Actions build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml). Artifacts are retained for 14 days. These previews may trigger unknown-developer or security warnings; only the `v*` tag release job uses protected credentials to sign and notarize the macOS packages. The tag workflow creates or updates a matching Draft Release and never publishes it automatically.
 
 ## Architecture
 
@@ -141,17 +143,19 @@ flowchart LR
 
 ### Common commands
 
-| Command                  | Description                                           |
-| ------------------------ | ----------------------------------------------------- |
-| `npm run dev`            | Start Vite, Main process build watch, and Electron    |
-| `npm run typecheck`      | Run TypeScript type checking                          |
-| `npm run test`           | Run the automated test suite                          |
-| `npm run check:contract` | Verify coverage between API methods and Host handlers |
-| `npm run smoke`          | Run Electron smoke tests                              |
-| `npm run verify`         | Run the complete pre-commit quality gate              |
-| `npm run build`          | Build Main, preload, and Renderer                     |
-| `npm run pack`           | Generate the unpacked application directory           |
-| `npm run dist`           | Build every configured architecture for this platform |
+| Command                      | Description                                                          |
+| ---------------------------- | -------------------------------------------------------------------- |
+| `npm run dev`                | Start Vite, Main process build watch, and Electron                   |
+| `npm run typecheck`          | Run TypeScript type checking                                         |
+| `npm run test`               | Run the automated test suite                                         |
+| `npm run check:contract`     | Verify coverage between API methods and Host handlers                |
+| `npm run smoke`              | Run Electron smoke tests                                             |
+| `npm run verify`             | Run the complete pre-commit quality gate                             |
+| `npm run build`              | Build Main, preload, and Renderer                                    |
+| `npm run pack`               | Generate the unpacked application directory                          |
+| `npm run dist`               | Build every configured architecture for this platform                |
+| `npm run dist:mac:signed`    | Build a Developer ID-signed package for the current Mac architecture |
+| `npm run dist:mac:notarized` | Build a signed and Apple-notarized macOS package                     |
 
 ### Project structure
 
@@ -171,26 +175,6 @@ Use [Issues](https://github.com/DLYZZT/pi-desktop/issues) for bug reports and su
 npm run verify
 ```
 
-## Build and release
-
-Run the complete quality gate before submitting changes or producing an installer:
-
-```bash
-npm run verify
-```
-
-Local build commands:
-
-```bash
-npm run build  # Build the application
-npm run pack   # Generate an unpacked application directory
-npm run dist   # Build every configured architecture for this platform
-```
-
-On an Apple Silicon Mac, the macOS configuration builds both arm64 and x64, so the first package run also downloads the x64 Electron archive into `~/Library/Caches/electron/`. An `EOF` while downloading from `release-assets.githubusercontent.com` normally indicates an interrupted GitHub Release CDN transfer; rerunning can reuse completed architectures and the local cache. The trailing `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE` is an electron-builder wrapper error and does not necessarily mean that a local executable lacks permission. For repeated failures, follow the cache verification and recovery steps in [`docs/learn.md`](./docs/learn.md#83-packdist-与跨架构-electron-缓存).
-
-GitHub Actions builds artifacts for macOS arm64, macOS x64, and Windows x64 separately. Current artifacts are unsigned. A public release still requires macOS notarization, Windows code signing, and installation testing on each target platform.
-
 ## Roadmap
 
 - [x] Electron three-process architecture and typed IPC
@@ -198,9 +182,10 @@ GitHub Actions builds artifacts for macOS arm64, macOS x64, and Windows x64 sepa
 - [x] Personal WeChat, Telegram, and Feishu/Lark text, image, file, and voice channels, plus Feishu/Lark video resources
 - [x] Tray, notifications, system theme, crash recovery, and diagnostic exports
 - [x] macOS arm64, macOS x64, and Windows x64 CI build matrix
-- [ ] macOS code signing and notarization
+- [x] Local macOS signing/notarization tooling and the `v*` tag release workflow
+- [ ] First end-to-end `v*` tag validation for both macOS architectures and the Draft Release
 - [ ] Windows code signing
-- [ ] End-to-end automatic update validation
+- [ ] Implement Main-process automatic updates and validate the end-to-end upgrade flow
 - [ ] Expanded cross-platform E2E and pre-release testing
 
 ## Relationship to the Pi ecosystem
