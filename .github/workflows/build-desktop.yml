@@ -454,10 +454,8 @@ jobs:
             "dist/Pi-Agent-Desktop-${version}-x64.dmg" \
             "dist/Pi-Agent-Desktop-${version}-x64.zip"
 
-      - name: Run packaged toolchain E2E for both macOS architectures
-        run: |
-          npm run check:packaged-toolchains -- darwin-arm64
-          npm run check:packaged-toolchains -- darwin-x64
+      - name: Run packaged toolchain E2E for macOS arm64
+        run: npm run check:packaged-toolchains -- darwin-arm64
 
       - name: Upload signed and notarized macOS artifacts
         uses: actions/upload-artifact@v7
@@ -470,6 +468,52 @@ jobs:
             dist/latest-mac.yml
           if-no-files-found: error
           retention-days: 14
+
+  verify-macos-x64:
+    name: Verify signed macOS x64 package
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: [release-macos]
+    runs-on: macos-15-intel
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Download signed and notarized macOS artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: pi-desktop-macos-release
+          path: dist
+
+      - name: Extract signed macOS x64 application
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          archive="dist/Pi-Agent-Desktop-${version}-x64.zip"
+          test -s "$archive"
+          mkdir -p dist/mac-x64
+          ditto -x -k "$archive" dist/mac-x64
+
+      - name: Verify signed and notarized macOS x64 application
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="dist/mac-x64/Pi Agent Desktop.app"
+          binary="$app/Contents/MacOS/Pi Agent Desktop"
+          test -f "$binary"
+          lipo -archs "$binary" | grep -qw x86_64
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+
+      - name: Run packaged toolchain E2E for macOS x64
+        run: npm run check:packaged-toolchains -- darwin-x64
 
   release-windows:
     name: Package Windows x64
@@ -699,7 +743,7 @@ jobs:
   release:
     name: Create desktop draft release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [release-macos, release-windows, release-linux]
+    needs: [release-macos, verify-macos-x64, release-windows, release-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
