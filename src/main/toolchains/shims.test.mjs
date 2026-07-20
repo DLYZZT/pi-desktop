@@ -18,7 +18,7 @@ function descriptor(executable) {
   };
 }
 
-test("creates and repairs private POSIX python/python3 aliases", () => {
+test("creates and repairs private POSIX python/python3 aliases", { skip: process.platform === "win32" }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-python-shims-"));
   try {
     const paths = createToolchainPaths(root);

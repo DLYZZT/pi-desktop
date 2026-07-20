@@ -385,16 +385,20 @@ test("probes and selects a project Python environment only after trust", async (
   try {
     fs.mkdirSync(path.join(root, ".git"));
     const environment = path.join(root, ".venv");
-    const bin = path.join(environment, "bin");
+    const bin = path.join(environment, process.platform === "win32" ? "Scripts" : "bin");
     fs.mkdirSync(bin, { recursive: true });
-    const projectPython = path.join(bin, "python3");
-    fs.symlinkSync(process.execPath, projectPython);
-    const systemPython = seed("python.interpreter", "/system/bin/python3", 1);
+    const projectPython = path.join(bin, process.platform === "win32" ? "python.exe" : "python3");
+    fs.writeFileSync(projectPython, "test");
+    const systemPython = seed(
+      "python.interpreter",
+      process.platform === "win32" ? "C:\\system\\python.exe" : "/system/bin/python3",
+      1,
+    );
     let projectProbes = 0;
     const manager = new ToolchainManager({
-      platform: "linux",
-      arch: "x64",
-      env: { PATH: "/system/bin" },
+      platform: process.platform,
+      arch: process.arch,
+      env: { PATH: process.platform === "win32" ? "C:\\system" : "/system/bin" },
       fileSystem,
       registry: {
         async collect() {
@@ -462,8 +466,8 @@ test("probes Main-selected custom executables before persisting private paths", 
     fs.writeFileSync(executable, "test");
     let healthy = true;
     const manager = new ToolchainManager({
-      platform: "linux",
-      arch: "x64",
+      platform: process.platform,
+      arch: process.arch,
       userDataRoot: root,
       homeDir: root,
       fileSystem,

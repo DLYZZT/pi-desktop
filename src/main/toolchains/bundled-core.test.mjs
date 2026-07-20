@@ -105,11 +105,11 @@ test("discovers legacy upstream rg/fd read-only with the lowest provider priorit
 
 test("resolves development and packaged core roots without consulting PATH", () => {
   assert.deepEqual(resolveBundledCorePaths({ isPackaged: false, resourcesRoot: "/ignored", applicationRoot: "/app" }), {
-    catalogPath: "/app/build/toolchains/core-catalog.json",
-    coreRoot: "/app/build/toolchains/core",
+    catalogPath: path.join("/app", "build", "toolchains", "core-catalog.json"),
+    coreRoot: path.join("/app", "build", "toolchains", "core"),
   });
   assert.deepEqual(resolveBundledCorePaths({ isPackaged: true, resourcesRoot: "/resources" }), {
-    catalogPath: "/resources/toolchains/core-catalog.json",
-    coreRoot: "/resources/toolchains/core",
+    catalogPath: path.join("/resources", "toolchains", "core-catalog.json"),
+    coreRoot: path.join("/resources", "toolchains", "core"),
   });
 });
