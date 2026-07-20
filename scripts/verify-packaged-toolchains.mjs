@@ -79,16 +79,17 @@ function verifyPackagedResources(resources, toolTarget) {
   const notice = path.join(resources, "THIRD_PARTY_NOTICES.md");
   if (!regularFile(notice)) throw new Error("Packaged third-party notices are missing");
   const noticeText = fs.readFileSync(notice, "utf8");
-  for (const marker of [
-    "ripgrep 15.2.0",
-    "fd 10.3.0",
-    "Node.js 24.18.0",
-    "uv 0.11.29",
-    "PortableGit 2.55.0.3",
-    "jq 1.8.2",
-    "Bun 1.3.14",
+  for (const [component, version] of [
+    ["ripgrep", "15.2.0"],
+    ["fd", "10.3.0"],
+    ["Node.js", "24.18.0"],
+    ["uv", "0.11.29"],
+    ["PortableGit", "2.55.0.3"],
+    ["jq", "1.8.2"],
+    ["Bun", "1.3.14"],
   ]) {
-    if (!noticeText.includes(marker)) throw new Error(`Third-party notices are missing ${marker}`);
+    const tableRow = `| ${component} | ${version} |`;
+    if (!noticeText.includes(tableRow)) throw new Error(`Third-party notices are missing ${component} ${version}`);
   }
   const runtimeCatalog = JSON.parse(fs.readFileSync(path.join(toolchains, "runtime-catalog.json"), "utf8"));
   const ids = runtimeCatalog.components?.map((component) => component.id).sort();
