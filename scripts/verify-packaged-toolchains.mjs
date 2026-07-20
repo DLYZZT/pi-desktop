@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { darwinCodeDigest } from "../src/main/toolchains/darwin-binary-integrity.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dist = path.join(root, "dist");
@@ -127,7 +128,14 @@ function verifyBundledTools(resources, platform, arch) {
       throw new Error("Unsafe core tool manifest entry");
     }
     const executable = path.join(targetRoot, tool.executable);
-    verifyManifestFile(executable, tool.sha256, tool.bytes);
+    if (platform === "darwin") {
+      if (!/^[a-f0-9]{64}$/.test(tool.darwinCodeSha256) || !Number.isSafeInteger(tool.darwinCodeBytes)) {
+        throw new Error(`Missing signed-code integrity metadata: ${executable}`);
+      }
+      verifyDarwinExecutable(executable, tool.darwinCodeSha256, tool.darwinCodeBytes);
+    } else {
+      verifyManifestFile(executable, tool.sha256, tool.bytes);
+    }
     if (platform !== "win32" && (fs.statSync(executable).mode & 0o111) === 0) {
       throw new Error(`${tool.componentId} is not executable`);
     }
@@ -251,6 +259,15 @@ function verifyManifestFile(file, expectedSha256, expectedBytes) {
   if (expectedBytes !== undefined && stat.size !== expectedBytes) throw new Error(`Size mismatch: ${file}`);
   const sha256 = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
   if (sha256 !== expectedSha256) throw new Error(`SHA-256 mismatch: ${file}`);
+}
+
+function verifyDarwinExecutable(file, expectedSha256, expectedBytes) {
+  const stat = fs.lstatSync(file);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Manifest target is not a regular file: ${file}`);
+  const digest = darwinCodeDigest(fs.readFileSync(file), expectedBytes);
+  if (!digest || digest.bytes !== expectedBytes || digest.sha256 !== expectedSha256) {
+    throw new Error(`Signed Mach-O code mismatch: ${file}`);
+  }
 }
 
 function regularFile(file) {

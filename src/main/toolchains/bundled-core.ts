@@ -5,6 +5,7 @@ import { isManagedComponentId, isToolCapabilityId } from "../../shared/toolchain
 import { hashFile } from "./downloader.ts";
 import type { DiscoveryFileSystem, ExecutableSeed } from "./discovery-registry.ts";
 import { nodeDiscoveryFileSystem } from "./discovery-registry.ts";
+import { darwinCodeDigest } from "./darwin-binary-integrity.ts";
 
 interface BundledToolManifestEntry {
   componentId: "ripgrep" | "fd";
@@ -13,6 +14,8 @@ interface BundledToolManifestEntry {
   executable: string;
   sha256: string;
   bytes: number;
+  darwinCodeSha256?: string;
+  darwinCodeBytes?: number;
   artifactSha256: string;
 }
 
@@ -70,6 +73,12 @@ function parseManifest(value: unknown): BundledCoreManifest | undefined {
       !isSha256(tool.sha256) ||
       !Number.isSafeInteger(tool.bytes) ||
       tool.bytes <= 0 ||
+      (tool.darwinCodeSha256 !== undefined && !isSha256(tool.darwinCodeSha256)) ||
+      (tool.darwinCodeBytes !== undefined &&
+        (!Number.isSafeInteger(tool.darwinCodeBytes) ||
+          tool.darwinCodeBytes <= 0 ||
+          tool.darwinCodeBytes > tool.bytes)) ||
+      (tool.darwinCodeSha256 === undefined) !== (tool.darwinCodeBytes === undefined) ||
       !isSha256(tool.artifactSha256)
     ) {
       return undefined;
@@ -88,6 +97,28 @@ function parseManifest(value: unknown): BundledCoreManifest | undefined {
     }
   }
   return manifest as BundledCoreManifest;
+}
+
+async function verifiedDarwinExecutable(
+  root: string,
+  relative: string,
+  sha256: string,
+  bytes: number,
+): Promise<string | undefined> {
+  try {
+    const absolute = absoluteManifestPath(root, relative);
+    if (!absolute) return undefined;
+    const stats = fs.lstatSync(absolute);
+    if (!stats.isFile() || stats.isSymbolicLink()) return undefined;
+    const canonicalRoot = fs.realpathSync.native(root);
+    const canonical = fs.realpathSync.native(absolute);
+    if (!canonical.startsWith(`${canonicalRoot}${path.sep}`)) return undefined;
+    const digest = darwinCodeDigest(fs.readFileSync(absolute), bytes);
+    if (!digest || digest.sha256 !== sha256 || digest.bytes !== bytes) return undefined;
+    return absolute;
+  } catch {
+    return undefined;
+  }
 }
 
 function absoluteManifestPath(root: string, relative: string): string | undefined {
@@ -176,7 +207,10 @@ export async function bundledSeedsFromResources(options: {
       ) {
         return [];
       }
-      const executable = await verifiedRegularFile(targetRoot, tool.executable, tool.sha256, tool.bytes);
+      const executable =
+        options.platform === "darwin" && tool.darwinCodeSha256 && tool.darwinCodeBytes
+          ? await verifiedDarwinExecutable(targetRoot, tool.executable, tool.darwinCodeSha256, tool.darwinCodeBytes)
+          : await verifiedRegularFile(targetRoot, tool.executable, tool.sha256, tool.bytes);
       if (!executable) return [];
       seeds.push({
         capability: tool.capability,

@@ -8,6 +8,7 @@ import { parseRuntimeCatalog } from "../src/shared/toolchains/catalog-schema.ts"
 import { findComponentEntrypoint } from "../src/main/toolchains/component-entrypoint.ts";
 import { downloadRuntimeArtifact, hashFile, verifyDownloadedArtifact } from "../src/main/toolchains/downloader.ts";
 import { extractRuntimeArchive } from "../src/main/toolchains/secure-extractor.ts";
+import { darwinCodeDigest } from "../src/main/toolchains/darwin-binary-integrity.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const catalogPath = path.join(root, "build", "toolchains", "core-catalog.json");
@@ -143,6 +144,8 @@ async function prepareTarget(catalog, target) {
       fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
       if (platform !== "win32") fs.chmodSync(destination, 0o755);
       const binary = await hashFile(destination);
+      const darwinCode = platform === "darwin" ? darwinCodeDigest(fs.readFileSync(destination)) : undefined;
+      if (platform === "darwin" && !darwinCode) fail(`${component.id} is not a supported Mach-O executable`);
 
       const componentLicenses = licenseFiles[component.id];
       if (!componentLicenses) fail(`missing license definition for ${component.id}`);
@@ -164,6 +167,7 @@ async function prepareTarget(catalog, target) {
         executable: executableName,
         sha256: binary.sha256,
         bytes: binary.bytes,
+        ...(darwinCode ? { darwinCodeSha256: darwinCode.sha256, darwinCodeBytes: darwinCode.bytes } : {}),
         artifactSha256: variant.sha256,
       });
     }
