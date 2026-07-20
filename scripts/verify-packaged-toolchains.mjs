@@ -22,7 +22,10 @@ verifyLinuxSandbox(layout.executable, expectedPlatform);
 runPackagedStartup(layout.executable, target);
 if (layout.appImage) {
   verifyLinuxAppImageDesktopEntry(layout.appImage);
-  runPackagedStartup(layout.appImage, target, { APPIMAGE_EXTRACT_AND_RUN: "1" });
+  // Extraction mode writes chrome-sandbox into a user-owned temporary directory, so it cannot retain the
+  // root-owned 4755 metadata required by Chromium. The unpacked layout startup above already exercises the
+  // configured SUID sandbox; this second launch verifies the AppImage entry point and production resources.
+  runPackagedStartup(layout.appImage, target, { APPIMAGE_EXTRACT_AND_RUN: "1" }, ["--no-sandbox"]);
 }
 
 console.log(
@@ -156,7 +159,7 @@ function verifyBundledTools(resources, platform, arch) {
   }
 }
 
-function runPackagedStartup(executable, toolTarget, environmentPatch = {}) {
+function runPackagedStartup(executable, toolTarget, environmentPatch = {}, extraArguments = []) {
   const isolated = fs.mkdtempSync(path.join(os.tmpdir(), "pi-packaged-startup-"));
   const userData = path.join(isolated, "user-data");
   const environment = {
@@ -174,7 +177,7 @@ function runPackagedStartup(executable, toolTarget, environmentPatch = {}) {
   try {
     const result = spawnSync(
       executable,
-      [`--user-data-dir=${userData}`, "--validate-packaged-startup", "--disable-gpu"],
+      [...extraArguments, `--user-data-dir=${userData}`, "--validate-packaged-startup", "--disable-gpu"],
       {
         cwd: path.dirname(executable),
         env: environment,
