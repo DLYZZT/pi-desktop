@@ -35,10 +35,19 @@ import type {
   ChannelId,
   ChannelTestSendResult,
 } from "../shared/channel-types";
+import type { ToolCapabilityId, ToolProvider } from "../shared/toolchains/types";
 
 /** Request/response API surface (replaces HTTP routes). */
 export interface Api {
   "host.ping": { params: void; result: { ok: true; ts: number } };
+  "host.toolchain": {
+    params: { cwd: string };
+    result: {
+      inventoryRevision: number;
+      resolutionId: string;
+      capabilities: Partial<Record<ToolCapabilityId, { provider: ToolProvider; version: string }>>;
+    };
+  };
 
   // Sessions & projects
   "sessions.list": {

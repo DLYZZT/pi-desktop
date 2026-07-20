@@ -3,7 +3,8 @@
  * Responsibilities: window lifecycle, menus, tray/badge, deep link,
  * Host supervision, system IPC. No business logic.
  */
-import { app, BrowserWindow, crashReporter, nativeTheme, nativeImage, Notification } from "electron";
+import { app, BrowserWindow, crashReporter, nativeTheme, nativeImage, net, Notification } from "electron";
+import fs from "node:fs";
 import path from "path";
 import { HostManager, getUserDataPath, resolveHostEntry } from "./host-manager";
 import { appendMainLog } from "./logger";
@@ -17,6 +18,12 @@ import { installDesktopIpc } from "./ipc";
 import { createCredentialRequestHandler, CredentialVault } from "./credential-vault";
 import { createProductionUpdateAdapter, isProductionUpdatePlatformEnabled } from "./update-adapter";
 import { createUpdateManager, redactUpdateError, type UpdateManager } from "./update-manager";
+import { ToolchainManager } from "./toolchains/manager";
+import { resolveRuntimeCatalogPath } from "./toolchains/catalog";
+import { resolveBundledCorePaths } from "./toolchains/bundled-core";
+import { isExecutionIntent, type ToolchainSnapshot } from "../shared/toolchains/types";
+import { readLegacyNpmCommand } from "./toolchains/legacy-npm-command";
+import { createElectronRuntimeFetch } from "./toolchains/electron-runtime-fetch";
 
 // Must run before app ready
 registerAppProtocol();
@@ -27,14 +34,67 @@ crashReporter.start({
 });
 
 const isDev = !app.isPackaged;
+const packagedStartupValidation = app.isPackaged && process.argv.includes("--validate-packaged-startup");
+const TOOLCHAIN_FOCUS_RESCAN_TTL_MS = 60_000;
 
 let mainWindow: BrowserWindow | null = null;
 let hostManager: HostManager | null = null;
 let updateManager: UpdateManager | null = null;
+let toolchainManager: ToolchainManager | null = null;
 let isQuitting = false;
 let unreadBadge = 0;
 let pendingDeepLink: string | null = null;
 let lastNotifiedUpdateVersion: string | null = null;
+let lastToolchainFocusScanAt = 0;
+let runningAgentSessionCount = 0;
+let startupRendererReady = false;
+let startupHostReady = false;
+let startupToolchainSnapshot: ToolchainSnapshot | null = null;
+let startupCheckFinished = false;
+let startupCheckTimer: ReturnType<typeof setTimeout> | null = null;
+
+function finishPackagedStartupValidation(error?: string): void {
+  if (!packagedStartupValidation || startupCheckFinished) return;
+  if (!error) {
+    const snapshot = startupToolchainSnapshot;
+    if (!startupRendererReady || !startupHostReady || !snapshot?.publicState.coreReady) return;
+    if ((hostManager?.getToolchainAckRevision() ?? -1) < snapshot.revision) return;
+    for (const capability of ["search.rg", "search.fd"] as const) {
+      const candidates = snapshot.publicState.capabilities[capability]?.candidates ?? [];
+      if (!candidates.some((candidate) => candidate.provider === "bundled" && candidate.health === "healthy")) return;
+    }
+  }
+
+  startupCheckFinished = true;
+  if (startupCheckTimer) clearTimeout(startupCheckTimer);
+  try {
+    const report = error
+      ? { ok: false, error }
+      : {
+          ok: true,
+          appVersion: app.getVersion(),
+          platformArch: `${process.platform}-${process.arch}`,
+          revision: startupToolchainSnapshot?.revision,
+          rendererReady: startupRendererReady,
+          hostReady: startupHostReady,
+          hostAckRevision: hostManager?.getToolchainAckRevision(),
+          bundledSearch: ["search.rg", "search.fd"],
+        };
+    fs.mkdirSync(app.getPath("userData"), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(app.getPath("userData"), "packaged-startup-check.json"),
+      `${JSON.stringify(report, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+  } catch (writeError) {
+    error ??= writeError instanceof Error ? writeError.message : "Could not write packaged startup report";
+  }
+  isQuitting = true;
+  updateManager?.stopAutomaticChecks();
+  hostManager?.stop();
+  for (const win of BrowserWindow.getAllWindows()) win.destroy();
+  app.exit(error ? 1 : 0);
+}
 
 function getMainWindow(): BrowserWindow | null {
   return mainWindow;
@@ -115,6 +175,24 @@ function createWindow(): BrowserWindow {
     },
   });
   mainWindow = win;
+  win.on("focus", () => {
+    const manager = toolchainManager;
+    const now = Date.now();
+    if (!manager || now - lastToolchainFocusScanAt < TOOLCHAIN_FOCUS_RESCAN_TTL_MS) return;
+    lastToolchainFocusScanAt = now;
+    void manager.rescan().catch((error) => {
+      appendMainLog(`toolchain focus rescan failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  });
+  if (packagedStartupValidation) {
+    win.webContents.once("did-finish-load", () => {
+      startupRendererReady = true;
+      finishPackagedStartupValidation();
+    });
+    win.webContents.once("did-fail-load", (_event, code, description) => {
+      finishPackagedStartupValidation(`Renderer failed to load (${code}): ${description}`);
+    });
+  }
   if (unreadBadge > 0) applyBadgeCount(unreadBadge);
   return win;
 }
@@ -137,6 +215,12 @@ function openUpdateSettings(checkForUpdates: boolean): void {
 
 void app.whenReady().then(async () => {
   appendMainLog(`app ready packaged=${app.isPackaged}`);
+  if (packagedStartupValidation) {
+    startupCheckTimer = setTimeout(
+      () => finishPackagedStartupValidation("Packaged startup validation timed out"),
+      45_000,
+    );
+  }
 
   const credentialVault = new CredentialVault(getUserDataPath("channels.secrets.json"));
   const ui = loadUiState();
@@ -184,6 +268,42 @@ void app.whenReady().then(async () => {
     },
     log: (level, message) => appendMainLog(`updater[${level}] ${message}`),
   });
+  const bundledCorePaths = resolveBundledCorePaths({
+    isPackaged: app.isPackaged,
+    resourcesRoot: process.resourcesPath,
+  });
+  const toolchainHome = app.getPath("home");
+  toolchainManager = new ToolchainManager({
+    platform: process.platform,
+    arch: process.arch,
+    env: process.env,
+    homeDir: toolchainHome,
+    tempRoot: app.getPath("temp"),
+    userDataRoot: app.getPath("userData"),
+    resourcesRoot: process.resourcesPath,
+    catalogPath: resolveRuntimeCatalogPath({
+      isPackaged: app.isPackaged,
+      resourcesRoot: process.resourcesPath,
+    }),
+    coreCatalogPath: bundledCorePaths.catalogPath,
+    bundledCoreRoot: bundledCorePaths.coreRoot,
+    // Chromium networking follows the user's system proxy/PAC and OS trust
+    // configuration. Redirects are synchronously allowlisted before following.
+    fetchImpl: createElectronRuntimeFetch((options) => net.request(options)),
+    legacyNpmCommand: readLegacyNpmCommand({ homeDir: toolchainHome, env: process.env }),
+    isRuntimeInUse: () => runningAgentSessionCount > 0,
+  });
+  toolchainManager.subscribe((snapshot) => {
+    if (packagedStartupValidation) startupToolchainSnapshot = snapshot;
+    appendMainLog(
+      `toolchain scan revision=${snapshot.revision} candidates=${snapshot.candidates.length} ready=${snapshot.publicState.coreReady}`,
+    );
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send("toolchains:state", snapshot.publicState);
+    }
+    hostManager?.setToolchainSnapshot(snapshot);
+    finishPackagedStartupValidation();
+  });
   updateManager.subscribe((state) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send("update:state", state);
@@ -219,6 +339,14 @@ void app.whenReady().then(async () => {
     getMainWindow,
     getUnreadBadge: () => unreadBadge,
     applyBadgeCount,
+    getToolchainState: (cwd) =>
+      cwd ? toolchainManager!.getPublicStateForProject(cwd) : toolchainManager!.getPublicState(),
+    rescanToolchains: async (cwd) => {
+      await toolchainManager!.rescan({ cwd });
+      return cwd ? toolchainManager!.getPublicStateForProject(cwd) : toolchainManager!.getPublicState();
+    },
+    performToolchainAction: (request) => toolchainManager!.performAction(request),
+    chooseCustomTool: (capability, executable) => toolchainManager!.registerCustomTool(capability, executable),
     setChannelCredential: (payload) =>
       credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
     updateManager,
@@ -233,10 +361,36 @@ void app.whenReady().then(async () => {
   }
 
   hostManager = new HostManager(resolveHostEntry());
-  hostManager.setRequestHandler(createCredentialRequestHandler(credentialVault));
+  hostManager.setToolchainSnapshot(toolchainManager.getSnapshot());
+  const credentialRequestHandler = createCredentialRequestHandler(credentialVault);
+  hostManager.setRequestHandler(async (method, params) => {
+    if (method.startsWith("channelSecrets.")) return credentialRequestHandler(method, params);
+    if (method === "toolchain.getSnapshot") return toolchainManager!.getSnapshot();
+    if (method === "toolchain.resolve") {
+      const body = (params ?? {}) as { cwd?: unknown; intent?: unknown; trusted?: unknown };
+      if (
+        typeof body.cwd !== "string" ||
+        !path.isAbsolute(body.cwd) ||
+        body.cwd.length > 4_096 ||
+        /[\0\r\n]/.test(body.cwd) ||
+        !isExecutionIntent(body.intent) ||
+        typeof body.trusted !== "boolean"
+      ) {
+        throw new Error("Invalid Host toolchain resolution request");
+      }
+      return toolchainManager!.resolveForProject(body.cwd, { intent: body.intent, trusted: body.trusted });
+    }
+    throw new Error(`Unsupported Host request: ${method}`);
+  });
   hostManager.setStatusListener((status, detail) => {
     appendMainLog(`host status=${status} ${detail ?? ""}`);
+    if (packagedStartupValidation) {
+      startupHostReady = status === "ready";
+      if (status === "crashed") finishPackagedStartupValidation(detail ?? "Agent Host crashed");
+      else finishPackagedStartupValidation();
+    }
     if (status !== "ready") {
+      runningAgentSessionCount = 0;
       setTrayRunningCount(0, getMainWindow);
       updateManager?.setRunningSessionCount(0);
     }
@@ -252,8 +406,10 @@ void app.whenReady().then(async () => {
   });
 
   hostManager.setMessageListener((msg) => {
+    if (packagedStartupValidation && msg.type === "toolchain:ack") finishPackagedStartupValidation();
     if (msg.type === "running-sessions") {
       const ids = (msg.sessionIds as string[]) ?? [];
+      runningAgentSessionCount = ids.length;
       setTrayRunningCount(ids.length, getMainWindow);
       updateManager?.setRunningSessionCount(ids.length);
     } else if (msg.type === "agent-end") {
@@ -287,6 +443,7 @@ void app.whenReady().then(async () => {
   hostManager.start();
 
   createWindow();
+  void toolchainManager.initialize();
   updateManager.startAutomaticChecks();
 
   app.on("activate", () => {

@@ -3,9 +3,13 @@ import { sendAgentCommand } from "@/lib/agent-client";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import type { PluginPackageInfo, PluginsResponse } from "@/lib/api-types";
+import { CapabilityRequired, parseCapabilityIssue, type CapabilityIssue } from "@/components/CapabilityRequired";
 
 type PluginScope = PluginPackageInfo["scope"];
 type PluginAction = "install" | "remove" | "update" | "disable" | "enable";
+type PendingCapabilityOperation =
+  | { kind: "action"; action: PluginAction; pkg: PluginPackageInfo }
+  | { kind: "install"; source: string; scope: PluginScope };
 
 function shortenPath(path: string): string {
   return path.replace(/^\/(?:Users|home)\/[^/]+/, "~");
@@ -567,6 +571,8 @@ export function PluginsConfig({
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [capabilityIssue, setCapabilityIssue] = useState<CapabilityIssue | null>(null);
+  const [pendingCapabilityOperation, setPendingCapabilityOperation] = useState<PendingCapabilityOperation | null>(null);
 
   const packages = useMemo(() => data?.packages ?? [], [data?.packages]);
   const selectedPackage = packages.find((pkg) => packageKey(pkg) === selected) ?? null;
@@ -607,14 +613,28 @@ export function PluginsConfig({
       setBusyKey(`${action}:${key}`);
       setActionError(null);
       setActionMessage(null);
+      setCapabilityIssue(null);
       try {
         const res = await fetch("/api/plugins", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action, source: pkg.source, scope: pkg.scope, cwd }),
         });
-        const next = (await res.json()) as PluginsResponse & { error?: string };
-        if (!res.ok || next.error) throw new Error(next.error ?? `HTTP ${res.status}`);
+        const next = (await res.json()) as PluginsResponse & {
+          error?: string;
+          code?: string;
+          capability?: string;
+        };
+        if (!res.ok || next.error) {
+          const issue = parseCapabilityIssue(next);
+          if (issue) {
+            setCapabilityIssue(issue);
+            setPendingCapabilityOperation({ kind: "action", action, pkg });
+            return;
+          }
+          throw new Error(safePluginError(next.error, `HTTP ${res.status}`));
+        }
+        setPendingCapabilityOperation(null);
         setData(next);
         if (action === "remove") {
           setSelected(next.packages[0] ? packageKey(next.packages[0]) : null);
@@ -630,7 +650,52 @@ export function PluginsConfig({
           setActionMessage(messages[action]);
         }
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : String(err));
+        setActionError(safePluginError(err instanceof Error ? err.message : String(err), "Plugin action failed."));
+      } finally {
+        setBusyKey(null);
+      }
+    },
+    [cwd],
+  );
+
+  const installPluginSource = useCallback(
+    async (source: string, scope: PluginScope) => {
+      const key = `${scope}\0${source}`;
+      setBusyKey(`install:${key}`);
+      setActionError(null);
+      setActionMessage(null);
+      setCapabilityIssue(null);
+      try {
+        const res = await fetch("/api/plugins", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "install", source, scope, cwd }),
+        });
+        const next = (await res.json()) as PluginsResponse & {
+          error?: string;
+          code?: string;
+          capability?: string;
+        };
+        if (!res.ok || next.error) {
+          const issue = parseCapabilityIssue(next);
+          if (issue) {
+            setCapabilityIssue(issue);
+            setPendingCapabilityOperation({ kind: "install", source, scope });
+            return;
+          }
+          throw new Error(safePluginError(next.error, `HTTP ${res.status}`));
+        }
+        setPendingCapabilityOperation(null);
+        setData(next);
+        const installed = findInstalledPackage(next.packages, source, scope);
+        setSelected(installed ? packageKey(installed) : key);
+        setAddMode(false);
+        setInstallSource("");
+        setActionMessage("Package installed.");
+      } catch (err) {
+        setActionError(
+          safePluginError(err instanceof Error ? err.message : String(err), "Plugin installation failed."),
+        );
       } finally {
         setBusyKey(null);
       }
@@ -641,30 +706,16 @@ export function PluginsConfig({
   const installPlugin = useCallback(async () => {
     const source = installSource.trim();
     if (!source) return;
-    const key = `${installScope}\0${source}`;
-    setBusyKey(`install:${key}`);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      const res = await fetch("/api/plugins", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "install", source, scope: installScope, cwd }),
-      });
-      const next = (await res.json()) as PluginsResponse & { error?: string };
-      if (!res.ok || next.error) throw new Error(next.error ?? `HTTP ${res.status}`);
-      setData(next);
-      const installed = findInstalledPackage(next.packages, source, installScope);
-      setSelected(installed ? packageKey(installed) : key);
-      setAddMode(false);
-      setInstallSource("");
-      setActionMessage("Package installed.");
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusyKey(null);
-    }
-  }, [cwd, installScope, installSource]);
+    await installPluginSource(source, installScope);
+  }, [installPluginSource, installScope, installSource]);
+
+  const retryCapabilityOperation = useCallback(async () => {
+    const pending = pendingCapabilityOperation;
+    if (!pending) return;
+    setCapabilityIssue(null);
+    if (pending.kind === "action") await runAction(pending.action, pending.pkg);
+    else await installPluginSource(pending.source, pending.scope);
+  }, [installPluginSource, pendingCapabilityOperation, runAction]);
 
   const reloadSession = useCallback(async () => {
     if (!sessionId) return;
@@ -934,6 +985,19 @@ export function PluginsConfig({
           </div>
 
           <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+            {capabilityIssue && pendingCapabilityOperation && (
+              <div style={{ marginBottom: 14 }}>
+                <CapabilityRequired
+                  issue={capabilityIssue}
+                  cwd={cwd}
+                  onContinue={retryCapabilityOperation}
+                  onCancel={() => {
+                    setCapabilityIssue(null);
+                    setPendingCapabilityOperation(null);
+                  }}
+                />
+              </div>
+            )}
             {addMode ? (
               <AddPluginPanel
                 cwd={cwd}
@@ -1019,4 +1083,12 @@ export function PluginsConfig({
       </div>
     </div>
   );
+}
+
+function safePluginError(message: string | undefined, fallback: string): string {
+  if (!message) return fallback;
+  if (/ENOENT|spawn\s+(?:npm|npx|node|git)|not found/i.test(message)) {
+    return "A required developer tool is unavailable. Rescan tools or install the matching Essentials profile.";
+  }
+  return message;
 }

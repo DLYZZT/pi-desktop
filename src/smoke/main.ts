@@ -10,6 +10,9 @@ import { runSmokeHostChecks } from "./host-checks";
 import { createCredentialRequestHandler, CredentialVault } from "../main/credential-vault";
 import { createProductionUpdateAdapter } from "../main/update-adapter";
 import { createUpdateManager, type UpdateManager } from "../main/update-manager";
+import { ToolchainManager } from "../main/toolchains/manager";
+import { resolveRuntimeCatalogPath } from "../main/toolchains/catalog";
+import { isExecutionIntent } from "../shared/toolchains/types";
 
 registerAppProtocol();
 crashReporter.start({
@@ -45,11 +48,40 @@ void app.whenReady().then(async () => {
     currentVersion: app.getVersion(),
     isPackaged: false,
   });
+  const toolchainManager = new ToolchainManager({
+    homeDir: app.getPath("home"),
+    tempRoot: app.getPath("temp"),
+    userDataRoot: app.getPath("userData"),
+    resourcesRoot: process.resourcesPath,
+    catalogPath: resolveRuntimeCatalogPath({
+      isPackaged: false,
+      resourcesRoot: process.resourcesPath,
+    }),
+  });
+  await toolchainManager.initialize();
 
   hostManager = new HostManager(resolveHostEntry(runtimeMainDirectory));
   const smokeVaultPath = path.join(app.getPath("userData"), "smoke-channel-secrets.json");
   const credentialVault = new CredentialVault(smokeVaultPath);
-  hostManager.setRequestHandler(createCredentialRequestHandler(credentialVault));
+  hostManager.setToolchainSnapshot(toolchainManager.getSnapshot());
+  const credentialRequestHandler = createCredentialRequestHandler(credentialVault);
+  hostManager.setRequestHandler(async (method, params) => {
+    if (method.startsWith("channelSecrets.")) return credentialRequestHandler(method, params);
+    if (method === "toolchain.getSnapshot") return toolchainManager.getSnapshot();
+    if (method === "toolchain.resolve") {
+      const body = (params ?? {}) as { cwd?: unknown; intent?: unknown; trusted?: unknown };
+      if (
+        typeof body.cwd !== "string" ||
+        !path.isAbsolute(body.cwd) ||
+        !isExecutionIntent(body.intent) ||
+        typeof body.trusted !== "boolean"
+      ) {
+        throw new Error("Invalid smoke toolchain request");
+      }
+      return toolchainManager.resolveForProject(body.cwd, { intent: body.intent, trusted: body.trusted });
+    }
+    throw new Error(`Unsupported smoke Host request: ${method}`);
+  });
   if (safeStorage.isEncryptionAvailable()) {
     const key = "channel:telegram:smoke-test";
     credentialVault.set(key, {
@@ -75,6 +107,10 @@ void app.whenReady().then(async () => {
     getMainWindow: () => smokeWindow,
     getUnreadBadge: () => 0,
     applyBadgeCount: () => {},
+    getToolchainState: () => toolchainManager.getPublicState(),
+    rescanToolchains: async (cwd) => (await toolchainManager.rescan({ cwd })).publicState,
+    performToolchainAction: (request) => toolchainManager.performAction(request),
+    chooseCustomTool: (capability, executable) => toolchainManager.registerCustomTool(capability, executable),
     setChannelCredential: (payload) =>
       credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
     updateManager,

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import type { SkillSearchResult } from "@/lib/api-types";
+import { CapabilityRequired, parseCapabilityIssue, type CapabilityIssue } from "@/components/CapabilityRequired";
 
 interface Skill {
   name: string;
@@ -252,6 +253,8 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
   const [searchError, setSearchError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [capabilityIssue, setCapabilityIssue] = useState<CapabilityIssue | null>(null);
+  const [pendingInstallPackage, setPendingInstallPackage] = useState<string | null>(null);
   const [installedPkgs, setInstalledPkgs] = useState<Set<string>>(new Set());
   const [scope, setScope] = useState<"global" | "project">("global");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -292,21 +295,34 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
     async (pkg: string) => {
       setInstalling(pkg);
       setInstallError(null);
+      setCapabilityIssue(null);
       try {
         const res = await fetch("/api/skills/install", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ package: pkg, scope, cwd }),
         });
-        const d = (await res.json()) as { success?: boolean; error?: string };
+        const d = (await res.json()) as {
+          success?: boolean;
+          error?: string;
+          code?: string;
+          capability?: string;
+        };
         if (!res.ok || d.error) {
-          setInstallError(d.error ?? `HTTP ${res.status}`);
+          const issue = parseCapabilityIssue(d);
+          if (issue) {
+            setPendingInstallPackage(pkg);
+            setCapabilityIssue(issue);
+          } else {
+            setInstallError(safeInstallError(d.error, `HTTP ${res.status}`));
+          }
           return;
         }
+        setPendingInstallPackage(null);
         setInstalledPkgs((prev) => new Set(prev).add(pkg));
         onInstalled();
       } catch (e) {
-        setInstallError(String(e));
+        setInstallError(safeInstallError(e instanceof Error ? e.message : String(e), "Skill installation failed."));
       } finally {
         setInstalling(null);
       }
@@ -420,6 +436,17 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
 
         {/* Errors */}
         {searchError && <div style={{ fontSize: 12, color: "#f87171" }}>{searchError}</div>}
+        {capabilityIssue && pendingInstallPackage && (
+          <CapabilityRequired
+            issue={capabilityIssue}
+            cwd={cwd}
+            onContinue={() => install(pendingInstallPackage)}
+            onCancel={() => {
+              setCapabilityIssue(null);
+              setPendingInstallPackage(null);
+            }}
+          />
+        )}
         {installError && <div style={{ fontSize: 12, color: "#f87171", wordBreak: "break-word" }}>{installError}</div>}
       </div>
 
@@ -540,6 +567,14 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
       )}
     </div>
   );
+}
+
+function safeInstallError(message: string | undefined, fallback: string): string {
+  if (!message) return fallback;
+  if (/ENOENT|spawn\s+(?:npm|npx|node)|not found/i.test(message)) {
+    return "A required developer tool is unavailable. Rescan tools or install JavaScript Essentials.";
+  }
+  return message;
 }
 
 export function SkillsConfig({

@@ -24,6 +24,7 @@ export default defineConfig([
     // ESM — pi-coding-agent only exports "import" condition
     entry: {
       "agent-host": "src/agent-host/index.ts",
+      "plugin-worker": "src/agent-host/plugin-worker.ts",
     },
     format: ["esm"],
     platform: "node",

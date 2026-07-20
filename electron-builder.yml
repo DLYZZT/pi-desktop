@@ -26,6 +26,18 @@ files:
 
 asar: true
 
+# Signed runtime catalogs plus the current target's small core search tools.
+# Managed Node/Python/Git archives remain download-on-consent and are never shipped.
+extraResources:
+  - from: build/THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+  - from: build/toolchains/runtime-catalog.json
+    to: toolchains/runtime-catalog.json
+  - from: build/toolchains/core-catalog.json
+    to: toolchains/core-catalog.json
+  - from: build/toolchains/core/${platform}-${arch}
+    to: toolchains/core/${platform}-${arch}
+
 mac:
   category: public.app-category.developer-tools
   hardenedRuntime: true
@@ -58,6 +70,11 @@ nsis:
   shortcutName: Pi Agent Desktop
 
 linux:
+  executableName: pi-agent-desktop
+  # Override electron-builder's unsafe default AppImage argument. Keep Chromium
+  # sandboxing enabled and use an app-owned inert launch marker instead.
+  executableArgs:
+    - --appimage-desktop-launch
   target:
     - target: AppImage
       arch:

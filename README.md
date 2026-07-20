@@ -11,14 +11,33 @@
 [![Desktop Build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml/badge.svg)](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml)
 ![Electron 43](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=0B1F2A)
-![macOS & Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
+![macOS, Windows & Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 [English](./README.en.md) · **简体中文**
 
-[功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [参与开发](#参与开发) · [路线图](#路线图)
+[截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [参与开发](#参与开发) · [路线图](#路线图)
 
 </div>
+
+## 应用截图
+
+![Pi Agent Desktop 主工作区：会话、Agent 回复与代码预览](./images/app-workspace.jpg)
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="./images/app-skills.jpg" alt="Pi Agent Desktop 技能管理" />
+      <br />
+      <sub>技能浏览、启用与内容编辑</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="./images/app-developer-tools.jpg" alt="Pi Agent Desktop 开发工具管理" />
+      <br />
+      <sub>系统工具发现与托管运行时管理</sub>
+    </td>
+  </tr>
+</table>
 
 ## 核心能力
 
@@ -51,14 +70,11 @@
 - 个人微信二维码登录、Telegram BotFather token，以及飞书/Lark 企业自建应用 App ID/App Secret 接入
 - 私聊配对，以及 Telegram、飞书/Lark 群聊白名单与 @触发控制；微信群尚未开放，默认不授予远程工具权限
 - 外部对话默认使用独立 Pi Session，也可从当前会话顶部快速绑定并与 UI 共用上下文；绑定列表会在窗口内自动定位，长列表支持内部滚动
-- 模型用户正文只包含 IM 实际文本；桌面端用本地黑、微信绿、Telegram 蓝、飞书/Lark 橙的用户气泡区分来源，不向模型附加用户或群聊标识
-- long polling/WebSocket、断线重连、事件去重、cursor/offset checkpoint 和后台运行
+- 模型用户正文只包含 IM 实际文本；桌面端用本地黑、微信绿、Telegram 蓝、飞书/Lark 橙的用户气泡区分来源
 - 微信、Telegram 与飞书/Lark 支持入站图片、文件和语音；飞书/Lark 还支持视频资源，图片直接作为多模态输入，其他附件进入隔离暂存区，微信 SILK 语音优先转为 WAV
-- 用户明确索取文件时，Agent 可回传当前工作区内在最终回复中明确链接的新文件或既有文件；单附件 20 MiB、单消息 4 个，禁止工作区外路径和 symlink escape
-- Telegram 私聊支持 Rich Messages 流式预览，最终回复保留 Markdown，并折叠思考与工具详情；群聊发送富文本最终消息
-- 飞书/Lark 通过官方 SDK 长连接收取私聊、受控群聊和 thread，并使用 Card JSON 2.0 渲染 Markdown、流式显示思考/工具调用、最终折叠过程；缺少 CardKit 权限时安全回退
+- Telegram 私聊支持流式预览，并折叠思考与工具详情
+- 飞书/Lark 通过官方 SDK 长连接收取私聊、受控群聊和 thread，并使用 Card 渲染 Markdown、流式显示思考/工具调用、最终折叠过程
 - Telegram 与飞书/Lark 在原消息上显示回合 Reaction 状态；飞书单聊可用原生菜单触发 `/help`、`/status`、`/new`、`/compact` 和 `/reload`
-- 渠道凭证由 Electron `safeStorage` 加密；已保存 token/App Secret 不向 Renderer 回传
 
 ### 为长期运行而设计
 
@@ -74,19 +90,22 @@
 
 Pi Agent Desktop 已内置 Pi Coding Agent 运行时。普通用户无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。
 
-应用会读取 `~/.pi/agent/` 中的会话与配置。如果你已经使用 Pi CLI，可以直接复用现有数据，无需迁移；此前没有使用过 Pi CLI 也不影响使用。在线安装部分 Skills 或 npm Plugins 时，系统可能需要提供 Node.js 和 npm。
+应用会读取 `~/.pi/agent/` 中的会话与配置。如果你已经使用 Pi CLI，可以直接复用现有数据，无需迁移；此前没有使用过 Pi CLI 也不影响使用。
+
+Pi Desktop 会先发现并验证用户已经安装的 Node.js/npm、Python、Git、Bash、uv、jq 和 Bun；内置的 `rg`/`fd` 保证离线搜索可用。
 
 ### 桌面安装包系统要求
 
 - macOS 12 Monterey 或更高版本，支持 Apple Silicon（arm64）和 Intel（x64）
 - Windows 10 或 Windows 11 64 位（x64）；推荐使用仍在常规安全支持期内的 Windows 11
+- Linux 64 位（x64）AppImage，需要现代 glibc 发行版和可用的桌面图形会话；当前采用手工下载安装更新
 - 暂不提供 Windows 32 位（x86）或 Windows ARM64 安装包
 
 ### 源码开发环境要求
 
 - Node.js 22.19 或更高版本
 - npm（随 Node.js 安装即可）
-- macOS 或 Windows；Linux 可用于开发，但暂未提供正式构建产物
+- macOS、Windows 或 Linux
 
 ### 本地运行
 
@@ -97,17 +116,12 @@ npm ci
 npm run dev
 ```
 
-Electron 43 不再在 `npm ci` 阶段下载 Electron 二进制；首次执行真正需要 Electron 的命令（例如 `npm run dev` 或 `npm run smoke`）时会按需下载。需要在运行前确定性预取时可执行 `npx install-electron --no`；Linux CI 的完整质量门会先显式执行该命令，再配置 `chrome-sandbox` 权限并运行 `npm run verify`。
-
-### CI 与发布构建
-
-`main` push 只运行 Linux、macOS、Windows 测试与完整质量门，不生成安装包。Pull Request 和手动触发的 workflow 可以生成以下临时构建产物：
+### 构建
 
 - macOS Apple Silicon（arm64）：DMG + ZIP
 - macOS Intel（x64）：DMG + ZIP
 - Windows（x64）：NSIS 安装程序
-
-可以在 [GitHub Actions](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml) 的成功构建中下载临时 Artifacts，产物保留 14 天。`v*` tag 的 release job 会使用受保护凭据签名并公证 macOS 包，同时生成 Windows x64 NSIS 正式安装包；Draft Release 会同时包含两个平台的安装包、blockmap 和更新元数据，仍需人工验收后公开发布。
+- Linux（x64）：AppImage
 
 ## 架构设计
 
@@ -189,7 +203,7 @@ npm run verify
 - [x] Windows x64 正式 Release 资产管线（当前不配置代码签名）
 - [x] 首个同时包含 macOS 与 Windows 正式资产的 Release 验收（v0.1.1）
 - [x] 实现主进程稳定版检查、用户确认下载、重启安装和设置界面
-- [ ] 完成 updater-enabled 基线到更高版本的 macOS 与 Windows 端到端升级验证
+- [x] 完成 updater-enabled 基线到更高版本的 macOS 与 Windows 端到端升级验证
 - [ ] 扩充跨平台 E2E 测试与发布前检查
 
 ## 与 Pi 生态的关系

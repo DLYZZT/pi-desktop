@@ -21,8 +21,9 @@ import type {
   PluginsResponse,
 } from "../shared/api-types";
 import { RpcError } from "../contract/types";
-
-type PluginAction = "install" | "remove" | "update" | "disable" | "enable";
+import { toolchainRuntime } from "./toolchain-runtime";
+import { runPluginWorker } from "./plugin-worker-client";
+import type { PluginActionBody } from "./plugin-worker-protocol";
 
 function emptyCounts(): PluginResourceCounts {
   return { extensions: 0, skills: 0, prompts: 0, themes: 0 };
@@ -75,6 +76,32 @@ function clearDisabledBackup(source: string, scope: PluginScope): void {
 
 function getPackageSource(entry: PackageSource): string {
   return typeof entry === "string" ? entry : entry.source;
+}
+
+function withEphemeralNpmCommand(settingsManager: SettingsManager, npmCommand?: string[]): SettingsManager {
+  const command = npmCommand?.length ? [...npmCommand] : undefined;
+  return new Proxy(settingsManager, {
+    get(target, property) {
+      if (property === "getNpmCommand") return () => (command ? [...command] : undefined);
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function configuredSources(settingsManager: SettingsManager): string[] {
+  return [
+    ...(settingsManager.getGlobalSettings().packages ?? []),
+    ...(settingsManager.getProjectSettings().packages ?? []),
+  ].map(getPackageSource);
+}
+
+function isNpmSource(source: string): boolean {
+  return source.startsWith("npm:");
+}
+
+function isGitSource(source: string): boolean {
+  return source.startsWith("git:") || /^(?:https?|ssh|git):\/\//i.test(source) || /^[^@\s]+@[^:\s]+:.+/.test(source);
 }
 
 function isDisabledPackage(entry: PackageSource): boolean {
@@ -237,8 +264,9 @@ function collectResources(paths: ResolvedPaths) {
   return { countsByPackage, resourcesByPackage, totals };
 }
 
-export async function readPlugins(cwd: string): Promise<PluginsResponse> {
-  const settingsManager = SettingsManager.create(cwd, getAgentDir());
+export async function readPlugins(cwd: string, npmCommand?: string[]): Promise<PluginsResponse> {
+  const rawSettingsManager = SettingsManager.create(cwd, getAgentDir());
+  const settingsManager = withEphemeralNpmCommand(rawSettingsManager, npmCommand);
   const packageManager = new DefaultPackageManager({
     cwd,
     agentDir: getAgentDir(),
@@ -301,16 +329,36 @@ export async function readPlugins(cwd: string): Promise<PluginsResponse> {
   return { packages, totals, diagnostics };
 }
 
-export async function applyPluginAction(body: {
-  action: PluginAction;
-  source?: string;
-  scope?: PluginScope;
-  cwd: string;
-}): Promise<PluginsResponse> {
+export async function applyPluginAction(body: PluginActionBody): Promise<PluginsResponse> {
+  validatePluginActionBody(body);
+  if (body.action === "disable" || body.action === "enable") {
+    return applyPluginActionInProcess(body);
+  }
+
+  const context = await toolchainRuntime.createExecutionContext({ cwd: body.cwd, intent: "plugin-install" });
+  const settingsManager = SettingsManager.create(body.cwd, getAgentDir());
+  const sources = body.source ? [body.source] : configuredSources(settingsManager);
+  const needsNpm = (body.action === "install" || body.action === "update") && sources.some(isNpmSource);
+  const needsGit = (body.action === "install" || body.action === "update") && sources.some(isGitSource);
+  if (needsNpm) toolchainRuntime.requireFromContext("js.npm", context);
+  if (needsGit) toolchainRuntime.requireFromContext("vcs.git", context);
+  const npm = context.commands["js.npm"];
+  const npmCommand = npm ? [npm.executable, ...npm.argvPrefix] : undefined;
+  return runPluginWorker({ body, npmCommand }, context);
+}
+
+function validatePluginActionBody(body: PluginActionBody): void {
   if (!body.cwd) throw new RpcError({ code: "BAD_REQUEST", message: "cwd required" });
   if (!body.action) throw new RpcError({ code: "BAD_REQUEST", message: "action required" });
+}
 
-  const settingsManager = SettingsManager.create(body.cwd, getAgentDir());
+export async function applyPluginActionInProcess(
+  body: PluginActionBody,
+  npmCommand?: string[],
+): Promise<PluginsResponse> {
+  validatePluginActionBody(body);
+  const rawSettingsManager = SettingsManager.create(body.cwd, getAgentDir());
+  const settingsManager = withEphemeralNpmCommand(rawSettingsManager, npmCommand);
   const packageManager = new DefaultPackageManager({
     cwd: body.cwd,
     agentDir: getAgentDir(),
@@ -340,5 +388,5 @@ export async function applyPluginAction(body: {
     throw new RpcError({ code: "BAD_REQUEST", message: `Unsupported action: ${body.action}` });
   }
 
-  return readPlugins(body.cwd);
+  return readPlugins(body.cwd, npmCommand);
 }

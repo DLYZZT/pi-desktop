@@ -1,0 +1,267 @@
+{
+  "schemaVersion": 2,
+  "revision": 3,
+  "components": [
+    {
+      "id": "node-lts",
+      "version": "24.18.0",
+      "provides": ["js.node", "js.npm", "js.npx"],
+      "license": {
+        "name": "Node.js license",
+        "url": "https://github.com/nodejs/node/blob/v24.18.0/LICENSE"
+      },
+      "variants": [
+        {
+          "platform": "darwin",
+          "arch": "arm64",
+          "url": "https://nodejs.org/dist/v24.18.0/node-v24.18.0-darwin-arm64.tar.gz",
+          "sha256": "e1a97e14c99c803e96c7339403282ea05a499c32f8d83defe9ef5ec66f979ed1",
+          "downloadBytes": 52087559,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "darwin",
+          "arch": "x64",
+          "url": "https://nodejs.org/dist/v24.18.0/node-v24.18.0-darwin-x64.tar.gz",
+          "sha256": "dfd0dbd3e721503434df7b7205e719f61b3a3a31b2bcf9729b8b91fea240f080",
+          "downloadBytes": 53282687,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "win32",
+          "arch": "x64",
+          "url": "https://nodejs.org/dist/v24.18.0/node-v24.18.0-win-x64.zip",
+          "sha256": "0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821",
+          "downloadBytes": 37176245,
+          "archive": "zip",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "linux",
+          "arch": "x64",
+          "url": "https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.gz",
+          "sha256": "783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8",
+          "downloadBytes": 57224421,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        }
+      ]
+    },
+    {
+      "id": "cpython",
+      "version": "3.14.6+20260623",
+      "provides": ["python.interpreter"],
+      "license": {
+        "name": "python-build-standalone licensing",
+        "url": "https://gregoryszorc.com/docs/python-build-standalone/main/running.html#licensing"
+      },
+      "variants": [
+        {
+          "platform": "darwin",
+          "arch": "arm64",
+          "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260623/cpython-3.14.6%2B20260623-aarch64-apple-darwin-install_only.tar.gz",
+          "sha256": "44f31db9afd16f714194580f2362e66d8b1784bf3a3e2d0ac86e7b392f32d75b",
+          "downloadBytes": 26167256,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "darwin",
+          "arch": "x64",
+          "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260623/cpython-3.14.6%2B20260623-x86_64-apple-darwin-install_only.tar.gz",
+          "sha256": "ad7e98f99975051ac4831c7062e6446b4fa21d04bfe112f3b60ef279dab4f4c5",
+          "downloadBytes": 26110707,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "win32",
+          "arch": "x64",
+          "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260623/cpython-3.14.6%2B20260623-x86_64-pc-windows-msvc-install_only.tar.gz",
+          "sha256": "50ca267042ac875f13ea9191799a9ff57b08154dc60a261424f66996f4d5a651",
+          "downloadBytes": 49216332,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "linux",
+          "arch": "x64",
+          "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260623/cpython-3.14.6%2B20260623-x86_64-unknown-linux-gnu-install_only.tar.gz",
+          "sha256": "3d943d8b4360823959012d7e9f4c755256ac1e9c04b609c24894a1b480736e36",
+          "downloadBytes": 127906094,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        }
+      ]
+    },
+    {
+      "id": "uv",
+      "version": "0.11.29",
+      "provides": ["python.uv", "python.uvx"],
+      "license": {
+        "name": "Apache-2.0 OR MIT",
+        "url": "https://github.com/astral-sh/uv/blob/0.11.29/LICENSE-MIT"
+      },
+      "variants": [
+        {
+          "platform": "darwin",
+          "arch": "arm64",
+          "url": "https://github.com/astral-sh/uv/releases/download/0.11.29/uv-aarch64-apple-darwin.tar.gz",
+          "sha256": "61c04acc52a33ef0f331e494bdfbedcdb6c26c6970c022ed3699e5860f8930e3",
+          "downloadBytes": 22496145,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "darwin",
+          "arch": "x64",
+          "url": "https://github.com/astral-sh/uv/releases/download/0.11.29/uv-x86_64-apple-darwin.tar.gz",
+          "sha256": "c4c4de482da9ccdd076dc4fb5cfe7b740609029385c72f58606be3153602387d",
+          "downloadBytes": 24120839,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "win32",
+          "arch": "x64",
+          "url": "https://github.com/astral-sh/uv/releases/download/0.11.29/uv-x86_64-pc-windows-msvc.zip",
+          "sha256": "a047d55651bc3e0ca24595b25ec4cfcb10f9dca9fb56514e661269b37d4fae68",
+          "downloadBytes": 25534683,
+          "archive": "zip",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "linux",
+          "arch": "x64",
+          "url": "https://github.com/astral-sh/uv/releases/download/0.11.29/uv-x86_64-unknown-linux-gnu.tar.gz",
+          "sha256": "04f8b82f5d47f0512dcd32c67a4a6f16a0ea27c81537c338fd0ad6b23cebe829",
+          "downloadBytes": 26200011,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        }
+      ]
+    },
+    {
+      "id": "jq",
+      "version": "1.8.2",
+      "provides": ["data.jq"],
+      "license": {
+        "name": "MIT",
+        "url": "https://github.com/jqlang/jq/blob/jq-1.8.2/COPYING"
+      },
+      "variants": [
+        {
+          "platform": "darwin",
+          "arch": "arm64",
+          "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-macos-arm64",
+          "sha256": "2d75340ba57a4b4b4c8708a21c2dc8e958a48aaa8bba13b27f77f6e4c0eca07e",
+          "downloadBytes": 841504,
+          "installedBytes": 841504,
+          "archive": "binary",
+          "installer": "single-binary"
+        },
+        {
+          "platform": "darwin",
+          "arch": "x64",
+          "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-macos-amd64",
+          "sha256": "e94b266e3c26690550006abe63152b782280f4e14374accdf04cbde844f00bc0",
+          "downloadBytes": 871768,
+          "installedBytes": 871768,
+          "archive": "binary",
+          "installer": "single-binary"
+        },
+        {
+          "platform": "win32",
+          "arch": "x64",
+          "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-amd64.exe",
+          "sha256": "a6fc67fedaf9128a3309a1e2ebb8b986aeccf70122ee46d2cb4849e423f0c627",
+          "downloadBytes": 1035264,
+          "installedBytes": 1035264,
+          "archive": "binary",
+          "installer": "single-binary"
+        },
+        {
+          "platform": "linux",
+          "arch": "x64",
+          "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64",
+          "sha256": "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f",
+          "downloadBytes": 2267912,
+          "installedBytes": 2267912,
+          "archive": "binary",
+          "installer": "single-binary"
+        }
+      ]
+    },
+    {
+      "id": "bun",
+      "version": "1.3.14",
+      "provides": [
+        "js.bun"
+      ],
+      "license": {
+        "name": "MIT with separately licensed bundled components",
+        "url": "https://github.com/oven-sh/bun/blob/bun-v1.3.14/LICENSE.md"
+      },
+      "variants": [
+        {
+          "platform": "darwin",
+          "arch": "arm64",
+          "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-darwin-aarch64.zip",
+          "sha256": "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620",
+          "downloadBytes": 23586433,
+          "archive": "zip",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "darwin",
+          "arch": "x64",
+          "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-darwin-x64.zip",
+          "sha256": "4183df3374623e5bab315c547cfa0974533cd457d86b73b639f7a87974cd6633",
+          "downloadBytes": 26509109,
+          "archive": "zip",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "win32",
+          "arch": "x64",
+          "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-windows-x64.zip",
+          "sha256": "0a0620930b6675d7ba440e81f4e0e00d3cfbe096c4b140d3fff02205e9e18922",
+          "downloadBytes": 38366737,
+          "archive": "zip",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "linux",
+          "arch": "x64",
+          "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip",
+          "sha256": "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f",
+          "downloadBytes": 35969274,
+          "archive": "zip",
+          "installer": "safe-archive"
+        }
+      ]
+    },
+    {
+      "id": "portable-git",
+      "version": "2.55.0.3",
+      "provides": ["vcs.git", "shell.bash"],
+      "license": {
+        "name": "GPL-2.0-only and bundled third-party licenses",
+        "url": "https://github.com/git-for-windows/git/blob/v2.55.0.windows.3/COPYING"
+      },
+      "variants": [
+        {
+          "platform": "win32",
+          "arch": "x64",
+          "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.3/PortableGit-2.55.0.3-64-bit.7z.exe",
+          "sha256": "ab00566336b5472120f9a52d34f2e79c5406535792acb0548001ffd0bd090e5d",
+          "downloadBytes": 58919776,
+          "archive": "7z-sfx",
+          "installer": "portable-git-sfx"
+        }
+      ]
+    }
+  ]
+}

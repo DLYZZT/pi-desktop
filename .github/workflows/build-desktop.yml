@@ -25,11 +25,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux
+          - name: Linux x64
             runner: ubuntu-24.04
-          - name: macOS
+          - name: macOS arm64
             runner: macos-15
-          - name: Windows
+          - name: macOS x64
+            runner: macos-15-intel
+          - name: Windows x64
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
@@ -90,19 +92,29 @@ jobs:
             platform: mac
             targets: dmg zip
             arch: arm64
+            tool_target: darwin-arm64
             artifact: pi-desktop-macos-arm64
           - name: macOS Intel x64
             runner: macos-15-intel
             platform: mac
             targets: dmg zip
             arch: x64
+            tool_target: darwin-x64
             artifact: pi-desktop-macos-x64
           - name: Windows x64
             runner: windows-2025
             platform: win
             targets: nsis
             arch: x64
+            tool_target: win32-x64
             artifact: pi-desktop-windows-x64
+          - name: Linux x64
+            runner: ubuntu-24.04
+            platform: linux
+            targets: AppImage
+            arch: x64
+            tool_target: linux-x64
+            artifact: pi-desktop-linux-x64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     env:
@@ -123,9 +135,26 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: Prepare verified bundled search tools
+        run: npm run prepare:bundled-tools -- --target ${{ matrix.tool_target }}
+
       - name: Package ${{ matrix.name }}
         shell: bash
         run: npx electron-builder --${{ matrix.platform }} ${{ matrix.targets }} --${{ matrix.arch }} --publish never
+
+      - name: Configure packaged Electron sandbox (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root dist/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 dist/linux-unpacked/chrome-sandbox
+
+      - name: Verify packaged toolchains and production startup (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run check:packaged-toolchains -- ${{ matrix.tool_target }}
+
+      - name: Verify packaged toolchains and production startup
+        if: runner.os != 'Linux'
+        run: npm run check:packaged-toolchains -- ${{ matrix.tool_target }}
 
       - name: Upload ${{ matrix.name }} artifacts
         uses: actions/upload-artifact@v7
@@ -135,10 +164,12 @@ jobs:
             dist/*.dmg
             dist/*.zip
             dist/*.exe
+            dist/*.AppImage
             dist/*.blockmap
             dist/latest*.yml
             dist/latest*.yaml
             dist/*-mac.yml
+            dist/latest-linux*.yml
           if-no-files-found: error
           retention-days: 14
 
@@ -219,6 +250,11 @@ jobs:
               exit 1
             fi
           fi
+
+      - name: Verify managed runtime catalog against upstream releases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run check:toolchain-catalog:upstream
 
   release-macos:
     name: Sign and notarize macOS
@@ -418,6 +454,11 @@ jobs:
             "dist/Pi-Agent-Desktop-${version}-x64.dmg" \
             "dist/Pi-Agent-Desktop-${version}-x64.zip"
 
+      - name: Run packaged toolchain E2E for both macOS architectures
+        run: |
+          npm run check:packaged-toolchains -- darwin-arm64
+          npm run check:packaged-toolchains -- darwin-x64
+
       - name: Upload signed and notarized macOS artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -453,6 +494,9 @@ jobs:
 
       - name: Build application
         run: npm run build
+
+      - name: Prepare verified bundled search tools
+        run: npm run prepare:bundled-tools -- --target win32-x64
 
       - name: Package Windows x64
         run: npx electron-builder --win nsis --x64 --publish never
@@ -579,6 +623,9 @@ jobs:
           test -s dist/latest.yml
           node scripts/verify-update-metadata.mjs dist/latest.yml "$version" "$installer"
 
+      - name: Run packaged toolchain E2E for Windows x64
+        run: npm run check:packaged-toolchains -- win32-x64
+
       - name: Upload Windows release artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -590,10 +637,69 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  release-linux:
+    name: Package Linux x64
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: [release-contract]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Prepare verified bundled search tools
+        run: npm run prepare:bundled-tools -- --target linux-x64
+
+      - name: Package Linux x64
+        run: npx electron-builder --linux AppImage --x64 --publish never
+
+      - name: Configure packaged Electron sandbox
+        run: |
+          sudo chown root:root dist/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 dist/linux-unpacked/chrome-sandbox
+
+      - name: Run packaged toolchain E2E for Linux x64
+        run: xvfb-run --auto-servernum npm run check:packaged-toolchains -- linux-x64
+
+      - name: Verify Linux release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          appimage="dist/Pi-Agent-Desktop-${version}-x86_64.AppImage"
+          test -s "$appimage"
+          test "$(find dist -maxdepth 1 -type f -name '*.AppImage' | wc -l | tr -d ' ')" -eq 1
+          test -s dist/latest-linux.yml
+
+      - name: Upload Linux release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: pi-desktop-linux-release
+          path: |
+            dist/*.AppImage
+            dist/*.blockmap
+            dist/latest-linux.yml
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Create desktop draft release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [release-macos, release-windows]
+    needs: [release-macos, release-windows, release-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -615,11 +721,13 @@ jobs:
           files=()
           mac_artifacts="release-artifacts/pi-desktop-macos-release"
           windows_artifacts="release-artifacts/pi-desktop-windows-release"
+          linux_artifacts="release-artifacts/pi-desktop-linux-release"
           test -d "$mac_artifacts"
           test -d "$windows_artifacts"
+          test -d "$linux_artifacts"
           while IFS= read -r -d '' file; do
             files+=("$file")
-          done < <(find "$mac_artifacts" "$windows_artifacts" -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.blockmap' -o -name '*.yml' -o -name '*.yaml' \) -print0)
+          done < <(find "$mac_artifacts" "$windows_artifacts" "$linux_artifacts" -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.blockmap' -o -name '*.yml' -o -name '*.yaml' \) -print0)
 
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release files were downloaded" >&2
@@ -637,6 +745,8 @@ jobs:
           test "$(find "$windows_artifacts" -type f -name '*.exe' | wc -l | tr -d ' ')" -eq 1
           test "$(find "$windows_artifacts" -type f -name '*.exe.blockmap' | wc -l | tr -d ' ')" -eq 1
           test "$(find "$windows_artifacts" -type f -name 'latest.yml' | wc -l | tr -d ' ')" -eq 1
+          test "$(find "$linux_artifacts" -type f -name '*.AppImage' | wc -l | tr -d ' ')" -eq 1
+          test "$(find "$linux_artifacts" -type f -name 'latest-linux.yml' | wc -l | tr -d ' ')" -eq 1
 
           if is_draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
             if [ "$is_draft" != "true" ]; then

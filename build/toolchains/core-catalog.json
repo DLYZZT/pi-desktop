@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 2,
+  "revision": 1,
+  "components": [
+    {
+      "id": "ripgrep",
+      "version": "15.2.0",
+      "provides": ["search.rg"],
+      "license": {
+        "name": "MIT OR Unlicense",
+        "url": "https://github.com/BurntSushi/ripgrep/blob/15.2.0/LICENSE-MIT"
+      },
+      "variants": [
+        {
+          "platform": "darwin",
+          "arch": "arm64",
+          "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-apple-darwin.tar.gz",
+          "sha256": "3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4",
+          "downloadBytes": 1764284,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "darwin",
+          "arch": "x64",
+          "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-apple-darwin.tar.gz",
+          "sha256": "af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1",
+          "downloadBytes": 1878284,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "win32",
+          "arch": "x64",
+          "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-pc-windows-msvc.zip",
+          "sha256": "71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5",
+          "downloadBytes": 1789611,
+          "archive": "zip",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "linux",
+          "arch": "x64",
+          "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+          "sha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
+          "downloadBytes": 2265718,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        }
+      ]
+    },
+    {
+      "id": "fd",
+      "version": "10.3.0",
+      "provides": ["search.fd"],
+      "license": {
+        "name": "Apache-2.0 OR MIT",
+        "url": "https://github.com/sharkdp/fd/blob/v10.3.0/LICENSE-MIT"
+      },
+      "variants": [
+        {
+          "platform": "darwin",
+          "arch": "arm64",
+          "url": "https://github.com/sharkdp/fd/releases/download/v10.3.0/fd-v10.3.0-aarch64-apple-darwin.tar.gz",
+          "sha256": "0570263812089120bc2a5d84f9e65cd0c25e4a4d724c80075c357239c74ae904",
+          "downloadBytes": 1337349,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "darwin",
+          "arch": "x64",
+          "url": "https://github.com/sharkdp/fd/releases/download/v10.3.0/fd-v10.3.0-x86_64-apple-darwin.tar.gz",
+          "sha256": "50d30f13fe3d5914b14c4fff5abcbd4d0cdab4b855970a6956f4f006c17117a3",
+          "downloadBytes": 1430203,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "win32",
+          "arch": "x64",
+          "url": "https://github.com/sharkdp/fd/releases/download/v10.3.0/fd-v10.3.0-x86_64-pc-windows-msvc.zip",
+          "sha256": "318aa2a6fa664325933e81fda60d523fff29444129e91ebf0726b5b3bcd8b059",
+          "downloadBytes": 1490905,
+          "archive": "zip",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "linux",
+          "arch": "x64",
+          "url": "https://github.com/sharkdp/fd/releases/download/v10.3.0/fd-v10.3.0-x86_64-unknown-linux-gnu.tar.gz",
+          "sha256": "c3c2bc79f838e780173fc8f18b337ec273e7ba17c7ff8f551be29fc3c19b7916",
+          "downloadBytes": 1710062,
+          "archive": "tar.gz",
+          "installer": "safe-archive"
+        }
+      ]
+    }
+  ]
+}

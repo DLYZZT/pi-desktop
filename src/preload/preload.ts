@@ -77,6 +77,9 @@ const bridge: PiBridge = {
   installUpdate: () => ipcRenderer.invoke("desktop:update:install"),
   setAutomaticUpdateChecks: (enabled) => ipcRenderer.invoke("desktop:update:set-automatic-checks", enabled),
   getHostStatus: () => ipcRenderer.invoke("desktop:get-host-status"),
+  getToolchainState: (cwd) => ipcRenderer.invoke("desktop:toolchains:get-state", cwd),
+  rescanToolchains: (cwd) => ipcRenderer.invoke("desktop:toolchains:rescan", cwd),
+  performToolchainAction: (request) => ipcRenderer.invoke("desktop:toolchains:action", request),
   requestHostPort: () => {
     ipcRenderer.send("desktop:connect-host");
   },
@@ -123,6 +126,11 @@ const bridge: PiBridge = {
     const handler = (_: Electron.IpcRendererEvent, state: DesktopUpdateState) => cb(state);
     ipcRenderer.on("update:state", handler);
     return () => ipcRenderer.removeListener("update:state", handler);
+  },
+  onToolchainState: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, state: Parameters<typeof cb>[0]) => cb(state);
+    ipcRenderer.on("toolchains:state", handler);
+    return () => ipcRenderer.removeListener("toolchains:state", handler);
   },
   onDeepLinkSession: (cb) => {
     deepLinkListeners.add(cb);

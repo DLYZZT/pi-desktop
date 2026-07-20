@@ -1,8 +1,10 @@
 import {
   createAgentSessionFromServices,
   createAgentSessionServices,
+  createBashToolDefinition,
   getAgentDir,
   SessionManager,
+  type CreateAgentSessionFromServicesOptions,
 } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "crypto";
 import { cacheSessionPath } from "./session-reader";
@@ -10,6 +12,9 @@ import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "../shared/pi-types";
 import type { ChannelId } from "../shared/channel-types";
 import type { ExtensionUiRequest, ExtensionUiResponse, ExtensionWidgetItem } from "../shared/types";
+import { toolchainRuntime } from "./toolchain-runtime";
+import { createToolchainBashOptions } from "./toolchain-bash";
+import { createDesktopSearchToolDefinitions } from "./toolchain-search";
 
 // ============================================================================
 // Types
@@ -136,6 +141,7 @@ export class AgentSessionWrapper {
   private extensionBindingPromise: Promise<void> | null = null;
   private extensionBindingError: unknown = null;
   private forceEmptySystemPrompt = false;
+  private toolchainPrompt = "";
   private unsubscribe: (() => void) | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private onDestroyCallback: (() => void) | null = null;
@@ -202,6 +208,15 @@ export class AgentSessionWrapper {
   setForceEmptySystemPrompt(force: boolean): void {
     this.forceEmptySystemPrompt = force;
     this.applyForcedEmptySystemPrompt();
+  }
+
+  setToolchainSummary(revision: number, summary: readonly string[]): void {
+    this.toolchainPrompt = [
+      `<pi-desktop-toolchain revision="${revision}">`,
+      ...summary,
+      "</pi-desktop-toolchain>",
+    ].join("\n");
+    this.applyToolchainSummary();
   }
 
   beginExtensionBinding(options: ExtensionBindingOptions = {}): void {
@@ -298,6 +313,15 @@ export class AgentSessionWrapper {
     }
   }
 
+  private applyToolchainSummary(): void {
+    if (this.forceEmptySystemPrompt || !this.toolchainPrompt || !this.inner.agent.state) return;
+    const marker = /\n*<pi-desktop-toolchain revision="\d+">[\s\S]*?<\/pi-desktop-toolchain>\n*/g;
+    const base = String(this.inner.agent.state.systemPrompt ?? "")
+      .replace(marker, "")
+      .trimEnd();
+    this.inner.agent.state.systemPrompt = `${base}\n\n${this.toolchainPrompt}`.trim();
+  }
+
   private emit(event: AgentEvent): void {
     for (const l of this.listeners) l(event);
   }
@@ -391,6 +415,7 @@ export class AgentSessionWrapper {
       this.inner.extensionRunner.setUIContext?.(this.createExtensionUiContext(), "rpc");
     }
     this.applyForcedEmptySystemPrompt();
+    this.applyToolchainSummary();
   }
 
   async runExternalCommand(params: { command: ExternalSessionCommand; customInstructions?: string }): Promise<void> {
@@ -1239,10 +1264,25 @@ export async function startRpcSession(
     // Build services first so extension-registered providers are available
     // before the SDK restores the saved model from the session file.
     const services = await createAgentSessionServices({ cwd, agentDir });
+    const executionContext = await toolchainRuntime.createExecutionContext({
+      cwd,
+      intent: "agent-shell",
+      trusted: services.settingsManager.isProjectTrusted(),
+    });
+    const bashOptions = createToolchainBashOptions(
+      executionContext,
+      toolchainRuntime,
+      services.settingsManager.getShellCommandPrefix(),
+    );
+    const customTools = [
+      createBashToolDefinition(cwd, bashOptions),
+      ...createDesktopSearchToolDefinitions(cwd, executionContext, toolchainRuntime),
+    ] as unknown as NonNullable<CreateAgentSessionFromServicesOptions["customTools"]>;
     const { session: inner } = await createAgentSessionFromServices({
       services,
       sessionManager,
       ...(toolsOption !== undefined ? { tools: toolsOption } : {}),
+      customTools,
     });
 
     // If specific tool names were requested (non-empty), set the active tools to the
@@ -1253,6 +1293,7 @@ export async function startRpcSession(
     }
 
     const wrapper = new AgentSessionWrapper(inner);
+    wrapper.setToolchainSummary(executionContext.inventoryRevision, executionContext.summary);
     // When all tools are disabled, clear the system prompt entirely.
     // pi's buildSystemPrompt always produces a non-empty prompt even with no tools;
     // keep this forced after extension resource discovery and reloads as well.

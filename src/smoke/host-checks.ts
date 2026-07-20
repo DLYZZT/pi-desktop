@@ -95,6 +95,24 @@ export async function runSmokeHostChecks(
 
   try {
     await call("host.ping");
+    const ackDeadline = Date.now() + 5_000;
+    while (manager.getToolchainAckRevision() < 0 && Date.now() < ackDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const acknowledgedRevision = manager.getToolchainAckRevision();
+    if (acknowledgedRevision < 0) throw new Error("Agent Host did not acknowledge its toolchain snapshot");
+    const hostToolchain = await call<{
+      inventoryRevision?: number;
+      resolutionId?: string;
+      capabilities?: Record<string, { provider?: string; version?: string }>;
+    }>("host.toolchain", { cwd: process.cwd() });
+    if (
+      hostToolchain.inventoryRevision !== acknowledgedRevision ||
+      !hostToolchain.resolutionId ||
+      !hostToolchain.capabilities?.["vcs.git"]?.provider
+    ) {
+      throw new Error(`Agent Host toolchain snapshot mismatch: ${JSON.stringify(hostToolchain)}`);
+    }
     await call("sessions.list");
     const channels = await call<{ accounts?: unknown[]; statuses?: unknown[]; bindings?: unknown[] }>("channels.list");
     if (!Array.isArray(channels.accounts) || !Array.isArray(channels.statuses) || !Array.isArray(channels.bindings)) {
@@ -312,7 +330,9 @@ export async function runSmokeHostChecks(
     } finally {
       if (!smokeWindow.isDestroyed()) smokeWindow.destroy();
     }
-    appendMainLog("smoke: renderer/RPC/session/worktree/git/watch/download/skills/channels checks passed");
+    appendMainLog(
+      `smoke: renderer/RPC/session/worktree/git/watch/download/skills/channels/toolchain revision=${acknowledgedRevision} checks passed`,
+    );
   } finally {
     for (const entry of pending.values()) {
       clearTimeout(entry.timer);

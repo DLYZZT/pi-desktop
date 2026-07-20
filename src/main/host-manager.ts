@@ -6,6 +6,7 @@ import { app, utilityProcess, MessageChannelMain, type UtilityProcess, type Mess
 import fs from "fs";
 import path from "path";
 import { appendMainLog } from "./logger";
+import type { ToolchainSnapshot } from "../shared/toolchains/types";
 
 const CRASH_WINDOW_MS = 30_000;
 const MAX_RESTARTS = 2;
@@ -20,6 +21,7 @@ export type HostMessage =
   | { type: "log"; message: string }
   | { type: "running-sessions"; sessionIds: string[] }
   | { type: "agent-end"; sessionId: string; eventType?: string }
+  | { type: "toolchain:ack"; revision: number }
   | { type: string; [key: string]: unknown };
 
 export class HostManager {
@@ -33,6 +35,8 @@ export class HostManager {
   private pendingPorts: MessagePortMain[] = [];
   private wasReadyBeforeExit = false;
   private requestHandler: ((method: string, params: unknown) => Promise<unknown>) | null = null;
+  private toolchainSnapshot: ToolchainSnapshot | null = null;
+  private toolchainAckRevision = -1;
 
   constructor(private readonly hostEntry: string) {}
 
@@ -50,6 +54,17 @@ export class HostManager {
 
   getStatus(): HostStatus {
     return this.status;
+  }
+
+  setToolchainSnapshot(snapshot: ToolchainSnapshot): void {
+    this.toolchainSnapshot = structuredClone(snapshot);
+    if (this.child && this.status === "ready") {
+      this.postToolchainSnapshot("toolchain:changed");
+    }
+  }
+
+  getToolchainAckRevision(): number {
+    return this.toolchainAckRevision;
   }
 
   start(): void {
@@ -194,6 +209,7 @@ export class HostManager {
         appendMainLog("agent-host ready");
         const restarted = this.wasReadyBeforeExit;
         this.wasReadyBeforeExit = false;
+        this.postToolchainSnapshot("toolchain:init");
         this.setStatus("ready");
         this.startPing();
         if (restarted) {
@@ -203,6 +219,12 @@ export class HostManager {
         this.lastPong = Date.now();
       } else if (m?.type === "log") {
         appendMainLog(`[host] ${m.message}`);
+      } else if (m?.type === "toolchain:ack") {
+        const revision = Number(m.revision);
+        if (Number.isSafeInteger(revision) && revision >= 0) {
+          this.toolchainAckRevision = Math.max(this.toolchainAckRevision, revision);
+          appendMainLog(`agent-host toolchain ack revision=${revision}`);
+        }
       } else if (m?.type === "host-rpc") {
         const request = m as HostMessage & { id?: string; method?: string; params?: unknown };
         const id = String(request.id ?? "");
@@ -283,6 +305,15 @@ export class HostManager {
         /* ignore */
       }
     }, PING_INTERVAL_MS);
+  }
+
+  private postToolchainSnapshot(type: "toolchain:init" | "toolchain:changed"): void {
+    if (!this.child || !this.toolchainSnapshot) return;
+    try {
+      this.child.postMessage({ type, snapshot: this.toolchainSnapshot });
+    } catch (error) {
+      appendMainLog(`toolchain snapshot delivery failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private clearPing(): void {

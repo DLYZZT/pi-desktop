@@ -1,4 +1,15 @@
 import type { ChannelId } from "../shared/channel-types";
+import type { PublicToolchainState, ToolchainActionRequest } from "../shared/toolchains/types";
+
+export type {
+  ManagedComponentId,
+  PublicToolchainState,
+  ToolCapabilityId,
+  ToolPreference,
+  ToolchainActionRequest,
+  ToolchainCacheId,
+  ToolchainProfileId,
+} from "../shared/toolchains/types";
 
 export type HostStatus = "starting" | "ready" | "crashed" | "stopped";
 
@@ -70,6 +81,9 @@ export interface PiBridge {
   installUpdate: () => Promise<void>;
   setAutomaticUpdateChecks: (enabled: boolean) => Promise<DesktopUpdateState>;
   getHostStatus: () => Promise<HostStatus>;
+  getToolchainState: (cwd?: string) => Promise<PublicToolchainState>;
+  rescanToolchains: (cwd?: string) => Promise<PublicToolchainState>;
+  performToolchainAction: (request: ToolchainActionRequest) => Promise<PublicToolchainState>;
   requestHostPort: () => void;
   openExternal: (url: string) => Promise<void>;
   showItemInFolder: (fsPath: string) => Promise<void>;
@@ -92,6 +106,7 @@ export interface PiBridge {
   onHostRestarted: (cb: (payload: { reason: string }) => void) => () => void;
   onHostCrashed: (cb: (payload: { detail?: string }) => void) => () => void;
   onUpdateState: (cb: (state: DesktopUpdateState) => void) => () => void;
+  onToolchainState: (cb: (state: PublicToolchainState) => void) => () => void;
   onDeepLinkSession: (cb: (sessionId: string) => void) => () => void;
   onMenu: (event: DesktopMenuEvent, cb: () => void) => () => void;
 }

@@ -3,6 +3,7 @@
  */
 import { runNpx } from "./npx";
 import type { SkillSearchResult } from "../shared/api-types";
+import { ToolchainError } from "../shared/toolchains/errors.ts";
 
 const ANSI_RE = /\x1B\[[0-9;]*m/g;
 const SEARCH_API_BASE = process.env.SKILLS_API_URL || "https://skills.sh";
@@ -76,7 +77,7 @@ export async function searchSkills(query: string, limit = 50): Promise<{ results
   } catch {
     const { stdout, stderr } = await runNpx(["skills", "find", q], {
       timeout: 20_000,
-      env: { ...process.env, FORCE_COLOR: "0" },
+      env: { FORCE_COLOR: "0" },
     });
     return { results: parseSearchOutput(stdout + stderr).slice(0, capped) };
   }
@@ -98,13 +99,14 @@ export async function installSkill(params: {
     const { stdout, stderr } = await runNpx(args, {
       timeout: 60_000,
       cwd: !isGlobal && params.cwd ? params.cwd : undefined,
-      env: { ...process.env, FORCE_COLOR: "0" },
+      env: { FORCE_COLOR: "0" },
     });
     const output = (stdout + stderr).replace(ANSI_RE, "");
     const success = /Installation complete|Installed \d+ skill/.test(output);
     if (!success) throw new Error(output.slice(-300) || "Install failed");
     return { ok: true as const, output };
   } catch (e: unknown) {
+    if (e instanceof ToolchainError) throw e;
     const err = e as { stdout?: string; stderr?: string; message?: string };
     const output = ((err.stdout ?? "") + (err.stderr ?? "")).replace(ANSI_RE, "");
     throw new Error(output || err.message || String(e));

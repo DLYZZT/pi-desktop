@@ -53,9 +53,10 @@ async function captureHandlers() {
 
 test("registerHandlers exposes every contract method exactly once", async () => {
   const { handlers } = await captureHandlers();
-  assert.equal(Object.keys(handlers).length, 63);
+  assert.equal(Object.keys(handlers).length, 64);
   for (const method of [
     "host.ping",
+    "host.toolchain",
     "sessions.list",
     "worktrees.list",
     "git.status",

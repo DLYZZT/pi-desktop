@@ -5,13 +5,14 @@ import { useI18n, type AppLanguage } from "@/i18n";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
+import { ToolchainsConfig } from "./ToolchainsConfig";
 import { ChannelsConfig } from "./channels/ChannelsConfig";
 import type { ChannelsSnapshot } from "@shared/channel-types";
 import type { DesktopUpdateState } from "../../contract/desktop";
 import { APP_AUTHOR, APP_DISPLAY_NAME, APP_GITHUB_URL, APP_VERSION, PI_VERSION } from "@/lib/app-version";
 import appIconUrl from "../../../build/icon.png";
 
-export type SettingsTab = "general" | "channels" | "models" | "skills" | "plugins" | "about";
+export type SettingsTab = "general" | "channels" | "models" | "tools" | "skills" | "plugins" | "about";
 
 interface SettingsConfigProps {
   cwd: string | null;
@@ -65,10 +66,11 @@ export function SettingsConfig({
 
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: "general", label: t("general", "General") },
-    { id: "channels", label: t("channels", "Channels") },
     { id: "models", label: t("models", "Models") },
     { id: "skills", label: t("skills", "Skills") },
     { id: "plugins", label: t("plugins", "Plugins") },
+    { id: "channels", label: t("channels", "Channels") },
+    { id: "tools", label: t("developerTools", "Developer Tools") },
     { id: "about", label: t("about", "About") },
   ];
 
@@ -254,6 +256,7 @@ export function SettingsConfig({
             />
           )}
           {activeTab === "models" && <ModelsConfig embedded onClose={() => undefined} onChanged={onModelsChanged} />}
+          {activeTab === "tools" && <ToolchainsConfig cwd={cwd} />}
           {activeTab === "channels" && <ChannelsConfig onSnapshotChange={onChannelsChanged} />}
           {activeTab === "skills" &&
             (cwd ? <SkillsConfig embedded cwd={cwd} onClose={() => undefined} /> : <ProjectRequired />)}

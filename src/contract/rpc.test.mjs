@@ -4,6 +4,7 @@ import { MessageChannel } from "node:worker_threads";
 
 import { createRpcClient, createRpcServer } from "./rpc.ts";
 import { RpcError } from "./types.ts";
+import { ToolchainError } from "../shared/toolchains/errors.ts";
 
 function createPair(t) {
   const { port1, port2 } = new MessageChannel();
@@ -54,6 +55,27 @@ test("serializes RpcError detail and maps ordinary errors to INTERNAL", async (t
   await assert.rejects(client.call("sessions.list"), (error) => {
     assert.equal(error.code, "INTERNAL");
     assert.equal(error.message, "database unavailable");
+    return true;
+  });
+});
+
+test("preserves structured toolchain errors across the RPC boundary", async (t) => {
+  const { client, server } = createPair(t);
+  server.handle({
+    "host.ping": () => {
+      throw new ToolchainError({
+        code: "TOOLCHAIN_NODE_REQUIRED",
+        capability: "js.npm",
+        causeCode: "ENOENT",
+        message: "Node.js with npm is required",
+      });
+    },
+  });
+
+  await assert.rejects(client.call("host.ping"), (error) => {
+    assert.equal(error.code, "TOOLCHAIN_NODE_REQUIRED");
+    assert.equal(error.message, "Node.js with npm is required");
+    assert.deepEqual(error.detail, { capability: "js.npm", causeCode: "ENOENT" });
     return true;
   });
 });

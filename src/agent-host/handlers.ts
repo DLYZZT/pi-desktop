@@ -15,8 +15,6 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { execFile } from "child_process";
-import { promisify } from "util";
 import { homedir, tmpdir } from "os";
 import path from "path";
 import {
@@ -39,6 +37,7 @@ import {
   addWorktree,
   getGitStatus,
   isDirtyWorktreeError,
+  listGitFiles,
   listWorktrees,
   removeWorktree,
   resolveProject,
@@ -60,8 +59,8 @@ import { applyPluginAction, readPlugins } from "./plugins-service";
 import { installSkill, searchSkills } from "./skills-service";
 import { projectTreeForResponse } from "./project-tree";
 import { ChannelManager } from "./channels/channel-manager";
-
-const execFileAsync = promisify(execFile);
+import { ToolchainError } from "../shared/toolchains/errors";
+import { toolchainRuntime } from "./toolchain-runtime";
 
 const IGNORED_NAMES = new Set([
   "node_modules",
@@ -260,6 +259,22 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
   server.handle({
     "host.ping": () => ({ ok: true as const, ts: Date.now() }),
+
+    "host.toolchain": async (params) => {
+      const { cwd } = params as { cwd: string };
+      if (!cwd || !path.isAbsolute(cwd)) throw new RpcError({ code: "BAD_REQUEST", message: "absolute cwd required" });
+      const context = await toolchainRuntime.createExecutionContext({ cwd, intent: "project-command" });
+      return {
+        inventoryRevision: context.inventoryRevision,
+        resolutionId: context.resolutionId,
+        capabilities: Object.fromEntries(
+          Object.entries(context.commands).map(([capability, command]) => [
+            capability,
+            { provider: command.provider, version: command.version },
+          ]),
+        ),
+      };
+    },
 
     "sessions.list": async () => {
       const sessions = await listAllSessions();
@@ -753,15 +768,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       let hardTruncated = false;
 
       try {
-        const { stdout } = await execFileAsync(
-          "git",
-          ["-C", root, "ls-files", "--cached", "--others", "--exclude-standard"],
-          { maxBuffer: 20 * 1024 * 1024, timeout: 15_000 },
-        );
-        const all = stdout
-          .split("\n")
-          .map((l) => l.trim().replace(/\\/g, "/"))
-          .filter(Boolean);
+        const all = await listGitFiles(root);
         if (all.length > 50_000) {
           hardTruncated = true;
           relFiles = all.slice(0, 50_000);
@@ -1149,6 +1156,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       try {
         return (await searchSkills(query)) as never;
       } catch (e) {
+        if (e instanceof ToolchainError) throw e;
         throw new RpcError({
           code: "INTERNAL",
           message: e instanceof Error ? e.message : String(e),
@@ -1160,6 +1168,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       try {
         return await installSkill(params as { package: string; scope?: "global" | "project"; cwd?: string });
       } catch (e) {
+        if (e instanceof ToolchainError) throw e;
         throw new RpcError({
           code: "INTERNAL",
           message: e instanceof Error ? e.message : String(e),

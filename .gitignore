@@ -9,3 +9,5 @@ temp/
 .env
 .env.*
 .artifacts/
+build/toolchains/.core-cache/
+build/toolchains/core/

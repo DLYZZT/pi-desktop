@@ -24,6 +24,11 @@ run("typecheck (main/host)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.json"]);
 run("typecheck (renderer)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.renderer.json"]);
 run("unit tests", "npm", ["test"]);
 run("contract coverage", "node", ["scripts/check-contract-coverage.mjs"]);
+run("toolchain contract safety", "node", ["scripts/check-toolchain-contract.mjs"]);
+run("toolchain catalog", "node", [
+  "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
+  "scripts/verify-toolchain-catalog.mjs",
+]);
 run("desktop security invariants", "node", ["scripts/check-desktop-security.mjs"]);
 run("build", "npm", ["run", "build"]);
 run("production artifact isolation", "node", ["scripts/check-production-artifacts.mjs"]);

@@ -323,7 +323,7 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
             >
               {t("connectTelegram", "Connect Telegram")}
             </button>
-            <button type="button" disabled={busy} style={buttonStyle(true)} onClick={beginLogin}>
+            <button type="button" disabled={busy} style={buttonStyle()} onClick={beginLogin}>
               {t("connectWeixin", "Connect WeChat")}
             </button>
           </div>

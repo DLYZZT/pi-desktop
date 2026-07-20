@@ -325,7 +325,7 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
                   ? 403
                   : 500;
     const detail = rpc.detail && typeof rpc.detail === "object" ? rpc.detail : {};
-    return jsonResponse({ error: msg, ...detail }, status);
+    return jsonResponse({ error: msg, ...detail, ...(rpc.code ? { code: rpc.code } : {}) }, status);
   }
 }
 

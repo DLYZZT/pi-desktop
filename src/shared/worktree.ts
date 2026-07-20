@@ -2,12 +2,44 @@ import { execFile } from "child_process";
 import { existsSync, mkdirSync, realpathSync } from "fs";
 import { basename, dirname, join, resolve } from "path";
 import { promisify } from "util";
-import { allowFileRoot } from "./allowed-roots";
+import { allowFileRoot } from "./allowed-roots.ts";
 import type { GitStatusResult } from "./api-types";
-import { parseGitStatusPorcelain } from "./git-status";
-export { parseGitStatusPorcelain } from "./git-status";
+import { parseGitStatusPorcelain } from "./git-status.ts";
+export { parseGitStatusPorcelain } from "./git-status.ts";
 
 const execFileAsync = promisify(execFile);
+
+export interface GitCommandRunOptions {
+  timeout: number;
+  maxBuffer: number;
+  env: NodeJS.ProcessEnv;
+}
+
+export interface GitCommandRunner {
+  run(cwd: string, args: string[], options: GitCommandRunOptions): Promise<{ stdout: string }>;
+}
+
+const defaultGitCommandRunner: GitCommandRunner = {
+  async run(cwd, args, options) {
+    const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
+      timeout: options.timeout,
+      maxBuffer: options.maxBuffer,
+      encoding: "utf8",
+      env: options.env,
+    });
+    return { stdout: String(stdout) };
+  },
+};
+
+let gitCommandRunner: GitCommandRunner = defaultGitCommandRunner;
+
+export function setGitCommandRunner(runner: GitCommandRunner): () => void {
+  const previous = gitCommandRunner;
+  gitCommandRunner = runner;
+  return () => {
+    if (gitCommandRunner === runner) gitCommandRunner = previous;
+  };
+}
 
 // ============================================================================
 // Project resolution: cwd → { projectRoot, branch }
@@ -48,7 +80,7 @@ export function invalidateProjectCache(): void {
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
+  const { stdout } = await gitCommandRunner.run(cwd, args, {
     timeout: 10_000,
     maxBuffer: 1024 * 1024,
     // Pin the message locale so error-text matching (e.g. the dirty-worktree
@@ -59,13 +91,21 @@ async function git(cwd: string, args: string[]): Promise<string> {
 }
 
 async function gitRaw(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
+  const { stdout } = await gitCommandRunner.run(cwd, args, {
     timeout: 10_000,
     maxBuffer: 20 * 1024 * 1024,
-    encoding: "utf8",
     env: { ...process.env, LC_ALL: "C" },
   });
   return stdout;
+}
+
+/** List repository files through the configured Git runtime. */
+export async function listGitFiles(cwd: string): Promise<string[]> {
+  const stdout = await gitRaw(cwd, ["ls-files", "--cached", "--others", "--exclude-standard"]);
+  return stdout
+    .split("\n")
+    .map((line) => line.trim().replace(/\\/g, "/"))
+    .filter(Boolean);
 }
 
 export async function getGitStatus(cwd: string): Promise<GitStatusResult> {

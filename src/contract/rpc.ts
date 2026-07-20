@@ -6,6 +6,7 @@
 
 import type { ApiMethod, ApiParams, ApiResult, StreamTopic, Streams } from "./api";
 import { RpcError, type RpcErrorShape } from "./types.ts";
+import { ToolchainError } from "../shared/toolchains/errors.ts";
 
 // ---------------------------------------------------------------------------
 // Wire protocol
@@ -314,10 +315,16 @@ export function createRpcServer(): RpcServer {
       const error: RpcErrorShape =
         err instanceof RpcError
           ? { code: err.code, message: err.message, detail: err.detail }
-          : {
-              code: "INTERNAL",
-              message: err instanceof Error ? err.message : String(err),
-            };
+          : err instanceof ToolchainError
+            ? {
+                code: err.code,
+                message: err.message,
+                detail: { capability: err.capability, causeCode: err.causeCode },
+              }
+            : {
+                code: "INTERNAL",
+                message: err instanceof Error ? err.message : String(err),
+              };
       response = { kind: "response", id: msg.id, ok: false, error };
     }
     try {

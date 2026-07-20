@@ -11,14 +11,33 @@ Local-first · No local server · Cross-platform
 [![Desktop Build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml/badge.svg)](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml)
 ![Electron 43](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=0B1F2A)
-![macOS & Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
+![macOS, Windows & Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 **English** · [简体中文](./README.md)
 
-[Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Contributing](#contributing) · [Roadmap](#roadmap)
+[Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Contributing](#contributing) · [Roadmap](#roadmap)
 
 </div>
+
+## Screenshots
+
+![Pi Agent Desktop workspace with a conversation, agent response, and code preview](./images/app-workspace.jpg)
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="./images/app-skills.jpg" alt="Pi Agent Desktop skill management" />
+      <br />
+      <sub>Browse, enable, and edit skills</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="./images/app-developer-tools.jpg" alt="Pi Agent Desktop developer tool management" />
+      <br />
+      <sub>Discover system tools and manage private runtimes</sub>
+    </td>
+  </tr>
+</table>
 
 ## Features
 
@@ -51,14 +70,11 @@ Local-first · No local server · Cross-platform
 - Connect personal WeChat with QR login, Telegram with a BotFather token, or a Feishu/Lark self-built app with an App ID and App Secret
 - Protect direct messages with pairing and Telegram or Feishu/Lark groups with allowlists and mention requirements; WeChat groups are not enabled yet, and remote tools are disabled by default
 - Give each external conversation an isolated Pi Session by default, or bind it from the active desktop session to share history and context with the UI; the binding list stays within the window and scrolls internally when long
-- Send only the user's actual IM text as the model's user prompt; the desktop distinguishes sources with black local, green WeChat, blue Telegram, and orange Feishu/Lark user bubbles without adding user or group IDs to the prompt
-- Keep channels running in the background with long polling or WebSocket, reconnects, event deduplication, and cursor/offset checkpoints
+- Send only the user's actual IM text as the model's user prompt; the desktop distinguishes sources with black local, green WeChat, blue Telegram, and orange Feishu/Lark user bubbles
 - Receive images, files, and voice messages from WeChat, Telegram, and Feishu/Lark, plus Feishu/Lark video resources; images enter the model as multimodal input, while other attachments use an isolated staging area and WeChat SILK audio is converted to WAV when possible
-- When the user explicitly requests a file, return an existing or newly created file from the current workspace by linking it in the final answer; each attachment is limited to 20 MiB and four per message, with paths outside the workspace and symlink escapes rejected
-- Stream Rich Message previews in Telegram private chats, preserve Markdown in the final response, and collapse reasoning and tool details; groups receive a rich final response
-- Receive Feishu/Lark DMs, controlled groups, and threads through the official SDK long connection; Card JSON 2.0 renders Markdown, streams thinking/tool progress, and folds process details in the final card with safe fallback when CardKit is unavailable
+- Stream previews in Telegram private chats and collapse reasoning and tool details
+- Receive Feishu/Lark DMs, controlled groups, and threads through the official SDK long connection; Cards render Markdown, stream thinking and tool progress, and fold process details into the final response
 - Show turn-status reactions on the source message in Telegram and Feishu/Lark; Feishu DMs can invoke `/help`, `/status`, `/new`, `/compact`, and `/reload` from a native bot menu
-- Encrypt channel credentials with Electron `safeStorage`; saved tokens and App Secrets are never returned to the Renderer
 
 ### Designed for long-running desktop use
 
@@ -74,19 +90,22 @@ Local-first · No local server · Cross-platform
 
 Pi Agent Desktop bundles the Pi Coding Agent runtime. Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm separately. Install the desktop application, configure a model provider, and start working.
 
-The application reads sessions and configuration from `~/.pi/agent/`. If you already use the Pi CLI, your existing data is available without migration. The desktop application also works if you have never used the CLI. Installing some Skills or npm Plugins from the internet may still require Node.js and npm.
+The application reads sessions and configuration from `~/.pi/agent/`. If you already use the Pi CLI, your existing data is available without migration. The desktop application also works if you have never used the CLI.
+
+Pi Desktop first discovers and verifies the user's existing Node.js/npm, Python, Git, Bash, uv, jq, and Bun installations; bundled `rg` and `fd` keep search available offline.
 
 ### Desktop system requirements
 
 - macOS 12 Monterey or later, on Apple Silicon (arm64) or Intel (x64)
 - 64-bit Windows 10 or Windows 11 on x64; Windows 11 is recommended because it remains under regular security support
+- A 64-bit Linux x64 AppImage on a modern glibc distribution with a graphical desktop session; updates are currently installed manually
 - Windows 32-bit (x86) and Windows ARM64 installers are not currently provided
 
 ### Development requirements
 
 - Node.js 22.19 or later
 - npm, included with Node.js
-- macOS or Windows; Linux can be used for development, but official Linux builds are not currently published
+- macOS, Windows, or Linux
 
 ### Run locally
 
@@ -97,17 +116,12 @@ npm ci
 npm run dev
 ```
 
-Electron 43 no longer downloads the Electron binary during `npm ci`. The first command that actually needs Electron, such as `npm run dev` or `npm run smoke`, downloads it on demand. Run `npx install-electron --no` when the binary must be prefetched deterministically; the Linux CI quality gate runs that command explicitly, configures the `chrome-sandbox` permissions, and then runs `npm run verify`.
-
-### CI and release builds
-
-Pushes to `main` run only the Linux, macOS, and Windows tests plus the full quality gate; they do not package installers. Pull requests and manually dispatched workflows can produce these temporary build artifacts:
+### Builds
 
 - macOS Apple Silicon (arm64): DMG and ZIP
 - macOS Intel (x64): DMG and ZIP
 - Windows (x64): NSIS installer
-
-Download temporary artifacts from a successful [GitHub Actions build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml). Artifacts are retained for 14 days. A `v*` tag release job uses protected credentials to sign and notarize the macOS packages and also produces the production Windows x64 NSIS installer. The Draft Release contains installers, blockmaps, and update metadata for both platforms and still requires manual review before publication.
+- Linux (x64): AppImage
 
 ## Architecture
 
@@ -189,7 +203,7 @@ npm run verify
 - [x] Production Windows x64 Release asset pipeline (currently without code signing)
 - [x] Validate the first Release containing both macOS and Windows production assets (v0.1.1)
 - [x] Implement Main-process stable-release checks, user-approved downloads, restart installation, and update settings
-- [ ] Validate updater-enabled baseline-to-target upgrades end to end on macOS and Windows
+- [x] Validate updater-enabled baseline-to-target upgrades end to end on macOS and Windows
 - [ ] Expanded cross-platform E2E and pre-release testing
 
 ## Relationship to the Pi ecosystem
