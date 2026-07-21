@@ -16,7 +16,7 @@
 
 [English](./README.en.md) · **简体中文**
 
-[截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [参与开发](#参与开发) · [路线图](#路线图)
+[下载 v0.1.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.3) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
 
 </div>
 
@@ -65,6 +65,13 @@
 - 搜索、安装和配置 Skills
 - 管理 Plugins，并沿用 Pi Agent 的扩展体系
 
+### 跨平台开发工具管理
+
+- 优先发现并验证用户已有的 Node.js/npm、Python、uv、Git/Bash、Bun 和 jq，覆盖 GUI 启动时 PATH 不完整的常见场景
+- 为 Skills、Plugins、Agent Bash、Git/worktree 和搜索工具提供一致的绝对路径与局部执行环境
+- 用户确认后可把 Node.js LTS、CPython、uv、PortableGit、Bun 和 jq 安装到应用私有目录，不修改系统 PATH、Shell 配置或注册表
+- 安装包内置经过清单校验的目标平台 ripgrep 与 fd，保证基础搜索离线可用
+
 ### 微信、Telegram 与飞书/Lark 消息渠道
 
 - 个人微信二维码登录、Telegram BotFather token，以及飞书/Lark 企业自建应用 App ID/App Secret 接入
@@ -88,7 +95,9 @@
 
 ### 使用桌面安装包
 
-Pi Agent Desktop 已内置 Pi Coding Agent 运行时。普通用户无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。
+最新稳定版为 [v0.1.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.3)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
+
+Pi Agent Desktop 已内置 Pi Coding Agent 运行时。普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
 
 应用会读取 `~/.pi/agent/` 中的会话与配置。如果你已经使用 Pi CLI，可以直接复用现有数据，无需迁移；此前没有使用过 Pi CLI 也不影响使用。
 
@@ -204,7 +213,7 @@ npm run verify
 - [x] 首个同时包含 macOS 与 Windows 正式资产的 Release 验收（v0.1.1）
 - [x] 实现主进程稳定版检查、用户确认下载、重启安装和设置界面
 - [x] 完成 updater-enabled 基线到更高版本的 macOS 与 Windows 端到端升级验证
-- [ ] 扩充跨平台 E2E 测试与发布前检查
+- [x] macOS arm64/x64、Windows x64、Linux x64 安装包生产启动 E2E 与发布前检查
 
 ## 与 Pi 生态的关系
 

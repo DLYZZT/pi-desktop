@@ -8,6 +8,7 @@ import { PluginsConfig } from "./PluginsConfig";
 import { ToolchainsConfig } from "./ToolchainsConfig";
 import { ChannelsConfig } from "./channels/ChannelsConfig";
 import type { ChannelsSnapshot } from "@shared/channel-types";
+import { APP_WEBSITE_URL } from "@shared/app-links";
 import type { DesktopUpdateState } from "../../contract/desktop";
 import { APP_AUTHOR, APP_DISPLAY_NAME, APP_GITHUB_URL, APP_VERSION, PI_VERSION } from "@/lib/app-version";
 import appIconUrl from "../../../build/icon.png";
@@ -335,6 +336,30 @@ function AboutSettings({ onClose }: { onClose: () => void }) {
             <AboutRow label={t("softwareVersion", "Software version")} value={`v${APP_VERSION}`} />
             <AboutRow label={t("piVersion", "Pi version")} value={`v${PI_VERSION}`} />
             <AboutRow label={t("author", "Author")} value={APP_AUTHOR} />
+            <AboutRow
+              label={t("officialWebsite", "Official website")}
+              value={
+                <button
+                  type="button"
+                  title={t("openOfficialWebsite", "Open official website")}
+                  onClick={() => void window.piBridge.openExternal(APP_WEBSITE_URL)}
+                  style={{
+                    maxWidth: "100%",
+                    padding: 0,
+                    border: 0,
+                    background: "none",
+                    color: "var(--accent)",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 12,
+                    cursor: "pointer",
+                    overflowWrap: "anywhere",
+                    textAlign: "right",
+                  }}
+                >
+                  pi-desktop.app ↗
+                </button>
+              }
+            />
             <AboutRow
               label={t("githubRepository", "GitHub repository")}
               value={

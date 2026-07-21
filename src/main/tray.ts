@@ -1,8 +1,9 @@
 /**
  * System tray — shows running session count; click focuses main window.
  */
-import { app, BrowserWindow, Menu, Tray, nativeImage } from "electron";
+import { app, BrowserWindow, Menu, Tray, nativeImage, shell } from "electron";
 import path from "path";
+import { APP_DOCS_URL } from "../shared/app-links";
 import { appendMainLog } from "./logger";
 
 let tray: Tray | null = null;
@@ -82,6 +83,13 @@ function updateTrayMenu(getMainWindow: () => BrowserWindow | null): void {
           win.focus();
           win.webContents.send("menu:new-session");
         }
+      },
+    },
+    { type: "separator" },
+    {
+      label: "Help",
+      click: () => {
+        void shell.openExternal(APP_DOCS_URL);
       },
     },
     { type: "separator" },

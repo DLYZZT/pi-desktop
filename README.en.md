@@ -16,7 +16,7 @@ Local-first · No local server · Cross-platform
 
 **English** · [简体中文](./README.md)
 
-[Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Contributing](#contributing) · [Roadmap](#roadmap)
+[Download v0.1.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.3) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
 
 </div>
 
@@ -65,6 +65,13 @@ Local-first · No local server · Cross-platform
 - Search for, install, and configure Skills
 - Manage Plugins while continuing to use the Pi Agent extension ecosystem
 
+### Cross-platform developer tool management
+
+- Discover and verify the user's existing Node.js/npm, Python, uv, Git/Bash, Bun, and jq installations, including common locations missing from a GUI launch PATH
+- Give Skills, Plugins, Agent Bash, Git/worktree operations, and search tools one consistent set of absolute paths and per-process environments
+- With explicit user confirmation, install Node.js LTS, CPython, uv, PortableGit, Bun, and jq into private application storage without changing the system PATH, shell profile, or registry
+- Bundle manifest-verified ripgrep and fd binaries for the target platform so basic search remains available offline
+
 ### WeChat, Telegram, and Feishu/Lark channels
 
 - Connect personal WeChat with QR login, Telegram with a BotFather token, or a Feishu/Lark self-built app with an App ID and App Secret
@@ -88,7 +95,9 @@ Local-first · No local server · Cross-platform
 
 ### Use a desktop build
 
-Pi Agent Desktop bundles the Pi Coding Agent runtime. Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm separately. Install the desktop application, configure a model provider, and start working.
+The latest stable version is [v0.1.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.3), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
+
+Pi Agent Desktop bundles the Pi Coding Agent runtime. Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
 
 The application reads sessions and configuration from `~/.pi/agent/`. If you already use the Pi CLI, your existing data is available without migration. The desktop application also works if you have never used the CLI.
 
@@ -204,7 +213,7 @@ npm run verify
 - [x] Validate the first Release containing both macOS and Windows production assets (v0.1.1)
 - [x] Implement Main-process stable-release checks, user-approved downloads, restart installation, and update settings
 - [x] Validate updater-enabled baseline-to-target upgrades end to end on macOS and Windows
-- [ ] Expanded cross-platform E2E and pre-release testing
+- [x] Production-startup E2E and pre-release checks for macOS arm64/x64, Windows x64, and Linux x64 packages
 
 ## Relationship to the Pi ecosystem
 
