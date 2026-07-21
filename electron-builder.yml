@@ -23,6 +23,32 @@ files:
   - "!tsup.config.ts"
   - "!vite.config.ts"
   - "!electron-builder.yml"
+  # Pi injects these package-relative paths into the agent system prompt when
+  # users ask it to author extensions, packages, SDK integrations, or TUI UI.
+  # Restore them after the broad Markdown/TypeScript production exclusions.
+  # Explicit FileSets bypass electron-builder's production-dependency cleanup,
+  # which otherwise drops package READMEs, examples, and declaration files.
+  - from: node_modules/@earendil-works/pi-coding-agent
+    to: node_modules/@earendil-works/pi-coding-agent
+    filter:
+      - README.md
+      - "docs/**/*"
+      - "examples/**/*"
+      # Public declarations let the agent inspect exact APIs when the prose and
+      # examples do not cover a newly added or advanced extension capability.
+      - "dist/**/*.d.ts"
+  - from: node_modules/@earendil-works/pi-ai/dist
+    to: node_modules/@earendil-works/pi-ai/dist
+    filter:
+      - "**/*.d.ts"
+  - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist
+    to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist
+    filter:
+      - "**/*.d.ts"
+  - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist
+    to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist
+    filter:
+      - "**/*.d.ts"
 
 asar: true
 

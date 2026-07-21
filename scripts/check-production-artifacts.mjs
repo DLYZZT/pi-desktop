@@ -42,6 +42,22 @@ const leakedCredentials = [
 ].filter((pattern) => pattern.test(mainBundle));
 const requiredPackageExclusions = ['"!**/*.map"', '"!**/*.{md,markdown,ts,tsx}"', '"!**/*.d.{mts,cts}"'];
 const missingPackageExclusions = requiredPackageExclusions.filter((pattern) => !builderConfig.includes(pattern));
+const requiredPiAuthoringAssetMarkers = [
+  "from: node_modules/@earendil-works/pi-coding-agent",
+  "to: node_modules/@earendil-works/pi-coding-agent",
+  "- README.md",
+  '- "docs/**/*"',
+  '- "examples/**/*"',
+  '- "dist/**/*.d.ts"',
+  "from: node_modules/@earendil-works/pi-ai/dist",
+  "to: node_modules/@earendil-works/pi-ai/dist",
+  "from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist",
+  "to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist",
+  "from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist",
+  "to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist",
+  '- "**/*.d.ts"',
+];
+const missingPiAuthoringAssets = requiredPiAuthoringAssetMarkers.filter((marker) => !builderConfig.includes(marker));
 const toolchainCatalogPackagingIsValid =
   builderConfig.includes("from: build/THIRD_PARTY_NOTICES.md") &&
   builderConfig.includes("to: THIRD_PARTY_NOTICES.md") &&
@@ -60,7 +76,8 @@ if (
   missing.length > 0 ||
   found.length > 0 ||
   leakedCredentials.length > 0 ||
-  missingPackageExclusions.length > 0
+  missingPackageExclusions.length > 0 ||
+  missingPiAuthoringAssets.length > 0
 ) {
   if (!updaterDependencyIsValid) {
     console.error("FAIL: electron-updater must be an exact production dependency matching package-lock.json");
@@ -73,6 +90,9 @@ if (
   for (const pattern of missingPackageExclusions) {
     console.error(`FAIL: electron-builder.yml is missing production exclusion: ${pattern}`);
   }
+  for (const pattern of missingPiAuthoringAssets) {
+    console.error(`FAIL: electron-builder.yml is missing Pi authoring asset: ${pattern}`);
+  }
   if (!toolchainCatalogPackagingIsValid) {
     console.error(
       "FAIL: production packaging must include third-party notices, fixed catalogs, and only target-specific bundled core tools",
@@ -82,5 +102,5 @@ if (
 }
 
 console.log(
-  `OK: electron-updater ${updaterVersion} is locked for production; main bundle contains ${requiredMarkers.length} updater markers, excludes ${forbiddenMarkers.length} forbidden markers, packaging retains ${requiredPackageExclusions.length} source exclusions, and fixed catalogs plus target-specific core tools are packaged without managed runtime archives`,
+  `OK: electron-updater ${updaterVersion} is locked for production; main bundle contains ${requiredMarkers.length} updater markers, excludes ${forbiddenMarkers.length} forbidden markers, packaging retains ${requiredPackageExclusions.length} source exclusions and explicit Pi authoring asset FileSets, and fixed catalogs plus target-specific core tools are packaged without managed runtime archives`,
 );
