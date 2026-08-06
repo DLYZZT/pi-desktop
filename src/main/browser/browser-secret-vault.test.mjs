@@ -19,7 +19,7 @@ test("BrowserSecretVault stores only encrypted values and uses private file perm
     const ref = first.set("Bearer very-secret");
     assert.equal(first.get(ref), "Bearer very-secret");
     assert.equal(fs.readFileSync(file, "utf8").includes("Bearer very-secret"), false);
-    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 
     const second = new BrowserSecretVault(file, codec);
     assert.equal(second.get(ref), "Bearer very-secret");

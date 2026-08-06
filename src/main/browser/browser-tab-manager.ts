@@ -984,10 +984,20 @@ export class BrowserTabManager {
       point.x += frameContext.offsetX;
       point.y += frameContext.offsetY;
       record.syntheticInput += 1;
+      const releaseInputFocus = this.cdp.acquire(record.info.id);
+      let focusEmulationEnabled = false;
       let usedInsertText = false;
       try {
         record.view.webContents.focus();
         await this.sendMouseClick(record, point.x, point.y, "left", 1, signal);
+        // Keep the renderer focused for the complete input sequence. A hidden
+        // Electron view may lose native window focus after the click helper
+        // restores focus emulation, especially under Linux/Xvfb. CDP text
+        // insertion then targets the focused frame without depending on an OS
+        // input method, including for out-of-process iframes.
+        await this.cdp.sendCommand(record.info.id, "Emulation.setFocusEmulationEnabled", { enabled: true });
+        focusEmulationEnabled = true;
+        record.view.webContents.focus();
         const selectModifier: BrowserInputModifier = process.platform === "darwin" ? "meta" : "control";
         record.view.webContents.sendInputEvent({
           type: "keyDown",
@@ -1006,7 +1016,7 @@ export class BrowserTabManager {
             record.view.webContents.sendInputEvent({ type: "char", keyCode: character });
             record.view.webContents.sendInputEvent({ type: "keyUp", keyCode: character });
           } else {
-            await record.view.webContents.insertText(character);
+            await this.cdp.sendCommand(record.info.id, "Input.insertText", { text: character });
             usedInsertText = true;
           }
           if (this.humanizedInputEnabled()) await abortableDelay(randomBetween(18, 64), signal);
@@ -1019,6 +1029,12 @@ export class BrowserTabManager {
         }
         return usedInsertText ? "mixed-insert-text" : "key-events";
       } finally {
+        if (focusEmulationEnabled) {
+          await this.cdp
+            .sendCommand(record.info.id, "Emulation.setFocusEmulationEnabled", { enabled: false })
+            .catch(() => undefined);
+        }
+        releaseInputFocus();
         record.syntheticInput -= 1;
       }
     });

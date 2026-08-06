@@ -77,7 +77,7 @@ test("only persistent profile metadata survives relaunch and is private on disk"
     first.create({ name: "Unsafe", mode: "unsafe" });
 
     const file = path.join(root, "browser-profiles.json");
-    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600);
     const second = managerAt(root, []);
     const profiles = second.list();
     assert.deepEqual(
