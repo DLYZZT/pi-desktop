@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import type { SessionEntry, SessionTreeNode } from "@/lib/types";
+import type { SessionTreeEntry, SessionTreeNode } from "@/lib/types";
 
 interface Props {
   tree: SessionTreeNode[];
@@ -49,23 +49,9 @@ function compress(node: SessionTreeNode): { node: SessionTreeNode; skipped: numb
   return { node: current, skipped };
 }
 
-function getLabel(entry: SessionEntry): string {
-  if (entry.type === "message" && "message" in entry) {
-    const msg = entry.message as { role: string; content: unknown };
-    const content = msg.content;
-    let text = "";
-    if (typeof content === "string") {
-      text = content;
-    } else if (Array.isArray(content)) {
-      text = content
-        .filter((b): b is { type: "text"; text: string } => b.type === "text")
-        .map((b) => b.text)
-        .join(" ");
-    }
-    if (text.length > 40) text = text.slice(0, 40) + "…";
-    if (text) return text;
-    if (msg.role === "assistant") return "[assistant]";
-  }
+function getLabel(entry: SessionTreeEntry): string {
+  if (entry.preview) return entry.preview.length > 40 ? `${entry.preview.slice(0, 40)}…` : entry.preview;
+  if (entry.role === "assistant") return "[assistant]";
   return entry.type;
 }
 
@@ -92,8 +78,7 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
   const isActive = activePathIds.has(rep.entry.id);
   const isOnPath = activePathIds.has(node.entry.id) || activePathIds.has(rep.entry.id);
   const label = getLabel(rep.entry);
-  const role =
-    rep.entry.type === "message" && "message" in rep.entry ? (rep.entry.message as { role: string }).role : null;
+  const role = rep.entry.role ?? null;
 
   return (
     <div>

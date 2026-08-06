@@ -19,6 +19,15 @@ export interface SessionEntryBase {
 export interface TextContent {
   type: "text";
   text: string;
+  /** UI transport metadata for content omitted from an initial history page. */
+  deferredContent?: DeferredContentRef;
+}
+
+export interface DeferredContentRef {
+  entryId: string;
+  blockIndex?: number;
+  originalBytes: number;
+  contentType?: "text" | "image" | "thinking" | "toolCall";
 }
 
 export interface ImageContent {
@@ -29,11 +38,15 @@ export interface ImageContent {
     data?: string;
     url?: string;
   };
+  /** UI transport metadata for binary content omitted from an initial history page. */
+  deferredContent?: DeferredContentRef;
 }
 
 export interface ThinkingContent {
   type: "thinking";
   thinking: string;
+  /** UI transport metadata for oversized reasoning omitted from an initial history page. */
+  deferredContent?: DeferredContentRef;
 }
 
 export interface ToolCallContent {
@@ -41,6 +54,8 @@ export interface ToolCallContent {
   toolCallId: string;
   toolName: string;
   input: Record<string, unknown>;
+  /** UI transport metadata for oversized tool input omitted from an initial history page. */
+  deferredContent?: DeferredContentRef;
 }
 
 export type AssistantContentBlock = TextContent | ImageContent | ThinkingContent | ToolCallContent;
@@ -263,8 +278,15 @@ export type SessionEntry =
 
 export type FileEntry = SessionHeader | SessionEntry;
 
+export interface SessionTreeEntry {
+  id: string;
+  type: string;
+  role?: AgentMessage["role"];
+  preview?: string;
+}
+
 export interface SessionTreeNode {
-  entry: SessionEntry;
+  entry: SessionTreeEntry;
   children: SessionTreeNode[];
   label?: string;
   compressedEntryIds?: string[];

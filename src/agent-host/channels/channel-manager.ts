@@ -26,6 +26,8 @@ import { evaluateInboundPolicy } from "./policy";
 import { fingerprintSecret, safeChannelError } from "./redaction";
 import { ChannelStateStore } from "./state-store";
 import type { AdapterTurnOutput, ChannelSecret, OutboundAttachment, StagedInboundAttachment } from "./types";
+import { resolveSessionPath } from "../session-reader";
+import { sessionIndex } from "../session-index";
 
 type RuntimeEntry = { controller: AbortController; task: Promise<void> };
 type SecretAccess = {
@@ -783,7 +785,21 @@ export class ChannelManager {
         // reload messages if the live agent stream was idle or interrupted.
         if (turn.notifySession && turn.sessionId) {
           const sessionCwd = "cwd" in turn && typeof turn.cwd === "string" ? turn.cwd : binding.cwd;
-          this.server.emit("sessions.changed", "*", { cwd: sessionCwd, sessionId: turn.sessionId });
+          const sessionPath = await resolveSessionPath(turn.sessionId).catch(() => null);
+          const session = sessionPath ? await sessionIndex.refreshPath(sessionPath).catch(() => null) : null;
+          if (session) {
+            this.server.emit("sessions.changed", session.id, {
+              cwd: session.cwd,
+              sessionId: session.id,
+              session,
+            });
+          } else {
+            this.server.emit("sessions.changed", "*", {
+              cwd: sessionCwd,
+              sessionId: turn.sessionId,
+              fullRefresh: true,
+            });
+          }
         }
         const text = turn.finalText || "Agent 已完成处理，但没有生成文本回复。";
         const receipt = progressiveOutput

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { build } from "esbuild";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
@@ -53,11 +54,13 @@ async function captureHandlers() {
 
 test("registerHandlers exposes every contract method exactly once", async () => {
   const { handlers } = await captureHandlers();
-  assert.equal(Object.keys(handlers).length, 64);
+  assert.equal(Object.keys(handlers).length, 66);
   for (const method of [
     "host.ping",
     "host.toolchain",
     "sessions.list",
+    "sessions.contextPage",
+    "sessions.entryContent",
     "worktrees.list",
     "git.status",
     "agent.state",
@@ -180,4 +183,124 @@ test("session, model configuration, and auth handlers isolate state and preserve
     (error) => error.code === "PARSE_ERROR",
   );
   assert.equal(readFileSync(modelsPath, "utf8"), "{broken json");
+});
+
+test("sessions.get returns the contract shape without rescanning known session paths", async (t) => {
+  const sessionDirectory = path.join(process.env.PI_CODING_AGENT_SESSION_DIR, "contract-fixture");
+  mkdirSync(sessionDirectory, { recursive: true });
+  const sessionId = "contract-session";
+  const sessionPath = path.join(sessionDirectory, `2026-08-06T00-00-00-000Z_${sessionId}.jsonl`);
+  const entries = [
+    {
+      type: "session",
+      version: 3,
+      id: sessionId,
+      timestamp: "2026-08-06T00:00:00.000Z",
+      cwd: root,
+    },
+    {
+      type: "message",
+      id: "user-one",
+      parentId: null,
+      timestamp: "2026-08-06T00:00:01.000Z",
+      message: { role: "user", content: "hello", timestamp: 1_786_060_801_000 },
+    },
+    {
+      type: "message",
+      id: "assistant-one",
+      parentId: "user-one",
+      timestamp: "2026-08-06T00:00:02.000Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "hi" }],
+        api: "test",
+        provider: "test",
+        model: "test",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { total: 0 } },
+        stopReason: "stop",
+        timestamp: 1_786_060_802_000,
+      },
+    },
+    {
+      type: "message",
+      id: "user-two",
+      parentId: "assistant-one",
+      timestamp: "2026-08-06T00:00:03.000Z",
+      message: { role: "user", content: "second", timestamp: 1_786_060_803_000 },
+    },
+    {
+      type: "message",
+      id: "assistant-two",
+      parentId: "user-two",
+      timestamp: "2026-08-06T00:00:04.000Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "second answer" }],
+        api: "test",
+        provider: "test",
+        model: "test",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { total: 0 } },
+        stopReason: "stop",
+        timestamp: 1_786_060_804_000,
+      },
+    },
+  ];
+  writeFileSync(sessionPath, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+
+  const { handlers } = await captureHandlers();
+  const listed = await handlers["sessions.list"]();
+  assert.equal(
+    listed.sessions.some((session) => session.id === sessionId),
+    true,
+  );
+
+  const originalListAll = SessionManager.listAll;
+  SessionManager.listAll = async () => {
+    throw new Error("global scan must not run");
+  };
+  t.after(() => {
+    SessionManager.listAll = originalListAll;
+  });
+
+  const detail = await handlers["sessions.get"]({ id: sessionId });
+  assert.deepEqual(Object.keys(detail).sort(), ["context", "filePath", "info", "leafId", "sessionId", "tree"]);
+  assert.equal(detail.sessionId, sessionId);
+  assert.equal(detail.filePath, sessionPath);
+  assert.equal(detail.info.id, sessionId);
+  assert.equal(detail.info.messageCount, 4);
+  assert.equal(detail.info.firstMessage, "hello");
+  assert.deepEqual(detail.context.entryIds, ["user-one", "assistant-one", "user-two", "assistant-two"]);
+  assert.equal(detail.context.messages.length, 4);
+
+  const paged = await handlers["sessions.get"]({ id: sessionId, historyWindow: { maxTurns: 1, maxBytes: 64 * 1024 } });
+  assert.deepEqual(paged.context.entryIds, ["user-two", "assistant-two"]);
+  assert.equal(paged.context.truncatedBefore, true);
+  const older = await handlers["sessions.contextPage"]({ id: sessionId, cursor: paged.context.previousCursor });
+  assert.deepEqual(older.context.entryIds, ["user-one", "assistant-one"]);
+  const cursorPayload = JSON.parse(Buffer.from(paged.context.previousCursor, "base64url").toString("utf8"));
+  const staleCursor = Buffer.from(
+    JSON.stringify({ ...cursorPayload, historyRevision: "stale-revision" }),
+    "utf8",
+  ).toString("base64url");
+  await assert.rejects(
+    handlers["sessions.contextPage"]({ id: sessionId, cursor: staleCursor }),
+    (error) => error.code === "STALE_CURSOR",
+  );
+  await assert.rejects(
+    handlers["sessions.contextPage"]({ id: sessionId, cursor: "invalid" }),
+    (error) => error.code === "BAD_REQUEST",
+  );
+  assert.deepEqual(await handlers["sessions.entryContent"]({ id: sessionId, entryId: "assistant-two" }), {
+    content: { type: "text", text: "second answer" },
+    deferredContent: {
+      entryId: "assistant-two",
+      blockIndex: 0,
+      originalBytes: Buffer.byteLength(JSON.stringify({ type: "text", text: "second answer" }), "utf8"),
+      contentType: "text",
+    },
+  });
+  await assert.rejects(
+    handlers["sessions.entryContent"]({ id: sessionId, entryId: "another-session-entry", blockIndex: 0 }),
+    (error) => error.code === "NOT_FOUND",
+  );
 });

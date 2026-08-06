@@ -3,14 +3,26 @@ import {
   buildSessionContext as piBuildSessionContext,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
 import type { AgentMessage, SessionEntry, SessionInfo, SessionContext, UserMessage } from "../shared/types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "../shared/normalize";
 import { resolveProject, type ProjectInfo } from "../shared/worktree";
+import { sessionIndex } from "./session-index";
 
 export { getAgentDir };
 
 export async function listAllSessions(): Promise<SessionInfo[]> {
+  try {
+    await sessionIndex.refreshAll();
+    return await sessionIndex.getAll();
+  } catch (error) {
+    console.error("[agent-host] session index unavailable; falling back to pi listAll:", error);
+    return listAllSessionsFallback();
+  }
+}
+
+async function listAllSessionsFallback(): Promise<SessionInfo[]> {
   const piSessions: PiSessionInfo[] = await SessionManager.listAll();
   const pathToId = new Map<string, string>();
   for (const s of piSessions) pathToId.set(s.path, s.id);
@@ -56,19 +68,102 @@ function getPathCache(): Map<string, string> {
 
 export async function resolveSessionPath(sessionId: string): Promise<string | null> {
   const cached = getPathCache().get(sessionId);
-  if (cached) return cached;
+  if (cached && existsSync(cached)) return cached;
+  if (cached) getPathCache().delete(sessionId);
 
-  // Cache miss: scan all sessions to populate cache, then retry
-  await listAllSessions();
-  return getPathCache().get(sessionId) ?? null;
+  const indexed = await sessionIndex.resolvePath(sessionId);
+  if (indexed) getPathCache().set(sessionId, indexed);
+  return indexed;
 }
 
 export function cacheSessionPath(sessionId: string, filePath: string): void {
   getPathCache().set(sessionId, filePath);
 }
 
+export function getSessionIndexMetrics() {
+  return sessionIndex.getMetrics();
+}
+
 export function invalidateSessionPathCache(sessionId: string): void {
   getPathCache().delete(sessionId);
+}
+
+function findCachedSessionId(filePath: string): string | undefined {
+  for (const [id, cachedPath] of getPathCache()) {
+    if (cachedPath === filePath) return id;
+  }
+  return undefined;
+}
+
+function getMessageTextContent(message: unknown): string {
+  if (!message || typeof message !== "object") return "";
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter(
+      (block): block is { type: "text"; text: string } =>
+        Boolean(block) &&
+        typeof block === "object" &&
+        (block as { type?: unknown }).type === "text" &&
+        typeof (block as { text?: unknown }).text === "string",
+    )
+    .map((block) => block.text)
+    .join(" ");
+}
+
+function getMessageActivityTime(entry: SessionEntry): number | undefined {
+  if (entry.type !== "message") return undefined;
+  const message = entry.message as unknown as { role?: unknown; timestamp?: unknown };
+  if (message.role !== "user" && message.role !== "assistant") return undefined;
+  if (!getMessageTextContent(entry.message)) return undefined;
+  if (typeof message.timestamp === "number") return message.timestamp;
+  const parsed = Date.parse(entry.timestamp);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+/** Build the Desktop SessionInfo for one already-open session without scanning all session files. */
+export async function buildSessionInfoFromManager(
+  filePath: string,
+  manager: SessionManager,
+  entries: SessionEntry[],
+  options: { resolveProjectInfo?: boolean } = {},
+): Promise<SessionInfo | null> {
+  const header = manager.getHeader();
+  if (!header) return null;
+
+  cacheSessionPath(header.id, filePath);
+  let messageCount = 0;
+  let firstMessage = "";
+  let lastActivityTime: number | undefined;
+  for (const entry of entries) {
+    if (entry.type !== "message") continue;
+    messageCount += 1;
+    const activityTime = getMessageActivityTime(entry);
+    if (activityTime !== undefined) lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
+    const message = entry.message as unknown as { role?: unknown };
+    if (!firstMessage && message.role === "user") firstMessage = getMessageTextContent(entry.message);
+  }
+
+  const headerTime = Date.parse(header.timestamp);
+  const created = Number.isNaN(headerTime) ? header.timestamp : new Date(headerTime).toISOString();
+  const modified = lastActivityTime === undefined ? created : new Date(lastActivityTime).toISOString();
+  const project = header.cwd && options.resolveProjectInfo !== false ? await resolveProject(header.cwd) : undefined;
+  const parentSessionId = header.parentSession ? findCachedSessionId(header.parentSession) : undefined;
+
+  return {
+    path: filePath,
+    id: header.id,
+    cwd: header.cwd,
+    name: manager.getSessionName(),
+    created,
+    modified,
+    messageCount,
+    firstMessage: firstMessage || "(no messages)",
+    ...(parentSessionId ? { parentSessionId } : {}),
+    projectRoot: project?.projectRoot ?? header.cwd,
+    ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
+  };
 }
 
 export function getSessionEntries(filePath: string): SessionEntry[] {
@@ -143,13 +238,13 @@ export function buildSessionContext(entries: SessionEntry[], leafId?: string | n
   };
 }
 
-function parseRunId(data: unknown): string | undefined {
+export function parseRunId(data: unknown): string | undefined {
   if (!data || typeof data !== "object") return undefined;
   const runId = (data as { runId?: unknown }).runId;
   return typeof runId === "string" ? runId : undefined;
 }
 
-function parseChannelSourceMarker(
+export function parseChannelSourceMarker(
   data: unknown,
 ): { channel: NonNullable<UserMessage["channelSource"]>; runId?: string } | null {
   if (!data || typeof data !== "object") return null;
@@ -161,7 +256,10 @@ function parseChannelSourceMarker(
   };
 }
 
-function withUserMessageSource(message: UserMessage, source?: NonNullable<UserMessage["channelSource"]>): UserMessage {
+export function withUserMessageSource(
+  message: UserMessage,
+  source?: NonNullable<UserMessage["channelSource"]>,
+): UserMessage {
   const legacy = parseLegacyChannelMessage(message);
   return {
     ...legacy.message,
@@ -206,7 +304,7 @@ function parseEntryTimestamp(timestamp: string): number | undefined {
 
 // Convert a session entry on the active branch into a UI message.
 // Returns null for entries that do not map to chat history (metadata, non-message types).
-function entryToUiMessage(entry: SessionEntry): AgentMessage | null {
+export function entryToUiMessage(entry: SessionEntry): AgentMessage | null {
   switch (entry.type) {
     case "message":
       return normalizeToolCalls(entry.message);

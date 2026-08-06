@@ -1,5 +1,17 @@
 /** Shared domain types used by the IPC contract. */
 
+import type {
+  AgentMessage,
+  DeferredContentRef,
+  ExtensionStatusItem,
+  ExtensionWidgetItem,
+  ImageContent,
+  SessionTreeNode,
+  TextContent,
+  ThinkingContent,
+  ToolCallContent,
+} from "../shared/types";
+
 export interface SessionInfo {
   path: string;
   id: string;
@@ -15,18 +27,54 @@ export interface SessionInfo {
 }
 
 export interface SessionDetail {
-  session: SessionInfo & {
-    tree?: unknown[];
-    leafId?: string | null;
-    state?: unknown;
+  sessionId: string;
+  filePath: string;
+  info: SessionInfo | null;
+  tree: SessionTreeNode[];
+  leafId: string | null;
+  context: PagedContextInfo;
+  agentState?: {
+    running: boolean;
+    state?: SessionRuntimeState;
   };
 }
 
 export interface ContextInfo {
-  messages: unknown[];
+  messages: AgentMessage[];
   entryIds: string[];
+  thinkingLevel: string;
+  model: { provider: string; modelId: string } | null;
+}
+
+export interface HistoryWindow {
+  maxTurns?: number;
+  maxBytes?: number;
+}
+
+export interface PagedContextInfo extends ContextInfo {
+  totalMessages: number;
+  loadedMessages: number;
+  truncatedBefore: boolean;
+  previousCursor?: string;
+  historyRevision: string;
+}
+
+export interface EntryContentResult {
+  content: TextContent | ImageContent | ThinkingContent | ToolCallContent;
+  deferredContent: DeferredContentRef;
+}
+
+export interface SessionRuntimeState {
+  contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null } | null;
+  systemPrompt?: string;
   thinkingLevel?: string;
-  model?: { provider: string; modelId: string } | null;
+  isStreaming?: boolean;
+  isPromptRunning?: boolean;
+  isCompacting?: boolean;
+  extensionStatuses?: ExtensionStatusItem[];
+  extensionWidgets?: ExtensionWidgetItem[];
+  queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
+  [key: string]: unknown;
 }
 
 export interface WorktreeInfo {

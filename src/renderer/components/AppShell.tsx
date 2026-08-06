@@ -24,6 +24,8 @@ import { useI18n } from "@/i18n";
 import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
 import { getSessionDisplayTitle } from "@/lib/session-list";
+import { beginSessionLoadTrace } from "@/lib/session-performance";
+import { SessionProfiler } from "./SessionProfiler";
 import { buildAtMentionText } from "@/lib/file-fuzzy";
 import {
   RIGHT_PANEL_DEFAULT_WIDTH,
@@ -485,6 +487,7 @@ export function AppShell() {
 
   const handleSelectSession = useCallback(
     (session: SessionInfo, isRestore = false) => {
+      beginSessionLoadTrace(session.id, isRestore ? "restore" : "selection");
       setNewSessionCwd(null);
       setSelectedSession(session);
       setSessionKey((k) => k + 1);
@@ -1353,20 +1356,21 @@ export function AppShell() {
           {/* Chat content */}
           <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
             {showChat ? (
-              <ChatWindow
-                key={sessionKey}
-                session={selectedSession}
-                newSessionCwd={effectiveNewSessionCwd}
-                onAgentEnd={handleAgentEnd}
-                onSessionCreated={handleSessionCreated}
-                onSessionForked={handleSessionForked}
-                modelsRefreshKey={modelsRefreshKey}
-                chatInputRef={chatInputRef}
-                onSessionStatsChange={handleSessionStatsChange}
-                onSessionStatsPanelOpen={openSessionStatsPanel}
-                onContextUsageChange={handleContextUsageChange}
-                onOpenFile={handleOpenLinkedFile}
-              />
+              <SessionProfiler key={sessionKey} id="ChatWindow">
+                <ChatWindow
+                  session={selectedSession}
+                  newSessionCwd={effectiveNewSessionCwd}
+                  onAgentEnd={handleAgentEnd}
+                  onSessionCreated={handleSessionCreated}
+                  onSessionForked={handleSessionForked}
+                  modelsRefreshKey={modelsRefreshKey}
+                  chatInputRef={chatInputRef}
+                  onSessionStatsChange={handleSessionStatsChange}
+                  onSessionStatsPanelOpen={openSessionStatsPanel}
+                  onContextUsageChange={handleContextUsageChange}
+                  onOpenFile={handleOpenLinkedFile}
+                />
+              </SessionProfiler>
             ) : showPlaceholder ? (
               activeCwd ? (
                 <div

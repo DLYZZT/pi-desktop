@@ -111,9 +111,11 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
   });
 
   win.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    if (level < 2) return;
+    const isSessionPerformanceLog =
+      options.isDev && (message.startsWith("[perf:sessions]") || message.startsWith("[perf:sessions:react]"));
+    if (level < 2 && !isSessionPerformanceLog) return;
     appendMainLog(`renderer[${level}] ${message} (${sourceId}:${line})`);
-    options.onConsoleError?.(message);
+    if (level >= 2) options.onConsoleError?.(message);
   });
 
   const url = resolveRendererEntry(options.isDev, options.runtimeMainDirectory);

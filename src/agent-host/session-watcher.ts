@@ -6,6 +6,7 @@ import path from "path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { RpcServer } from "../contract/rpc";
 import { invalidateAllowedRootsCache, setAllowedRootsWatcherHealthy } from "./file-access";
+import { sessionIndex } from "./session-index";
 
 export function startSessionWatcher(server: RpcServer): () => void {
   let agentDir: string;
@@ -23,12 +24,48 @@ export function startSessionWatcher(server: RpcServer): () => void {
     }
   }
 
+  const sessionsRoot = path.resolve(process.env.PI_CODING_AGENT_SESSION_DIR || path.join(agentDir, "sessions"));
+  const changedPaths = new Set<string>();
+  let fullRefreshRequired = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const debounce = () => {
+  const debounce = (changedPath?: string) => {
+    if (changedPath) changedPaths.add(changedPath);
+    else fullRefreshRequired = true;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      invalidateAllowedRootsCache();
-      server.emit("sessions.changed", "*", { cwd: null });
+      void (async () => {
+        timer = null;
+        try {
+          invalidateAllowedRootsCache();
+          const pendingPaths = [...changedPaths];
+          changedPaths.clear();
+          const shouldRefreshAll = fullRefreshRequired;
+          fullRefreshRequired = false;
+          if (shouldRefreshAll) {
+            await sessionIndex.refreshAll();
+            server.emit("sessions.changed", "*", { cwd: null, fullRefresh: true });
+            return;
+          }
+          for (const filePath of pendingPaths) {
+            const previous = sessionIndex.getByPath(filePath);
+            const session = await sessionIndex.refreshPath(filePath);
+            if (session) {
+              server.emit("sessions.changed", session.id, { cwd: session.cwd, sessionId: session.id, session });
+            } else if (previous) {
+              server.emit("sessions.changed", previous.id, {
+                cwd: previous.cwd,
+                sessionId: previous.id,
+                deleted: true,
+              });
+            } else {
+              server.emit("sessions.changed", "*", { cwd: null, fullRefresh: true });
+            }
+          }
+        } catch (error) {
+          console.error("[agent-host] session watcher refresh failed:", error);
+          server.emit("sessions.changed", "*", { cwd: null, fullRefresh: true });
+        }
+      })();
     }, 300);
   };
 
@@ -40,10 +77,12 @@ export function startSessionWatcher(server: RpcServer): () => void {
         return;
       }
       const name = filename.toString();
-      // Session files are typically .jsonl under sessions/ or similar
-      if (name.endsWith(".jsonl") || name.endsWith(".json") || name.includes("session")) {
-        debounce();
-      }
+      const candidate = path.resolve(agentDir, name);
+      const insideAgentDirectory =
+        candidate === path.resolve(agentDir) || candidate.startsWith(`${path.resolve(agentDir)}${path.sep}`);
+      if (!insideAgentDirectory) return;
+      if (candidate.endsWith(".jsonl") && candidate.startsWith(`${sessionsRoot}${path.sep}`)) debounce(candidate);
+      else if (name.endsWith(".json") || name.includes("session")) debounce();
     });
     watcher.on("error", (err) => {
       console.error("[agent-host] session watcher error:", err);

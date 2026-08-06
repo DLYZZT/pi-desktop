@@ -28,10 +28,18 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type AuthInteraction } from "@earendil-works/pi-ai";
 import type { RpcServer } from "../contract/rpc";
-import { RpcError } from "../contract/types";
+import { RpcError, type HistoryWindow, type SessionDetail, type SessionRuntimeState } from "../contract/types";
+import type { SessionTreeNode } from "../shared/types";
 import { allowFileRoot, getAllowedFileRoots, invalidateAllowedRootsCache, isFilePathAllowed } from "./file-access";
 import { getRpcSession, getRunningRpcSessionIds, startRpcSession, subscribeRunningSessions } from "./rpc-manager";
-import { buildSessionContext, invalidateSessionPathCache, listAllSessions, resolveSessionPath } from "./session-reader";
+import {
+  buildSessionContext,
+  buildSessionInfoFromManager,
+  getSessionIndexMetrics,
+  invalidateSessionPathCache,
+  listAllSessions,
+  resolveSessionPath,
+} from "./session-reader";
 import { isFilePathReferencedBySession } from "./session-file-references";
 import {
   addWorktree,
@@ -58,10 +66,25 @@ import { createAuthLoginService, resolveLoginCode } from "./auth-login";
 import { getSharedModelRuntime, reloadSharedModelRuntimeConfig } from "./model-runtime";
 import { applyPluginAction, readPlugins } from "./plugins-service";
 import { installSkill, searchSkills } from "./skills-service";
-import { projectTreeForResponse } from "./project-tree";
+import { projectSessionTreeForResponse } from "./project-tree";
 import { ChannelManager } from "./channels/channel-manager";
 import { ToolchainError } from "../shared/toolchains/errors";
 import { toolchainRuntime } from "./toolchain-runtime";
+import {
+  logSessionPerformance,
+  resolveSessionTraceId,
+  roundSessionMilliseconds,
+  sessionPerformanceBytesEnabled,
+} from "./session-performance";
+import {
+  buildHistoryRevision,
+  buildSessionHistoryPage,
+  decodeHistoryCursor,
+  readSessionEntryContent,
+  StaleHistoryCursorError,
+} from "./session-history";
+import { getSessionContentSnapshot, invalidateSessionContent } from "./session-content-cache";
+import { sessionIndex } from "./session-index";
 
 const IGNORED_NAMES = new Set([
   "node_modules",
@@ -127,6 +150,20 @@ function getLanguage(filePath: string): string {
   if (base === "makefile" || base === "gnumakefile") return "makefile";
   const ext = base.split(".").pop() ?? "";
   return EXT_TO_LANGUAGE[ext] ?? "text";
+}
+
+async function emitIndexedSessionChange(server: RpcServer, sessionId: string, cwd: string | null): Promise<void> {
+  try {
+    const filePath = await resolveSessionPath(sessionId);
+    const session = filePath ? await sessionIndex.refreshPath(filePath) : null;
+    if (session) {
+      server.emit("sessions.changed", session.id, { cwd: session.cwd, sessionId: session.id, session });
+      return;
+    }
+  } catch (error) {
+    console.error("[agent-host] failed to refresh changed session:", error);
+  }
+  server.emit("sessions.changed", "*", { cwd, fullRefresh: true });
 }
 
 async function assertPathAllowed(target: string, sourceSessionId?: string): Promise<void> {
@@ -278,53 +315,183 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     },
 
     "sessions.list": async () => {
-      const sessions = await listAllSessions();
-      return { sessions, runningSessionIds: getRunningRpcSessionIds() };
+      const traceId = resolveSessionTraceId();
+      const startedAt = performance.now();
+      try {
+        const sessions = await listAllSessions();
+        const indexMetrics = getSessionIndexMetrics();
+        logSessionPerformance("sessions.list", {
+          traceId,
+          ok: true,
+          totalMs: roundSessionMilliseconds(performance.now() - startedAt),
+          sessionsReturned: sessions.length,
+          filesDiscovered: indexMetrics.filesDiscovered,
+          filesParsed: indexMetrics.filesParsed,
+          filesReused: indexMetrics.filesReused,
+          invalidFiles: indexMetrics.invalidFiles,
+          indexRefreshMs: indexMetrics.totalMs,
+        });
+        return { sessions, runningSessionIds: getRunningRpcSessionIds() };
+      } catch (error) {
+        logSessionPerformance("sessions.list", {
+          traceId,
+          ok: false,
+          totalMs: roundSessionMilliseconds(performance.now() - startedAt),
+          error: error instanceof Error ? error.name : "UnknownError",
+        });
+        throw error;
+      }
     },
 
     "sessions.get": async (params) => {
-      const { id, includeState } = params as { id: string; includeState?: boolean };
-      const filePath = await resolveSessionPath(id);
-      if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+      const {
+        id,
+        includeState,
+        traceId: requestedTraceId,
+        historyWindow,
+      } = params as {
+        id: string;
+        includeState?: boolean;
+        traceId?: string;
+        historyWindow?: HistoryWindow;
+      };
+      const traceId = resolveSessionTraceId(requestedTraceId);
+      const startedAt = performance.now();
+      let stateMs = 0;
+      try {
+        const agentStatePromise: Promise<SessionDetail["agentState"]> = (async () => {
+          if (!includeState) return undefined;
+          const stateStartedAt = performance.now();
+          const existing = getRpcSession(id);
+          const result = existing?.isAlive()
+            ? { running: true, state: (await existing.send({ type: "get_state" })) as SessionRuntimeState }
+            : { running: false };
+          stateMs = performance.now() - stateStartedAt;
+          return result;
+        })();
 
-      const sm = SessionManager.open(filePath);
-      const entries = sm.getEntries() as never;
-      const leafId = sm.getLeafId();
-      const tree = projectTreeForResponse(sm.getTree() as never);
-      const context = buildSessionContext(entries, leafId);
-      const all = await listAllSessions();
-      const info = all.find((s) => s.id === id);
+        const resolveStartedAt = performance.now();
+        const filePath = await resolveSessionPath(id);
+        const resolvePathMs = performance.now() - resolveStartedAt;
+        if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
 
-      let agentState: { running: boolean; state?: unknown } | undefined;
-      if (includeState) {
-        const existing = getRpcSession(id);
-        if (existing?.isAlive()) {
-          const state = await existing.send({ type: "get_state" });
-          agentState = { running: true, state };
-        } else {
-          agentState = { running: false };
-        }
+        const openStartedAt = performance.now();
+        const { manager: sm, entries } = getSessionContentSnapshot(filePath);
+        const openMs = performance.now() - openStartedAt;
+
+        const contextStartedAt = performance.now();
+        const leafId = sm.getLeafId();
+        const tree = projectSessionTreeForResponse(sm.getTree() as never) as SessionTreeNode[];
+        const historyRevision = buildHistoryRevision(filePath, id);
+        const context = buildSessionHistoryPage({ entries, leafId, historyWindow, historyRevision });
+        const contextMs = performance.now() - contextStartedAt;
+
+        const infoStartedAt = performance.now();
+        const [info, agentState] = await Promise.all([
+          buildSessionInfoFromManager(filePath, sm, entries),
+          agentStatePromise,
+        ]);
+        const infoMs = performance.now() - infoStartedAt;
+
+        const detail: SessionDetail = {
+          sessionId: id,
+          filePath,
+          info,
+          leafId,
+          tree,
+          context,
+          ...(agentState !== undefined ? { agentState } : {}),
+        };
+        const responseBytes = sessionPerformanceBytesEnabled()
+          ? Buffer.byteLength(JSON.stringify(detail), "utf8")
+          : undefined;
+        logSessionPerformance("sessions.get", {
+          traceId,
+          ok: true,
+          totalMs: roundSessionMilliseconds(performance.now() - startedAt),
+          resolvePathMs: roundSessionMilliseconds(resolvePathMs),
+          openMs: roundSessionMilliseconds(openMs),
+          contextMs: roundSessionMilliseconds(contextMs),
+          infoMs: roundSessionMilliseconds(infoMs),
+          stateMs: roundSessionMilliseconds(stateMs),
+          entryCount: entries.length,
+          messageCount: context.messages.length,
+          fileBytes: statSync(filePath).size,
+          ...(responseBytes === undefined ? {} : { responseBytes }),
+        });
+        return detail;
+      } catch (error) {
+        logSessionPerformance("sessions.get", {
+          traceId,
+          ok: false,
+          totalMs: roundSessionMilliseconds(performance.now() - startedAt),
+          error: error instanceof Error ? error.name : "UnknownError",
+        });
+        throw error;
       }
-
-      // Return flat SessionData shape expected by useAgentSession
-      return {
-        sessionId: id,
-        filePath,
-        info: info ?? null,
-        leafId,
-        tree,
-        context,
-        ...(agentState !== undefined ? { agentState } : {}),
-      } as never;
     },
 
     "sessions.context": async (params) => {
-      const { id, leafId } = params as { id: string; leafId?: string };
+      const { id, leafId, historyWindow } = params as { id: string; leafId?: string; historyWindow?: HistoryWindow };
       const filePath = await resolveSessionPath(id);
       if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
-      const sm = SessionManager.open(filePath);
-      const context = buildSessionContext(sm.getEntries() as never, leafId);
-      return { context: context as never };
+      const { entries } = getSessionContentSnapshot(filePath);
+      const context = buildSessionHistoryPage({
+        entries,
+        leafId,
+        historyWindow,
+        historyRevision: buildHistoryRevision(filePath, id),
+      });
+      return { context };
+    },
+
+    "sessions.contextPage": async (params) => {
+      const { id, cursor, maxTurns, maxBytes } = params as {
+        id: string;
+        cursor: string;
+        maxTurns?: number;
+        maxBytes?: number;
+      };
+      const filePath = await resolveSessionPath(id);
+      if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+      const { entries } = getSessionContentSnapshot(filePath);
+      try {
+        const context = buildSessionHistoryPage({
+          entries,
+          historyWindow: { maxTurns, maxBytes },
+          historyRevision: buildHistoryRevision(filePath, id),
+          cursor: decodeHistoryCursor(cursor),
+        });
+        return { context };
+      } catch (error) {
+        if (error instanceof StaleHistoryCursorError) {
+          throw new RpcError({ code: "STALE_CURSOR", message: error.message });
+        }
+        if (error instanceof Error && error.message === "Invalid session history cursor") {
+          throw new RpcError({ code: "BAD_REQUEST", message: error.message });
+        }
+        throw error;
+      }
+    },
+
+    "sessions.entryContent": async (params) => {
+      const { id, entryId, blockIndex = 0 } = params as { id: string; entryId: string; blockIndex?: number };
+      const filePath = await resolveSessionPath(id);
+      if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+      const { entries } = getSessionContentSnapshot(filePath);
+      const content = readSessionEntryContent(entries, entryId, blockIndex);
+      if (content === null) {
+        throw new RpcError({ code: "NOT_FOUND", message: "Session entry content not found" });
+      }
+      return {
+        content,
+        deferredContent: {
+          entryId,
+          blockIndex,
+          originalBytes: Buffer.byteLength(JSON.stringify(content), "utf8"),
+          contentType: content.type,
+        },
+      };
     },
 
     "sessions.export": async (params) => {
@@ -376,9 +543,15 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
           message: e instanceof Error ? e.message : String(e),
         });
       }
+      invalidateSessionContent(filePath);
+      const deletedSession = sessionIndex.removePath(filePath);
       invalidateSessionPathCache(id);
       void callMain("browser.sessionEnded", { sessionId: id }).catch(() => undefined);
-      server.emit("sessions.changed", "*", { cwd: null });
+      server.emit("sessions.changed", id, {
+        cwd: deletedSession?.cwd ?? null,
+        sessionId: id,
+        deleted: true,
+      });
       return { ok: true as const };
     },
 
@@ -396,8 +569,9 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         const sm = SessionManager.open(filePath);
         // ISSUE-014: SDK uses appendSessionInfo, not setSessionName
         sm.appendSessionInfo(name.trim());
+        invalidateSessionContent(filePath);
       }
-      server.emit("sessions.changed", "*", { cwd: null });
+      await emitIndexedSessionChange(server, id, null);
       return { ok: true as const };
     },
 
@@ -498,13 +672,12 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       }
 
       if (rest.type === "ensure_session") {
-        server.emit("sessions.changed", "*", { cwd });
         return { sessionId: realSessionId, data: null };
       }
 
       const command = rest.type ? rest : { type: "prompt", message: body.message ?? "" };
       const data = await session.send(command as Record<string, unknown>);
-      server.emit("sessions.changed", "*", { cwd });
+      await emitIndexedSessionChange(server, realSessionId, cwd);
       return { sessionId: realSessionId, data };
     },
 

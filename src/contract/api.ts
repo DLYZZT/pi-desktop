@@ -1,13 +1,15 @@
 import type {
   AgentCommand,
   AgentEvent,
-  ContextInfo,
   DirEntry,
+  EntryContentResult,
   FileContent,
   FileMeta,
+  HistoryWindow,
   LoginProgressEvent,
   ModelsConfig,
   ModelsListResult,
+  PagedContextInfo,
   ProviderStatus,
   RunningStateEvent,
   SessionDetail,
@@ -55,12 +57,20 @@ export interface Api {
     result: { sessions: SessionInfo[]; runningSessionIds: string[] };
   };
   "sessions.get": {
-    params: { id: string; includeState?: boolean };
+    params: { id: string; includeState?: boolean; traceId?: string; historyWindow?: HistoryWindow };
     result: SessionDetail;
   };
   "sessions.context": {
-    params: { id: string; leafId?: string };
-    result: { context: ContextInfo };
+    params: { id: string; leafId?: string; historyWindow?: HistoryWindow };
+    result: { context: PagedContextInfo };
+  };
+  "sessions.contextPage": {
+    params: { id: string; cursor: string; maxTurns?: number; maxBytes?: number };
+    result: { context: PagedContextInfo };
+  };
+  "sessions.entryContent": {
+    params: { id: string; entryId: string; blockIndex?: number };
+    result: EntryContentResult;
   };
   "sessions.export": {
     params: { id: string; format?: "md" | "json" };
@@ -299,7 +309,13 @@ export interface Streams {
   "agent.events": AgentEvent;
   "agent.running": RunningStateEvent;
   "auth.login": LoginProgressEvent;
-  "sessions.changed": { cwd: string | null; sessionId?: string };
+  "sessions.changed": {
+    cwd: string | null;
+    sessionId?: string;
+    session?: SessionInfo;
+    deleted?: boolean;
+    fullRefresh?: boolean;
+  };
   "files.changed": {
     path: string;
     event: "connected" | "change" | "error";

@@ -5,6 +5,8 @@ import { useTheme } from "@/hooks/useTheme";
 import { copyText } from "@/lib/clipboard";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { markdownRehypePlugins, markdownRemarkPlugins } from "@/lib/markdown";
+import { shouldHighlightCode } from "@/lib/code-highlight-policy";
+import { SessionProfiler } from "./SessionProfiler";
 
 interface MarkdownBodyProps {
   children: string;
@@ -28,80 +30,82 @@ export function MarkdownBody({
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
 
   return (
-    <div className={["markdown-body", className].filter(Boolean).join(" ")}>
-      <ReactMarkdown
-        remarkPlugins={markdownRemarkPlugins}
-        rehypePlugins={markdownRehypePlugins}
-        components={{
-          code({ className, children, ...props }) {
-            const lang = className?.replace("language-", "").toLowerCase() ?? "";
-            const raw = String(children);
-            const isBlock = className?.includes("language-") || raw.includes("\n");
-            if (isBlock) {
-              if (lang === "mermaid") {
-                return <MermaidBlock code={raw.replace(/\n$/, "")} isStreaming={isStreaming} />;
+    <SessionProfiler id="MarkdownBody">
+      <div className={["markdown-body", className].filter(Boolean).join(" ")}>
+        <ReactMarkdown
+          remarkPlugins={markdownRemarkPlugins}
+          rehypePlugins={markdownRehypePlugins}
+          components={{
+            code({ className, children, ...props }) {
+              const lang = className?.replace("language-", "").toLowerCase() ?? "";
+              const raw = String(children);
+              const isBlock = className?.includes("language-") || raw.includes("\n");
+              if (isBlock) {
+                if (lang === "mermaid") {
+                  return <MermaidBlock code={raw.replace(/\n$/, "")} isStreaming={isStreaming} />;
+                }
+                return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} />;
               }
-              return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} />;
-            }
-            return (
-              <code className="markdown-inline-code" {...props}>
-                {children}
-              </code>
-            );
-          },
-          pre({ children }) {
-            return <>{children}</>;
-          },
-          a({ href, children, ...props }) {
-            const filePath = onOpenFile ? resolveLocalFileHref(href, cwd) : null;
-            const openFile = onOpenFile;
-            if (!filePath || !openFile) {
               return (
-                <a href={href} {...props}>
+                <code className="markdown-inline-code" {...props}>
+                  {children}
+                </code>
+              );
+            },
+            pre({ children }) {
+              return <>{children}</>;
+            },
+            a({ href, children, ...props }) {
+              const filePath = onOpenFile ? resolveLocalFileHref(href, cwd) : null;
+              const openFile = onOpenFile;
+              if (!filePath || !openFile) {
+                return (
+                  <a href={href} {...props}>
+                    {children}
+                  </a>
+                );
+              }
+
+              const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
+                if (event.defaultPrevented || event.button !== 0) return;
+                if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                const target = event.currentTarget.getAttribute("target");
+                if (target && target !== "_self") return;
+                event.preventDefault();
+                openFile(filePath);
+              };
+
+              return (
+                <a href={href} {...props} onClick={handleClick}>
                   {children}
                 </a>
               );
-            }
-
-            const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
-              if (event.defaultPrevented || event.button !== 0) return;
-              if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-              const target = event.currentTarget.getAttribute("target");
-              if (target && target !== "_self") return;
-              event.preventDefault();
-              openFile(filePath);
-            };
-
-            return (
-              <a href={href} {...props} onClick={handleClick}>
-                {children}
-              </a>
-            );
-          },
-          img({ src, alt, node: _node, ...props }) {
-            return (
-              <MarkdownImage
-                src={src}
-                alt={alt}
-                cwd={cwd}
-                relativeBase={imageBasePath ?? cwd}
-                sourceSessionId={sourceSessionId}
-                {...props}
-              />
-            );
-          },
-          table({ children }) {
-            return (
-              <div className="markdown-table-wrap">
-                <table>{children}</table>
-              </div>
-            );
-          },
-        }}
-      >
-        {normalizedMarkdown}
-      </ReactMarkdown>
-    </div>
+            },
+            img({ src, alt, node: _node, ...props }) {
+              return (
+                <MarkdownImage
+                  src={src}
+                  alt={alt}
+                  cwd={cwd}
+                  relativeBase={imageBasePath ?? cwd}
+                  sourceSessionId={sourceSessionId}
+                  {...props}
+                />
+              );
+            },
+            table({ children }) {
+              return (
+                <div className="markdown-table-wrap">
+                  <table>{children}</table>
+                </div>
+              );
+            },
+          }}
+        >
+          {normalizedMarkdown}
+        </ReactMarkdown>
+      </div>
+    </SessionProfiler>
   );
 }
 
@@ -309,23 +313,40 @@ function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; h
           </button>
         </div>
       </div>
-      <SyntaxHighlighter
-        language={lang || "text"}
-        style={isDark ? vscDarkPlus : vs}
-        showLineNumbers
-        lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal" }}
-        customStyle={{
-          margin: 0,
-          padding: "11px 13px",
-          fontSize: 12.5,
-          lineHeight: 1.62,
-          borderRadius: 0,
-          background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
-        }}
-        codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
-      >
-        {code}
-      </SyntaxHighlighter>
+      {shouldHighlightCode(code) ? (
+        <SyntaxHighlighter
+          language={lang || "text"}
+          style={isDark ? vscDarkPlus : vs}
+          showLineNumbers
+          lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal" }}
+          customStyle={{
+            margin: 0,
+            padding: "11px 13px",
+            fontSize: 12.5,
+            lineHeight: 1.62,
+            borderRadius: 0,
+            background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+          }}
+          codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
+        >
+          {code}
+        </SyntaxHighlighter>
+      ) : (
+        <pre
+          style={{
+            margin: 0,
+            padding: "11px 13px",
+            fontSize: 12.5,
+            lineHeight: 1.62,
+            overflow: "auto",
+            whiteSpace: "pre",
+            fontFamily: "var(--font-mono)",
+            background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+          }}
+        >
+          <code>{code}</code>
+        </pre>
+      )}
     </div>
   );
 }

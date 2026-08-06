@@ -1,45 +1,26 @@
 import { useEffect, useRef, useState, useCallback, useMemo, RefObject } from "react";
-import type { AgentMessage, AssistantMessage, TextContent } from "@/lib/types";
+
+export interface ChatMinimapMessage {
+  role: "user" | "assistant";
+  preview: string;
+  hasText: boolean;
+}
 
 interface Props {
-  messages: AgentMessage[];
-  streamingMessage: Partial<AgentMessage> | null;
+  messages: ChatMinimapMessage[];
+  streamingMessage: ChatMinimapMessage | null;
   scrollContainer: RefObject<HTMLDivElement | null>;
   messageRefs: RefObject<(HTMLDivElement | null)[]>;
+  historyTruncated?: boolean;
 }
 
 const MINIMAP_WIDTH = 36;
 
-function getMessagePreview(msg: AgentMessage | Partial<AgentMessage>): string {
-  if (msg.role === "user") {
-    const content = msg.content;
-    if (typeof content === "string") return content.slice(0, 200);
-    if (Array.isArray(content)) {
-      return (content as { type: string; text?: string }[])
-        .filter((b) => b.type === "text" && b.text)
-        .map((b) => b.text!)
-        .join("\n")
-        .slice(0, 200);
-    }
-    return "";
-  }
-  if (msg.role === "assistant") {
-    const blocks = (msg as Partial<AssistantMessage>).content ?? [];
-    const text = blocks
-      .filter((b): b is TextContent => b.type === "text")
-      .map((b) => b.text)
-      .join(" ");
-    if (text) return text.slice(0, 200);
-    const toolNames = blocks
-      .filter((b) => b.type === "toolCall")
-      .map((b) => (b as { type: string; toolName: string }).toolName);
-    if (toolNames.length) return toolNames.join(", ");
-    return "";
-  }
-  return "";
+function getMessagePreview(msg: ChatMinimapMessage): string {
+  return msg.preview;
 }
 
-function getNodeColor(msg: AgentMessage | Partial<AgentMessage>): { bg: string; border: string } {
+function getNodeColor(msg: ChatMinimapMessage): { bg: string; border: string } {
   if (msg.role === "user") {
     return {
       bg: "color-mix(in srgb, var(--accent) 18%, transparent)",
@@ -52,23 +33,18 @@ function getNodeColor(msg: AgentMessage | Partial<AgentMessage>): { bg: string; 
   };
 }
 
-function hasTextContent(msg: AgentMessage | Partial<AgentMessage>): boolean {
-  if (msg.role === "user") return true;
-  if (msg.role === "assistant") {
-    const blocks = (msg as Partial<AssistantMessage>).content ?? [];
-    return blocks.some((b) => b.type === "text");
-  }
-  return false;
+function hasTextContent(msg: ChatMinimapMessage): boolean {
+  return msg.hasText;
 }
 
 interface NodeInfo {
   topRatio: number; // 0–1 within total scroll height
   heightRatio: number;
-  msg: AgentMessage | Partial<AgentMessage>;
+  msg: ChatMinimapMessage;
   index: number;
 }
 
-export function ChatMinimap({ messages, streamingMessage, scrollContainer, messageRefs }: Props) {
+export function ChatMinimap({ messages, streamingMessage, scrollContainer, messageRefs, historyTruncated }: Props) {
   const [scrollRatio, setScrollRatio] = useState(0);
   const [viewportRatio, setViewportRatio] = useState(1);
   const [visible, setVisible] = useState(false);
@@ -79,7 +55,7 @@ export function ChatMinimap({ messages, streamingMessage, scrollContainer, messa
   const containerRef = useRef<HTMLDivElement>(null);
 
   const allMessages = useMemo(
-    () => (streamingMessage ? [...messages, streamingMessage] : messages) as (AgentMessage | Partial<AgentMessage>)[],
+    () => (streamingMessage ? [...messages, streamingMessage] : messages),
     [messages, streamingMessage],
   );
   const allMessagesRef = useRef(allMessages);
@@ -264,6 +240,22 @@ export function ChatMinimap({ messages, streamingMessage, scrollContainer, messa
         overflow: "visible",
       }}
     >
+      {historyTruncated && (
+        <div
+          title="Minimap shows the currently loaded history range"
+          style={{
+            position: "absolute",
+            top: 2,
+            left: 9,
+            right: 9,
+            height: 2,
+            borderRadius: 2,
+            background: "var(--accent)",
+            opacity: 0.7,
+            zIndex: 3,
+          }}
+        />
+      )}
       {/* Viewport indicator */}
       <div
         style={{

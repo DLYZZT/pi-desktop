@@ -169,12 +169,29 @@ export async function listSessions() {
   return call("sessions.list");
 }
 
-export async function getSession(id: string, includeState?: boolean) {
-  return call("sessions.get", { id, includeState });
+export async function getSession(
+  id: string,
+  includeState?: boolean,
+  traceId?: string,
+  historyWindow?: ApiParams<"sessions.get">["historyWindow"],
+) {
+  return call("sessions.get", { id, includeState, traceId, historyWindow });
 }
 
-export async function getSessionContext(id: string, leafId?: string) {
-  return call("sessions.context", { id, leafId });
+export async function getSessionContext(
+  id: string,
+  leafId?: string,
+  historyWindow?: ApiParams<"sessions.context">["historyWindow"],
+) {
+  return call("sessions.context", { id, leafId, historyWindow });
+}
+
+export async function getSessionContextPage(id: string, cursor: string, maxTurns?: number, maxBytes?: number) {
+  return call("sessions.contextPage", { id, cursor, maxTurns, maxBytes });
+}
+
+export async function getSessionEntryContent(id: string, entryId: string, blockIndex?: number) {
+  return call("sessions.entryContent", { id, entryId, blockIndex });
 }
 
 export async function exportSession(id: string, format: "md" | "json" = "md") {

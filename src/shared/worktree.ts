@@ -70,6 +70,7 @@ export interface WorktreeInfo {
 
 const PROJECT_CACHE_TTL_MS = 60_000;
 const projectCache = new Map<string, { info: ProjectInfo; expiresAt: number }>();
+let projectCacheRevision = 0;
 
 function getProjectCache(): Map<string, { info: ProjectInfo; expiresAt: number }> {
   return projectCache;
@@ -77,6 +78,11 @@ function getProjectCache(): Map<string, { info: ProjectInfo; expiresAt: number }
 
 export function invalidateProjectCache(): void {
   projectCache.clear();
+  projectCacheRevision += 1;
+}
+
+export function getProjectCacheRevision(): number {
+  return projectCacheRevision;
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {

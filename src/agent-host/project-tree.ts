@@ -1,3 +1,5 @@
+import type { SessionTreeNode } from "../shared/types";
+
 export const MAX_PROJECTED_TREE_DEPTH = 200;
 
 export type ProjectTreeNode = {
@@ -63,4 +65,45 @@ export function projectTreeForResponse<T extends ProjectTreeNode>(nodes: T[]): T
   }
 
   return projectedRoots;
+}
+
+function treeEntryPreview(entry: Record<string, unknown>): SessionTreeNode["entry"] {
+  const type = typeof entry.type === "string" ? entry.type : "unknown";
+  const message =
+    entry.message && typeof entry.message === "object" ? (entry.message as Record<string, unknown>) : null;
+  const role =
+    message && ["user", "assistant", "toolResult", "custom"].includes(String(message.role))
+      ? (message.role as SessionTreeNode["entry"]["role"])
+      : undefined;
+  const content = message?.content;
+  const text =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .flatMap((block) =>
+              block && typeof block === "object" && (block as { type?: unknown }).type === "text"
+                ? [String((block as { text?: unknown }).text ?? "")]
+                : [],
+            )
+            .join(" ")
+        : "";
+  const preview = text.trim().replace(/\s+/g, " ").slice(0, 80);
+  return {
+    id: String(entry.id),
+    type,
+    ...(role ? { role } : {}),
+    ...(preview ? { preview } : {}),
+  };
+}
+
+/** Compress and strip message payloads; branch navigation only needs metadata previews. */
+export function projectSessionTreeForResponse<T extends ProjectTreeNode>(nodes: T[]): SessionTreeNode[] {
+  const projected = projectTreeForResponse(nodes);
+  const convert = (node: T): SessionTreeNode => ({
+    entry: treeEntryPreview(node.entry as Record<string, unknown>),
+    children: node.children.map((child) => convert(child as T)),
+    ...(node.compressedEntryIds?.length ? { compressedEntryIds: [...node.compressedEntryIds] } : {}),
+  });
+  return projected.map(convert);
 }

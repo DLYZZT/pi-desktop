@@ -40,6 +40,7 @@ interface Props {
   onEditContent?: (content: string) => void;
   showTimestamp?: boolean;
   prevTimestamp?: number;
+  onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
 }
 
 function formatTime(ts?: number): string | null {
@@ -58,6 +59,64 @@ function formatTime(ts?: number): string | null {
   return `${date} ${time}`;
 }
 
+function formatByteSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 102.4) / 10} KB`;
+  return `${Math.round(bytes / 1024 / 102.4) / 10} MB`;
+}
+
+function DeferredContentActions({
+  content,
+  onLoad,
+}: {
+  content: unknown;
+  onLoad?: (entryId: string, blockIndex?: number) => Promise<void>;
+}) {
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  if (!onLoad || !Array.isArray(content)) return null;
+  const references = content.flatMap((block) => {
+    if (!block || typeof block !== "object") return [];
+    const deferred = (block as AssistantContentBlock | TextContent | ImageContent).deferredContent;
+    return deferred ? [deferred] : [];
+  });
+  if (references.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+      {references.map((reference) => {
+        const key = `${reference.entryId}:${reference.blockIndex ?? 0}`;
+        const loading = loadingKey === key;
+        return (
+          <button
+            key={key}
+            type="button"
+            disabled={loading}
+            onClick={() => {
+              setLoadingKey(key);
+              setLoadError(false);
+              void onLoad(reference.entryId, reference.blockIndex)
+                .catch(() => setLoadError(true))
+                .finally(() => setLoadingKey(null));
+            }}
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              background: "var(--bg-panel)",
+              color: "var(--accent)",
+              cursor: loading ? "default" : "pointer",
+              fontSize: 11,
+              padding: "4px 8px",
+            }}
+          >
+            {loading ? "Loading full content…" : `Load full content (${formatByteSize(reference.originalBytes)})`}
+          </button>
+        );
+      })}
+      {loadError && <span style={{ color: "var(--danger)", fontSize: 11 }}>Failed to load full content</span>}
+    </div>
+  );
+}
+
 export function MessageView({
   message,
   isStreaming,
@@ -73,6 +132,7 @@ export function MessageView({
   onEditContent,
   showTimestamp,
   prevTimestamp,
+  onLoadDeferredContent,
 }: Props) {
   if (message.role === "user") {
     return (
@@ -86,6 +146,7 @@ export function MessageView({
         onNavigate={onNavigate}
         prevAssistantEntryId={prevAssistantEntryId}
         onEditContent={onEditContent}
+        onLoadDeferredContent={onLoadDeferredContent}
       />
     );
   }
@@ -100,6 +161,7 @@ export function MessageView({
         onOpenFile={onOpenFile}
         showTimestamp={showTimestamp}
         prevTimestamp={prevTimestamp}
+        onLoadDeferredContent={onLoadDeferredContent}
       />
     );
   }
@@ -109,9 +171,21 @@ export function MessageView({
   }
   if (message.role === "custom") {
     if ((message as CustomMessage).customType === "compaction") {
-      return <CompactionMessageView message={message as CustomMessage} />;
+      return (
+        <>
+          <CompactionMessageView message={message as CustomMessage} />
+          <DeferredContentActions content={message.content} onLoad={onLoadDeferredContent} />
+        </>
+      );
     }
-    return <CustomMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
+    return (
+      <CustomMessageView
+        message={message as CustomMessage}
+        cwd={cwd}
+        onOpenFile={onOpenFile}
+        onLoadDeferredContent={onLoadDeferredContent}
+      />
+    );
   }
   return null;
 }
@@ -126,6 +200,7 @@ function UserMessageView({
   onNavigate,
   prevAssistantEntryId,
   onEditContent,
+  onLoadDeferredContent,
 }: {
   message: UserMessage;
   cwd?: string;
@@ -136,6 +211,7 @@ function UserMessageView({
   onNavigate?: (entryId: string) => void;
   prevAssistantEntryId?: string;
   onEditContent?: (content: string) => void;
+  onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
 }) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
@@ -150,7 +226,9 @@ function UserMessageView({
           .join("\n");
 
   const imageBlocks: ImageContent[] =
-    typeof message.content === "string" ? [] : message.content.filter((b): b is ImageContent => b.type === "image");
+    typeof message.content === "string"
+      ? []
+      : message.content.filter((b): b is ImageContent => b.type === "image" && !b.deferredContent);
 
   const visibleContent =
     message.channelSource && content === CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER
@@ -237,6 +315,7 @@ function UserMessageView({
               {visibleContent}
             </MarkdownBody>
           )}
+          <DeferredContentActions content={message.content} onLoad={onLoadDeferredContent} />
         </div>
       </div>
 
@@ -444,6 +523,7 @@ function AssistantMessageView({
   onOpenFile,
   showTimestamp,
   prevTimestamp,
+  onLoadDeferredContent,
 }: {
   message: AssistantMessage;
   isStreaming?: boolean;
@@ -453,6 +533,7 @@ function AssistantMessageView({
   onOpenFile?: (filePath: string) => void;
   showTimestamp?: boolean;
   prevTimestamp?: number;
+  onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
 }) {
   const { t } = useI18n();
   const time = showTimestamp ? formatTime(message.timestamp) : null;
@@ -667,8 +748,10 @@ function AssistantMessageView({
             toolCallDurations={toolCallDurations}
             cwd={cwd}
             onOpenFile={onOpenFile}
+            onLoadDeferredContent={onLoadDeferredContent}
           />
         ))}
+        <DeferredContentActions content={message.content} onLoad={onLoadDeferredContent} />
         {failureDetail && !isStreaming && (
           <div
             role="alert"
@@ -780,6 +863,7 @@ function BlockView({
   toolCallDurations,
   cwd,
   onOpenFile,
+  onLoadDeferredContent,
 }: {
   block: AssistantContentBlock;
   toolResults?: Map<string, ToolResultMessage>;
@@ -788,18 +872,29 @@ function BlockView({
   toolCallDurations?: Map<string, number>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
+  onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
 }) {
   if (block.type === "text") {
     return <TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} />;
   }
   if (block.type === "thinking") {
-    return <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} />;
+    return (
+      <>
+        <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} />
+        <DeferredContentActions content={[block]} onLoad={onLoadDeferredContent} />
+      </>
+    );
   }
   if (block.type === "toolCall") {
     const tc = block as ToolCallContent;
     const result = toolResults?.get(tc.toolCallId);
     const duration = toolCallDurations?.get(tc.toolCallId);
-    return <ToolCallBlock block={tc} result={result} duration={duration} />;
+    return (
+      <>
+        <ToolCallBlock block={tc} result={result} duration={duration} onLoadDeferredContent={onLoadDeferredContent} />
+        <DeferredContentActions content={[block]} onLoad={onLoadDeferredContent} />
+      </>
+    );
   }
   return null;
 }
@@ -901,10 +996,12 @@ function ToolCallBlock({
   block,
   result,
   duration,
+  onLoadDeferredContent,
 }: {
   block: ToolCallContent;
   result?: ToolResultMessage;
   duration?: number;
+  onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const { t } = useI18n();
@@ -1037,6 +1134,7 @@ function ToolCallBlock({
             collapsed={!expanded}
           />
         ))}
+      {result && <DeferredContentActions content={result.content} onLoad={onLoadDeferredContent} />}
       {browserTabId && (
         <button
           type="button"
@@ -1542,10 +1640,12 @@ function CustomMessageView({
   message,
   cwd,
   onOpenFile,
+  onLoadDeferredContent,
 }: {
   message: CustomMessage;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
+  onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
 }) {
   const isHiddenDisplay = message.display === false;
   const [contentExpanded, setContentExpanded] = useState(!isHiddenDisplay);
@@ -1627,6 +1727,7 @@ function CustomMessageView({
             ) : (
               <span style={{ color: "var(--text-dim)", fontSize: 12 }}>(no message)</span>
             )}
+            <DeferredContentActions content={message.content} onLoad={onLoadDeferredContent} />
           </div>
         ) : (
           <button
@@ -1734,7 +1835,7 @@ function getMessageText(content: CustomMessage["content"] | UserMessage["content
 
 function getMessageImages(content: CustomMessage["content"] | UserMessage["content"]): ImageContent[] {
   if (typeof content === "string") return [];
-  return content.filter((b): b is ImageContent => b.type === "image");
+  return content.filter((b): b is ImageContent => b.type === "image" && !b.deferredContent);
 }
 
 function imageSource(img: ImageContent): string {
