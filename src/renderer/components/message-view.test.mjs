@@ -79,3 +79,20 @@ test("renders actionable fallback text when a failed response has no provider de
 test("continues to hide a completed empty non-error assistant message", () => {
   assert.equal(renderToStaticMarkup(createElement(MessageView, { message: assistant() })), "");
 });
+
+test("renders compaction summaries collapsed by default", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: {
+        role: "custom",
+        customType: "compaction",
+        content: "A long summary that should stay hidden until requested.",
+        display: true,
+      },
+    }),
+  );
+
+  assert.match(html, /aria-expanded="false"/);
+  assert.match(html, /Conversation compacted/);
+  assert.doesNotMatch(html, /A long summary that should stay hidden/);
+});

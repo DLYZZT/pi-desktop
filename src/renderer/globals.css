@@ -576,6 +576,21 @@ code {
   margin: 6px 0;
 }
 
+.compaction-summary-toggle {
+  width: 100%;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.compaction-summary-toggle:hover {
+  filter: brightness(0.98);
+}
+.compaction-summary-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .compaction-file-details {
   margin-top: 10px;
   padding-top: 8px;
