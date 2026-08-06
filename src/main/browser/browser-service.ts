@@ -41,7 +41,7 @@ import { BrowserNetworkInterceptor } from "./browser-network-interceptor.ts";
 import { BrowserPolicyEngine, createDisabledAdvancedRuntimePolicy } from "./browser-policy.ts";
 import { BrowserPersistentGrantStore } from "./browser-persistent-grant-store.ts";
 import { BrowserProfileManager, DEFAULT_BROWSER_PROFILE_ID } from "./browser-profile-manager.ts";
-import { BrowserSecretVault } from "./browser-secret-vault.ts";
+import { BrowserSecretVault, type BrowserSecretCodec } from "./browser-secret-vault.ts";
 import { BrowserSettingsStore } from "./browser-settings-store.ts";
 import { BrowserSnippetStore } from "./browser-snippet-store.ts";
 import { BrowserTabManager } from "./browser-tab-manager.ts";
@@ -64,6 +64,7 @@ export interface BrowserServiceOptions {
   confirmPrivateNetwork?: (url: string) => Promise<boolean>;
   chooseSavePath?: (filename: string) => Promise<string | null>;
   chooseUploadPaths?: () => Promise<string[]>;
+  secretCodec?: BrowserSecretCodec;
 }
 
 export class BrowserService {
@@ -127,11 +128,14 @@ export class BrowserService {
       },
       emitResolved: (requestId, outcome) => this.emit({ type: "agent-authorization-resolved", requestId, outcome }),
     });
-    this.secrets = new BrowserSecretVault(path.join(options.userDataDir, "browser-secrets.json"), {
-      isAvailable: () => safeStorage.isEncryptionAvailable(),
-      encrypt: (value) => safeStorage.encryptString(value),
-      decrypt: (value) => safeStorage.decryptString(value),
-    });
+    this.secrets = new BrowserSecretVault(
+      path.join(options.userDataDir, "browser-secrets.json"),
+      options.secretCodec ?? {
+        isAvailable: () => safeStorage.isEncryptionAvailable(),
+        encrypt: (value) => safeStorage.encryptString(value),
+        decrypt: (value) => safeStorage.decryptString(value),
+      },
+    );
     this.restoreStore = new BrowserTabRestoreStore(path.join(options.userDataDir, "browser-tabs.json"));
     this.headerStore = new BrowserHeaderRuleStore(path.join(options.userDataDir, "browser-header-rules.json"));
     this.snippetStore = new BrowserSnippetStore(

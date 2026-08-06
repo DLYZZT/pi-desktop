@@ -447,6 +447,18 @@ async function waitFor(predicate: () => boolean, message: string, timeout = 10_0
   throw new Error(message);
 }
 
+function maskFixtureSecret(value: Buffer): Buffer {
+  const masked = Buffer.from(value);
+  for (let index = 0; index < masked.length; index += 1) masked[index] = masked[index]! ^ 0xa5;
+  return masked;
+}
+
+const fixtureSecretCodec = {
+  isAvailable: () => true,
+  encrypt: (value: string) => maskFixtureSecret(Buffer.from(value, "utf8")),
+  decrypt: (value: Buffer) => maskFixtureSecret(value).toString("utf8"),
+};
+
 async function run(): Promise<void> {
   const stage = (name: string) => console.log(`[browser-e2e] ${name}`);
   const fixture = await startFixture();
@@ -481,6 +493,7 @@ async function run(): Promise<void> {
     },
     chooseSavePath: async (filename) => path.join(downloads, filename),
     chooseUploadPaths: async () => [uploadFile],
+    secretCodec: fixtureSecretCodec,
     emit: (event) => {
       if (event.type === "permission-request") permissionRequests += 1;
       if (event.type === "permission-resolved") permissionResolutions += 1;
@@ -1653,6 +1666,7 @@ async function run(): Promise<void> {
     confirmPrivateNetwork: async () => true,
     chooseSavePath: async (filename) => path.join(downloads, filename),
     chooseUploadPaths: async () => [uploadFile],
+    secretCodec: fixtureSecretCodec,
   });
   await service.restoreTabs();
   const restoredPersistent = service.listTabs().find((candidate) => candidate.profileId === persistent.id);
