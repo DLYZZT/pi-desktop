@@ -1003,16 +1003,26 @@ export class BrowserTabManager {
         }
         record.view.webContents.focus();
         const selectModifier: BrowserInputModifier = process.platform === "darwin" ? "meta" : "control";
-        record.view.webContents.sendInputEvent({
+        const selectModifiers = cdpModifierMask([selectModifier]);
+        await this.cdp.sendCommand(record.info.id, "Input.dispatchKeyEvent", {
           type: "keyDown",
-          keyCode: "A",
-          modifiers: [selectModifier],
+          key: "a",
+          code: "KeyA",
+          modifiers: selectModifiers,
+          windowsVirtualKeyCode: 65,
+          nativeVirtualKeyCode: 65,
         });
-        record.view.webContents.sendInputEvent({
+        await this.cdp.sendCommand(record.info.id, "Input.dispatchKeyEvent", {
           type: "keyUp",
-          keyCode: "A",
-          modifiers: [selectModifier],
+          key: "a",
+          code: "KeyA",
+          modifiers: selectModifiers,
+          windowsVirtualKeyCode: 65,
+          nativeVirtualKeyCode: 65,
         });
+        // Keep selection and character events ordered on the same CDP queue,
+        // then round-trip through the target OOPIF before inserting text.
+        await frameContext.frame.executeJavaScript("true");
         for (const character of [...text]) {
           if (signal.aborted) throw new BrowserError("USER_TOOK_CONTROL", "User took control of the Browser tab");
           if (/^[\x20-\x7e]$/.test(character)) {
