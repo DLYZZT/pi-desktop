@@ -113,6 +113,7 @@ void app.whenReady().then(async () => {
     chooseCustomTool: (capability, executable) => toolchainManager.registerCustomTool(capability, executable),
     setChannelCredential: (payload) =>
       credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
+    getBrowserService: () => null,
     updateManager,
   });
 

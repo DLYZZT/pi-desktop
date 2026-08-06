@@ -51,11 +51,14 @@ const requiredPiAuthoringAssetMarkers = [
   '- "dist/**/*.d.ts"',
   "from: node_modules/@earendil-works/pi-ai/dist",
   "to: node_modules/@earendil-works/pi-ai/dist",
-  "from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist",
-  "to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist",
-  "from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist",
-  "to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist",
+  "from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai",
+  "to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai",
+  "from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui",
+  "to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui",
+  "- package.json",
+  '- "dist/**/*.js"',
   '- "**/*.d.ts"',
+  '- "dist/**/*.d.ts"',
 ];
 const missingPiAuthoringAssets = requiredPiAuthoringAssetMarkers.filter((marker) => !builderConfig.includes(marker));
 const toolchainCatalogPackagingIsValid =

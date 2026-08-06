@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
+import type { BrowserErrorCode, BrowserRecovery } from "../contract/browser.ts";
 
-type ParentRpcResult = { type: "host-rpc-result"; id: string; ok: boolean; result?: unknown; error?: string };
+type ParentRpcError = {
+  message: string;
+  code?: BrowserErrorCode;
+  retryable?: boolean;
+  recovery?: BrowserRecovery;
+  details?: Record<string, unknown>;
+};
+type ParentRpcResult = { type: "host-rpc-result"; id: string; ok: boolean; result?: unknown; error?: ParentRpcError };
 type Pending = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -9,6 +17,25 @@ type Pending = {
 
 const pending = new Map<string, Pending>();
 let installed = false;
+
+export class MainProcessRpcError extends Error {
+  readonly code?: BrowserErrorCode;
+  readonly retryable: boolean;
+  readonly recovery?: BrowserRecovery;
+  readonly details?: Record<string, unknown>;
+
+  constructor(value: ParentRpcError) {
+    const recovery = value.recovery
+      ? ` Recovery: ${value.recovery.remediation}; reason=${value.recovery.reason}; retryable=${value.recovery.retryable}.`
+      : "";
+    super(value.code ? `${value.code}: ${value.message}.${recovery}` : value.message);
+    this.name = "MainProcessRpcError";
+    this.code = value.code;
+    this.retryable = value.retryable === true;
+    this.recovery = value.recovery ? structuredClone(value.recovery) : undefined;
+    this.details = value.details ? structuredClone(value.details) : undefined;
+  }
+}
 
 function installListener(): void {
   if (installed || !process.parentPort) return;
@@ -21,7 +48,7 @@ function installListener(): void {
     pending.delete(message.id);
     clearTimeout(request.timer);
     if (message.ok) request.resolve(message.result);
-    else request.reject(new Error(message.error ?? "Main process request failed"));
+    else request.reject(new MainProcessRpcError(message.error ?? { message: "Main process request failed" }));
   });
 }
 

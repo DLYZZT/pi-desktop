@@ -53,6 +53,7 @@ import {
   getImageMime,
 } from "../shared/file-types";
 import { createFileWatchService } from "./file-watch";
+import { callMain } from "./parent-rpc";
 import { createAuthLoginService, resolveLoginCode } from "./auth-login";
 import { getSharedModelRuntime, reloadSharedModelRuntimeConfig } from "./model-runtime";
 import { applyPluginAction, readPlugins } from "./plugins-service";
@@ -376,6 +377,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         });
       }
       invalidateSessionPathCache(id);
+      void callMain("browser.sessionEnded", { sessionId: id }).catch(() => undefined);
       server.emit("sessions.changed", "*", { cwd: null });
       return { ok: true as const };
     },

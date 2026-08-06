@@ -8,6 +8,9 @@ import { startSessionWatcher } from "./session-watcher";
 import { toolchainRuntime } from "./toolchain-runtime";
 import type { ToolchainSnapshot } from "../shared/toolchains/types";
 import { installToolchainGitRunner } from "./toolchain-git";
+import type { BrowserCapabilitySnapshot } from "../contract/browser";
+import { browserCapabilityRuntime } from "./browser-capability-runtime";
+import { syncBrowserToolsForAllSessions } from "./rpc-manager";
 
 const server = createRpcServer();
 const restoreGitRunner = installToolchainGitRunner();
@@ -26,7 +29,7 @@ function log(message: string): void {
 const parentPort = process.parentPort;
 if (parentPort) {
   parentPort.on("message", (event) => {
-    const msg = event.data as { type?: string; snapshot?: ToolchainSnapshot };
+    const msg = event.data as { type?: string; snapshot?: ToolchainSnapshot | BrowserCapabilitySnapshot };
     if (msg?.type === "ping") {
       parentPort.postMessage({ type: "pong", ts: Date.now() });
       return;
@@ -48,11 +51,23 @@ if (parentPort) {
     if (msg?.type === "toolchain:init" || msg?.type === "toolchain:changed") {
       try {
         if (!msg.snapshot) throw new Error("missing snapshot");
-        toolchainRuntime.apply(msg.snapshot);
+        toolchainRuntime.apply(msg.snapshot as ToolchainSnapshot);
         parentPort.postMessage({ type: "toolchain:ack", revision: msg.snapshot.revision });
         log(`toolchain ${msg.type === "toolchain:init" ? "initialized" : "updated"} revision=${msg.snapshot.revision}`);
       } catch (error) {
         log(`toolchain snapshot rejected: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
+    if (msg?.type === "browser:init" || msg?.type === "browser:changed") {
+      try {
+        if (!msg.snapshot) throw new Error("missing snapshot");
+        browserCapabilityRuntime.apply(msg.snapshot as BrowserCapabilitySnapshot);
+        syncBrowserToolsForAllSessions();
+        parentPort.postMessage({ type: "browser:ack", revision: msg.snapshot.revision });
+        log(`browser ${msg.type === "browser:init" ? "initialized" : "updated"} revision=${msg.snapshot.revision}`);
+      } catch (error) {
+        log(`browser capability snapshot rejected: ${error instanceof Error ? error.message : String(error)}`);
       }
       return;
     }

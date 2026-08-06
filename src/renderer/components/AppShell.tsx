@@ -16,6 +16,8 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { SettingsConfig, type SettingsTab } from "./SettingsConfig";
 import { QuickChannelBinding } from "./channels/QuickChannelBinding";
+import { BrowserDock } from "./browser/BrowserDock";
+import { BrowserAuthorizationDialog } from "./browser/BrowserAuthorizationDialog";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
@@ -38,9 +40,12 @@ import type { SessionInfo } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { ChannelsSnapshot } from "@shared/channel-types";
+import type { BrowserAgentAuthorizationRequest, BrowserAgentAuthorizationDecision } from "../../contract/browser";
 
 type SessionCopyField = "file" | "id";
 const EXPLORER_TAB_ID = "explorer";
+const BROWSER_TAB_ID = "browser";
+const BROWSER_PANEL_WIDTH_KEY = "pi-desktop.browser-panel-width";
 const EMPTY_CHANNELS: ChannelsSnapshot = { accounts: [], statuses: [], pairings: [], bindings: [], activities: [] };
 
 function initialRightPanelPreferredWidth(): number {
@@ -51,11 +56,21 @@ function initialRightPanelPreferredWidth(): number {
   }
 }
 
-function persistRightPanelPreferredWidth(width: number): void {
+function persistRightPanelPreferredWidth(width: number, browser = false): void {
   try {
-    saveRightPanelPreferredWidth(window.localStorage, width);
+    if (browser) window.localStorage.setItem(BROWSER_PANEL_WIDTH_KEY, String(Math.round(width)));
+    else saveRightPanelPreferredWidth(window.localStorage, width);
   } catch {
     // Storage can become unavailable after startup; keep the in-memory preference.
+  }
+}
+
+function loadBrowserPanelPreferredWidth(): number {
+  try {
+    const value = Number(window.localStorage.getItem(BROWSER_PANEL_WIDTH_KEY));
+    return Number.isFinite(value) && value >= RIGHT_PANEL_MIN_WIDTH ? value : 520;
+  } catch {
+    return 520;
   }
 }
 
@@ -95,10 +110,13 @@ export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("general");
   const [settingsNavigationRequestId, setSettingsNavigationRequestId] = useState(0);
+  const [authorizationSettingsSessionId, setAuthorizationSettingsSessionId] = useState<string | null>(null);
+  const [browserAuthorization, setBrowserAuthorization] = useState<BrowserAgentAuthorizationRequest | null>(null);
   const [channelSnapshot, setChannelSnapshot] = useState<ChannelsSnapshot>(EMPTY_CHANNELS);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
+
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
   // is visible on load. Runs once the breakpoint resolves after hydration.
   useEffect(() => {
@@ -195,6 +213,7 @@ export function AppShell() {
     getRightPanelWidthBounds(window.innerWidth, sidebarOpen),
   );
   const rightPanelPreferredWidthRef = useRef(RIGHT_PANEL_DEFAULT_WIDTH);
+  const rightPanelKindRef = useRef<"files" | "browser">("files");
   const [rightPanelWidth, setRightPanelWidth] = useState(() => {
     const preferredWidth = initialRightPanelPreferredWidth();
     rightPanelPreferredWidthRef.current = preferredWidth;
@@ -230,7 +249,7 @@ export function AppShell() {
         rightPanelResizeCleanupRef.current = null;
         if (commit && didResize && finalWidth >= RIGHT_PANEL_MIN_WIDTH) {
           rightPanelPreferredWidthRef.current = finalWidth;
-          persistRightPanelPreferredWidth(finalWidth);
+          persistRightPanelPreferredWidth(finalWidth, activeFileTabId === BROWSER_TAB_ID);
         }
       };
       const handlePointerUp = () => cleanup(true);
@@ -244,10 +263,21 @@ export function AppShell() {
       window.addEventListener("pointerup", handlePointerUp);
       window.addEventListener("pointercancel", handlePointerCancel);
     },
-    [isMobile, rightPanelWidth, sidebarOpen],
+    [activeFileTabId, isMobile, rightPanelWidth, sidebarOpen],
   );
 
   useEffect(() => () => rightPanelResizeCleanupRef.current?.(), []);
+
+  useEffect(() => {
+    if (isMobile) return;
+    const nextKind = activeFileTabId === BROWSER_TAB_ID ? "browser" : "files";
+    if (rightPanelKindRef.current === nextKind) return;
+    persistRightPanelPreferredWidth(rightPanelPreferredWidthRef.current, rightPanelKindRef.current === "browser");
+    rightPanelKindRef.current = nextKind;
+    const preferred = nextKind === "browser" ? loadBrowserPanelPreferredWidth() : initialRightPanelPreferredWidth();
+    rightPanelPreferredWidthRef.current = preferred;
+    setRightPanelWidth(clampRightPanelWidth(preferred, window.innerWidth, sidebarOpen));
+  }, [activeFileTabId, isMobile, sidebarOpen]);
 
   useEffect(() => {
     if (isMobile) return;
@@ -276,6 +306,56 @@ export function AppShell() {
     else openRightPanel();
   }, [openRightPanel, rightPanelOpen]);
 
+  useEffect(() => {
+    const openBrowserTab = (event: Event) => {
+      const tabId = (event as CustomEvent<{ tabId?: string }>).detail?.tabId;
+      setActiveFileTabId(BROWSER_TAB_ID);
+      openRightPanel();
+      if (tabId) void window.piBridge.browserActivateTab(tabId).catch(() => undefined);
+    };
+    window.addEventListener("pi-desktop:open-browser-tab", openBrowserTab);
+    return () => window.removeEventListener("pi-desktop:open-browser-tab", openBrowserTab);
+  }, [openRightPanel]);
+
+  useEffect(
+    () =>
+      window.piBridge.onBrowserEvent((event) => {
+        if (event.type !== "tab-created" || !event.tab.ownerSessionId) return;
+        void window.piBridge.browserGetSettings().then((settings) => {
+          if (!settings.settings.panel.openOnAgentUse) return;
+          setActiveFileTabId(BROWSER_TAB_ID);
+          openRightPanel();
+        });
+      }),
+    [openRightPanel],
+  );
+
+  useEffect(
+    () =>
+      window.piBridge.onBrowserEvent((event) => {
+        if (event.type === "agent-authorization-request") {
+          setBrowserAuthorization(event.request);
+          void window.piBridge.browserSetSurfaceVisible({ visible: false }).catch(() => undefined);
+        } else if (event.type === "agent-authorization-resolved") {
+          setBrowserAuthorization((current) => (current?.id === event.requestId ? null : current));
+          setAuthorizationSettingsSessionId(null);
+        }
+      }),
+    [],
+  );
+
+  const respondToBrowserAuthorization = useCallback(
+    (decision: BrowserAgentAuthorizationDecision) => {
+      const requestId = browserAuthorization?.id;
+      if (!requestId) return;
+      void window.piBridge
+        .browserRespondAgentAuthorization(requestId, decision)
+        .catch(() => undefined)
+        .finally(() => setBrowserAuthorization((current) => (current?.id === requestId ? null : current)));
+    },
+    [browserAuthorization?.id],
+  );
+
   const handleRightPanelResizeKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (
@@ -296,10 +376,10 @@ export function AppShell() {
       setRightPanelWidth(nextWidth);
       if (nextWidth >= RIGHT_PANEL_MIN_WIDTH) {
         rightPanelPreferredWidthRef.current = nextWidth;
-        persistRightPanelPreferredWidth(nextWidth);
+        persistRightPanelPreferredWidth(nextWidth, activeFileTabId === BROWSER_TAB_ID);
       }
     },
-    [isMobile, rightPanelWidth, sidebarOpen],
+    [activeFileTabId, isMobile, rightPanelWidth, sidebarOpen],
   );
 
   // Same @mention format as the chat input's @ autocomplete, so the agent's
@@ -1346,7 +1426,7 @@ export function AppShell() {
           </div>
         </div>
 
-        {/* Right panel: explorer and file previews — always mounted, width animated via CSS */}
+        {/* Right panel: Browser, Explorer and file previews — always mounted, width animated via CSS */}
         <div
           className={`right-panel-container${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}${rightPanelResizing ? " right-panel-resizing" : ""}`}
           style={
@@ -1421,6 +1501,42 @@ export function AppShell() {
               </svg>
               Explorer
             </button>
+            <button
+              type="button"
+              onClick={() => setActiveFileTabId(BROWSER_TAB_ID)}
+              aria-pressed={activeFileTabId === BROWSER_TAB_ID}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                height: 36,
+                padding: "0 12px",
+                flexShrink: 0,
+                background: activeFileTabId === BROWSER_TAB_ID ? "var(--bg)" : "var(--bg-panel)",
+                border: "none",
+                borderRight: "1px solid var(--border)",
+                color: activeFileTabId === BROWSER_TAB_ID ? "var(--text)" : "var(--text-muted)",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: activeFileTabId === BROWSER_TAB_ID ? 500 : 400,
+              }}
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="9" />
+                <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+              </svg>
+              Browser
+            </button>
             <div style={{ flex: 1, overflow: "hidden" }}>
               <TabBar
                 tabs={fileTabs}
@@ -1477,9 +1593,14 @@ export function AppShell() {
             )}
           </div>
 
-          {/* Explorer or file content */}
+          {/* Browser, Explorer or file content */}
           <div style={{ flex: 1, overflow: "hidden" }}>
-            {activeFileTabId === EXPLORER_TAB_ID ? (
+            {activeFileTabId === BROWSER_TAB_ID ? (
+              <BrowserDock
+                visible={rightPanelOpen && !settingsOpen && !browserAuthorization}
+                ownerSessionId={selectedSession?.id ?? null}
+              />
+            ) : activeFileTabId === EXPLORER_TAB_ID ? (
               explorerCwd ? (
                 <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", paddingTop: 4 }}>
                   <FileExplorer
@@ -1521,7 +1642,7 @@ export function AppShell() {
                   fontSize: 12,
                 }}
               >
-                Select Explorer or open a file
+                Select Browser, Explorer or open a file
               </div>
             )}
           </div>
@@ -1575,7 +1696,7 @@ export function AppShell() {
       {settingsOpen && (
         <SettingsConfig
           cwd={activeCwd ?? selectedSession?.cwd ?? newSessionCwd ?? null}
-          sessionId={selectedSession?.id ?? null}
+          sessionId={authorizationSettingsSessionId ?? selectedSession?.id ?? null}
           initialTab={settingsInitialTab}
           navigationRequestId={settingsNavigationRequestId}
           onClose={() => {
@@ -1585,6 +1706,23 @@ export function AppShell() {
           onModelsChanged={() => setModelsRefreshKey((key) => key + 1)}
           onPluginsReloaded={() => setSessionKey((key) => key + 1)}
           onChannelsChanged={setChannelSnapshot}
+        />
+      )}
+      {browserAuthorization && !settingsOpen && (
+        <BrowserAuthorizationDialog
+          request={browserAuthorization}
+          sessionTitle={
+            selectedSession?.id === browserAuthorization.sessionId
+              ? getSessionDisplayTitle(selectedSession, 240)
+              : browserAuthorization.sessionId
+          }
+          onRespond={respondToBrowserAuthorization}
+          onManage={() => {
+            setAuthorizationSettingsSessionId(browserAuthorization.sessionId);
+            setSettingsInitialTab("browser");
+            setSettingsNavigationRequestId((value) => value + 1);
+            setSettingsOpen(true);
+          }}
         />
       )}
     </>

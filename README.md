@@ -51,6 +51,15 @@
 - 支持图片附件、斜杠命令与 `@` 文件引用
 - 对话与输入框使用一致的阅读宽度，右侧文件面板可通过鼠标或键盘调整并记住宽度
 
+### 用户与 Agent 共享的内置浏览器
+
+- 在主界面右侧使用 Electron `WebContentsView` 承载真实 Chromium 页面，支持多 Tab、临时/持久 Profile、登录态、下载、上传和代理
+- Agent 可在独立的 Browser read/interact 授权下执行导航、结构化页面快照、截图、点击、输入、键盘与等待；首次需要时由主窗口弹窗询问，Coding 权限不会隐式开启浏览权限
+- 用户与 Agent 操作同一个页面，并可随时接管；提交、下载、上传、权限和外部协议继续经过本地策略或确认
+- 设置页管理全局默认与具体会话的永久权限，授权弹窗只产生当前会话的临时权限；高级浏览器模式由一个仅本次启动有效的本机开关统一控制
+- 高级浏览器模式整合三层 UA/Client Hints 身份、可信输入、CDP 网络抓包与确认后的写请求重放、JavaScript 经验库和专用高级 Profile；Agent 工具不接收或返回 Cookie value
+- 私网保护当前为明确标记的 best-effort；未部署受控网络沙箱时，Strict 模式会直接拒绝请求
+
 ### 围绕项目工作的文件体验
 
 - 原生选择项目目录，管理 Git 分支与 Worktree
@@ -141,10 +150,13 @@ flowchart LR
     Main["Electron Main<br/>窗口 · 托盘 · 协议 · Host 监督"]
     Host["Agent Host / utilityProcess<br/>Pi Agent · 会话 · 文件 · 配置"]
     UI["Renderer<br/>React 19 · Vite"]
+    Browser["Main-owned WebContentsView<br/>远程网页 · Profile · 网络策略"]
     Data["~/.pi/agent/<br/>会话 · 模型 · 配置"]
 
     Main --> Host
     Main --> UI
+    Main --> Browser
+    Host -->|"revisioned Browser RPC"| Main
     UI <-->|"Typed MessagePort IPC"| Host
     Host <--> Data
 ```
@@ -152,6 +164,7 @@ flowchart LR
 - **Main**：负责窗口生命周期、菜单、托盘、通知、软件更新、自定义协议和 Agent Host 监督
 - **Agent Host**：在独立 `utilityProcess` 中运行 Pi Coding Agent，处理会话、文件、配置与扩展
 - **Renderer**：运行 React UI，只通过受控的 preload bridge 与 Host 交互
+- **Browser View**：远程网页只进入 Main 创建的沙箱化 `WebContentsView`，不获得应用 preload、Node 或主 Renderer bridge
 - **无本地服务**：生产环境不监听 TCP 端口，也不需要附带 Web Server
 
 ## 数据、安全与隐私
@@ -160,6 +173,7 @@ flowchart LR
 - 应用不会为了 UI 通信额外开放本地网络端口
 - Renderer 开启 Electron sandbox，并使用严格的 Content Security Policy
 - preload 只暴露受控桥接接口，Host RPC 由 TypeScript 契约约束
+- Agent Browser tools 与高级浏览器模式默认关闭；Main 在任何目标工具副作用前按 session、持久策略、临时 grant、lease 和 policy revision 逐次校验
 - 更新客户端只使用正式包内固定的公开 GitHub Release 配置，不接收 Renderer 提供的更新地址或发布凭证
 - 微信和 Telegram 只发起出站 long polling，飞书/Lark 使用出站 WebSocket；均不开放 webhook 或本地监听端口
 - 模型请求的数据处理方式取决于你配置的模型提供商，请同时查看对应服务的隐私政策
@@ -168,19 +182,20 @@ flowchart LR
 
 ### 常用命令
 
-| 命令                         | 说明                                    |
-| ---------------------------- | --------------------------------------- |
-| `npm run dev`                | 启动 Vite、主进程构建监听与 Electron    |
-| `npm run typecheck`          | 执行 TypeScript 类型检查                |
-| `npm run test`               | 运行自动化测试套件                      |
-| `npm run check:contract`     | 检查 API 方法与 Host handler 覆盖关系   |
-| `npm run smoke`              | 运行 Electron 冒烟测试                  |
-| `npm run verify`             | 执行提交前的完整质量检查                |
-| `npm run build`              | 构建 main、preload 与 renderer          |
-| `npm run pack`               | 生成未封装的应用目录                    |
-| `npm run dist`               | 生成当前平台配置的全部架构安装包        |
-| `npm run dist:mac:signed`    | 生成当前 Mac 架构的 Developer ID 签名包 |
-| `npm run dist:mac:notarized` | 生成签名并经 Apple 公证的 macOS 包      |
+| 命令                            | 说明                                    |
+| ------------------------------- | --------------------------------------- |
+| `npm run dev`                   | 启动 Vite、主进程构建监听与 Electron    |
+| `npm run typecheck`             | 执行 TypeScript 类型检查                |
+| `npm run test`                  | 运行自动化测试套件                      |
+| `npm run check:contract`        | 检查 API 方法与 Host handler 覆盖关系   |
+| `npm run smoke`                 | 运行 Electron 冒烟测试                  |
+| `npm run test:browser-electron` | 运行本地 Browser Electron 集成测试      |
+| `npm run verify`                | 执行提交前的完整质量检查                |
+| `npm run build`                 | 构建 main、preload 与 renderer          |
+| `npm run pack`                  | 生成未封装的应用目录                    |
+| `npm run dist`                  | 生成当前平台配置的全部架构安装包        |
+| `npm run dist:mac:signed`       | 生成当前 Mac 架构的 Developer ID 签名包 |
+| `npm run dist:mac:notarized`    | 生成签名并经 Apple 公证的 macOS 包      |
 
 ### 项目结构
 
@@ -212,6 +227,7 @@ npm run verify
 - [x] Windows x64 正式 Release 资产管线（当前不配置代码签名）
 - [x] 首个同时包含 macOS 与 Windows 正式资产的 Release 验收（v0.1.1）
 - [x] 实现主进程稳定版检查、用户确认下载、重启安装和设置界面
+- [x] 实现 Main-owned WebContentsView 内置浏览器、按需 Agent 会话授权和统一高级浏览器模式
 - [x] 完成 updater-enabled 基线到更高版本的 macOS 与 Windows 端到端升级验证
 - [x] macOS arm64/x64、Windows x64、Linux x64 安装包生产启动 E2E 与发布前检查
 

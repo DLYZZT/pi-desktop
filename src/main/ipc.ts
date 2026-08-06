@@ -18,6 +18,22 @@ import {
   type ToolchainActionRequest,
 } from "../shared/toolchains/types";
 import { ToolchainError } from "../shared/toolchains/errors";
+import type { BrowserService } from "./browser/browser-service";
+import { BrowserError } from "./browser/browser-error";
+import type {
+  BrowserConfirmationKind,
+  BrowserConfirmationProof,
+  BrowserCreateProfileInput,
+  BrowserCreateTabInput,
+  BrowserDataType,
+  BrowserHeaderRule,
+  BrowserHeaderRuleDirection,
+  BrowserAgentAuthorizationDecision,
+  BrowserPersistentSessionPermission,
+  BrowserPermissionDecision,
+  BrowserProxyCredentialsInput,
+  BrowserSettingsPatch,
+} from "../contract/browser";
 
 export type DesktopIpcOptions = {
   getHostManager: () => HostManager | null;
@@ -32,6 +48,7 @@ export type DesktopIpcOptions = {
     executable: string,
   ) => Promise<PublicToolchainState>;
   setChannelCredential: (payload: ChannelCredentialWrite) => void;
+  getBrowserService: () => BrowserService | null;
   updateManager: {
     getState: () => DesktopUpdateState;
     checkForUpdates: () => Promise<DesktopUpdateState>;
@@ -52,6 +69,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     performToolchainAction,
     chooseCustomTool,
     setChannelCredential,
+    getBrowserService,
     updateManager,
   } = options;
   const assertTrustedToolchainSender = (event: IpcMainInvokeEvent): void => {
@@ -64,6 +82,26 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     ) {
       throw new Error("Untrusted toolchain IPC sender");
     }
+  };
+  const requireTrustedBrowser = (event: IpcMainInvokeEvent): BrowserService => {
+    assertTrustedToolchainSender(event);
+    const browser = getBrowserService();
+    if (!browser) throw new Error("BROWSER_DISABLED: Browser service is unavailable");
+    return browser;
+  };
+  const browserHandler = <T extends unknown[], R>(
+    channel: string,
+    handler: (browser: BrowserService, ...args: T) => R | Promise<R>,
+  ): void => {
+    ipcMain.handle(channel, async (event, ...args: T) => {
+      const browser = requireTrustedBrowser(event);
+      try {
+        return await handler(browser, ...args);
+      } catch (error) {
+        if (error instanceof BrowserError) throw new Error(`${error.code}: ${error.message}`);
+        throw error;
+      }
+    });
   };
 
   ipcMain.handle("desktop:get-version", () => app.getVersion());
@@ -231,9 +269,100 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   ipcMain.handle("desktop:open-logs", () => shell.showItemInFolder(getMainLogPath()));
   ipcMain.handle("desktop:export-diagnostics", async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
-    return exportDiagnostics(win, { toolchainState: await getToolchainState() });
+    return exportDiagnostics(win, {
+      toolchainState: await getToolchainState(),
+      browser: getBrowserService()?.getRedactedDiagnostics(),
+    });
   });
   ipcMain.handle("desktop:clear-badge", () => applyBadgeCount(0));
+
+  browserHandler("desktop:browser:get-state", (browser) => browser.getState());
+  browserHandler("desktop:browser:get-settings", (browser) => browser.getSettings());
+  browserHandler(
+    "desktop:browser:request-confirmation",
+    (browser, kind: BrowserConfirmationKind, payload?: BrowserSettingsPatch, language?: "en-US" | "zh-CN") =>
+      browser.requestConfirmation(kind, payload, language),
+  );
+  browserHandler(
+    "desktop:browser:update-settings",
+    (browser, patch: BrowserSettingsPatch, proof?: BrowserConfirmationProof) => browser.updateSettings(patch, proof),
+  );
+  browserHandler("desktop:browser:list-tabs", (browser, sessionId?: string) => browser.listTabs(sessionId));
+  browserHandler("desktop:browser:create-user-tab", (browser, input: BrowserCreateTabInput) =>
+    browser.createUserTab(input),
+  );
+  browserHandler("desktop:browser:activate-tab", (browser, tabId: string) => browser.activateTab(tabId));
+  browserHandler("desktop:browser:navigate-user", (browser, tabId: string, url: string) =>
+    browser.navigateUser(tabId, url),
+  );
+  browserHandler("desktop:browser:go-back", (browser, tabId: string) => browser.goBack(tabId));
+  browserHandler("desktop:browser:go-forward", (browser, tabId: string) => browser.goForward(tabId));
+  browserHandler("desktop:browser:reload", (browser, tabId: string) => browser.reload(tabId));
+  browserHandler("desktop:browser:stop", (browser, tabId: string) => browser.stop(tabId));
+  browserHandler("desktop:browser:close-tab", (browser, tabId: string) => browser.closeTab(tabId));
+  browserHandler("desktop:browser:close-all-tabs", (browser) => browser.closeAllTabs());
+  browserHandler("desktop:browser:set-bounds", (browser, input: Parameters<BrowserService["setBounds"]>[0]) =>
+    browser.setBounds(input),
+  );
+  browserHandler("desktop:browser:set-surface-visible", (browser, input: { tabId?: string; visible: boolean }) =>
+    browser.setSurfaceVisible(input),
+  );
+  browserHandler(
+    "desktop:browser:set-persistent-session-permission",
+    (browser, sessionId: string, permission: BrowserPersistentSessionPermission) =>
+      browser.setPersistentSessionPermission(sessionId, permission),
+  );
+  browserHandler("desktop:browser:revoke-temporary-session-permission", (browser, sessionId: string) =>
+    browser.revokeTemporarySessionPermission(sessionId),
+  );
+  browserHandler(
+    "desktop:browser:respond-agent-authorization",
+    (browser, requestId: string, decision: BrowserAgentAuthorizationDecision) =>
+      browser.respondAgentAuthorization(requestId, decision),
+  );
+  browserHandler("desktop:browser:list-profiles", (browser) => browser.listProfiles());
+  browserHandler("desktop:browser:create-profile", (browser, input: BrowserCreateProfileInput) =>
+    browser.createProfile(input),
+  );
+  browserHandler("desktop:browser:rename-profile", (browser, profileId: string, name: string) =>
+    browser.renameProfile(profileId, name),
+  );
+  browserHandler("desktop:browser:delete-profile", (browser, profileId: string) => browser.deleteProfile(profileId));
+  browserHandler("desktop:browser:clear-profile-data", (browser, profileId: string, dataType: BrowserDataType) =>
+    browser.clearProfileData(profileId, dataType),
+  );
+  browserHandler("desktop:browser:set-proxy-credentials", (browser, credentials: BrowserProxyCredentialsInput | null) =>
+    browser.setProxyCredentials(credentials),
+  );
+  browserHandler(
+    "desktop:browser:get-header-rules",
+    (browser, profileId: string, direction: BrowserHeaderRuleDirection) => browser.getHeaderRules(profileId, direction),
+  );
+  browserHandler(
+    "desktop:browser:set-header-rules",
+    (browser, profileId: string, direction: BrowserHeaderRuleDirection, rules: BrowserHeaderRule[]) =>
+      browser.setLocalHeaderRules(profileId, direction, rules),
+  );
+  browserHandler("desktop:browser:store-header-secret", (browser, value: string, existingRef?: string) =>
+    browser.storeHeaderSecret(value, existingRef),
+  );
+  browserHandler("desktop:browser:remove-header-secret", (browser, secretRef: string) =>
+    browser.removeHeaderSecret(secretRef),
+  );
+  browserHandler("desktop:browser:list-page-snippets", (browser) => browser.listPageSnippets());
+  browserHandler("desktop:browser:set-page-snippet-enabled", (browser, snippetId: string, enabled: boolean) =>
+    browser.setPageSnippetEnabled(snippetId, enabled),
+  );
+  browserHandler("desktop:browser:delete-page-snippet", (browser, snippetId: string) =>
+    browser.deletePageSnippet(snippetId),
+  );
+  browserHandler("desktop:browser:clear-page-snippets", (browser) => browser.clearPageSnippets());
+  browserHandler(
+    "desktop:browser:respond-permission",
+    (browser, requestId: string, decision: BrowserPermissionDecision) => browser.respondPermission(requestId, decision),
+  );
+  browserHandler("desktop:browser:choose-upload-files", (browser, tabId: string) => browser.chooseUploadFiles(tabId));
+  browserHandler("desktop:browser:reset", (browser) => browser.reset());
 }
 
 function toolchainActionConfirmation(request: ToolchainActionRequest): Electron.MessageBoxOptions | undefined {

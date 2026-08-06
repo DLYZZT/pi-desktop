@@ -41,14 +41,22 @@ files:
     to: node_modules/@earendil-works/pi-ai/dist
     filter:
       - "**/*.d.ts"
-  - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist
-    to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist
+  # electron-builder deduplicates these transitive packages to the app root.
+  # Re-adding declaration-only nested directories would shadow the healthy
+  # root package under Node's ESM resolver, so package metadata and runtime JS
+  # must travel with the authoring declarations.
+  - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai
+    to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai
     filter:
-      - "**/*.d.ts"
-  - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist
-    to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist
+      - package.json
+      - "dist/**/*.js"
+      - "dist/**/*.d.ts"
+  - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui
+    to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui
     filter:
-      - "**/*.d.ts"
+      - package.json
+      - "dist/**/*.js"
+      - "dist/**/*.d.ts"
 
 asar: true
 

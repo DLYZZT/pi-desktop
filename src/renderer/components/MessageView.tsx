@@ -907,6 +907,7 @@ function ToolCallBlock({
   duration?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const { t } = useI18n();
   const inputStr = JSON.stringify(block.input, null, 2);
   const isEditTool = isEditToolName(block.toolName);
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
@@ -922,6 +923,9 @@ function ToolCallBlock({
   const isError = result?.isError ?? false;
   const isRunning = !result;
   const preview = getToolPreview(block);
+  const browserTabId = isBrowserToolName(block.toolName) ? browserTabIdFromResult(resultText) : null;
+  const browserSummary =
+    isBrowserToolName(block.toolName) && resultText && !isError ? browserResultSummary(resultText, t) : null;
 
   return (
     <div
@@ -1026,9 +1030,104 @@ function ToolCallBlock({
             </div>
           )
         ) : (
-          <PairedResult text={resultText ?? ""} isEmpty={resultIsEmpty} isError={isError} collapsed={!expanded} />
+          <PairedResult
+            text={!expanded && browserSummary ? browserSummary : (resultText ?? "")}
+            isEmpty={resultIsEmpty}
+            isError={isError}
+            collapsed={!expanded}
+          />
         ))}
+      {browserTabId && (
+        <button
+          type="button"
+          onClick={() =>
+            window.dispatchEvent(new CustomEvent("pi-desktop:open-browser-tab", { detail: { tabId: browserTabId } }))
+          }
+          style={{
+            width: "100%",
+            minHeight: 30,
+            border: "none",
+            borderTop: "1px solid var(--tool-border)",
+            background: "transparent",
+            color: "var(--accent)",
+            cursor: "pointer",
+            fontSize: 11,
+            textAlign: "left",
+            padding: "0 12px",
+          }}
+        >
+          Open in Browser →
+        </button>
+      )}
     </div>
+  );
+}
+
+function isBrowserToolName(value: string): boolean {
+  return value.startsWith("browser_");
+}
+
+function browserTabIdFromResult(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as { tabId?: unknown; id?: unknown };
+    const tabId = typeof parsed.tabId === "string" ? parsed.tabId : typeof parsed.id === "string" ? parsed.id : null;
+    return tabId && tabId.length <= 128 ? tabId : null;
+  } catch {
+    return null;
+  }
+}
+
+function browserResultSummary(value: string, t: (key: string, fallback: string) => string): string | null {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (typeof parsed.inspectionId === "string" && typeof parsed.changed === "boolean") {
+      const truncated = isRecord(parsed.truncated)
+        ? Object.entries(parsed.truncated)
+            .filter(([, entry]) => entry === true)
+            .map(([key]) => key)
+            .join(", ")
+        : "";
+      return parsed.changed
+        ? formatBrowserSummary(t("browserToolInspectChanged", "Page changed · generation {generation}{truncated}"), {
+            generation: Number(parsed.generation ?? 0),
+            truncated: truncated ? ` · truncated: ${truncated}` : "",
+          })
+        : formatBrowserSummary(t("browserToolInspectUnchanged", "Page unchanged · generation {generation}"), {
+            generation: Number(parsed.generation ?? 0),
+          });
+    }
+    if (typeof parsed.differenceRatio === "number") {
+      return formatBrowserSummary(t("browserToolVisualDifference", "Visual difference: {percent}% · {pixels} pixels"), {
+        percent: (parsed.differenceRatio * 100).toFixed(3),
+        pixels: Number(parsed.differentPixels ?? 0).toLocaleString(),
+      });
+    }
+    if (typeof parsed.total === "number" && typeof parsed.failed === "number" && isRecord(parsed.byResourceType)) {
+      return formatBrowserSummary(
+        t("browserToolNetworkSummary", "Network: {total} requests · {failed} failed · {pending} pending"),
+        {
+          total: parsed.total,
+          failed: parsed.failed,
+          pending: Number(parsed.pending ?? 0),
+        },
+      );
+    }
+    if (Array.isArray(parsed.entries)) {
+      return formatBrowserSummary(t("browserToolConsoleSummary", "Console: {count} entries{truncated}"), {
+        count: parsed.entries.length,
+        truncated: parsed.truncated === true ? " · more available" : "",
+      });
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function formatBrowserSummary(template: string, values: Record<string, string | number>): string {
+  return template.replace(/\{([A-Za-z][A-Za-z0-9]*)\}/g, (match, key: string) =>
+    values[key] === undefined ? match : String(values[key]),
   );
 }
 

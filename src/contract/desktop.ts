@@ -1,5 +1,28 @@
 import type { ChannelId } from "../shared/channel-types";
 import type { PublicToolchainState, ToolchainActionRequest } from "../shared/toolchains/types";
+import type {
+  BrowserBoundsInput,
+  BrowserConfirmationKind,
+  BrowserConfirmationProof,
+  BrowserCreateProfileInput,
+  BrowserCreateTabInput,
+  BrowserDataType,
+  BrowserEvent,
+  BrowserHeaderRule,
+  BrowserHeaderRuleDirection,
+  BrowserPermissionDecision,
+  BrowserPageSnippetSummary,
+  BrowserProfileInfo,
+  BrowserProxyCredentialsInput,
+  BrowserRendererState,
+  BrowserSettingsPatch,
+  BrowserSettingsPublic,
+  BrowserPersistentSessionPermission,
+  BrowserAgentAuthorizationDecision,
+  BrowserTabInfo,
+} from "./browser";
+
+export type * from "./browser";
 
 export type {
   ManagedComponentId,
@@ -101,6 +124,56 @@ export interface PiBridge {
   setThemeSource: (source: "system" | "light" | "dark") => Promise<void>;
   openLogs: () => Promise<void>;
   exportDiagnostics: () => Promise<string | null>;
+  browserGetState: () => Promise<BrowserRendererState>;
+  browserGetSettings: () => Promise<BrowserSettingsPublic>;
+  browserRequestConfirmation: (
+    kind: BrowserConfirmationKind,
+    payload?: BrowserSettingsPatch,
+    language?: "en-US" | "zh-CN",
+  ) => Promise<BrowserConfirmationProof | null>;
+  browserUpdateSettings: (
+    patch: BrowserSettingsPatch,
+    confirmation?: BrowserConfirmationProof,
+  ) => Promise<BrowserSettingsPublic>;
+  browserListTabs: (sessionId?: string) => Promise<BrowserTabInfo[]>;
+  browserCreateUserTab: (input: BrowserCreateTabInput) => Promise<BrowserTabInfo>;
+  browserActivateTab: (tabId: string) => Promise<void>;
+  browserNavigateUser: (tabId: string, url: string) => Promise<void>;
+  browserGoBack: (tabId: string) => Promise<void>;
+  browserGoForward: (tabId: string) => Promise<void>;
+  browserReload: (tabId: string) => Promise<void>;
+  browserStop: (tabId: string) => Promise<void>;
+  browserCloseTab: (tabId: string) => Promise<void>;
+  browserCloseAllTabs: () => Promise<void>;
+  browserSetBounds: (input: BrowserBoundsInput) => Promise<void>;
+  browserSetSurfaceVisible: (input: { tabId?: string; visible: boolean }) => Promise<void>;
+  browserSetPersistentSessionPermission: (
+    sessionId: string,
+    permission: BrowserPersistentSessionPermission,
+  ) => Promise<void>;
+  browserRevokeTemporarySessionPermission: (sessionId: string) => Promise<void>;
+  browserRespondAgentAuthorization: (requestId: string, decision: BrowserAgentAuthorizationDecision) => Promise<void>;
+  browserListProfiles: () => Promise<BrowserProfileInfo[]>;
+  browserCreateProfile: (input: BrowserCreateProfileInput) => Promise<BrowserProfileInfo>;
+  browserRenameProfile: (profileId: string, name: string) => Promise<BrowserProfileInfo>;
+  browserDeleteProfile: (profileId: string) => Promise<void>;
+  browserClearProfileData: (profileId: string, dataType: BrowserDataType) => Promise<void>;
+  browserSetProxyCredentials: (credentials: BrowserProxyCredentialsInput | null) => Promise<BrowserSettingsPublic>;
+  browserGetHeaderRules: (profileId: string, direction: BrowserHeaderRuleDirection) => Promise<BrowserHeaderRule[]>;
+  browserSetHeaderRules: (
+    profileId: string,
+    direction: BrowserHeaderRuleDirection,
+    rules: BrowserHeaderRule[],
+  ) => Promise<void>;
+  browserStoreHeaderSecret: (value: string, existingRef?: string) => Promise<string>;
+  browserRemoveHeaderSecret: (secretRef: string) => Promise<void>;
+  browserListPageSnippets: () => Promise<BrowserPageSnippetSummary[]>;
+  browserSetPageSnippetEnabled: (snippetId: string, enabled: boolean) => Promise<void>;
+  browserDeletePageSnippet: (snippetId: string) => Promise<void>;
+  browserClearPageSnippets: () => Promise<void>;
+  browserRespondPermission: (requestId: string, decision: BrowserPermissionDecision) => Promise<void>;
+  browserChooseUploadFiles: (tabId: string) => Promise<string[]>;
+  browserReset: () => Promise<BrowserRendererState>;
   clearBadge: () => void;
   onHostStatus: (cb: (s: { status: HostStatus; detail?: string }) => void) => () => void;
   onHostRestarted: (cb: (payload: { reason: string }) => void) => () => void;
@@ -108,5 +181,6 @@ export interface PiBridge {
   onUpdateState: (cb: (state: DesktopUpdateState) => void) => () => void;
   onToolchainState: (cb: (state: PublicToolchainState) => void) => () => void;
   onDeepLinkSession: (cb: (sessionId: string) => void) => () => void;
+  onBrowserEvent: (cb: (event: BrowserEvent) => void) => () => void;
   onMenu: (event: DesktopMenuEvent, cb: () => void) => () => void;
 }

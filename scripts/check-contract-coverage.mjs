@@ -10,6 +10,12 @@ import ts from "typescript";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const apiTs = fs.readFileSync(path.join(root, "src/contract/api.ts"), "utf8");
 const handlersTs = fs.readFileSync(path.join(root, "src/agent-host/handlers.ts"), "utf8");
+const desktopTs = fs.readFileSync(path.join(root, "src/contract/desktop.ts"), "utf8");
+const preloadTs = fs.readFileSync(path.join(root, "src/preload/preload.ts"), "utf8");
+const ipcTs = fs.readFileSync(path.join(root, "src/main/ipc.ts"), "utf8");
+const browserTs = fs.readFileSync(path.join(root, "src/contract/browser.ts"), "utf8");
+const browserServiceTs = fs.readFileSync(path.join(root, "src/main/browser/browser-service.ts"), "utf8");
+const mainTs = fs.readFileSync(path.join(root, "src/main/main.ts"), "utf8");
 
 const apiSource = ts.createSourceFile("api.ts", apiTs, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const handlersSource = ts.createSourceFile("handlers.ts", handlersTs, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -70,4 +76,52 @@ if (unknown.length) {
   console.error("Handlers missing from Api contract:", unknown.join(", "));
   process.exit(1);
 }
-console.log(`OK: ${methods.length} Api methods have host handlers`);
+
+const piBridgeBody = desktopTs.slice(desktopTs.indexOf("export interface PiBridge"));
+const browserBridgeMethods = [...piBridgeBody.matchAll(/^\s+(browser[A-Z]\w*):/gm)].map((match) => match[1]);
+const missingPreloadMethods = browserBridgeMethods.filter((method) => !preloadTs.includes(`${method}:`));
+if (missingPreloadMethods.length) {
+  console.error("Missing Browser preload methods for:", missingPreloadMethods.join(", "));
+  process.exit(1);
+}
+
+const browserInvokeChannels = [...preloadTs.matchAll(/ipcRenderer\.invoke\("(desktop:browser:[^"]+)"/g)].map(
+  (match) => match[1],
+);
+const registeredBrowserIpcChannels = new Set(
+  [...ipcTs.matchAll(/browserHandler\(\s*"(desktop:browser:[^"]+)"/g)].map((match) => match[1]),
+);
+const missingBrowserIpcHandlers = browserInvokeChannels.filter((channel) => !registeredBrowserIpcChannels.has(channel));
+if (missingBrowserIpcHandlers.length) {
+  console.error("Missing Browser IPC handlers for:", missingBrowserIpcHandlers.join(", "));
+  process.exit(1);
+}
+if (!preloadTs.includes("onBrowserEvent:") || !mainTs.includes('webContents.send("browser:event"')) {
+  console.error("Browser event bridge is incomplete");
+  process.exit(1);
+}
+
+const browserMethodSetBody = browserTs.slice(
+  browserTs.indexOf("export const BROWSER_HOST_METHODS"),
+  browserTs.indexOf("]);", browserTs.indexOf("export const BROWSER_HOST_METHODS")) + 3,
+);
+const browserHostMethods = [...browserMethodSetBody.matchAll(/"(browser\.[A-Za-z]+)"/g)].map((match) => match[1]);
+const missingBrowserDispatch = browserHostMethods.filter(
+  (method) => !browserServiceTs.includes(`case "${method}"`) && !browserServiceTs.includes(`method === "${method}"`),
+);
+if (missingBrowserDispatch.length) {
+  console.error("Missing Browser Host dispatch cases for:", missingBrowserDispatch.join(", "));
+  process.exit(1);
+}
+if (new Set(browserInvokeChannels).size !== browserInvokeChannels.length) {
+  console.error("Duplicate Browser IPC channels in preload");
+  process.exit(1);
+}
+if (new Set(browserHostMethods).size !== browserHostMethods.length) {
+  console.error("Duplicate Browser Host methods in contract");
+  process.exit(1);
+}
+
+console.log(
+  `OK: ${methods.length} Api handlers, ${browserBridgeMethods.length} Browser bridge methods, and ${browserHostMethods.length} Browser Host methods are covered`,
+);

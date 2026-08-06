@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { PublicToolchainState } from "../shared/toolchains/types";
+import type { BrowserDiagnostics } from "../contract/browser.ts";
 import { getMainLogPath } from "./logger";
 import { buildToolchainDiagnosticSummary, redactDiagnosticText } from "./diagnostics-redaction.ts";
 
@@ -12,6 +13,7 @@ const MAX_CRASH_METADATA_ENTRIES = 256;
 
 export interface ExportDiagnosticsOptions {
   toolchainState?: PublicToolchainState;
+  browser?: BrowserDiagnostics;
 }
 
 export async function exportDiagnostics(
@@ -54,6 +56,7 @@ export async function exportDiagnostics(
   if (options.toolchainState) {
     writePrivateJson(path.join(outDir, "toolchains.json"), buildToolchainDiagnosticSummary(options.toolchainState));
   }
+  if (options.browser) writePrivateJson(path.join(outDir, "browser.json"), options.browser);
 
   const copiedNames = new Set<string>();
   copyRedactedLog(getMainLogPath(), "main.log", outDir, roots, copiedNames);
