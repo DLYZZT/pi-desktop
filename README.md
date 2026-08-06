@@ -16,7 +16,7 @@
 
 [English](./README.en.md) · **简体中文**
 
-[下载 v0.1.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.3) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
+[下载 v0.1.4](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.4) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
 
 </div>
 
@@ -104,7 +104,7 @@
 
 ### 使用桌面安装包
 
-最新稳定版为 [v0.1.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.3)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
+最新稳定版为 [v0.1.4](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.4)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
 
 Pi Agent Desktop 已内置 Pi Coding Agent 运行时。普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
 

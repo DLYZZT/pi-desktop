@@ -16,7 +16,7 @@ Local-first · No local server · Cross-platform
 
 **English** · [简体中文](./README.md)
 
-[Download v0.1.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.3) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
+[Download v0.1.4](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.4) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
 
 </div>
 
@@ -104,7 +104,7 @@ Local-first · No local server · Cross-platform
 
 ### Use a desktop build
 
-The latest stable version is [v0.1.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.3), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
+The latest stable version is [v0.1.4](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.4), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
 
 Pi Agent Desktop bundles the Pi Coding Agent runtime. Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
 
