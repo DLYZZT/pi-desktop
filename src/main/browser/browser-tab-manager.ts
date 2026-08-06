@@ -979,7 +979,7 @@ export class BrowserTabManager {
       if (submit) await this.approveSensitiveAction(record, "Submit a form after entering text");
       const frameContext = record.snapshot?.frames.get(ref);
       if (!frameContext) throw new BrowserError("STALE_ELEMENT_REF", "Browser frame is no longer available");
-      const point = await frameContext.frame.executeJavaScript(elementPointScript(snapshotId, ref, false));
+      const point = await frameContext.frame.executeJavaScript(elementPointScript(snapshotId, ref, true));
       if (!isPoint(point)) throw new BrowserError("STALE_ELEMENT_REF", "Browser element is no longer editable");
       point.x += frameContext.offsetX;
       point.y += frameContext.offsetY;
@@ -988,15 +988,19 @@ export class BrowserTabManager {
       let focusEmulationEnabled = false;
       let usedInsertText = false;
       try {
-        record.view.webContents.focus();
-        await this.sendMouseClick(record, point.x, point.y, "left", 1, signal);
-        // Keep the renderer focused for the complete input sequence. A hidden
-        // Electron view may lose native window focus after the click helper
-        // restores focus emulation, especially under Linux/Xvfb. CDP text
-        // insertion then targets the focused frame without depending on an OS
-        // input method, including for out-of-process iframes.
         await this.cdp.sendCommand(record.info.id, "Emulation.setFocusEmulationEnabled", { enabled: true });
         focusEmulationEnabled = true;
+        record.view.webContents.focus();
+        await this.sendMouseClick(record, point.x, point.y, "left", 1, signal, [], true);
+        // Keep the renderer focused for the complete input sequence. A hidden
+        // Electron view may not have native window focus under Linux/Xvfb, so
+        // do not restore focus emulation between the click and text insertion.
+        // Re-focus the exact frame element after the trusted click so CDP text
+        // insertion also reaches out-of-process iframes deterministically.
+        const focusedPoint = await frameContext.frame.executeJavaScript(elementPointScript(snapshotId, ref, true));
+        if (!isPoint(focusedPoint)) {
+          throw new BrowserError("STALE_ELEMENT_REF", "Browser element is no longer editable");
+        }
         record.view.webContents.focus();
         const selectModifier: BrowserInputModifier = process.platform === "darwin" ? "meta" : "control";
         record.view.webContents.sendInputEvent({
@@ -2033,6 +2037,7 @@ export class BrowserTabManager {
     clickCount: 1 | 2,
     signal: AbortSignal,
     modifiers: BrowserInputModifier[] = [],
+    preserveFocusEmulation = false,
   ): Promise<void> {
     record.view.webContents.focus();
     const releaseDebugger = this.cdp.acquire(record.info.id);
@@ -2093,7 +2098,7 @@ export class BrowserTabManager {
         .catch(() => undefined);
       await abortableDelay(32, signal);
     } finally {
-      if (focusEmulationEnabled) {
+      if (focusEmulationEnabled && !preserveFocusEmulation) {
         await this.cdp
           .sendCommand(record.info.id, "Emulation.setFocusEmulationEnabled", { enabled: false })
           .catch(() => undefined);
