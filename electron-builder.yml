@@ -23,6 +23,11 @@ files:
   - "!tsup.config.ts"
   - "!vite.config.ts"
   - "!electron-builder.yml"
+  # Keep authoring assets out of electron-builder's default dependency walk.
+  # The explicit FileSet below restores them exactly once; without these
+  # exclusions Linux asar packaging can hard-link JSON/images twice (EEXIST).
+  - "!node_modules/@earendil-works/pi-coding-agent/docs/**/*"
+  - "!node_modules/@earendil-works/pi-coding-agent/examples/**/*"
   # Pi injects these package-relative paths into the agent system prompt when
   # users ask it to author extensions, packages, SDK integrations, or TUI UI.
   # Restore them after the broad Markdown/TypeScript production exclusions.

@@ -40,7 +40,13 @@ const leakedCredentials = [
   /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/,
   /\bnpm_[A-Za-z0-9]{20,}\b/,
 ].filter((pattern) => pattern.test(mainBundle));
-const requiredPackageExclusions = ['"!**/*.map"', '"!**/*.{md,markdown,ts,tsx}"', '"!**/*.d.{mts,cts}"'];
+const requiredPackageExclusions = [
+  '"!**/*.map"',
+  '"!**/*.{md,markdown,ts,tsx}"',
+  '"!**/*.d.{mts,cts}"',
+  '"!node_modules/@earendil-works/pi-coding-agent/docs/**/*"',
+  '"!node_modules/@earendil-works/pi-coding-agent/examples/**/*"',
+];
 const missingPackageExclusions = requiredPackageExclusions.filter((pattern) => !builderConfig.includes(pattern));
 const requiredPiAuthoringAssetMarkers = [
   "from: node_modules/@earendil-works/pi-coding-agent",
