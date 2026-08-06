@@ -802,6 +802,17 @@ async function run(): Promise<void> {
     text: "跨框架🙂",
   })) as { inputPath: string };
   assert.equal(crossType.inputPath, "mixed-insert-text");
+  const crossFrame = nativeViewFor(tab.id).webContents.mainFrame.frames.find((frame) =>
+    frame.url.startsWith(fixture.corsOrigin),
+  );
+  assert.ok(crossFrame, "cross-origin input frame was not found");
+  assert.deepEqual(
+    await crossFrame.executeJavaScript(`(() => {
+      const input = document.getElementById('cross-input');
+      return { value: input?.value, focused: document.activeElement === input };
+    })()`),
+    { value: "跨框架🙂", focused: true },
+  );
   await call("browser.wait", {
     tabId: tab.id,
     condition: "text",

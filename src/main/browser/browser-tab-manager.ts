@@ -1020,7 +1020,12 @@ export class BrowserTabManager {
             record.view.webContents.sendInputEvent({ type: "char", keyCode: character });
             record.view.webContents.sendInputEvent({ type: "keyUp", keyCode: character });
           } else {
-            await this.cdp.sendCommand(record.info.id, "Input.insertText", { text: character });
+            await this.cdp.sendCommand(record.info.id, "Input.dispatchKeyEvent", {
+              type: "char",
+              key: character,
+              text: character,
+              unmodifiedText: character,
+            });
             usedInsertText = true;
           }
           if (this.humanizedInputEnabled()) await abortableDelay(randomBetween(18, 64), signal);
