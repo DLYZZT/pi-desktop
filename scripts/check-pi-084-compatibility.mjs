@@ -31,11 +31,17 @@ for (const packageName of directPackages) {
 if (packageJson.overrides?.["@earendil-works/pi-telemetry"] !== targetVersion) {
   fail(`@earendil-works/pi-telemetry override must be ${targetVersion}`);
 }
+if (packageJson.dependencies?.["@earendil-works/pi-telemetry"] !== targetVersion) {
+  fail(`@earendil-works/pi-telemetry must be an exact root dependency at ${targetVersion}`);
+}
 const telemetryLocks = Object.entries(lockfile.packages ?? {}).filter(([packagePath]) =>
   packagePath.endsWith("node_modules/@earendil-works/pi-telemetry"),
 );
 if (telemetryLocks.length === 0 || telemetryLocks.some(([, entry]) => entry.version !== targetVersion)) {
   fail(`every locked @earendil-works/pi-telemetry instance must be ${targetVersion}`);
+}
+if (lockfile.packages?.["node_modules/@earendil-works/pi-telemetry"]?.version !== targetVersion) {
+  fail(`the root @earendil-works/pi-telemetry lock entry must be ${targetVersion}`);
 }
 
 function sourceFiles(directory) {

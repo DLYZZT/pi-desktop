@@ -98,8 +98,8 @@ function verifyPackagedResources(resources, toolTarget) {
     ["jq", "1.8.2"],
     ["Bun", "1.3.14"],
   ]) {
-    const tableRow = `| ${component} | ${version} |`;
-    if (!noticeText.includes(tableRow)) throw new Error(`Third-party notices are missing ${component} ${version}`);
+    const tableRow = new RegExp(`^\\|\\s*${escapeRegExp(component)}\\s*\\|\\s*${escapeRegExp(version)}\\s*\\|`, "m");
+    if (!tableRow.test(noticeText)) throw new Error(`Third-party notices are missing ${component} ${version}`);
   }
   const runtimeCatalog = JSON.parse(fs.readFileSync(path.join(toolchains, "runtime-catalog.json"), "utf8"));
   const ids = runtimeCatalog.components?.map((component) => component.id).sort();
@@ -169,10 +169,7 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
   for (const [packageRoot, lockRoot = packageRoot] of [
     [codingAgentRoot],
     ["node_modules/@earendil-works/pi-ai"],
-    [
-      "node_modules/@earendil-works/pi-telemetry",
-      "node_modules/@earendil-works/pi-ai/node_modules/@earendil-works/pi-telemetry",
-    ],
+    ["node_modules/@earendil-works/pi-telemetry"],
     ["node_modules/@earendil-works/pi-agent-core", `${nested}/@earendil-works/pi-agent-core`],
     [`${nested}/@earendil-works/pi-ai`],
     [`${nested}/@earendil-works/pi-client`],
@@ -189,6 +186,10 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
       );
     }
   }
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function verifyBundledTools(resources, platform, arch) {

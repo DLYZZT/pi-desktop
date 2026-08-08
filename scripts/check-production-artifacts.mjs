@@ -57,7 +57,7 @@ const requiredPiAuthoringAssetMarkers = [
   '- "dist/**/*.d.ts"',
   "from: node_modules/@earendil-works/pi-ai/dist",
   "to: node_modules/@earendil-works/pi-ai/dist",
-  "from: node_modules/@earendil-works/pi-ai/node_modules/@earendil-works/pi-telemetry",
+  "from: node_modules/@earendil-works/pi-telemetry",
   "to: node_modules/@earendil-works/pi-telemetry",
   "from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai",
   "to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai",
