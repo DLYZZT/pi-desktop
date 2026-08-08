@@ -159,7 +159,7 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
   const missing = required.filter((entry) => !entries.has(entry));
   if (missing.length > 0) throw new Error(`Packaged Pi runtime/authoring assets are missing: ${missing.join(", ")}`);
 
-  const codingAgentPackage = JSON.parse(extractFile(asarPath, `${codingAgentRoot}/package.json`).toString("utf8"));
+  const codingAgentPackage = JSON.parse(extractAsarFile(asarPath, `${codingAgentRoot}/package.json`).toString("utf8"));
   if (codingAgentPackage.version !== expectedPiVersion) {
     throw new Error(
       `Packaged Pi version ${codingAgentPackage.version ?? "unknown"} does not match ${expectedPiVersion}`,
@@ -178,7 +178,7 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
     [`${nested}/@earendil-works/pi-tui`],
     ["node_modules/grok-mermaid", `${nested}/grok-mermaid`],
   ]) {
-    const packaged = JSON.parse(extractFile(asarPath, `${packageRoot}/package.json`).toString("utf8"));
+    const packaged = JSON.parse(extractAsarFile(asarPath, `${packageRoot}/package.json`).toString("utf8"));
     const locked = lockfile.packages?.[lockRoot]?.version;
     if (!locked || packaged.version !== locked) {
       throw new Error(
@@ -190,6 +190,10 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractAsarFile(archive, entry) {
+  return extractFile(archive, path.join(...entry.split("/")));
 }
 
 function verifyBundledTools(resources, platform, arch) {
