@@ -4,6 +4,7 @@
 import { runNpx } from "./npx";
 import type { SkillSearchResult } from "../shared/api-types";
 import { ToolchainError } from "../shared/toolchains/errors.ts";
+import { buildSkillsCliArgs } from "./skills-cli.ts";
 
 const ANSI_RE = /\x1B\[[0-9;]*m/g;
 const SEARCH_API_BASE = process.env.SKILLS_API_URL || "https://skills.sh";
@@ -75,8 +76,8 @@ export async function searchSkills(query: string, limit = 50): Promise<{ results
     const results = await searchSkillsApi(q, capped);
     return { results };
   } catch {
-    const { stdout, stderr } = await runNpx(["skills", "find", q], {
-      timeout: 20_000,
+    const { stdout, stderr } = await runNpx(buildSkillsCliArgs(["find", q]), {
+      timeout: 60_000,
       env: { FORCE_COLOR: "0" },
     });
     return { results: parseSearchOutput(stdout + stderr).slice(0, capped) };
@@ -92,12 +93,12 @@ export async function installSkill(params: {
   if (!pkg) throw new Error("package required");
 
   const isGlobal = params.scope !== "project";
-  const args = ["skills", "add", pkg, "-y", "--agent", "pi"];
+  const args = buildSkillsCliArgs(["add", pkg, "-y", "--agent", "pi"]);
   if (isGlobal) args.push("-g");
 
   try {
     const { stdout, stderr } = await runNpx(args, {
-      timeout: 60_000,
+      timeout: 180_000,
       cwd: !isGlobal && params.cwd ? params.cwd : undefined,
       env: { FORCE_COLOR: "0" },
     });

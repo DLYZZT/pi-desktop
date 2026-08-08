@@ -18,7 +18,7 @@ const PING_TIMEOUT_MS = 10_000;
 export type HostStatus = "starting" | "ready" | "crashed" | "stopped";
 
 export type HostMessage =
-  | { type: "ready"; ts?: number }
+  | { type: "ready"; ts?: number; piVersion?: string }
   | { type: "pong"; ts?: number }
   | { type: "log"; message: string }
   | { type: "running-sessions"; sessionIds: string[] }
@@ -42,6 +42,7 @@ export class HostManager {
   private toolchainAckRevision = -1;
   private browserCapabilitySnapshot: BrowserCapabilitySnapshot | null = null;
   private browserAckRevision = -1;
+  private piVersion: string | null = null;
 
   constructor(private readonly hostEntry: string) {}
 
@@ -59,6 +60,10 @@ export class HostManager {
 
   getStatus(): HostStatus {
     return this.status;
+  }
+
+  getPiVersion(): string | null {
+    return this.piVersion;
   }
 
   setToolchainSnapshot(snapshot: ToolchainSnapshot): void {
@@ -224,7 +229,8 @@ export class HostManager {
     child.on("message", (msg: unknown) => {
       const m = msg as HostMessage;
       if (m?.type === "ready") {
-        appendMainLog("agent-host ready");
+        this.piVersion = typeof m.piVersion === "string" ? m.piVersion : null;
+        appendMainLog(`agent-host ready pi=${this.piVersion ?? "unknown"}`);
         const restarted = this.wasReadyBeforeExit;
         this.wasReadyBeforeExit = false;
         this.postToolchainSnapshot("toolchain:init");

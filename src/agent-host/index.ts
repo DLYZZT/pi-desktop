@@ -11,6 +11,9 @@ import { installToolchainGitRunner } from "./toolchain-git";
 import type { BrowserCapabilitySnapshot } from "../contract/browser";
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
 import { syncBrowserToolsForAllSessions } from "./rpc-manager";
+import { readPiRuntimeVersion } from "./runtime-version";
+
+const piRuntimeVersion = readPiRuntimeVersion();
 
 const server = createRpcServer();
 const restoreGitRunner = installToolchainGitRunner();
@@ -78,7 +81,7 @@ if (parentPort) {
     }
   });
 
-  parentPort.postMessage({ type: "ready", ts: Date.now() });
+  parentPort.postMessage({ type: "ready", ts: Date.now(), piVersion: piRuntimeVersion });
   log("agent-host ready");
 } else {
   // Fallback for non-electron (smoke / unit)

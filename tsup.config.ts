@@ -1,4 +1,16 @@
 import { defineConfig } from "tsup";
+import { readFileSync } from "node:fs";
+
+const packageJson = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as {
+  dependencies?: Record<string, string>;
+};
+const expectedPiVersion = packageJson.dependencies?.["@earendil-works/pi-coding-agent"];
+if (!expectedPiVersion || !/^\d+\.\d+\.\d+$/.test(expectedPiVersion)) {
+  throw new Error("@earendil-works/pi-coding-agent must be an exact dependency");
+}
+const piVersionDefine = {
+  "process.env.PI_DESKTOP_EXPECTED_PI_VERSION": JSON.stringify(expectedPiVersion),
+};
 
 export default defineConfig([
   {
@@ -16,6 +28,7 @@ export default defineConfig([
     external: ["electron", "electron-updater"],
     splitting: false,
     treeshake: true,
+    define: piVersionDefine,
     outExtension() {
       return { js: ".js" };
     },
@@ -43,6 +56,7 @@ export default defineConfig([
     ],
     splitting: false,
     treeshake: true,
+    define: piVersionDefine,
     banner: {
       // utilityProcess doesn't set import.meta.url the same way; help CJS interop
       js: "",

@@ -1,6 +1,7 @@
 import type {
   AgentCommand,
   AgentEvent,
+  CredentialMutationResult,
   DirEntry,
   EntryContentResult,
   FileContent,
@@ -226,6 +227,14 @@ export interface Api {
     params: { cwd?: string } | void;
     result: ModelsListResult;
   };
+  "models.refresh": {
+    params: { cwd?: string; requestId: string };
+    result: ModelsListResult;
+  };
+  "models.refreshCancel": {
+    params: { requestId: string };
+    result: { ok: true; cancelled: boolean };
+  };
   "modelsConfig.get": { params: void; result: ModelsConfig };
   "modelsConfig.set": { params: ModelsConfig; result: { ok: true } };
   "modelsConfig.test": {
@@ -242,13 +251,13 @@ export interface Api {
   "auth.allProviders": { params: void; result: { providers: ProviderStatus[] } };
   "auth.setApiKey": {
     params: { provider: string; key: string };
-    result: { ok: true };
+    result: CredentialMutationResult;
   };
   "auth.deleteApiKey": {
     params: { provider: string };
-    result: { ok: true };
+    result: CredentialMutationResult;
   };
-  "auth.logout": { params: { provider: string }; result: { ok: true } };
+  "auth.logout": { params: { provider: string }; result: CredentialMutationResult };
   "auth.loginSubmit": {
     params: { provider: string; token: string; code: string };
     result: { ok: true };

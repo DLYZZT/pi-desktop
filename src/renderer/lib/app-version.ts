@@ -10,7 +10,7 @@ export const APP_VERSION =
 export const PI_VERSION =
   (typeof import.meta !== "undefined" &&
     (import.meta as ImportMeta & { env?: { VITE_PI_VERSION?: string } }).env?.VITE_PI_VERSION) ||
-  "0.80.0";
+  "unknown";
 
 export const APP_DISPLAY_NAME = "Pi Agent Desktop";
 export const APP_AUTHOR = "DLYZZT";

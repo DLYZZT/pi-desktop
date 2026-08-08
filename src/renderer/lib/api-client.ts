@@ -222,6 +222,14 @@ export async function listModels(cwd?: string) {
   return call("models.list", cwd ? { cwd } : undefined);
 }
 
+export async function refreshModels(cwd: string | undefined, requestId: string) {
+  return call("models.refresh", { ...(cwd ? { cwd } : {}), requestId });
+}
+
+export async function cancelModelsRefresh(requestId: string) {
+  return call("models.refreshCancel", { requestId });
+}
+
 export async function listWorktrees(projectRoot: string) {
   return call("worktrees.list", { projectRoot });
 }

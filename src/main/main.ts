@@ -36,6 +36,7 @@ crashReporter.start({
 
 const isDev = !app.isPackaged;
 const packagedStartupValidation = app.isPackaged && process.argv.includes("--validate-packaged-startup");
+const expectedPiVersion = process.env.PI_DESKTOP_EXPECTED_PI_VERSION;
 const TOOLCHAIN_FOCUS_RESCAN_TTL_MS = 60_000;
 
 let mainWindow: BrowserWindow | null = null;
@@ -60,6 +61,9 @@ function finishPackagedStartupValidation(error?: string): void {
   if (!error) {
     const snapshot = startupToolchainSnapshot;
     if (!startupRendererReady || !startupHostReady || !snapshot?.publicState.coreReady) return;
+    if (!expectedPiVersion || hostManager?.getPiVersion() !== expectedPiVersion) {
+      error = `Agent Host Pi version mismatch: expected ${expectedPiVersion ?? "unknown"}, got ${hostManager?.getPiVersion() ?? "unknown"}`;
+    }
     if ((hostManager?.getToolchainAckRevision() ?? -1) < snapshot.revision) return;
     for (const capability of ["search.rg", "search.fd"] as const) {
       const candidates = snapshot.publicState.capabilities[capability]?.candidates ?? [];
@@ -75,6 +79,7 @@ function finishPackagedStartupValidation(error?: string): void {
       : {
           ok: true,
           appVersion: app.getVersion(),
+          piVersion: hostManager?.getPiVersion(),
           platformArch: `${process.platform}-${process.arch}`,
           revision: startupToolchainSnapshot?.revision,
           rendererReady: startupRendererReady,

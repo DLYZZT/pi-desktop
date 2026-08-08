@@ -122,12 +122,26 @@ export interface ModelInfo {
   provider: string;
 }
 
+export interface ModelCatalogWarning {
+  provider: string;
+  code: "PROVIDER_REFRESH_FAILED" | "MODEL_REFRESH_TIMEOUT";
+  message: string;
+}
+
+export interface ModelCatalogStatus {
+  source: "network" | "cache" | "offline";
+  refreshed: boolean;
+  aborted: boolean;
+  warnings: ModelCatalogWarning[];
+}
+
 export interface ModelsListResult {
   models: ModelInfo[];
   defaultModel: { provider: string; modelId: string } | null;
   thinkingLevels: Record<string, string[]>;
   thinkingLevelMaps: Record<string, Record<string, string | null>>;
   nameMap: Record<string, string>;
+  catalog: ModelCatalogStatus;
 }
 
 export interface ModelsConfig {
@@ -169,10 +183,32 @@ export interface RunningStateEvent {
   sessionIds: string[];
 }
 
-export interface LoginProgressEvent {
-  type: string;
-  [key: string]: unknown;
+export interface CredentialMutationWarning {
+  code: "MODEL_SYNC_FAILED";
+  message: string;
 }
+
+export interface CredentialMutationResult {
+  ok: true;
+  synchronized: boolean;
+  warning?: CredentialMutationWarning;
+}
+
+export type LoginProgressEvent =
+  | { type: "auth"; url: string; instructions: string | null; token: string }
+  | {
+      type: "device_code";
+      userCode: string;
+      verificationUri: string;
+      intervalSeconds: number | null;
+      expiresInSeconds: number | null;
+    }
+  | { type: "progress"; message: string; links?: Array<{ label: string; url: string }> }
+  | { type: "select_request"; message: string; options: Array<{ id: string; label: string }>; token: string }
+  | { type: "prompt_request"; message: string; placeholder: string | null; token: string; secret: boolean }
+  | { type: "success"; warning?: CredentialMutationWarning }
+  | { type: "error"; message: string }
+  | { type: "cancelled" };
 
 export interface RpcErrorShape {
   code: string;

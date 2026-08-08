@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import { CredentialSynchronizationError } from "@earendil-works/pi-coding-agent";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
 let modulePromise;
@@ -112,4 +113,45 @@ test("ModelRuntime auth notifications and prompts map onto the desktop login str
     ["auth", "device_code", "progress", "prompt_request", "success"],
   );
   assert.equal(events[0].data.token, promptEvent.data.token);
+});
+
+test("OAuth credential synchronization failure emits success with a safe warning after read-back", async () => {
+  const { createAuthLoginService } = await loadAuthLoginModule();
+  const events = [];
+  const service = createAuthLoginService(
+    {
+      emit(topic, key, data) {
+        events.push({ topic, key, data });
+      },
+    },
+    () => ({
+      getProvider() {
+        return { auth: { oauth: {} } };
+      },
+      async login() {
+        throw new CredentialSynchronizationError(
+          "test-oauth",
+          "login",
+          { type: "oauth", access: "secret", refresh: "secret", expires: Date.now() + 60_000 },
+          { cause: new Error("secret synchronization detail") },
+        );
+      },
+      async listCredentials() {
+        return [{ providerId: "test-oauth", type: "oauth" }];
+      },
+      async refresh() {
+        return { aborted: false, errors: new Map([["test-oauth", new Error("secret refresh detail")]]) };
+      },
+    }),
+  );
+
+  assert.deepEqual(await service.start("test-oauth"), { started: true });
+  await nextTurn();
+  const terminal = events.find((event) => event.data.type === "success");
+  assert.equal(terminal.data.warning.code, "MODEL_SYNC_FAILED");
+  assert.equal(JSON.stringify(terminal).includes("secret"), false);
+  assert.equal(
+    events.some((event) => event.data.type === "error"),
+    false,
+  );
 });

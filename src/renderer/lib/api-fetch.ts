@@ -123,6 +123,18 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       }
     }
 
+    if (segs[0] === "models" && segs[1] === "refresh") {
+      const body = method === "POST" ? await parseBody(init) : {};
+      const requestId = String(body.requestId ?? u.searchParams.get("requestId") ?? "");
+      if (method === "POST") {
+        const cwd = typeof body.cwd === "string" ? body.cwd : (u.searchParams.get("cwd") ?? undefined);
+        return jsonResponse(await call("models.refresh", { ...(cwd ? { cwd } : {}), requestId }));
+      }
+      if (method === "DELETE") {
+        return jsonResponse(await call("models.refreshCancel", { requestId }));
+      }
+    }
+
     if (segs[0] === "models" && segs.length === 1 && method === "GET") {
       const cwd = u.searchParams.get("cwd") ?? undefined;
       const d = await listModels(cwd);
@@ -154,22 +166,20 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
     }
     if (segs[0] === "auth" && segs[1] === "logout" && method === "POST") {
       const provider = decodeURIComponent(segs[2] ?? "");
-      await call("auth.logout", { provider });
-      return jsonResponse({ ok: true });
+      return jsonResponse(await call("auth.logout", { provider }));
     }
     if (segs[0] === "auth" && segs[1] === "api-key") {
       const provider = decodeURIComponent(segs[2] ?? "");
       if (method === "PUT" || method === "POST") {
         const body = await parseBody(init);
-        await call("auth.setApiKey", {
+        const result = await call("auth.setApiKey", {
           provider,
           key: String(body.key ?? body.apiKey ?? ""),
         });
-        return jsonResponse({ ok: true });
+        return jsonResponse(result);
       }
       if (method === "DELETE") {
-        await call("auth.deleteApiKey", { provider });
-        return jsonResponse({ ok: true });
+        return jsonResponse(await call("auth.deleteApiKey", { provider }));
       }
     }
     if (segs[0] === "auth" && segs[1] === "login" && method === "POST") {

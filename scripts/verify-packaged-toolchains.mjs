@@ -7,9 +7,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { darwinCodeDigest } from "../src/main/toolchains/darwin-binary-integrity.ts";
+import { extractFile, listPackage } from "@electron/asar";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dist = path.join(root, "dist");
+const expectedPiVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).dependencies?.[
+  "@earendil-works/pi-coding-agent"
+];
+const lockfile = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
 const target = process.argv[2] ?? `${process.platform}-${process.arch}`;
 if (!/^(?:darwin-(?:arm64|x64)|win32-x64|linux-x64)$/.test(target)) {
   throw new Error("Usage: verify-packaged-toolchains.mjs <darwin-arm64|darwin-x64|win32-x64|linux-x64>");
@@ -18,6 +23,7 @@ const [expectedPlatform, expectedArch] = target.split("-");
 const layout = findPackagedLayout(dist, target);
 
 verifyPackagedResources(layout.resources, target);
+verifyPiRuntimeAssets(layout.resources, expectedPlatform, expectedArch);
 verifyBundledTools(layout.resources, expectedPlatform, expectedArch);
 verifyLinuxSandbox(layout.executable, expectedPlatform);
 runPackagedStartup(layout.executable, target);
@@ -109,6 +115,82 @@ function verifyPackagedResources(resources, toolTarget) {
   if (forbidden.length > 0) throw new Error(`Packaged managed runtime residue: ${forbidden.join(", ")}`);
 }
 
+function verifyPiRuntimeAssets(resources, platform, arch) {
+  const asarPath = path.join(resources, "app.asar");
+  const entries = new Set(listPackage(asarPath).map((entry) => entry.replace(/^[/\\]+/u, "").replaceAll("\\", "/")));
+  const codingAgentRoot = "node_modules/@earendil-works/pi-coding-agent";
+  const nested = `${codingAgentRoot}/node_modules`;
+  const required = [
+    `${codingAgentRoot}/package.json`,
+    `${codingAgentRoot}/dist/index.js`,
+    `${codingAgentRoot}/dist/index.d.ts`,
+    "node_modules/@earendil-works/pi-ai/package.json",
+    "node_modules/@earendil-works/pi-ai/dist/index.js",
+    "node_modules/@earendil-works/pi-ai/dist/index.d.ts",
+    "node_modules/@earendil-works/pi-telemetry/package.json",
+    "node_modules/@earendil-works/pi-telemetry/dist/index.js",
+    "node_modules/@earendil-works/pi-telemetry/dist/index.d.ts",
+    "node_modules/@earendil-works/pi-agent-core/package.json",
+    "node_modules/@earendil-works/pi-agent-core/dist/index.js",
+    `${nested}/@earendil-works/pi-ai/package.json`,
+    `${nested}/@earendil-works/pi-ai/dist/index.js`,
+    `${nested}/@earendil-works/pi-ai/dist/index.d.ts`,
+    `${nested}/@earendil-works/pi-ai/dist/providers/data/amazon-bedrock.json`,
+    `${nested}/@earendil-works/pi-client/package.json`,
+    `${nested}/@earendil-works/pi-client/dist/index.js`,
+    `${nested}/@earendil-works/pi-client/dist/index.d.ts`,
+    `${nested}/@earendil-works/pi-protocol/package.json`,
+    `${nested}/@earendil-works/pi-protocol/dist/index.js`,
+    `${nested}/@earendil-works/pi-protocol/dist/index.d.ts`,
+    `${nested}/@earendil-works/pi-telemetry/package.json`,
+    `${nested}/@earendil-works/pi-telemetry/dist/index.js`,
+    `${nested}/@earendil-works/pi-telemetry/dist/index.d.ts`,
+    `${nested}/@earendil-works/pi-tui/package.json`,
+    `${nested}/@earendil-works/pi-tui/dist/index.js`,
+    `${nested}/@earendil-works/pi-tui/dist/index.d.ts`,
+    "node_modules/grok-mermaid/package.json",
+    "node_modules/grok-mermaid/dist/index.js",
+  ];
+  if (platform === "darwin") {
+    required.push(`${nested}/@earendil-works/pi-tui/native/darwin/prebuilds/darwin-${arch}/darwin-modifiers.node`);
+  } else if (platform === "win32") {
+    required.push(`${nested}/@earendil-works/pi-tui/native/win32/prebuilds/win32-${arch}/win32-console-mode.node`);
+  }
+  const missing = required.filter((entry) => !entries.has(entry));
+  if (missing.length > 0) throw new Error(`Packaged Pi runtime/authoring assets are missing: ${missing.join(", ")}`);
+
+  const codingAgentPackage = JSON.parse(extractFile(asarPath, `${codingAgentRoot}/package.json`).toString("utf8"));
+  if (codingAgentPackage.version !== expectedPiVersion) {
+    throw new Error(
+      `Packaged Pi version ${codingAgentPackage.version ?? "unknown"} does not match ${expectedPiVersion}`,
+    );
+  }
+
+  for (const [packageRoot, lockRoot = packageRoot] of [
+    [codingAgentRoot],
+    ["node_modules/@earendil-works/pi-ai"],
+    [
+      "node_modules/@earendil-works/pi-telemetry",
+      "node_modules/@earendil-works/pi-ai/node_modules/@earendil-works/pi-telemetry",
+    ],
+    ["node_modules/@earendil-works/pi-agent-core", `${nested}/@earendil-works/pi-agent-core`],
+    [`${nested}/@earendil-works/pi-ai`],
+    [`${nested}/@earendil-works/pi-client`],
+    [`${nested}/@earendil-works/pi-protocol`],
+    [`${nested}/@earendil-works/pi-telemetry`],
+    [`${nested}/@earendil-works/pi-tui`],
+    ["node_modules/grok-mermaid", `${nested}/grok-mermaid`],
+  ]) {
+    const packaged = JSON.parse(extractFile(asarPath, `${packageRoot}/package.json`).toString("utf8"));
+    const locked = lockfile.packages?.[lockRoot]?.version;
+    if (!locked || packaged.version !== locked) {
+      throw new Error(
+        `Packaged ${packaged.name ?? packageRoot} version ${packaged.version ?? "unknown"} does not match lockfile ${locked ?? "missing"}`,
+      );
+    }
+  }
+}
+
 function verifyBundledTools(resources, platform, arch) {
   const targetRoot = path.join(resources, "toolchains", "core", `${platform}-${arch}`);
   const manifestPath = path.join(targetRoot, "manifests", "core-tools.json");
@@ -196,7 +278,9 @@ function runPackagedStartup(executable, toolTarget, environmentPatch = {}, extra
     );
     if (result.error) throw result.error;
     if (result.status !== 0) {
-      throw new Error(`Packaged startup exited ${result.status}: ${(result.stderr || result.stdout).slice(-4_000)}`);
+      throw new Error(
+        `Packaged startup exited ${result.status}: ${[result.stdout, result.stderr].filter(Boolean).join("\n").slice(-4_000)}`,
+      );
     }
     const reports = [];
     walkFiles(isolated, (file) => {
@@ -209,6 +293,7 @@ function runPackagedStartup(executable, toolTarget, environmentPatch = {}, extra
       report.platformArch !== toolTarget ||
       report.rendererReady !== true ||
       report.hostReady !== true ||
+      report.piVersion !== expectedPiVersion ||
       report.hostAckRevision !== report.revision
     ) {
       throw new Error(`Invalid packaged startup report: ${JSON.stringify(report)}`);

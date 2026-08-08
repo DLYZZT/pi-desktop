@@ -5,6 +5,7 @@ import {
   getAgentDir,
   SessionManager,
   type CreateAgentSessionFromServicesOptions,
+  type AgentSessionRuntimeDiagnostic,
 } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "crypto";
 import { cacheSessionPath } from "./session-reader";
@@ -23,6 +24,7 @@ import {
 } from "./browser-tools";
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
 import { browserAgentRuntime } from "./browser-agent-runtime";
+import { projectExtensionDiagnostics } from "./extension-diagnostics";
 
 // ============================================================================
 // Types
@@ -133,6 +135,7 @@ export class AgentSessionWrapper {
   private pendingUiRequests = new Map<string, AgentEvent>();
   private activeCustomUis = new Map<string, ActiveCustomUi>();
   private extensionStatuses = new Map<string, string>();
+  private runtimeDiagnosticStatuses = new Map<string, string>();
   private extensionWidgets = new Map<string, ExtensionWidgetItem>();
   private extensionWorkingMessage = "Working";
   private extensionWorkingIndicator = "";
@@ -231,6 +234,12 @@ export class AgentSessionWrapper {
       "</pi-desktop-toolchain>",
     ].join("\n");
     this.applyToolchainSummary();
+  }
+
+  setRuntimeDiagnostics(diagnostics: readonly AgentSessionRuntimeDiagnostic[]): void {
+    this.runtimeDiagnosticStatuses = new Map(
+      projectExtensionDiagnostics(diagnostics).map(({ key, text }) => [key, text]),
+    );
   }
 
   beginExtensionBinding(options: ExtensionBindingOptions = {}): void {
@@ -771,7 +780,10 @@ export class AgentSessionWrapper {
   }
 
   private getExtensionStatuses(): Array<{ key: string; text: string }> {
-    return Array.from(this.extensionStatuses, ([key, text]) => ({ key, text }));
+    return Array.from(new Map([...this.runtimeDiagnosticStatuses, ...this.extensionStatuses]), ([key, text]) => ({
+      key,
+      text,
+    }));
   }
 
   private setExtensionStatus(key: string, text: string | undefined): void {
@@ -1320,6 +1332,7 @@ export async function startRpcSession(
     }
 
     const wrapper = new AgentSessionWrapper(inner);
+    wrapper.setRuntimeDiagnostics(services.diagnostics);
     wrapper.setToolchainSummary(executionContext.inventoryRevision, executionContext.summary);
     // When all tools are disabled, clear the system prompt entirely.
     // pi's buildSystemPrompt always produces a non-empty prompt even with no tools;

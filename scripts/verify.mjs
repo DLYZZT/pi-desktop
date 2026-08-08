@@ -24,6 +24,7 @@ run("typecheck (main/host)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.json"]);
 run("typecheck (renderer)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.renderer.json"]);
 run("unit tests", "npm", ["test"]);
 run("contract coverage", "node", ["scripts/check-contract-coverage.mjs"]);
+run("Pi 0.84 compatibility", "node", ["scripts/check-pi-084-compatibility.mjs"]);
 run("toolchain contract safety", "node", ["scripts/check-toolchain-contract.mjs"]);
 run("toolchain catalog", "node", [
   "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",

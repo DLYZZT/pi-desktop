@@ -10,17 +10,19 @@ import type {
   SessionTreeNode,
   TextContent,
 } from "@/lib/types";
-import type { SessionDetail, SessionRuntimeState } from "@contract/types";
+import type { ModelCatalogStatus, ModelsListResult, SessionDetail, SessionRuntimeState } from "@contract/types";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
 import {
   agentState,
+  cancelModelsRefresh,
   getSession,
   getSessionContext,
   getSessionContextPage,
   getSessionEntryContent,
   listModels,
   newAgent,
+  refreshModels as requestModelsRefresh,
   subscribeAgentEvents,
   subscribeSessionsChanged,
 } from "@/lib/api-client";
@@ -340,6 +342,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [agentRunning, setAgentRunning] = useState(false);
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
   const [modelList, setModelList] = useState<ModelEntry[]>([]);
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalogStatus>({
+    source: "cache",
+    refreshed: false,
+    aborted: false,
+    warnings: [],
+  });
+  const [modelRefreshing, setModelRefreshing] = useState(false);
   const [modelThinkingLevels, setModelThinkingLevels] = useState<Record<string, string[]>>({});
   const [modelThinkingLevelMaps, setModelThinkingLevelMaps] = useState<Record<string, Record<string, string | null>>>(
     {},
@@ -378,6 +387,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [loadingOlder, setLoadingOlder] = useState(false);
 
   const eventUnsubRef = useRef<(() => void) | null>(null);
+  const modelRefreshRequestRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const agentRunningRef = useRef(false);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
@@ -1437,12 +1447,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [isCompacting, loadSession]);
 
-  const loadModels = useCallback(
-    async (signal?: AbortSignal) => {
-      const modelCwd = newSessionCwd ?? session?.cwd ?? "";
-      if (signal?.aborted) return;
-      const d = await listModels(modelCwd || undefined);
-      if (signal?.aborted) return;
+  const applyModelsResult = useCallback(
+    (d: ModelsListResult) => {
       const nextList: ModelEntry[] = d.models ?? [];
       const nameMap = d.nameMap ?? {};
       setModelNames(
@@ -1453,6 +1459,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setModelThinkingLevels(d.thinkingLevels ?? {});
       setModelThinkingLevelMaps(d.thinkingLevelMaps ?? {});
       setModelList(nextList);
+      setModelCatalog(d.catalog);
       if (isNew) {
         const match = d.defaultModel
           ? nextList.find((m) => m.id === d.defaultModel?.modelId && m.provider === d.defaultModel?.provider)
@@ -1461,8 +1468,52 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setNewSessionDefaultModel(displayModel ? { provider: displayModel.provider, modelId: displayModel.id } : null);
       }
     },
-    [isNew, newSessionCwd, session?.cwd],
+    [isNew],
   );
+
+  const loadModels = useCallback(
+    async (signal?: AbortSignal) => {
+      const modelCwd = newSessionCwd ?? session?.cwd ?? "";
+      if (signal?.aborted) return;
+      const d = await listModels(modelCwd || undefined);
+      if (signal?.aborted) return;
+      applyModelsResult(d);
+    },
+    [applyModelsResult, newSessionCwd, session?.cwd],
+  );
+
+  const cancelModelRefresh = useCallback(() => {
+    const requestId = modelRefreshRequestRef.current;
+    if (!requestId) return;
+    modelRefreshRequestRef.current = null;
+    setModelRefreshing(false);
+    void cancelModelsRefresh(requestId).catch(() => {});
+  }, []);
+
+  const refreshModels = useCallback(async () => {
+    const previousRequestId = modelRefreshRequestRef.current;
+    if (previousRequestId) void cancelModelsRefresh(previousRequestId).catch(() => {});
+    const requestId = `models_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+    modelRefreshRequestRef.current = requestId;
+    setModelRefreshing(true);
+    const modelCwd = newSessionCwd ?? session?.cwd ?? "";
+    try {
+      const result = await requestModelsRefresh(modelCwd || undefined, requestId);
+      if (modelRefreshRequestRef.current !== requestId) return;
+      applyModelsResult(result);
+    } catch {
+      if (modelRefreshRequestRef.current !== requestId) return;
+      addNotice({
+        type: "error",
+        message: "Unable to refresh the model directory. Cached models remain available.",
+      });
+    } finally {
+      if (modelRefreshRequestRef.current === requestId) {
+        modelRefreshRequestRef.current = null;
+        setModelRefreshing(false);
+      }
+    }
+  }, [addNotice, applyModelsResult, newSessionCwd, session?.cwd]);
 
   const handleBuiltinSlashCommand = useCallback(
     async (text: string): Promise<BuiltinSlashCommandResult> => {
@@ -1864,6 +1915,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     return () => controller.abort();
   }, [loadModels, modelsRefreshKey]);
 
+  useEffect(() => cancelModelRefresh, [cancelModelRefresh, newSessionCwd, session?.cwd]);
+
   // Compact error auto-dismiss
   useEffect(() => {
     if (!compactError) return;
@@ -1910,6 +1963,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunning,
     modelNames,
     modelList,
+    modelCatalog,
+    modelRefreshing,
     modelThinkingLevels,
     modelThinkingLevelMaps,
     newSessionModel,
@@ -1956,6 +2011,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleFork,
     handleNavigate,
     handleModelChange,
+    refreshModels,
+    cancelModelRefresh,
     handleCompact,
     handleSteer,
     handleFollowUp,

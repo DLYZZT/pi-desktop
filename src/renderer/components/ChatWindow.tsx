@@ -253,6 +253,8 @@ export function ChatWindow({
     agentRunning,
     modelNames,
     modelList,
+    modelCatalog,
+    modelRefreshing,
     modelThinkingLevels,
     modelThinkingLevelMaps,
     toolPreset,
@@ -289,6 +291,8 @@ export function ChatWindow({
     handleFork,
     handleNavigate,
     handleModelChange,
+    refreshModels,
+    cancelModelRefresh,
     handleCompact,
     handleSteer,
     handleFollowUp,
@@ -426,7 +430,11 @@ export function ChatWindow({
       isAutoModelSelection={isAutoModelSelection}
       modelNames={modelNames}
       modelList={modelList}
+      modelCatalog={modelCatalog}
+      modelRefreshing={modelRefreshing}
       onModelChange={handleModelChange}
+      onModelsRefresh={refreshModels}
+      onModelsRefreshCancel={cancelModelRefresh}
       onCompact={session || isNew ? handleCompact : undefined}
       onAbortCompaction={handleAbortCompaction}
       isCompacting={isCompacting}

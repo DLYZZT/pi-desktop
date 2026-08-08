@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { CredentialSynchronizationError } from "@earendil-works/pi-coding-agent";
 import { build } from "esbuild";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
@@ -54,7 +55,7 @@ async function captureHandlers() {
 
 test("registerHandlers exposes every contract method exactly once", async () => {
   const { handlers } = await captureHandlers();
-  assert.equal(Object.keys(handlers).length, 66);
+  assert.equal(Object.keys(handlers).length, 68);
   for (const method of [
     "host.ping",
     "host.toolchain",
@@ -69,6 +70,8 @@ test("registerHandlers exposes every contract method exactly once", async () => 
     "files.list",
     "files.download",
     "models.list",
+    "models.refresh",
+    "models.refreshCancel",
     "auth.providers",
     "skills.list",
     "plugins.list",
@@ -76,6 +79,53 @@ test("registerHandlers exposes every contract method exactly once", async () => 
   ]) {
     assert.equal(typeof handlers[method], "function", `${method} must be registered`);
   }
+});
+
+test("credential mutation failures distinguish committed state from an unverified mutation", async () => {
+  const { credentialMutationFailure } = await loadHandlersModule();
+  const synchronizationError = new CredentialSynchronizationError("test-provider", "setRuntimeApiKey", undefined, {
+    cause: new Error("secret upstream detail"),
+  });
+
+  const committed = await credentialMutationFailure(
+    {
+      async listCredentials() {
+        return [{ providerId: "test-provider", type: "api_key" }];
+      },
+      async refresh() {
+        throw new Error("secret retry detail");
+      },
+    },
+    "test-provider",
+    { present: true, type: "api_key" },
+    synchronizationError,
+  );
+  assert.deepEqual(committed, {
+    ok: true,
+    synchronized: false,
+    warning: {
+      code: "MODEL_SYNC_FAILED",
+      message: "Credentials were updated, but the local model state could not be refreshed. Retry model refresh.",
+    },
+  });
+  assert.doesNotMatch(JSON.stringify(committed), /secret/);
+
+  await assert.rejects(
+    credentialMutationFailure(
+      {
+        async listCredentials() {
+          return [];
+        },
+        async refresh() {
+          throw new Error("must not refresh");
+        },
+      },
+      "test-provider",
+      { present: true, type: "api_key" },
+      synchronizationError,
+    ),
+    (error) => error?.code === "INTERNAL" && !String(error?.message).includes("secret"),
+  );
 });
 
 test("file, git, worktree, skill, plugin, and system handlers return contract-shaped results", async (t) => {
@@ -155,6 +205,33 @@ test("session, model configuration, and auth handlers isolate state and preserve
   await assert.rejects(handlers["modelsConfig.set"]({}), (error) => error.code === "BAD_REQUEST");
   assert.deepEqual(await handlers["modelsConfig.set"]({ providers: {} }), { ok: true });
 
+  const v084Config = {
+    providers: {
+      custom: {
+        headers: { Authorization: "Bearer test", "X-Remove-Me": null },
+        models: [
+          {
+            id: "model-one",
+            samplingParams: { temperature: 0.2, thinking_token_budget: 1024 },
+            futureField: { preserved: true },
+          },
+        ],
+      },
+    },
+    futureTopLevel: "preserved",
+  };
+  assert.deepEqual(await handlers["modelsConfig.set"](v084Config), { ok: true });
+  assert.deepEqual(await handlers["modelsConfig.get"](), v084Config);
+
+  const models = await handlers["models.list"]({ cwd: root });
+  assert.equal(models.catalog.source, "offline");
+  const refreshedModels = await handlers["models.refresh"]({ cwd: root, requestId: "offline-test" });
+  assert.equal(refreshedModels.catalog.source, "offline");
+  assert.deepEqual(await handlers["models.refreshCancel"]({ requestId: "offline-test" }), {
+    ok: true,
+    cancelled: false,
+  });
+
   const invalidModelTest = await handlers["modelsConfig.test"]({});
   assert.deepEqual(invalidModelTest, { ok: false, error: "providerName is required" });
 
@@ -163,13 +240,19 @@ test("session, model configuration, and auth handlers isolate state and preserve
   const allProviders = await handlers["auth.allProviders"]();
   assert.equal(Array.isArray(allProviders.providers), true);
 
-  assert.deepEqual(await handlers["auth.setApiKey"]({ provider: "openai", key: "secret" }), { ok: true });
+  assert.deepEqual(await handlers["auth.setApiKey"]({ provider: "openai", key: "secret" }), {
+    ok: true,
+    synchronized: true,
+  });
   await assert.rejects(
     handlers["auth.setApiKey"]({ provider: "amazon-bedrock", key: "not-a-bearer-token" }),
     (error) => error.code === "BAD_REQUEST" && /interactive, multi-field/.test(error.message),
   );
-  assert.deepEqual(await handlers["auth.deleteApiKey"]({ provider: "openai" }), { ok: true });
-  assert.deepEqual(await handlers["auth.logout"]({ provider: "openai" }), { ok: true });
+  assert.deepEqual(await handlers["auth.deleteApiKey"]({ provider: "openai" }), {
+    ok: true,
+    synchronized: true,
+  });
+  assert.deepEqual(await handlers["auth.logout"]({ provider: "openai" }), { ok: true, synchronized: true });
   assert.deepEqual(await handlers["auth.loginCancel"]({ provider: "handler-test" }), { ok: true });
   await assert.rejects(
     handlers["auth.loginSubmit"]({ provider: "one", token: "two-token", code: "code" }),

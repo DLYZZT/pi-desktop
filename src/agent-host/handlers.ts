@@ -19,6 +19,7 @@ import { homedir, tmpdir } from "os";
 import path from "path";
 import {
   DefaultResourceLoader,
+  CredentialSynchronizationError,
   ModelRuntime,
   SessionManager,
   createAgentSessionServices,
@@ -28,7 +29,14 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type AuthInteraction } from "@earendil-works/pi-ai";
 import type { RpcServer } from "../contract/rpc";
-import { RpcError, type HistoryWindow, type SessionDetail, type SessionRuntimeState } from "../contract/types";
+import {
+  RpcError,
+  type HistoryWindow,
+  type ModelCatalogStatus,
+  type ModelsListResult,
+  type SessionDetail,
+  type SessionRuntimeState,
+} from "../contract/types";
 import type { SessionTreeNode } from "../shared/types";
 import { allowFileRoot, getAllowedFileRoots, invalidateAllowedRootsCache, isFilePathAllowed } from "./file-access";
 import { getRpcSession, getRunningRpcSessionIds, startRpcSession, subscribeRunningSessions } from "./rpc-manager";
@@ -63,7 +71,7 @@ import {
 import { createFileWatchService } from "./file-watch";
 import { callMain } from "./parent-rpc";
 import { createAuthLoginService, resolveLoginCode } from "./auth-login";
-import { getSharedModelRuntime, reloadSharedModelRuntimeConfig } from "./model-runtime";
+import { getSharedModelRuntime, modelCatalogRefreshCoordinator, reloadSharedModelRuntimeConfig } from "./model-runtime";
 import { applyPluginAction, readPlugins } from "./plugins-service";
 import { installSkill, searchSkills } from "./skills-service";
 import { projectSessionTreeForResponse } from "./project-tree";
@@ -85,6 +93,7 @@ import {
 } from "./session-history";
 import { getSessionContentSnapshot, invalidateSessionContent } from "./session-content-cache";
 import { sessionIndex } from "./session-index";
+import { credentialStateMatches, recoverCommittedCredential, type CredentialTarget } from "./credential-sync";
 
 const IGNORED_NAMES = new Set([
   "node_modules",
@@ -270,6 +279,68 @@ function filterByExactEnabledModels<T extends { id: string; provider: string }>(
   const refs = new Set(enabledModels.map(stripThinkingSuffix).filter(Boolean));
   const visible = available.filter((m) => refs.has(`${m.provider}/${m.id}`) || refs.has(m.id));
   return visible.length > 0 ? visible : available;
+}
+
+export async function credentialMutationFailure(
+  modelRuntime: ModelRuntime,
+  providerId: string,
+  target: CredentialTarget,
+  error: unknown,
+) {
+  if (error instanceof CredentialSynchronizationError) {
+    const recovered = await recoverCommittedCredential(modelRuntime, providerId, target);
+    if (recovered) {
+      if (!recovered.synchronized) {
+        console.warn(`[agent-host] credential ${error.operation} committed for ${providerId}; model sync retry failed`);
+      }
+      return recovered;
+    }
+    throw new RpcError({ code: "INTERNAL", message: `Credential change for ${providerId} could not be verified` });
+  }
+  throw new RpcError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : String(error) });
+}
+
+function resolveModelsCwd(params: { cwd?: string } | void): string {
+  const cwd = params?.cwd || process.cwd();
+  try {
+    const st = statSync(cwd);
+    if (!st.isDirectory()) throw new Error("not-directory");
+  } catch {
+    throw new RpcError({ code: "BAD_REQUEST", message: `Directory does not exist: ${cwd}` });
+  }
+  return cwd;
+}
+
+async function projectModelsList(
+  modelRuntime: ModelRuntime,
+  settings: SettingsManager,
+  catalog: ModelCatalogStatus,
+): Promise<ModelsListResult> {
+  const available = [...(await modelRuntime.getAvailable())];
+  const enabledModels = settings.getEnabledModels();
+  const visible = filterByExactEnabledModels(available, enabledModels);
+  const models = visible
+    .map((model) => ({ id: model.id, name: model.name, provider: model.provider }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.provider.localeCompare(b.provider));
+
+  const nameMap: Record<string, string> = {};
+  const thinkingLevels: Record<string, string[]> = {};
+  const thinkingLevelMaps: Record<string, Record<string, string | null>> = {};
+  for (const model of visible) {
+    const key = `${model.provider}:${model.id}`;
+    nameMap[key] = model.name;
+    thinkingLevels[key] = getSupportedThinkingLevels(model);
+    if (model.thinkingLevelMap) thinkingLevelMaps[key] = model.thinkingLevelMap;
+  }
+
+  let defaultModel: { provider: string; modelId: string } | null = null;
+  const provider = settings.getDefaultProvider();
+  const modelId = settings.getDefaultModel();
+  if (provider && modelId && visible.some((model) => model.provider === provider && model.id === modelId)) {
+    defaultModel = { provider, modelId };
+  }
+
+  return { models, defaultModel, thinkingLevels, thinkingLevelMaps, nameMap, catalog };
 }
 
 export function registerHandlers(server: RpcServer): () => Promise<void> {
@@ -1017,49 +1088,33 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     },
 
     "models.list": async (params) => {
-      const cwd = (params as { cwd?: string } | void)?.cwd || process.cwd();
-      try {
-        const st = statSync(cwd);
-        if (!st.isDirectory()) {
-          throw new RpcError({ code: "BAD_REQUEST", message: `Not a directory: ${cwd}` });
-        }
-      } catch (e) {
-        if (e instanceof RpcError) throw e;
-        throw new RpcError({ code: "BAD_REQUEST", message: `Directory does not exist: ${cwd}` });
-      }
-
+      const cwd = resolveModelsCwd(params as { cwd?: string } | void);
       const agentDir = getAgentDir();
       const services = await createAgentSessionServices({ cwd, agentDir });
-      const available = [...(await services.modelRuntime.getAvailable())];
-      const settings: SettingsManager = services.settingsManager;
-      const enabledModels = settings.getEnabledModels();
-      const visible = filterByExactEnabledModels(available, enabledModels);
-      const models = visible
-        .map((m: { id: string; name: string; provider: string }) => ({
-          id: m.id,
-          name: m.name,
-          provider: m.provider,
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name) || a.provider.localeCompare(b.provider));
+      return projectModelsList(services.modelRuntime, services.settingsManager, {
+        source: process.env.PI_OFFLINE === undefined ? "cache" : "offline",
+        refreshed: false,
+        aborted: false,
+        warnings: [],
+      });
+    },
 
-      const nameMap: Record<string, string> = {};
-      const thinkingLevels: Record<string, string[]> = {};
-      const thinkingLevelMaps: Record<string, Record<string, string | null>> = {};
-      for (const m of visible) {
-        const key = `${m.provider}:${m.id}`;
-        nameMap[key] = m.name;
-        thinkingLevels[key] = getSupportedThinkingLevels(m);
-        if (m.thinkingLevelMap) thinkingLevelMaps[key] = m.thinkingLevelMap;
+    "models.refresh": async (params) => {
+      const { requestId } = params as { cwd?: string; requestId: string };
+      if (!/^[A-Za-z0-9_-]{1,100}$/.test(requestId)) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "Invalid model refresh request id" });
       }
+      const cwd = resolveModelsCwd(params);
+      const agentDir = getAgentDir();
+      const { services, catalog } = await modelCatalogRefreshCoordinator.refresh(cwd, requestId, (signal) =>
+        createAgentSessionServices({ cwd, agentDir, modelRuntimeSignal: signal }),
+      );
+      return projectModelsList(services.modelRuntime, services.settingsManager, catalog);
+    },
 
-      let defaultModel: { provider: string; modelId: string } | null = null;
-      const provider = settings.getDefaultProvider();
-      const modelId = settings.getDefaultModel();
-      if (provider && modelId && visible.some((m) => m.provider === provider && m.id === modelId)) {
-        defaultModel = { provider, modelId };
-      }
-
-      return { models, defaultModel, thinkingLevels, thinkingLevelMaps, nameMap };
+    "models.refreshCancel": (params) => {
+      const { requestId } = params as { requestId: string };
+      return { ok: true as const, cancelled: modelCatalogRefreshCoordinator.cancel(requestId) };
     },
 
     "modelsConfig.get": () => readModelsJson() as never,
@@ -1257,37 +1312,43 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       try {
         await modelRuntime.login(provider, "api_key", interaction);
       } catch (error) {
-        throw new RpcError({
-          code: "BAD_REQUEST",
-          message: error instanceof Error ? error.message : String(error),
-        });
+        return credentialMutationFailure(modelRuntime, provider, { present: true, type: "api_key" }, error);
       }
-      const stored = await modelRuntime.listCredentials();
-      if (!stored.some((entry) => entry.providerId === provider && entry.type === "api_key")) {
+      if (!(await credentialStateMatches(modelRuntime, provider, { present: true, type: "api_key" }))) {
         throw new RpcError({
           code: "INTERNAL",
           message: `Key for ${provider} was written but not readable back`,
         });
       }
-      return { ok: true as const };
+      return { ok: true as const, synchronized: true };
     },
 
     "auth.deleteApiKey": async (params) => {
       const { provider } = params as { provider: string };
+      const modelRuntime = await getSharedModelRuntime();
       try {
-        const modelRuntime = await getSharedModelRuntime();
         await modelRuntime.logout(provider);
-      } catch {
-        /* ignore */
+      } catch (error) {
+        return credentialMutationFailure(modelRuntime, provider, { present: false, type: "api_key" }, error);
       }
-      return { ok: true as const };
+      if (!(await credentialStateMatches(modelRuntime, provider, { present: false, type: "api_key" }))) {
+        throw new RpcError({ code: "INTERNAL", message: `Key removal for ${provider} could not be verified` });
+      }
+      return { ok: true as const, synchronized: true };
     },
 
     "auth.logout": async (params) => {
       const { provider } = params as { provider: string };
       const modelRuntime = await getSharedModelRuntime();
-      await modelRuntime.logout(provider);
-      return { ok: true as const };
+      try {
+        await modelRuntime.logout(provider);
+      } catch (error) {
+        return credentialMutationFailure(modelRuntime, provider, { present: false }, error);
+      }
+      if (!(await credentialStateMatches(modelRuntime, provider, { present: false }))) {
+        throw new RpcError({ code: "INTERNAL", message: `Logout for ${provider} could not be verified` });
+      }
+      return { ok: true as const, synchronized: true };
     },
 
     "auth.loginSubmit": async (params) => {
@@ -1446,7 +1507,10 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     },
   });
 
-  return () => channelManager.shutdown();
+  return async () => {
+    modelCatalogRefreshCoordinator.cancelAll();
+    await channelManager.shutdown();
+  };
 }
 
 /** ISSUE-003: track bindings per wrapper instance, not permanent sessionId set */

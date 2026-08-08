@@ -2,9 +2,11 @@
  * OAuth login progress service for Streams["auth.login"].
  */
 import type { AuthEvent, AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
+import { CredentialSynchronizationError } from "@earendil-works/pi-coding-agent";
 import type { RpcServer } from "../contract/rpc";
 import { RpcError } from "../contract/types";
 import { getSharedModelRuntime } from "./model-runtime";
+import { recoverCommittedCredential } from "./credential-sync";
 
 type Pending = {
   resolve: (v: string) => void;
@@ -39,6 +41,8 @@ export function cancelLogin(provider: string): void {
 type OAuthRuntime = {
   getProvider(provider: string): { auth: { oauth?: unknown } } | undefined;
   login(provider: string, type: "oauth", interaction: AuthInteraction): Promise<unknown>;
+  listCredentials(): ReturnType<import("@earendil-works/pi-coding-agent").ModelRuntime["listCredentials"]>;
+  refresh: import("@earendil-works/pi-coding-agent").ModelRuntime["refresh"];
 };
 
 type ModelRuntimeFactory = () => OAuthRuntime | Promise<OAuthRuntime>;
@@ -192,6 +196,16 @@ export function createAuthLoginService(
 
           emit(provider, { type: "success" });
         } catch (err) {
+          if (err instanceof CredentialSynchronizationError) {
+            const recovered = await recoverCommittedCredential(modelRuntime, provider, {
+              present: true,
+              type: "oauth",
+            });
+            if (recovered) {
+              emit(provider, { type: "success", ...(recovered.warning ? { warning: recovered.warning } : {}) });
+              return;
+            }
+          }
           const msg = err instanceof Error ? err.message : String(err);
           if (msg === "Login cancelled" || abort.signal.aborted) {
             emit(provider, { type: "cancelled" });

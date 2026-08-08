@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Check, Field, NumInput, SecretTextInput, Select, SectionTitle, TextInput } from "./form-controls";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
+import { replaceModelEntry, type ModelEntry, type ModelsJson, type ProviderEntry } from "@/lib/models-config-state";
 import { call } from "@/lib/api-client";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
@@ -114,35 +115,8 @@ type OAuthLoginState =
   | { phase: "prompt"; message: string; placeholder: string | null; token: string }
   | { phase: "select"; message: string; options: { id: string; label: string }[]; token: string }
   | { phase: "progress"; message: string }
-  | { phase: "success" }
+  | { phase: "success"; message?: string; warning?: boolean }
   | { phase: "error"; message: string };
-
-interface ModelEntry {
-  id: string;
-  name?: string;
-  api?: string;
-  reasoning?: boolean;
-  thinkingLevelMap?: Record<string, string | null>;
-  input?: string[];
-  contextWindow?: number;
-  maxTokens?: number;
-  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
-  compat?: Record<string, unknown>;
-}
-
-interface ProviderEntry {
-  baseUrl?: string;
-  api?: string;
-  apiKey?: string;
-  headers?: Record<string, string>;
-  compat?: Record<string, unknown>;
-  models?: ModelEntry[];
-  modelOverrides?: Record<string, unknown>;
-}
-
-interface ModelsJson {
-  providers?: Record<string, ProviderEntry>;
-}
 
 type ModelTestState =
   | { phase: "idle" }
@@ -792,6 +766,7 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
         intervalSeconds?: number | null;
         expiresInSeconds?: number | null;
         options?: { id: string; label: string }[];
+        warning?: { code: "MODEL_SYNC_FAILED"; message: string };
       };
       if (data.type === "auth") {
         setLoginState({ phase: "auth", url: data.url!, instructions: data.instructions ?? null, token: data.token! });
@@ -830,7 +805,10 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
       } else if (data.type === "success") {
         es.close();
         eventSourceRef.current = null;
-        setLoginState({ phase: "success" });
+        setLoginState({
+          phase: "success",
+          ...(data.warning ? { message: data.warning.message, warning: true } : {}),
+        });
         onRefresh();
       } else if (data.type === "error") {
         es.close();
@@ -861,9 +839,25 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
   }, [provider.id]);
 
   const handleLogout = useCallback(async () => {
-    await fetch(`/api/auth/logout/${encodeURIComponent(provider.id)}`, { method: "POST" });
-    setLoginState({ phase: "idle" });
-    onRefresh();
+    try {
+      const response = await fetch(`/api/auth/logout/${encodeURIComponent(provider.id)}`, { method: "POST" });
+      const result = (await response.json().catch(() => ({}))) as {
+        warning?: { code: "MODEL_SYNC_FAILED"; message: string };
+        error?: string;
+      };
+      if (!response.ok || result.error) {
+        setLoginState({ phase: "error", message: result.error ?? `HTTP ${response.status}` });
+        return;
+      }
+      setLoginState(
+        result.warning
+          ? { phase: "success", message: result.warning.message, warning: true }
+          : { phase: "success", message: "Disconnected successfully." },
+      );
+      onRefresh();
+    } catch (error) {
+      setLoginState({ phase: "error", message: error instanceof Error ? error.message : String(error) });
+    }
   }, [provider.id, onRefresh]);
 
   const submitCode = useCallback(
@@ -1079,7 +1073,9 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
           <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>{loginState.message}</p>
         )}
         {loginState.phase === "success" && (
-          <p style={{ margin: 0, fontSize: 12, color: "#4ade80" }}>Connected successfully.</p>
+          <p style={{ margin: 0, fontSize: 12, color: loginState.warning ? "#d97706" : "#4ade80" }}>
+            {loginState.message ?? "Connected successfully."}
+          </p>
         )}
         {loginState.phase === "error" && (
           <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{loginState.message}</p>
@@ -1150,12 +1146,14 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [savedOk, setSavedOk] = useState(false);
 
   // Reset state when provider changes
   useEffect(() => {
     setApiKey("");
     setError(null);
+    setWarning(null);
     setSavedOk(false);
   }, [provider.id]);
 
@@ -1163,6 +1161,7 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
     if (!apiKey.trim()) return;
     setSaving(true);
     setError(null);
+    setWarning(null);
     setSavedOk(false);
     try {
       const res = await fetch(`/api/auth/api-key/${encodeURIComponent(provider.id)}`, {
@@ -1170,12 +1169,17 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ apiKey: apiKey.trim() }),
       });
-      const d = (await res.json()) as { success?: boolean; error?: string };
+      const d = (await res.json()) as {
+        ok?: boolean;
+        warning?: { code: "MODEL_SYNC_FAILED"; message: string };
+        error?: string;
+      };
       if (!res.ok || d.error) {
         setError(d.error ?? `HTTP ${res.status}`);
       } else {
         setApiKey("");
         setSavedOk(true);
+        setWarning(d.warning?.message ?? null);
         setTimeout(() => setSavedOk(false), 2000);
         onRefresh();
       }
@@ -1189,11 +1193,19 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
   const handleRemove = useCallback(async () => {
     setRemoving(true);
     setError(null);
+    setWarning(null);
     try {
       const res = await fetch(`/api/auth/api-key/${encodeURIComponent(provider.id)}`, { method: "DELETE" });
-      const d = (await res.json()) as { success?: boolean; error?: string };
+      const d = (await res.json()) as {
+        ok?: boolean;
+        warning?: { code: "MODEL_SYNC_FAILED"; message: string };
+        error?: string;
+      };
       if (!res.ok || d.error) setError(d.error ?? `HTTP ${res.status}`);
-      else onRefresh();
+      else {
+        setWarning(d.warning?.message ?? null);
+        onRefresh();
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -1279,6 +1291,7 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
       </Field>
 
       {error && <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{error}</p>}
+      {warning && <p style={{ margin: 0, fontSize: 12, color: "#d97706" }}>{warning}</p>}
 
       {provider.configured && (
         <button
@@ -1801,12 +1814,7 @@ export function ModelsConfig({
   }, []);
 
   const updateModel = useCallback((providerName: string, index: number, m: ModelEntry) => {
-    setConfig((prev) => {
-      const provider = prev.providers?.[providerName] ?? {};
-      const models = [...(provider.models ?? [])];
-      models[index] = m;
-      return { ...prev, providers: { ...(prev.providers ?? {}), [providerName]: { ...provider, models } } };
-    });
+    setConfig((prev) => replaceModelEntry(prev, providerName, index, m));
   }, []);
 
   const removeModel = useCallback((providerName: string, index: number) => {

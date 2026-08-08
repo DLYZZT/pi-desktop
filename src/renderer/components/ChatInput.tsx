@@ -27,6 +27,7 @@ import {
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
+import type { ModelCatalogStatus } from "@contract/types";
 
 export interface AttachedImage {
   data: string; // base64, no prefix
@@ -51,7 +52,11 @@ interface Props {
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
   modelList?: { id: string; name: string; provider: string }[];
+  modelCatalog?: ModelCatalogStatus;
+  modelRefreshing?: boolean;
   onModelChange?: (provider: string, modelId: string) => void;
+  onModelsRefresh?: () => Promise<void> | void;
+  onModelsRefreshCancel?: () => void;
   onCompact?: () => void;
   onAbortCompaction?: () => void;
   isCompacting?: boolean;
@@ -215,7 +220,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     isAutoModelSelection,
     modelNames,
     modelList,
+    modelCatalog,
+    modelRefreshing,
     onModelChange,
+    onModelsRefresh,
+    onModelsRefreshCancel,
     onCompact,
     onAbortCompaction,
     isCompacting,
@@ -1018,6 +1027,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     closeControlDropdowns();
   }, [closeControlDropdowns, isMobile, isStreaming]);
 
+  const modelDropdownWasOpenRef = useRef(false);
+  useEffect(() => {
+    if (modelDropdownWasOpenRef.current && !modelDropdownOpen && modelRefreshing) onModelsRefreshCancel?.();
+    modelDropdownWasOpenRef.current = modelDropdownOpen;
+  }, [modelDropdownOpen, modelRefreshing, onModelsRefreshCancel]);
+
   useLayoutEffect(() => {
     if (!modelDropdownOpen) return;
     updateModelDropdownRect();
@@ -1779,7 +1794,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
               </svg>
             </button>
             {/* Model selector — visible always, disabled during streaming */}
-            {modelOptions.length > 0 && currentName && onModelChange && (
+            {(onModelsRefresh || (modelOptions.length > 0 && currentName && onModelChange)) && (
               <div
                 ref={dropdownRef}
                 style={{ position: "relative", flex: isMobile ? "1 1 auto" : undefined, minWidth: 0 }}
@@ -1842,7 +1857,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     <line x1="1" y1="14" x2="4" y2="14" />
                   </svg>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-                    {currentName}
+                    {currentName ?? t("models", "Models")}
                   </span>
                 </button>
                 {modelDropdownOpen &&
@@ -1875,6 +1890,50 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                             overflowY: "auto",
                           }}
                         >
+                          {onModelsRefresh && (
+                            <div
+                              style={{
+                                padding: "7px 8px",
+                                borderBottom: "1px solid var(--border)",
+                                minWidth: 240,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                disabled={modelRefreshing}
+                                onClick={() => void onModelsRefresh?.()}
+                                style={{
+                                  width: "100%",
+                                  padding: "7px 9px",
+                                  border: "1px solid var(--border)",
+                                  borderRadius: 6,
+                                  background: "var(--bg-panel)",
+                                  color: "var(--text)",
+                                  cursor: modelRefreshing ? "wait" : "pointer",
+                                  fontSize: 12,
+                                  textAlign: "left",
+                                }}
+                              >
+                                {modelRefreshing
+                                  ? t("refreshingModels", "Refreshing model directory…")
+                                  : t("refreshModels", "Refresh model directory")}
+                              </button>
+                              {modelCatalog?.source === "offline" && (
+                                <div style={{ marginTop: 6, color: "var(--text-dim)", fontSize: 11 }}>
+                                  {t("modelsOfflineCache", "Offline: using the cached model directory.")}
+                                </div>
+                              )}
+                              {(modelCatalog?.warnings ?? []).map((warning) => (
+                                <div
+                                  key={`${warning.provider}:${warning.code}`}
+                                  role="alert"
+                                  style={{ marginTop: 6, color: "#d97706", fontSize: 11, whiteSpace: "normal" }}
+                                >
+                                  {warning.message}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           {modelsByProvider.map((group, gi) => (
                             <div key={group.provider}>
                               {modelsByProvider.length > 1 && (
@@ -1899,7 +1958,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                     key={`${opt.provider}:${opt.modelId}`}
                                     onClick={() => {
                                       setModelDropdownOpen(false);
-                                      if (!isActive || isAutoModelSelection) onModelChange(opt.provider, opt.modelId);
+                                      if (!isActive || isAutoModelSelection) onModelChange?.(opt.provider, opt.modelId);
                                     }}
                                     style={{
                                       display: "flex",
