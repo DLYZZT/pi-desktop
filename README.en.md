@@ -16,7 +16,7 @@ Local-first · No local server · Cross-platform
 
 **English** · [简体中文](./README.md)
 
-[Download v0.1.4](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.4) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
+[Download v0.1.6](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.6) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
 
 </div>
 
@@ -64,14 +64,15 @@ Local-first · No local server · Cross-platform
 
 - Select project directories natively and manage Git branches and worktrees
 - Browse project files, open multiple tabs, download files, or reference them in prompts
-- Preview Markdown, syntax-highlighted code, Mermaid, KaTeX, and Word (`.docx`) documents
+- Render syntax-highlighted code, Mermaid, and KaTeX in Agent responses and Markdown files, and preview Word (`.docx`) documents
 - Keep sessions aligned with the project through file watching and Git status awareness
 
 ### Unified model and extension management
 
-- Manage model providers and model configurations
+- Bundle Pi Coding Agent 0.84.0 and manage model providers and model configurations
+- Prefer the local model directory when sessions start; explicitly refresh the remote directory when needed while preserving cached models across offline, timeout, or partial-provider failures
 - Sign in through browser-based OAuth flows
-- Search for, install, and configure Skills
+- Search for, install, and configure Skills; normal installs keep npm's default concurrency, with one isolated-cache retry for network, timeout, or cache-lock failures
 - Manage Plugins while continuing to use the Pi Agent extension ecosystem
 
 ### Cross-platform developer tool management
@@ -104,9 +105,9 @@ Local-first · No local server · Cross-platform
 
 ### Use a desktop build
 
-The latest stable version is [v0.1.4](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.4), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
+The latest stable version is [v0.1.6](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.6), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
 
-Pi Agent Desktop bundles the Pi Coding Agent runtime. Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
+Pi Agent Desktop v0.1.6 bundles the Pi Coding Agent 0.84.0 runtime. Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
 
 The application reads sessions and configuration from `~/.pi/agent/`. If you already use the Pi CLI, your existing data is available without migration. The desktop application also works if you have never used the CLI.
 

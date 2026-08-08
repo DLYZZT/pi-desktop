@@ -16,7 +16,7 @@
 
 [English](./README.en.md) · **简体中文**
 
-[下载 v0.1.4](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.4) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
+[下载 v0.1.6](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.6) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
 
 </div>
 
@@ -64,14 +64,15 @@
 
 - 原生选择项目目录，管理 Git 分支与 Worktree
 - 浏览项目文件、打开多标签页、下载或引用文件
-- Markdown、代码高亮、Mermaid、KaTeX 与 Word（`.docx`）文档预览
+- Agent 回复和 Markdown 文件支持代码高亮、Mermaid、KaTeX，并可预览 Word（`.docx`）文档
 - 文件变更监听与 Git 状态感知，让会话始终贴近当前项目
 
 ### 模型与扩展统一管理
 
-- 管理模型提供商和模型配置
+- 内置 Pi Coding Agent 0.84.0，管理模型提供商和模型配置
+- 会话启动优先使用本地模型目录；需要时可显式刷新远程目录，离线、超时或部分 provider 失败时继续保留缓存模型
 - 支持浏览器 OAuth 登录流程
-- 搜索、安装和配置 Skills
+- 搜索、安装和配置 Skills；正常安装沿用 npm 默认并发，遇到网络、超时或 cache lock 故障时使用隔离缓存重试一次
 - 管理 Plugins，并沿用 Pi Agent 的扩展体系
 
 ### 跨平台开发工具管理
@@ -104,9 +105,9 @@
 
 ### 使用桌面安装包
 
-最新稳定版为 [v0.1.4](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.4)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
+最新稳定版为 [v0.1.6](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.6)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
 
-Pi Agent Desktop 已内置 Pi Coding Agent 运行时。普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
+Pi Agent Desktop v0.1.6 已内置 Pi Coding Agent 0.84.0 运行时。普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
 
 应用会读取 `~/.pi/agent/` 中的会话与配置。如果你已经使用 Pi CLI，可以直接复用现有数据，无需迁移；此前没有使用过 Pi CLI 也不影响使用。
 

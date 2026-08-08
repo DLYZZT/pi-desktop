@@ -79,7 +79,7 @@ const requiredPiAuthoringAssetMarkers = [
 ];
 const missingPiAuthoringAssets = requiredPiAuthoringAssetMarkers.filter((marker) => !builderConfig.includes(marker));
 const toolchainCatalogPackagingIsValid =
-  builderConfig.includes("from: build/THIRD_PARTY_NOTICES.md") &&
+  builderConfig.includes("from: THIRD_PARTY_NOTICES.md") &&
   builderConfig.includes("to: THIRD_PARTY_NOTICES.md") &&
   builderConfig.includes("from: build/toolchains/runtime-catalog.json") &&
   builderConfig.includes("to: toolchains/runtime-catalog.json") &&
