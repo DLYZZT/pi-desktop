@@ -8,6 +8,7 @@ import type {
   FileMeta,
   HistoryWindow,
   LoginProgressEvent,
+  ModelPreferencesResult,
   ModelsConfig,
   ModelsListResult,
   PagedContextInfo,
@@ -234,6 +235,14 @@ export interface Api {
   "models.refreshCancel": {
     params: { requestId: string };
     result: { ok: true; cancelled: boolean };
+  };
+  "models.preferences.get": {
+    params: { cwd?: string } | void;
+    result: ModelPreferencesResult;
+  };
+  "models.preferences.set": {
+    params: { cwd?: string; enabledModels: string[] | null };
+    result: ModelPreferencesResult;
   };
   "modelsConfig.get": { params: void; result: ModelsConfig };
   "modelsConfig.set": { params: ModelsConfig; result: { ok: true } };

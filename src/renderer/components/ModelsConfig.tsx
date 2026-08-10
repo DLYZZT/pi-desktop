@@ -3,7 +3,9 @@ import { Check, Field, NumInput, SecretTextInput, Select, SectionTitle, TextInpu
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import { replaceModelEntry, type ModelEntry, type ModelsJson, type ProviderEntry } from "@/lib/models-config-state";
-import { call } from "@/lib/api-client";
+import { call, getModelPreferences, setModelPreferences } from "@/lib/api-client";
+import { isModelEnabled, setProviderModelsEnabled, toggleModelEnabled } from "@/lib/model-selection";
+import type { ModelPreferencesResult } from "@contract/types";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
 import OpenAIIcon from "@lobehub/icons/es/OpenAI/components/Mono";
@@ -696,9 +698,223 @@ function ModelDetail({
   );
 }
 
+// ── Managed provider models ──────────────────────────────────────────────────
+
+interface ModelSelectionControl {
+  preferences: ModelPreferencesResult | null;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  onChange: (enabledModels: string[] | null) => Promise<void>;
+}
+
+function ManagedModelsControl({
+  providerId,
+  preferences,
+  loading,
+  saving,
+  error,
+  onChange,
+}: ModelSelectionControl & { providerId: string }) {
+  const [query, setQuery] = useState("");
+  useEffect(() => setQuery(""), [providerId]);
+
+  const providerModels = (preferences?.models ?? []).filter((model) => model.provider === providerId);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const visibleModels = normalizedQuery
+    ? providerModels.filter(
+        (model) =>
+          model.name.toLocaleLowerCase().includes(normalizedQuery) ||
+          model.id.toLocaleLowerCase().includes(normalizedQuery),
+      )
+    : providerModels;
+  const enabledCount = preferences
+    ? providerModels.filter((model) => isModelEnabled(model, preferences.enabledModels)).length
+    : 0;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        paddingTop: 16,
+        borderTop: "1px solid var(--border)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <SectionTitle>Models</SectionTitle>
+        {!loading && preferences && (
+          <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>
+            {enabledCount} of {providerModels.length} enabled
+          </span>
+        )}
+      </div>
+
+      <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>
+        Choose which models appear in the model picker. The active model in an existing session is not changed.
+      </p>
+
+      {loading && <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>Loading models…</p>}
+      {!loading && preferences && providerModels.length === 0 && (
+        <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+          No models are currently available for this provider.
+        </p>
+      )}
+
+      {!loading && preferences && providerModels.length > 0 && (
+        <>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              type="button"
+              disabled={saving || enabledCount === providerModels.length}
+              onClick={() =>
+                void onChange(setProviderModelsEnabled(preferences.models, preferences.enabledModels, providerId, true))
+              }
+              style={{
+                padding: "4px 9px",
+                background: "none",
+                border: "1px solid var(--border)",
+                borderRadius: 5,
+                color: "var(--text-muted)",
+                cursor: saving || enabledCount === providerModels.length ? "not-allowed" : "pointer",
+                fontSize: 11,
+              }}
+            >
+              Enable all
+            </button>
+            <button
+              type="button"
+              disabled={saving || enabledCount === 0}
+              onClick={() =>
+                void onChange(
+                  setProviderModelsEnabled(preferences.models, preferences.enabledModels, providerId, false),
+                )
+              }
+              style={{
+                padding: "4px 9px",
+                background: "none",
+                border: "1px solid var(--border)",
+                borderRadius: 5,
+                color: "var(--text-muted)",
+                cursor: saving || enabledCount === 0 ? "not-allowed" : "pointer",
+                fontSize: 11,
+              }}
+            >
+              Disable all
+            </button>
+          </div>
+
+          {providerModels.length > 8 && (
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search models…"
+              aria-label="Search provider models"
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "6px 9px",
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                borderRadius: 5,
+                color: "var(--text)",
+                fontSize: 12,
+                outline: "none",
+              }}
+            />
+          )}
+
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              maxHeight: 300,
+              overflowY: "auto",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+            }}
+          >
+            {visibleModels.map((model, index) => {
+              const enabled = isModelEnabled(model, preferences.enabledModels);
+              return (
+                <label
+                  key={`${model.provider}/${model.id}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 9,
+                    padding: "8px 10px",
+                    borderTop: index > 0 ? "1px solid var(--border)" : undefined,
+                    cursor: saving ? "not-allowed" : "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    disabled={saving}
+                    onChange={(event) =>
+                      void onChange(
+                        toggleModelEnabled(preferences.models, preferences.enabledModels, model, event.target.checked),
+                      )
+                    }
+                    style={{ margin: "2px 0 0", accentColor: "var(--accent)", flexShrink: 0 }}
+                  />
+                  <span style={{ minWidth: 0 }}>
+                    <span
+                      style={{
+                        display: "block",
+                        color: "var(--text)",
+                        fontSize: 12,
+                        lineHeight: 1.35,
+                        overflowWrap: "anywhere",
+                      }}
+                    >
+                      {model.name}
+                    </span>
+                    {model.name !== model.id && (
+                      <code
+                        style={{
+                          display: "block",
+                          marginTop: 2,
+                          color: "var(--text-dim)",
+                          fontSize: 10,
+                          fontFamily: "var(--font-mono)",
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {model.id}
+                      </code>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+            {visibleModels.length === 0 && (
+              <span style={{ padding: "10px", color: "var(--text-muted)", fontSize: 12 }}>No matching models.</span>
+            )}
+          </div>
+        </>
+      )}
+
+      {saving && <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)" }}>Saving selection…</p>}
+      {error && <p style={{ margin: 0, fontSize: 11, color: "#f87171", lineHeight: 1.4 }}>{error}</p>}
+    </div>
+  );
+}
+
 // ── OAuth detail ──────────────────────────────────────────────────────────────
 
-function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefresh: () => void }) {
+function OAuthDetail({
+  provider,
+  onRefresh,
+  modelSelection,
+}: {
+  provider: OAuthProvider;
+  onRefresh: () => void;
+  modelSelection: ModelSelectionControl;
+}) {
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
   const [inputValue, setInputValue] = useState("");
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -1135,13 +1351,23 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
           </>
         )}
       </div>
+
+      {provider.loggedIn && <ManagedModelsControl providerId={provider.id} {...modelSelection} />}
     </div>
   );
 }
 
 // ── API Key detail ────────────────────────────────────────────────────────────
 
-function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRefresh: () => void }) {
+function ApiKeyDetail({
+  provider,
+  onRefresh,
+  modelSelection,
+}: {
+  provider: ApiKeyProvider;
+  onRefresh: () => void;
+  modelSelection: ModelSelectionControl;
+}) {
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -1292,6 +1518,8 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
 
       {error && <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{error}</p>}
       {warning && <p style={{ margin: 0, fontSize: 12, color: "#d97706" }}>{warning}</p>}
+
+      {provider.configured && <ManagedModelsControl providerId={provider.id} {...modelSelection} />}
 
       {provider.configured && (
         <button
@@ -1692,10 +1920,12 @@ export function ModelsConfig({
   onClose,
   onChanged,
   embedded = false,
+  cwd = null,
 }: {
   onClose: () => void;
   onChanged?: () => void;
   embedded?: boolean;
+  cwd?: string | null;
 }) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
@@ -1707,6 +1937,10 @@ export function ModelsConfig({
   const [selection, setSelection] = useState<Selection | null>(null);
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
+  const [modelPreferences, setModelPreferencesState] = useState<ModelPreferencesResult | null>(null);
+  const [modelPreferencesLoading, setModelPreferencesLoading] = useState(true);
+  const [modelPreferencesSaving, setModelPreferencesSaving] = useState(false);
+  const [modelPreferencesError, setModelPreferencesError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const loadOAuthProviders = useCallback(() => {
@@ -1722,6 +1956,45 @@ export function ModelsConfig({
       .then((d: { providers: ApiKeyProvider[] }) => setApiKeyProviders(d.providers))
       .catch(() => {});
   }, []);
+
+  const loadModelPreferences = useCallback(async () => {
+    setModelPreferencesLoading(true);
+    setModelPreferencesError(null);
+    try {
+      setModelPreferencesState(await getModelPreferences(cwd ?? undefined));
+    } catch (error) {
+      setModelPreferencesError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setModelPreferencesLoading(false);
+    }
+  }, [cwd]);
+
+  const updateModelPreferences = useCallback(
+    async (enabledModels: string[] | null) => {
+      setModelPreferencesSaving(true);
+      setModelPreferencesError(null);
+      try {
+        const result = await setModelPreferences(cwd ?? undefined, enabledModels);
+        setModelPreferencesState(result);
+        onChanged?.();
+      } catch (error) {
+        setModelPreferencesError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setModelPreferencesSaving(false);
+      }
+    },
+    [cwd, onChanged],
+  );
+
+  const refreshOAuthProviders = useCallback(() => {
+    loadOAuthProviders();
+    void loadModelPreferences();
+  }, [loadModelPreferences, loadOAuthProviders]);
+
+  const refreshApiKeyProviders = useCallback(() => {
+    loadApiKeyProviders();
+    void loadModelPreferences();
+  }, [loadApiKeyProviders, loadModelPreferences]);
 
   const [loadFailed, setLoadFailed] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -1755,6 +2028,10 @@ export function ModelsConfig({
     loadOAuthProviders();
     loadApiKeyProviders();
   }, [loadOAuthProviders, loadApiKeyProviders]);
+
+  useEffect(() => {
+    void loadModelPreferences();
+  }, [loadModelPreferences]);
 
   const addCustomProvider = useCallback(() => {
     let finalName = "new-provider";
@@ -1848,6 +2125,7 @@ export function ModelsConfig({
       else {
         setSavedOk(true);
         onChanged?.();
+        void loadModelPreferences();
         setTimeout(() => setSavedOk(false), 2000);
       }
     } catch (e) {
@@ -1855,7 +2133,7 @@ export function ModelsConfig({
     } finally {
       setSaving(false);
     }
-  }, [config, onChanged]);
+  }, [config, loadModelPreferences, onChanged]);
 
   const providers = Object.entries(config.providers ?? {});
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
@@ -1867,12 +2145,38 @@ export function ModelsConfig({
     if (selection.type === "oauth") {
       const p = oauthProviders.find((p) => p.id === selection.providerId);
       if (!p) return null;
-      return <OAuthDetail key={p.id} provider={p} onRefresh={loadOAuthProviders} />;
+      return (
+        <OAuthDetail
+          key={p.id}
+          provider={p}
+          onRefresh={refreshOAuthProviders}
+          modelSelection={{
+            preferences: modelPreferences,
+            loading: modelPreferencesLoading,
+            saving: modelPreferencesSaving,
+            error: modelPreferencesError,
+            onChange: updateModelPreferences,
+          }}
+        />
+      );
     }
     if (selection.type === "apikey") {
       const p = apiKeyProviders.find((p) => p.id === selection.providerId);
       if (!p) return null;
-      return <ApiKeyDetail key={p.id} provider={p} onRefresh={loadApiKeyProviders} />;
+      return (
+        <ApiKeyDetail
+          key={p.id}
+          provider={p}
+          onRefresh={refreshApiKeyProviders}
+          modelSelection={{
+            preferences: modelPreferences,
+            loading: modelPreferencesLoading,
+            saving: modelPreferencesSaving,
+            error: modelPreferencesError,
+            onChange: updateModelPreferences,
+          }}
+        />
+      );
     }
     if (selection.type === "provider") {
       const provider = config.providers?.[selection.name];

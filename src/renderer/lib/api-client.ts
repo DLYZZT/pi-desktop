@@ -230,6 +230,14 @@ export async function cancelModelsRefresh(requestId: string) {
   return call("models.refreshCancel", { requestId });
 }
 
+export async function getModelPreferences(cwd?: string) {
+  return call("models.preferences.get", cwd ? { cwd } : undefined);
+}
+
+export async function setModelPreferences(cwd: string | undefined, enabledModels: string[] | null) {
+  return call("models.preferences.set", { ...(cwd ? { cwd } : {}), enabledModels });
+}
+
 export async function listWorktrees(projectRoot: string) {
   return call("worktrees.list", { projectRoot });
 }

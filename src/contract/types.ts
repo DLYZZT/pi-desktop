@@ -144,6 +144,12 @@ export interface ModelsListResult {
   catalog: ModelCatalogStatus;
 }
 
+export interface ModelPreferencesResult {
+  models: ModelInfo[];
+  /** null means every available model is enabled, including models added later. */
+  enabledModels: string[] | null;
+}
+
 export interface ModelsConfig {
   [key: string]: unknown;
 }

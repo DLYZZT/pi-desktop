@@ -55,7 +55,7 @@ async function captureHandlers() {
 
 test("registerHandlers exposes every contract method exactly once", async () => {
   const { handlers } = await captureHandlers();
-  assert.equal(Object.keys(handlers).length, 68);
+  assert.equal(Object.keys(handlers).length, 70);
   for (const method of [
     "host.ping",
     "host.toolchain",
@@ -72,6 +72,8 @@ test("registerHandlers exposes every contract method exactly once", async () => 
     "models.list",
     "models.refresh",
     "models.refreshCancel",
+    "models.preferences.get",
+    "models.preferences.set",
     "auth.providers",
     "skills.list",
     "plugins.list",
@@ -244,6 +246,28 @@ test("session, model configuration, and auth handlers isolate state and preserve
     ok: true,
     synchronized: true,
   });
+  const preferences = await handlers["models.preferences.get"]({ cwd: root });
+  assert.equal(Array.isArray(preferences.models), true);
+  assert.equal(preferences.enabledModels, null);
+  await assert.rejects(
+    handlers["models.preferences.set"]({ cwd: root, enabledModels: [] }),
+    (error) => error.code === "BAD_REQUEST",
+  );
+  const selectedModel = preferences.models.find((model) => model.provider === "openai");
+  assert.ok(selectedModel, "setting an OpenAI credential should expose OpenAI models");
+  const selectedReference = `${selectedModel.provider}/${selectedModel.id}`;
+  const updatedPreferences = await handlers["models.preferences.set"]({
+    cwd: root,
+    enabledModels: [`${selectedReference}:high`, selectedReference],
+  });
+  assert.deepEqual(updatedPreferences.enabledModels, [selectedReference]);
+  const filteredModels = await handlers["models.list"]({ cwd: root });
+  assert.deepEqual(
+    filteredModels.models.map((model) => `${model.provider}/${model.id}`),
+    [selectedReference],
+  );
+  const resetPreferences = await handlers["models.preferences.set"]({ cwd: root, enabledModels: null });
+  assert.equal(resetPreferences.enabledModels, null);
   await assert.rejects(
     handlers["auth.setApiKey"]({ provider: "amazon-bedrock", key: "not-a-bearer-token" }),
     (error) => error.code === "BAD_REQUEST" && /interactive, multi-field/.test(error.message),
