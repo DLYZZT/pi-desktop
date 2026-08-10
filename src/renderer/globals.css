@@ -24,8 +24,8 @@
 
 /* Warm paper + orange accent design system (from design.html) */
 :root {
-  --font-inter: "Inter", system-ui, sans-serif;
-  --font-noto-mono: "Noto Sans Mono", ui-monospace, monospace;
+  --font-inter: "Inter", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  --font-noto-mono: "Noto Sans Mono", "PingFang SC", "Microsoft YaHei", ui-monospace, monospace;
   --bg: #f7f6f3;
   --bg-panel: #fcfbf9;
   --bg-hover: #f0eeea;
@@ -222,7 +222,7 @@ html.dark ::-webkit-scrollbar-thumb {
 :root {
   --font-sans: var(--font-inter), "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono:
-    var(--font-noto-mono), "JetBrains Mono", "Fira Code", "Consolas", ui-monospace, "PingFang SC", "Microsoft YaHei",
+    var(--font-noto-mono), "JetBrains Mono", "Fira Code", "Consolas", "PingFang SC", "Microsoft YaHei", ui-monospace,
     monospace;
 }
 
