@@ -149,6 +149,7 @@ function ProviderDetail({
   onRename: (n: string) => void;
   onDelete: () => void;
 }) {
+  const { t } = useI18n();
   const [editingName, setEditingName] = useState(name);
   useEffect(() => setEditingName(name), [name]);
   const set = <K extends keyof ProviderEntry>(k: K, v: ProviderEntry[K]) => onChange({ ...provider, [k]: v });
@@ -161,7 +162,7 @@ function ProviderDetail({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionTitle>Provider</SectionTitle>
+        <SectionTitle>{t("modelProvider", "Provider")}</SectionTitle>
         <button
           type="button"
           onClick={onDelete}
@@ -176,11 +177,11 @@ function ProviderDetail({
             fontSize: 12,
           }}
         >
-          Delete
+          {t("delete", "Delete")}
         </button>
       </div>
 
-      <Field label="Provider name">
+      <Field label={t("modelProviderName", "Provider name")}>
         <TextInput value={editingName} onChange={setEditingName} placeholder="provider-name" mono />
         {editingName !== name && editingName.trim() && (
           <button
@@ -199,12 +200,12 @@ function ProviderDetail({
               alignSelf: "flex-start",
             }}
           >
-            Rename
+            {t("rename", "Rename")}
           </button>
         )}
       </Field>
 
-      <Field label="Base URL">
+      <Field label={t("modelBaseUrl", "Base URL")}>
         <TextInput
           value={provider.baseUrl ?? ""}
           onChange={(v) => set("baseUrl", v || undefined)}
@@ -213,20 +214,19 @@ function ProviderDetail({
         />
       </Field>
 
-      <Field label="API Key">
+      <Field label={t("modelApiKey", "API Key")}>
         <SecretTextInput
           value={provider.apiKey ?? ""}
           onChange={(v) => set("apiKey", v || undefined)}
-          placeholder="ENV_VAR_NAME, !shell-command, or literal key"
+          placeholder={t("modelApiKeySourcePlaceholder", "ENV_VAR_NAME, !shell-command, or literal key")}
           mono
         />
         <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
-          Prefix with <code style={{ fontFamily: "var(--font-mono)" }}>!</code> to run a shell command, or use an env
-          var name
+          {t("modelApiKeySourceHint", "Prefix with ! to run a shell command, or use an environment variable name.")}
         </span>
       </Field>
 
-      <Field label="API">
+      <Field label={t("modelApi", "API")}>
         <Select
           value={provider.api ?? "openai-completions"}
           onChange={(v) => set("api", v)}
@@ -259,6 +259,7 @@ function ThinkingLevelMapEditor({
   value: Record<string, string | null> | undefined;
   onChange: (v: Record<string, string | null> | undefined) => void;
 }) {
+  const { t } = useI18n();
   const map = value ?? {};
 
   const setLevel = (level: ThinkingLevel, entry: string | null | "omit") => {
@@ -335,7 +336,17 @@ function ThinkingLevelMapEditor({
                   textDecoration: state === "null" ? "line-through" : "none",
                 }}
               >
-                {level}
+                {t(
+                  {
+                    off: "thinkingOff",
+                    minimal: "thinkingMinimal",
+                    low: "thinkingLow",
+                    medium: "thinkingMedium",
+                    high: "thinkingHigh",
+                    xhigh: "thinkingXHigh",
+                  }[level],
+                  level,
+                )}
               </span>
             </div>
 
@@ -353,7 +364,7 @@ function ThinkingLevelMapEditor({
                 onClick={() => setLevel(level, "omit")}
                 style={{ ...btnBase, ...(state === "omit" ? btnActive : {}) }}
               >
-                Default
+                {t("modelDefault", "Default")}
               </button>
               <button
                 onClick={() => setLevel(level, null)}
@@ -363,7 +374,7 @@ function ThinkingLevelMapEditor({
                   ...(state === "null" ? btnActiveDisabled : {}),
                 }}
               >
-                Disabled
+                {t("modelDisabled", "Disabled")}
               </button>
             </div>
 
@@ -386,7 +397,7 @@ function ThinkingLevelMapEditor({
                   flexShrink: 0,
                 }}
               >
-                Custom
+                {t("modelCustom", "Custom")}
               </button>
               <input
                 value={strVal}
@@ -451,6 +462,7 @@ function ModelDetail({
   onChange: (m: ModelEntry) => void;
   onDelete: () => void;
 }) {
+  const { t } = useI18n();
   const [testState, setTestState] = useState<ModelTestState>({ phase: "idle" });
   const set = <K extends keyof ModelEntry>(k: K, v: ModelEntry[K]) => onChange({ ...model, [k]: v });
   const costVal = (k: keyof NonNullable<ModelEntry["cost"]>) =>
@@ -461,15 +473,17 @@ function ModelDetail({
   };
   const testSummary = (() => {
     if (testState.phase === "idle") return null;
-    if (testState.phase === "testing") return "Testing model connection...";
+    if (testState.phase === "testing") return t("modelTestingConnection", "Testing model connection…");
     const meta = [
       testState.latencyMs !== undefined ? `${testState.latencyMs}ms` : null,
       testState.status !== undefined ? `HTTP ${testState.status}` : null,
     ].filter(Boolean);
     if (testState.phase === "success") {
-      return ["Connected", ...meta, testState.responseText || null].filter(Boolean).join(" · ");
+      return [t("modelConnectionConnected", "Connected"), ...meta, testState.responseText || null]
+        .filter(Boolean)
+        .join(" · ");
     }
-    return ["Failed", ...meta, testState.message].filter(Boolean).join(" · ");
+    return [t("modelConnectionFailed", "Failed"), ...meta, testState.message].filter(Boolean).join(" · ");
   })();
 
   useEffect(() => {
@@ -515,7 +529,7 @@ function ModelDetail({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionTitle>Model</SectionTitle>
+        <SectionTitle>{t("model", "Model")}</SectionTitle>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {testSummary && (
             <span
@@ -545,7 +559,7 @@ function ModelDetail({
             type="button"
             onClick={handleTest}
             disabled={!model.id.trim() || testState.phase === "testing"}
-            title="Test model connection"
+            title={t("modelTestConnection", "Test model connection")}
             style={{
               height: 32,
               padding: "0 10px",
@@ -581,7 +595,11 @@ function ModelDetail({
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             )}
-            {testState.phase === "testing" ? "Testing…" : testState.phase === "success" ? "OK" : "Test"}
+            {testState.phase === "testing"
+              ? t("testingConnection", "Testing…")
+              : testState.phase === "success"
+                ? "OK"
+                : t("modelTest", "Test")}
           </button>
           <button
             type="button"
@@ -598,36 +616,36 @@ function ModelDetail({
               boxSizing: "border-box",
             }}
           >
-            Remove
+            {t("modelRemove", "Remove")}
           </button>
         </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label="ID *">
+        <Field label={t("modelId", "ID *")}>
           <TextInput value={model.id} onChange={(v) => set("id", v)} placeholder="model-id" mono />
         </Field>
-        <Field label="Name">
+        <Field label={t("modelName", "Name")}>
           <TextInput
             value={model.name ?? ""}
             onChange={(v) => set("name", v || undefined)}
-            placeholder="Display name"
+            placeholder={t("modelDisplayName", "Display name")}
           />
         </Field>
       </div>
 
-      <Field label="API override">
+      <Field label={t("modelApiOverride", "API override")}>
         <Select value={model.api ?? ""} onChange={(v) => set("api", v || undefined)} options={API_OPTIONS} />
       </Field>
 
       <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
         <Check
-          label="Reasoning / thinking"
+          label={t("modelReasoning", "Reasoning / thinking")}
           checked={model.reasoning ?? false}
           onChange={(v) => set("reasoning", v || undefined)}
         />
         <Check
-          label="Image input"
+          label={t("modelImageInput", "Image input")}
           checked={model.input?.includes("image") ?? false}
           onChange={(v) => set("input", v ? ["text", "image"] : undefined)}
         />
@@ -636,13 +654,13 @@ function ModelDetail({
       {model.reasoning && (
         <>
           <Check
-            label="DeepSeek thinking compat"
+            label={t("modelDeepSeekCompat", "DeepSeek thinking compatibility")}
             checked={hasDeepseekCompat(model)}
             onChange={(v) => onChange(setDeepseekCompat(model, v))}
           />
           <div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <SectionTitle>Thinking level map</SectionTitle>
+              <SectionTitle>{t("modelThinkingLevelMap", "Thinking level map")}</SectionTitle>
               {model.thinkingLevelMap && (
                 <button
                   type="button"
@@ -658,7 +676,7 @@ function ModelDetail({
                     cursor: "pointer",
                   }}
                 >
-                  clear all
+                  {t("modelClearAll", "Clear all")}
                 </button>
               )}
             </div>
@@ -668,14 +686,14 @@ function ModelDetail({
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label="Context window (tokens)">
+        <Field label={t("modelContextWindow", "Context window (tokens)")}>
           <NumInput
             value={model.contextWindow !== undefined ? String(model.contextWindow) : ""}
             onChange={(v) => set("contextWindow", v ? parseInt(v) : undefined)}
             placeholder="128000"
           />
         </Field>
-        <Field label="Max output tokens">
+        <Field label={t("modelMaxOutputTokens", "Max output tokens")}>
           <NumInput
             value={model.maxTokens !== undefined ? String(model.maxTokens) : ""}
             onChange={(v) => set("maxTokens", v ? parseInt(v) : undefined)}
@@ -685,10 +703,21 @@ function ModelDetail({
       </div>
 
       <div>
-        <SectionTitle>Cost (per million tokens)</SectionTitle>
+        <SectionTitle>{t("modelCostPerMillion", "Cost (per million tokens)")}</SectionTitle>
         <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
           {(["input", "output", "cacheRead", "cacheWrite"] as const).map((k) => (
-            <Field key={k} label={k}>
+            <Field
+              key={k}
+              label={t(
+                {
+                  input: "modelCostInput",
+                  output: "modelCostOutput",
+                  cacheRead: "modelCostCacheRead",
+                  cacheWrite: "modelCostCacheWrite",
+                }[k],
+                k,
+              )}
+            >
               <NumInput value={costVal(k)} onChange={(v) => setCost(k, v)} placeholder="0" />
             </Field>
           ))}
@@ -716,6 +745,7 @@ function ManagedModelsControl({
   error,
   onChange,
 }: ModelSelectionControl & { providerId: string }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   useEffect(() => setQuery(""), [providerId]);
 
@@ -743,22 +773,31 @@ function ManagedModelsControl({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <SectionTitle>Models</SectionTitle>
+        <SectionTitle>{t("models", "Models")}</SectionTitle>
         {!loading && preferences && (
           <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>
-            {enabledCount} of {providerModels.length} enabled
+            {t("modelEnabledCount", "{enabled} of {total} enabled")
+              .replace("{enabled}", String(enabledCount))
+              .replace("{total}", String(providerModels.length))}
           </span>
         )}
       </div>
 
       <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>
-        Choose which models appear in the model picker. The active model in an existing session is not changed.
+        {t(
+          "modelSelectionDescription",
+          "Choose which models appear in the model picker. The active model in an existing session is not changed.",
+        )}
       </p>
 
-      {loading && <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>Loading models…</p>}
+      {loading && (
+        <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+          {t("modelLoadingModels", "Loading models…")}
+        </p>
+      )}
       {!loading && preferences && providerModels.length === 0 && (
         <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
-          No models are currently available for this provider.
+          {t("modelNoAvailableModels", "No models are currently available for this provider.")}
         </p>
       )}
 
@@ -781,7 +820,7 @@ function ManagedModelsControl({
                 fontSize: 11,
               }}
             >
-              Enable all
+              {t("modelEnableAll", "Enable all")}
             </button>
             <button
               type="button"
@@ -801,7 +840,7 @@ function ManagedModelsControl({
                 fontSize: 11,
               }}
             >
-              Disable all
+              {t("modelDisableAll", "Disable all")}
             </button>
           </div>
 
@@ -810,8 +849,8 @@ function ManagedModelsControl({
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search models…"
-              aria-label="Search provider models"
+              placeholder={t("modelSearchModels", "Search models…")}
+              aria-label={t("modelSearchProviderModels", "Search provider models")}
               style={{
                 width: "100%",
                 boxSizing: "border-box",
@@ -892,13 +931,19 @@ function ManagedModelsControl({
               );
             })}
             {visibleModels.length === 0 && (
-              <span style={{ padding: "10px", color: "var(--text-muted)", fontSize: 12 }}>No matching models.</span>
+              <span style={{ padding: "10px", color: "var(--text-muted)", fontSize: 12 }}>
+                {t("modelNoMatchingModels", "No matching models.")}
+              </span>
             )}
           </div>
         </>
       )}
 
-      {saving && <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)" }}>Saving selection…</p>}
+      {saving && (
+        <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)" }}>
+          {t("modelSavingSelection", "Saving selection…")}
+        </p>
+      )}
       {error && <p style={{ margin: 0, fontSize: 11, color: "#f87171", lineHeight: 1.4 }}>{error}</p>}
     </div>
   );
@@ -915,6 +960,7 @@ function OAuthDetail({
   onRefresh: () => void;
   modelSelection: ModelSelectionControl;
 }) {
+  const { t } = useI18n();
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
   const [inputValue, setInputValue] = useState("");
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -960,7 +1006,10 @@ function OAuthDetail({
       await call("auth.loginCancel", { provider: provider.id });
     } catch (error) {
       if (loginAttemptRef.current !== attempt) return;
-      setLoginState({ phase: "error", message: error instanceof Error ? error.message : "Unable to reset login" });
+      setLoginState({
+        phase: "error",
+        message: error instanceof Error ? error.message : t("modelUnableResetLogin", "Unable to reset login"),
+      });
       return;
     }
     if (loginAttemptRef.current !== attempt) return;
@@ -1040,10 +1089,11 @@ function OAuthDetail({
       if (eventSourceRef.current !== es || loginAttemptRef.current !== attempt) return;
       es.close();
       eventSourceRef.current = null;
-      const message = event instanceof ErrorEvent && event.message ? event.message : "Connection lost";
+      const message =
+        event instanceof ErrorEvent && event.message ? event.message : t("modelConnectionLost", "Connection lost");
       setLoginState((prev) => (prev.phase === "success" ? prev : { phase: "error", message }));
     };
-  }, [provider.id, onRefresh]);
+  }, [provider.id, onRefresh, t]);
 
   const handleCancelLogin = useCallback(() => {
     loginAttemptRef.current += 1;
@@ -1068,18 +1118,18 @@ function OAuthDetail({
       setLoginState(
         result.warning
           ? { phase: "success", message: result.warning.message, warning: true }
-          : { phase: "success", message: "Disconnected successfully." },
+          : { phase: "success", message: t("modelDisconnectedSuccessfully", "Disconnected successfully.") },
       );
       onRefresh();
     } catch (error) {
       setLoginState({ phase: "error", message: error instanceof Error ? error.message : String(error) });
     }
-  }, [provider.id, onRefresh]);
+  }, [provider.id, onRefresh, t]);
 
   const submitCode = useCallback(
     async (token: string, code: string) => {
       if (!code.trim()) return;
-      setLoginState({ phase: "progress", message: "Verifying…" });
+      setLoginState({ phase: "progress", message: t("modelVerifying", "Verifying…") });
       try {
         const res = await fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
           method: "POST",
@@ -1088,21 +1138,27 @@ function OAuthDetail({
         });
         if (!res.ok) {
           const d = (await res.json().catch(() => ({}))) as { error?: string };
-          setLoginState({ phase: "error", message: d.error ?? `Server error ${res.status}` });
+          setLoginState({
+            phase: "error",
+            message: d.error ?? t("modelServerError", "Server error {status}").replace("{status}", String(res.status)),
+          });
           return;
         }
         setInputValue("");
         // Success path: the auth progress stream emits "success" and updates state.
       } catch (e) {
-        setLoginState({ phase: "error", message: e instanceof Error ? e.message : "Network error" });
+        setLoginState({
+          phase: "error",
+          message: e instanceof Error ? e.message : t("modelNetworkError", "Network error"),
+        });
       }
     },
-    [provider.id],
+    [provider.id, t],
   );
 
   const submitSelection = useCallback(
     async (token: string, value: string) => {
-      setLoginState({ phase: "progress", message: "Continuing…" });
+      setLoginState({ phase: "progress", message: t("modelContinuing", "Continuing…") });
       try {
         const res = await fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
           method: "POST",
@@ -1111,13 +1167,19 @@ function OAuthDetail({
         });
         if (!res.ok) {
           const d = (await res.json().catch(() => ({}))) as { error?: string };
-          setLoginState({ phase: "error", message: d.error ?? `Server error ${res.status}` });
+          setLoginState({
+            phase: "error",
+            message: d.error ?? t("modelServerError", "Server error {status}").replace("{status}", String(res.status)),
+          });
         }
       } catch (e) {
-        setLoginState({ phase: "error", message: e instanceof Error ? e.message : "Network error" });
+        setLoginState({
+          phase: "error",
+          message: e instanceof Error ? e.message : t("modelNetworkError", "Network error"),
+        });
       }
     },
-    [provider.id],
+    [provider.id, t],
   );
 
   const isWorking =
@@ -1131,7 +1193,7 @@ function OAuthDetail({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionTitle>Subscription</SectionTitle>
+        <SectionTitle>{t("modelSubscription", "Subscription")}</SectionTitle>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span
             style={{
@@ -1143,7 +1205,7 @@ function OAuthDetail({
             }}
           />
           <span style={{ fontSize: 11, color: provider.loggedIn ? "#4ade80" : "var(--text-dim)" }}>
-            {provider.loggedIn ? "connected" : "not connected"}
+            {provider.loggedIn ? t("modelConnected", "connected") : t("modelNotConnected", "not connected")}
           </span>
         </div>
       </div>
@@ -1153,12 +1215,14 @@ function OAuthDetail({
         {loginState.phase === "idle" && (
           <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
             {provider.loggedIn
-              ? "Already connected. You can re-login or disconnect."
-              : `Connect your ${provider.name} account.`}
+              ? t("modelAlreadyConnected", "Already connected. You can re-login or disconnect.")
+              : t("modelConnectAccount", "Connect your {provider} account.").replace("{provider}", provider.name)}
           </p>
         )}
         {loginState.phase === "connecting" && (
-          <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>Opening browser…</p>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+            {t("modelOpeningBrowser", "Opening browser…")}
+          </p>
         )}
         {loginState.phase === "select" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1189,19 +1253,22 @@ function OAuthDetail({
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
               {loginState.phase === "auth"
-                ? "Complete sign-in in the browser, then copy the redirect URL from the address bar and paste it below."
+                ? t(
+                    "modelCompleteSignIn",
+                    "Complete sign-in in the browser, then copy the redirect URL from the address bar and paste it below.",
+                  )
                 : loginState.message}
             </p>
             {loginState.phase === "auth" && (
               <p style={{ margin: 0, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
-                If the browser window did not open,{" "}
+                {t("modelBrowserDidNotOpen", "If the browser window did not open,")}{" "}
                 <a
                   href={loginState.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{ color: "var(--accent)", wordBreak: "break-all" }}
                 >
-                  click here to open the login page
+                  {t("modelOpenLoginPage", "click here to open the login page")}
                 </a>
                 .
               </p>
@@ -1217,7 +1284,7 @@ function OAuthDetail({
                 placeholder={
                   loginState.phase === "auth"
                     ? "http://localhost:1455/auth/callback?code=…"
-                    : (loginState.placeholder ?? "Enter value…")
+                    : (loginState.placeholder ?? t("modelEnterValue", "Enter value…"))
                 }
                 style={{
                   flex: 1,
@@ -1247,7 +1314,7 @@ function OAuthDetail({
                   flexShrink: 0,
                 }}
               >
-                Submit
+                {t("submit", "Submit")}
               </button>
             </div>
           </div>
@@ -1255,7 +1322,7 @@ function OAuthDetail({
         {loginState.phase === "device_code" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-              Open the verification page and enter this code:
+              {t("modelOpenVerificationPage", "Open the verification page and enter this code:")}
             </p>
             <div
               style={{
@@ -1281,7 +1348,12 @@ function OAuthDetail({
               >
                 {loginState.verificationUri}
               </a>
-              {loginState.expiresInSeconds ? ` Expires in ${Math.ceil(loginState.expiresInSeconds / 60)} minutes.` : ""}
+              {loginState.expiresInSeconds
+                ? ` ${t("modelCodeExpires", "Expires in {minutes} minutes.").replace(
+                    "{minutes}",
+                    String(Math.ceil(loginState.expiresInSeconds / 60)),
+                  )}`
+                : ""}
             </p>
           </div>
         )}
@@ -1290,7 +1362,7 @@ function OAuthDetail({
         )}
         {loginState.phase === "success" && (
           <p style={{ margin: 0, fontSize: 12, color: loginState.warning ? "#d97706" : "#4ade80" }}>
-            {loginState.message ?? "Connected successfully."}
+            {loginState.message ?? t("modelConnectedSuccessfully", "Connected successfully.")}
           </p>
         )}
         {loginState.phase === "error" && (
@@ -1313,7 +1385,7 @@ function OAuthDetail({
               fontSize: 12,
             }}
           >
-            Cancel
+            {t("cancel", "Cancel")}
           </button>
         ) : (
           <>
@@ -1330,7 +1402,7 @@ function OAuthDetail({
                 fontWeight: 600,
               }}
             >
-              {provider.loggedIn ? "Re-login" : "Login"}
+              {provider.loggedIn ? t("modelRelogin", "Re-login") : t("modelLogin", "Login")}
             </button>
             {provider.loggedIn && (
               <button
@@ -1345,7 +1417,7 @@ function OAuthDetail({
                   fontSize: 12,
                 }}
               >
-                Disconnect
+                {t("modelDisconnect", "Disconnect")}
               </button>
             )}
           </>
@@ -1368,6 +1440,7 @@ function ApiKeyDetail({
   onRefresh: () => void;
   modelSelection: ModelSelectionControl;
 }) {
+  const { t } = useI18n();
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -1442,7 +1515,7 @@ function ApiKeyDetail({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionTitle>API Key</SectionTitle>
+        <SectionTitle>{t("modelApiKey", "API Key")}</SectionTitle>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span
             style={{
@@ -1454,18 +1527,23 @@ function ApiKeyDetail({
             }}
           />
           <span style={{ fontSize: 11, color: provider.configured ? "#4ade80" : "var(--text-dim)" }}>
-            {provider.configured ? "configured" : "not configured"}
+            {provider.configured ? t("configured", "configured") : t("notConfigured", "not configured")}
           </span>
         </div>
       </div>
 
       <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
         {provider.configured
-          ? `API key is stored. Enter a new key below to replace it, or disconnect to remove it.`
-          : `Enter your ${provider.displayName} API key to enable ${provider.modelCount} model${provider.modelCount !== 1 ? "s" : ""}.`}
+          ? t(
+              "modelApiKeyStored",
+              "API key is stored. Enter a new key below to replace it, or disconnect to remove it.",
+            )
+          : t("modelEnterApiKey", "Enter your {provider} API key to enable {count} models.")
+              .replace("{provider}", provider.displayName)
+              .replace("{count}", String(provider.modelCount))}
       </p>
 
-      <Field label="API Key">
+      <Field label={t("modelApiKey", "API Key")}>
         <div style={{ display: "flex", gap: 6 }}>
           <SecretTextInput
             value={apiKey}
@@ -1473,7 +1551,7 @@ function ApiKeyDetail({
             onKeyDown={(e) => {
               if (e.key === "Enter" && apiKey.trim()) void handleSave();
             }}
-            placeholder={provider.configured ? "Enter new key to replace…" : "sk-…"}
+            placeholder={provider.configured ? t("modelReplaceApiKey", "Enter new key to replace…") : "sk-…"}
             style={{ flex: 1 }}
             autoComplete="off"
             spellCheck={false}
@@ -1511,7 +1589,7 @@ function ApiKeyDetail({
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             )}
-            {savedOk ? "Saved" : saving ? "Saving…" : "Save"}
+            {savedOk ? t("saved", "Saved") : saving ? t("saving", "Saving…") : t("save", "Save")}
           </button>
         </div>
       </Field>
@@ -1536,7 +1614,7 @@ function ApiKeyDetail({
             fontSize: 12,
           }}
         >
-          {removing ? "Removing…" : "Disconnect"}
+          {removing ? t("modelRemoving", "Removing…") : t("modelDisconnect", "Disconnect")}
         </button>
       )}
     </div>
@@ -1603,6 +1681,7 @@ function AddProviderPicker({
   onAddCustom,
   onClose,
 }: AddProviderPickerProps) {
+  const { t } = useI18n();
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -1616,8 +1695,16 @@ function AddProviderPicker({
   const availableApiKey = apiKeyProviders.filter(
     (p) => !p.configured && (!q || p.displayName.toLowerCase().includes(q) || p.id.toLowerCase().includes(q)),
   );
-  const showCustom =
-    !q || "custom".includes(q) || "openai-compatible".includes(q) || "anthropic-compatible".includes(q);
+  const customSearchTerms = [
+    "custom",
+    "openai-compatible",
+    "anthropic-compatible",
+    t("modelCustom", "Custom"),
+    t("modelCompatibleProvider", "OpenAI / Anthropic compatible"),
+  ]
+    .join(" ")
+    .toLowerCase();
+  const showCustom = !q || customSearchTerms.includes(q);
 
   const totalCount = availableOAuth.length + availableApiKey.length + (showCustom ? 1 : 0);
 
@@ -1699,7 +1786,7 @@ function AddProviderPicker({
             onKeyDown={(e) => {
               if (e.key === "Escape") onClose();
             }}
-            placeholder="Search providers…"
+            placeholder={t("modelSearchProviders", "Search providers…")}
             style={{
               flex: 1,
               background: "none",
@@ -1716,7 +1803,7 @@ function AddProviderPicker({
         <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
           {totalCount === 0 ? (
             <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-dim)", textAlign: "center" }}>
-              No providers match
+              {t("modelNoProvidersMatch", "No providers match")}
             </div>
           ) : (
             <div
@@ -1737,7 +1824,7 @@ function AddProviderPicker({
                     letterSpacing: "0.07em",
                   }}
                 >
-                  Custom
+                  {t("modelCustom", "Custom")}
                 </div>
               )}
               {showCustom && (
@@ -1768,9 +1855,11 @@ function AddProviderPicker({
                         whiteSpace: "nowrap",
                       }}
                     >
-                      OpenAI / Anthropic compatible
+                      {t("modelCompatibleProvider", "OpenAI / Anthropic compatible")}
                     </div>
-                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>Custom endpoint format</div>
+                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
+                      {t("modelCustomEndpointFormat", "Custom endpoint format")}
+                    </div>
                   </div>
                   <span
                     style={{
@@ -1815,7 +1904,7 @@ function AddProviderPicker({
                     letterSpacing: "0.07em",
                   }}
                 >
-                  Subscriptions
+                  {t("modelSubscriptions", "Subscriptions")}
                 </div>
               )}
               {availableOAuth.map((p) => (
@@ -1867,7 +1956,7 @@ function AddProviderPicker({
                     letterSpacing: "0.07em",
                   }}
                 >
-                  API Key
+                  {t("modelApiKey", "API Key")}
                 </div>
               )}
               {availableApiKey.map((p) => (
@@ -1901,7 +1990,9 @@ function AddProviderPicker({
                     >
                       {p.displayName}
                     </div>
-                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>{p.modelCount} models</div>
+                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
+                      {t("modelCount", "{count} models").replace("{count}", String(p.modelCount))}
+                    </div>
                   </div>
                   <ProviderIcon id={p.id} size={28} />
                 </button>
@@ -2266,7 +2357,7 @@ export function ModelsConfig({
               }}
             >
               <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Models</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>{t("models", "Models")}</span>
                 <code style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
                   ~/.pi/agent/models.json
                 </code>
@@ -2274,8 +2365,8 @@ export function ModelsConfig({
               <button
                 type="button"
                 onClick={onClose}
-                title="Close models"
-                aria-label="Close models"
+                title={t("modelCloseModels", "Close models")}
+                aria-label={t("modelCloseModels", "Close models")}
                 style={{
                   background: "none",
                   border: "none",
@@ -2397,7 +2488,9 @@ export function ModelsConfig({
 
                 {/* Custom providers */}
                 {loading ? (
-                  <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
+                  <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--text-muted)" }}>
+                    {t("loading", "Loading…")}
+                  </div>
                 ) : (
                   providers.map(([pName, pData]) => {
                     const isProviderSelected = selection?.type === "provider" && selection.name === pName;
@@ -2496,7 +2589,7 @@ export function ModelsConfig({
                                   whiteSpace: "nowrap",
                                 }}
                               >
-                                {m.id || "new model"}
+                                {m.id || t("modelNewModel", "new model")}
                               </span>
                               {m.reasoning && (
                                 <span
@@ -2540,7 +2633,7 @@ export function ModelsConfig({
                             e.currentTarget.style.background = "none";
                           }}
                         >
-                          <span style={{ fontSize: 11 }}>+ model</span>
+                          <span style={{ fontSize: 11 }}>+ {t("modelAddModel", "model")}</span>
                         </div>
                       </div>
                     );
@@ -2627,13 +2720,15 @@ export function ModelsConfig({
                   fontSize: 13,
                 }}
               >
-                Cancel
+                {t("cancel", "Cancel")}
               </button>
             )}
             <button
               onClick={handleSave}
               disabled={saving || savedOk || loading || loadFailed || !configLoaded}
-              title={loadFailed ? "Cannot save until config loads successfully" : undefined}
+              title={
+                loadFailed ? t("modelCannotSaveBeforeLoad", "Cannot save until config loads successfully") : undefined
+              }
               style={{
                 position: "relative",
                 padding: "6px 16px",
