@@ -401,46 +401,6 @@ function stripThinkingSuffix(modelRef: string): string {
 }
 
 /**
- * Exact model allowlist from settings (`enabledModels`), applied to the model
- * picker. Refs are bare model ids or `provider/model` pairs.
- *
- * The provider portion matches case-insensitively, so renaming a custom
- * provider's identifier (e.g. "VectorEngine" → "vector-engine") does not orphan
- * its models out of the picker. Refs naming a provider that no longer exists
- * are treated as stale and kept alive by bare model id instead, so a rename or
- * removal cannot silently hide that provider's models while other allowlisted
- * models keep the fallback from triggering.
- */
-export function filterByExactEnabledModels<T extends { id: string; provider: string }>(
-  available: T[],
-  enabledModels: string[] | undefined,
-): T[] {
-  if (!enabledModels || enabledModels.length === 0) return available;
-  const providers = new Set(available.map((m) => m.provider.toLowerCase()));
-  const refs = new Set<string>();
-  for (const raw of enabledModels) {
-    const ref = stripThinkingSuffix(raw);
-    if (!ref) continue;
-    const slash = ref.lastIndexOf("/");
-    if (slash === -1) {
-      refs.add(ref);
-      continue;
-    }
-    const refProvider = ref.slice(0, slash);
-    const refModel = ref.slice(slash + 1);
-    if (providers.has(refProvider.toLowerCase())) {
-      refs.add(`${refProvider.toLowerCase()}/${refModel}`);
-    } else {
-      // Provider no longer exists (renamed or removed): keep the model enabled
-      // by bare id so a stale identifier cannot hide it.
-      refs.add(refModel);
-    }
-  }
-  const visible = available.filter((m) => refs.has(m.id) || refs.has(`${m.provider.toLowerCase()}/${m.id}`));
-  return visible.length > 0 ? visible : available;
-}
-
-/**
  * Per-provider enabled model ids persisted in models.json (`providers.<id>.enabledModels`).
  * Unlike the global settings allowlist this filter is authoritative: disabling every
  * model of a provider removes that provider from the chat model picker.
@@ -507,7 +467,6 @@ async function projectModelsList(
   catalog: ModelCatalogStatus,
 ): Promise<ModelsListResult> {
   const available = [...(await modelRuntime.getAvailable())];
-  const enabledModels = settings.getEnabledModels();
   let modelsConfig: Record<string, unknown> | undefined;
   try {
     modelsConfig = readModelsJson();
@@ -515,7 +474,10 @@ async function projectModelsList(
     // A corrupt models.json must not break model listing; the editor surfaces the parse error.
     modelsConfig = undefined;
   }
-  const visible = filterByProviderEnabledModels(filterByExactEnabledModels(available, enabledModels), modelsConfig);
+  // The global `enabledModels` allowlist (settings.json) had its only UI and
+  // handler removed with the legacy model selector, so it must not cap the chat
+  // picker invisibly. The per-provider overlay in models.json is authoritative.
+  const visible = filterByProviderEnabledModels(available, modelsConfig);
   const models = visible
     .map((model) => ({ id: model.id, name: model.name, provider: model.provider }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.provider.localeCompare(b.provider));

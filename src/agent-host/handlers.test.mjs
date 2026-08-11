@@ -329,6 +329,21 @@ test("built-in provider overlays persist, restore defaults, and filter the model
   await handlers["auth.deleteApiKey"]({ provider: "openai" });
 });
 
+test("models.list ignores a stale global enabledModels allowlist in settings.json", async () => {
+  const { handlers } = await captureHandlers();
+  // The legacy model selector's global allowlist (settings.json `enabledModels`)
+  // has no UI or handler anymore; it must not cap the chat picker. Only the
+  // per-provider overlay in models.json filters models.
+  const settingsPath = path.join(isolatedAgentDirectory, "settings.json");
+  writeFileSync(settingsPath, JSON.stringify({ enabledModels: ["gemini-3.5-flash"] }, null, 2));
+  await handlers["auth.setApiKey"]({ provider: "openai", key: "secret" });
+  const listed = await handlers["models.list"]({ cwd: root });
+  const openaiModels = listed.models.filter((m) => m.provider === "openai");
+  assert.ok(openaiModels.length > 1, "global allowlist must not restrict openai models");
+  rmSync(settingsPath, { force: true });
+  await handlers["auth.deleteApiKey"]({ provider: "openai" });
+});
+
 test("modelsConfig.fetchModels validates input and reports failures clearly", async () => {
   const { handlers } = await captureHandlers();
   const missing = await handlers["modelsConfig.fetchModels"]({ baseUrl: "" });
