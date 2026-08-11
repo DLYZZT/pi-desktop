@@ -10,33 +10,51 @@ import { darwinCodeDigest } from "../src/main/toolchains/darwin-binary-integrity
 import { extractFile, listPackage } from "@electron/asar";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dist = path.join(root, "dist");
 const expectedPiVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).dependencies?.[
   "@earendil-works/pi-coding-agent"
 ];
 const lockfile = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
-const target = process.argv[2] ?? `${process.platform}-${process.arch}`;
-if (!/^(?:darwin-(?:arm64|x64)|win32-x64|linux-x64)$/.test(target)) {
-  throw new Error("Usage: verify-packaged-toolchains.mjs <darwin-arm64|darwin-x64|win32-x64|linux-x64>");
+const argumentsList = process.argv.slice(2);
+const target = argumentsList.shift() ?? `${process.platform}-${process.arch}`;
+let outputArgument;
+let staticOnly = false;
+for (const argument of argumentsList) {
+  if (argument === "--static" && !staticOnly) staticOnly = true;
+  else if (!argument.startsWith("--") && !outputArgument) outputArgument = argument;
+  else {
+    throw new Error(
+      "Usage: verify-packaged-toolchains.mjs <darwin-arm64|darwin-x64|win32-x64|linux-x64> [package-output-directory] [--static]",
+    );
+  }
 }
+if (!/^(?:darwin-(?:arm64|x64)|win32-x64|linux-x64)$/.test(target)) {
+  throw new Error(
+    "Usage: verify-packaged-toolchains.mjs <darwin-arm64|darwin-x64|win32-x64|linux-x64> [package-output-directory] [--static]",
+  );
+}
+const dist = outputArgument ? path.resolve(outputArgument) : path.join(root, "dist");
 const [expectedPlatform, expectedArch] = target.split("-");
 const layout = findPackagedLayout(dist, target);
 
 verifyPackagedResources(layout.resources, target);
 verifyPiRuntimeAssets(layout.resources, expectedPlatform, expectedArch);
-verifyBundledTools(layout.resources, expectedPlatform, expectedArch);
+verifyBundledTools(layout.resources, expectedPlatform, expectedArch, !staticOnly);
 verifyLinuxSandbox(layout.executable, expectedPlatform);
-runPackagedStartup(layout.executable, target);
-if (layout.appImage) {
-  verifyLinuxAppImageDesktopEntry(layout.appImage);
-  // Extraction mode writes chrome-sandbox into a user-owned temporary directory, so it cannot retain the
-  // root-owned 4755 metadata required by Chromium. The unpacked layout startup above already exercises the
-  // configured SUID sandbox; this second launch verifies the AppImage entry point and production resources.
-  runPackagedStartup(layout.appImage, target, { APPIMAGE_EXTRACT_AND_RUN: "1" }, ["--no-sandbox"]);
+if (!staticOnly) {
+  runPackagedStartup(layout.executable, target);
+  if (layout.appImage) {
+    verifyLinuxAppImageDesktopEntry(layout.appImage);
+    // Extraction mode writes chrome-sandbox into a user-owned temporary directory, so it cannot retain the
+    // root-owned 4755 metadata required by Chromium. The unpacked layout startup above already exercises the
+    // configured SUID sandbox; this second launch verifies the AppImage entry point and production resources.
+    runPackagedStartup(layout.appImage, target, { APPIMAGE_EXTRACT_AND_RUN: "1" }, ["--no-sandbox"]);
+  }
 }
 
 console.log(
-  `OK: ${target} packaged app starts through its production entry and contains only verified target toolchains`,
+  staticOnly
+    ? `OK: ${target} packaged resources and target toolchains pass static verification (executables not run)`
+    : `OK: ${target} packaged app starts through its production entry and contains only verified target toolchains`,
 );
 
 function findPackagedLayout(directory, toolTarget) {
@@ -155,6 +173,10 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
     required.push(`${nested}/@earendil-works/pi-tui/native/darwin/prebuilds/darwin-${arch}/darwin-modifiers.node`);
   } else if (platform === "win32") {
     required.push(`${nested}/@earendil-works/pi-tui/native/win32/prebuilds/win32-${arch}/win32-console-mode.node`);
+    required.push(
+      "node_modules/@mariozechner/clipboard-win32-x64-msvc/package.json",
+      "node_modules/@mariozechner/clipboard-win32-x64-msvc/clipboard.win32-x64-msvc.node",
+    );
   }
   const missing = required.filter((entry) => !entries.has(entry));
   if (missing.length > 0) throw new Error(`Packaged Pi runtime/authoring assets are missing: ${missing.join(", ")}`);
@@ -196,7 +218,7 @@ function extractAsarFile(archive, entry) {
   return extractFile(archive, path.join(...entry.split("/")));
 }
 
-function verifyBundledTools(resources, platform, arch) {
+function verifyBundledTools(resources, platform, arch, executeTools) {
   const targetRoot = path.join(resources, "toolchains", "core", `${platform}-${arch}`);
   const manifestPath = path.join(targetRoot, "manifests", "core-tools.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
@@ -232,6 +254,8 @@ function verifyBundledTools(resources, platform, arch) {
     if (!safeRelativePath(license.path)) throw new Error("Unsafe core license manifest entry");
     verifyManifestFile(path.join(targetRoot, license.path), license.sha256);
   }
+
+  if (!executeTools) return;
 
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-packaged-core-"));
   try {

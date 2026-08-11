@@ -27,6 +27,7 @@ import {
   type FeishuWsConnection,
 } from "./api";
 import type { FeishuBotIdentity, FeishuMenuEvent, FeishuMessageEvent, FeishuMessageMention } from "./protocol-types";
+import { FeishuAppRegistration } from "./app-registration";
 import {
   buildFeishuInterruptedCard,
   buildFeishuStreamingCard,
@@ -418,7 +419,20 @@ export class FeishuAdapter implements ChannelAdapter {
   constructor(
     private readonly dependencies: FeishuAdapterDependencies = defaultFeishuDependencies,
     private readonly cardUpdateIntervalMs = DEFAULT_CARD_UPDATE_INTERVAL_MS,
+    private readonly appRegistration = new FeishuAppRegistration(),
   ) {}
+
+  async startLogin(options: Parameters<NonNullable<ChannelAdapter["startLogin"]>>[0]) {
+    return this.appRegistration.start(options);
+  }
+
+  async pollLogin(sessionKey: string) {
+    return this.appRegistration.poll(sessionKey);
+  }
+
+  cancelLogin(sessionKey: string): void {
+    this.appRegistration.cancel(sessionKey);
+  }
 
   async start(context: AdapterStartContext): Promise<void> {
     const { account, secret, signal, state, onInbound, onStatus } = context;

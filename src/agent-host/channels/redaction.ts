@@ -1,4 +1,5 @@
-const SENSITIVE_KEYS = /token|secret|authorization|qrcode|context[_-]?token|encrypt[_-]?query/i;
+const SENSITIVE_KEYS =
+  /token|secret|authorization|qr(?:code|[_-]?(?:content|data))|context[_-]?token|encrypt[_-]?query|device[_-]?code|user[_-]?code|verification[_-]?(?:uri|url)/i;
 
 export function fingerprintSecret(secret: string): string | undefined {
   const trimmed = secret.trim();
@@ -28,9 +29,15 @@ export function redactChannelText(raw: unknown): string {
   }
   return text
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]")
-    .replace(/([?&](?:token|secret|app_?secret|qrcode|context_token)=)[^&\s]+/gi, "$1[REDACTED]")
+    .replace(
+      /([?&](?:token|secret|app_?secret|qrcode|context_token|device_code|user_code|verification_(?:uri|url))=)[^&\s]+/gi,
+      "$1[REDACTED]",
+    )
     .replace(/(api\.telegram\.org\/bot)[^/\s]+/gi, "$1[REDACTED]")
-    .replace(/("(?:app_?secret|bot_token|context_token|qrcode|secret|token)"\s*:\s*")[^"]+/gi, "$1[REDACTED]");
+    .replace(
+      /("(?:app_?secret|bot_token|context_token|qrcode|qr_?(?:content|data)|secret|token|device_code|user_code|verification_(?:uri|url))"\s*:\s*")[^"]+/gi,
+      "$1[REDACTED]",
+    );
 }
 
 export function safeChannelError(error: unknown): string {

@@ -120,7 +120,14 @@ export interface ChannelLoginEvent {
   qrDataUrl?: string;
   qrContent?: string;
   accountId?: string;
+  /** Earliest useful time for the Renderer to request another snapshot of this login session. */
+  pollAfterMs?: number;
+  /** Absolute Unix timestamp in milliseconds after which the QR/session is no longer usable. */
+  expiresAt?: number;
 }
+
+export type ChannelLoginStartRequest =
+  { channel: "weixin"; force?: boolean } | { channel: "feishu"; domain: FeishuDomain; force?: boolean };
 
 export interface ChannelProbeResult {
   ok: boolean;

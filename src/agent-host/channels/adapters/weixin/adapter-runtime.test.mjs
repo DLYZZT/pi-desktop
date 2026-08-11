@@ -253,7 +253,7 @@ test("QR confirmation returns a fresh credential for re-login", async (t) => {
   };
 
   const adapter = new WeixinAdapter();
-  const started = await adapter.startLogin(true, ["stale-token"]);
+  const started = await adapter.startLogin({ channel: "weixin", force: true, localTokens: ["stale-token"] });
   const confirmed = await adapter.pollLogin(started.sessionKey);
 
   assert.equal(started.phase, "qr");
@@ -262,7 +262,7 @@ test("QR confirmation returns a fresh credential for re-login", async (t) => {
   assert.deepEqual(confirmed.credential, {
     token: "fresh-token",
     providerAccountId: "Bot Account 42",
-    userId: "owner-42",
     baseUrl: "https://redirect.example.test",
   });
+  assert.deepEqual(confirmed.account, { ownerUserId: "owner-42" });
 });

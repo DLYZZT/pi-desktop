@@ -83,16 +83,20 @@ void app.whenReady().then(async () => {
     throw new Error(`Unsupported smoke Host request: ${method}`);
   });
   if (safeStorage.isEncryptionAvailable()) {
-    const key = "channel:telegram:smoke-test";
+    const key = "channel:feishu:smoke-test";
     credentialVault.set(key, {
-      token: "smoke-secret",
-      providerAccountId: "42",
-      providerUsername: "@smoke_bot",
-      baseUrl: "https://api.telegram.org",
+      token: "smoke-app-secret",
+      providerAccountId: "ou_smoke_bot",
+      baseUrl: "https://open.feishu.cn",
     });
-    const savedCredential = credentialVault.get(key);
-    if (savedCredential?.token !== "smoke-secret" || savedCredential.providerAccountId !== "42") {
-      finish(1, new Error("Credential vault round-trip failed"));
+    const rawVault = fs.readFileSync(smokeVaultPath, "utf8");
+    const savedCredential = new CredentialVault(smokeVaultPath).get(key);
+    if (
+      rawVault.includes("smoke-app-secret") ||
+      savedCredential?.token !== "smoke-app-secret" ||
+      savedCredential.providerAccountId !== "ou_smoke_bot"
+    ) {
+      finish(1, new Error("Credential vault reload failed"));
       return;
     }
     credentialVault.delete(key);

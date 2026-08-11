@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -65,6 +66,10 @@ function createFakeAdapter(id = "weixin") {
     emit: async (envelope) => inbound(envelope),
     sent,
   };
+}
+
+function scanAccountId(domain, appId) {
+  return `feishu-${createHash("sha256").update(`${domain}\0${appId}`).digest("hex").slice(0, 24)}`;
 }
 
 test("fake adapter runs inbound message through binding, Pi bridge, and delivery", async () => {
@@ -621,6 +626,304 @@ test("account connect probes before persisting and cleans up a rejected credenti
     false,
   );
   assert.equal(secrets.has("telegram-bad"), false);
+  await manager.shutdown();
+});
+
+test("Feishu scan login persists credentials, probes the bot, and enforces owner-only defaults", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-feishu-scan-"));
+  const fake = createFakeAdapter("feishu");
+  const runtimeStarts = [];
+  fake.adapter.start = async (context) => {
+    runtimeStarts.push({ account: structuredClone(context.account), secret: structuredClone(context.secret) });
+    context.onStatus({ state: "running", connected: true });
+    await new Promise((resolve) => context.signal.addEventListener("abort", resolve, { once: true }));
+  };
+  const appId = "cli_1234567890abcdef";
+  const accountId = scanAccountId("feishu", appId);
+  let startOptions;
+  fake.adapter.startLogin = async (options) => {
+    startOptions = options;
+    return {
+      channel: "feishu",
+      sessionKey: "scan-session",
+      phase: "qr",
+      message: "scan",
+      qrContent: "https://accounts.feishu.cn/qr",
+    };
+  };
+  let pollCalls = 0;
+  fake.adapter.pollLogin = async () => {
+    pollCalls += 1;
+    return {
+      event: {
+        channel: "feishu",
+        sessionKey: "scan-session",
+        phase: "confirmed",
+        message: "created",
+        accountId,
+      },
+      credential: {
+        token: "app-secret-must-stay-host-side",
+        providerAccountId: appId,
+        baseUrl: "https://open.feishu.cn",
+      },
+      account: { appId, domain: "feishu", ownerUserId: "ou_owner" },
+    };
+  };
+  fake.adapter.probe = async (account) => ({
+    ok: true,
+    accountId: account.id,
+    providerAccountId: "ou_bot",
+    displayName: "Pi Bot",
+    message: "ok",
+  });
+  const registry = new AdapterRegistry();
+  registry.register(fake.adapter);
+  const secrets = new Map();
+  const emitted = [];
+  const manager = new ChannelManager(
+    {
+      handle() {},
+      attachPort() {},
+      detachPort() {},
+      emit(topic, key, data) {
+        emitted.push({ topic, key, data });
+      },
+    },
+    () => {},
+    {
+      dataDirectory: dir,
+      registry,
+      secretAccess: {
+        get: async (_channel, id) => secrets.get(id) ?? null,
+        set: async (_channel, id, secret) => secrets.set(id, structuredClone(secret)),
+        delete: async (_channel, id) => secrets.delete(id),
+      },
+      bridge: {
+        async runTurn() {
+          throw new Error("not used");
+        },
+      },
+    },
+  );
+
+  const started = await manager.startLogin({ channel: "feishu", domain: "feishu", force: true });
+  assert.equal(started.phase, "qr");
+  assert.deepEqual(startOptions, { channel: "feishu", domain: "feishu", force: true, localTokens: [] });
+  const [completed, concurrent] = await Promise.all([
+    manager.waitLogin("feishu", "scan-session"),
+    manager.waitLogin("feishu", "scan-session"),
+  ]);
+  assert.equal(completed.phase, "confirmed");
+  assert.equal(completed.message, "飞书/Lark 机器人已创建并连接。");
+  assert.deepEqual(concurrent, completed);
+  const repeated = await manager.waitLogin("feishu", "scan-session");
+  assert.equal(repeated.phase, "confirmed");
+  assert.equal(pollCalls, 1);
+
+  const snapshot = await manager.snapshot();
+  assert.equal(snapshot.accounts.length, 1);
+  const account = snapshot.accounts.find((item) => item.id === accountId);
+  assert.equal(account.appId, appId);
+  assert.equal(account.domain, "feishu");
+  assert.equal(account.providerAccountId, "ou_bot");
+  assert.equal(account.name, "Pi Bot");
+  assert.equal(account.dmPolicy, "allowlist");
+  assert.deepEqual(account.allowFrom, ["ou_owner"]);
+  assert.equal(account.groupPolicy, "disabled");
+  assert.equal(account.commandsEnabled, false);
+  assert.deepEqual(account.toolNames, []);
+  assert.equal(account.configured, true);
+  assert.deepEqual(secrets.get(accountId), {
+    token: "app-secret-must-stay-host-side",
+    providerAccountId: "ou_bot",
+    baseUrl: "https://open.feishu.cn",
+  });
+  assert.doesNotMatch(JSON.stringify(emitted), /app-secret-must-stay-host-side/);
+  assert.equal(runtimeStarts.length, 1);
+  await manager.shutdown();
+
+  const restoredManager = new ChannelManager(
+    {
+      handle() {},
+      attachPort() {},
+      detachPort() {},
+      emit(topic, key, data) {
+        emitted.push({ topic, key, data });
+      },
+    },
+    () => {},
+    {
+      dataDirectory: dir,
+      registry,
+      secretAccess: {
+        get: async (_channel, id) => secrets.get(id) ?? null,
+        set: async (_channel, id, secret) => secrets.set(id, structuredClone(secret)),
+        delete: async (_channel, id) => secrets.delete(id),
+      },
+      bridge: {
+        async runTurn() {
+          throw new Error("not used");
+        },
+      },
+    },
+  );
+  await restoredManager.initialize();
+  assert.equal(runtimeStarts.length, 2);
+  assert.equal(runtimeStarts[1].account.id, accountId);
+  assert.equal(runtimeStarts[1].account.appId, appId);
+  assert.equal(runtimeStarts[1].secret.token, "app-secret-must-stay-host-side");
+  assert.equal((await restoredManager.snapshot()).statuses[0].state, "running");
+  assert.doesNotMatch(JSON.stringify(emitted), /app-secret-must-stay-host-side/);
+  await restoredManager.shutdown();
+});
+
+test("Feishu scan login falls back to pairing when the provider omits the scanner open_id", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-feishu-scan-pairing-"));
+  const fake = createFakeAdapter("feishu");
+  const appId = "cli_withoutowner123";
+  const accountId = scanAccountId("lark", appId);
+  fake.adapter.pollLogin = async () => ({
+    event: { channel: "feishu", sessionKey: "lark-scan", phase: "confirmed", message: "created", accountId },
+    credential: { token: "secret", providerAccountId: appId, baseUrl: "https://open.larksuite.com" },
+    account: { appId, domain: "lark" },
+  });
+  const registry = new AdapterRegistry();
+  registry.register(fake.adapter);
+  const secrets = new Map();
+  const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
+    dataDirectory: dir,
+    registry,
+    secretAccess: {
+      get: async (_channel, id) => secrets.get(id) ?? null,
+      set: async (_channel, id, secret) => secrets.set(id, secret),
+      delete: async (_channel, id) => secrets.delete(id),
+    },
+    bridge: {
+      async runTurn() {
+        throw new Error("not used");
+      },
+    },
+  });
+  await manager.waitLogin("feishu", "lark-scan");
+  const account = (await manager.snapshot()).accounts[0];
+  assert.equal(account.dmPolicy, "pairing");
+  assert.deepEqual(account.allowFrom, []);
+  await manager.shutdown();
+});
+
+test("Feishu scan login rolls back a newly written secret when config persistence fails", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-feishu-scan-rollback-"));
+  const blockedDataDirectory = path.join(dir, "not-a-directory");
+  await writeFile(blockedDataDirectory, "blocked");
+  const fake = createFakeAdapter("feishu");
+  const appId = "cli_rollback123456";
+  const accountId = scanAccountId("feishu", appId);
+  fake.adapter.pollLogin = async () => ({
+    event: { channel: "feishu", sessionKey: "rollback", phase: "confirmed", message: "created", accountId },
+    credential: { token: "must-be-deleted", providerAccountId: appId, baseUrl: "https://open.feishu.cn" },
+    account: { appId, domain: "feishu", ownerUserId: "ou_owner" },
+  });
+  const registry = new AdapterRegistry();
+  registry.register(fake.adapter);
+  const secrets = new Map();
+  const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
+    dataDirectory: blockedDataDirectory,
+    registry,
+    secretAccess: {
+      get: async (_channel, id) => secrets.get(id) ?? null,
+      set: async (_channel, id, secret) => secrets.set(id, secret),
+      delete: async (_channel, id) => secrets.delete(id),
+    },
+    bridge: {
+      async runTurn() {
+        throw new Error("not used");
+      },
+    },
+  });
+  const event = await manager.waitLogin("feishu", "rollback");
+  assert.equal(event.phase, "error");
+  assert.match(event.message, /安全保存失败/);
+  assert.equal(secrets.has(accountId), false);
+});
+
+test("Feishu scan login does not create an account when the encrypted vault rejects the secret", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-feishu-scan-vault-failure-"));
+  const fake = createFakeAdapter("feishu");
+  const appId = "cli_vaultfailure123";
+  const accountId = scanAccountId("feishu", appId);
+  fake.adapter.pollLogin = async () => ({
+    event: { channel: "feishu", sessionKey: "vault-failure", phase: "confirmed", message: "created", accountId },
+    credential: { token: "never-persisted", providerAccountId: appId, baseUrl: "https://open.feishu.cn" },
+    account: { appId, domain: "feishu", ownerUserId: "ou_owner" },
+  });
+  const registry = new AdapterRegistry();
+  registry.register(fake.adapter);
+  const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
+    dataDirectory: dir,
+    registry,
+    secretAccess: {
+      get: async () => null,
+      set: async () => {
+        throw new Error("safeStorage unavailable");
+      },
+      delete: async () => {},
+    },
+    bridge: {
+      async runTurn() {
+        throw new Error("not used");
+      },
+    },
+  });
+  const event = await manager.waitLogin("feishu", "vault-failure");
+  assert.equal(event.phase, "error");
+  assert.match(event.message, /安全保存失败/);
+  assert.equal((await manager.snapshot()).accounts.length, 0);
+  await manager.shutdown();
+});
+
+test("Feishu scan login retains encrypted credentials for retry when the bot probe fails", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-feishu-scan-probe-failure-"));
+  const fake = createFakeAdapter("feishu");
+  const appId = "cli_probefailure123";
+  const accountId = scanAccountId("feishu", appId);
+  fake.adapter.pollLogin = async () => ({
+    event: { channel: "feishu", sessionKey: "probe-failure", phase: "confirmed", message: "created", accountId },
+    credential: { token: "retained-secret", providerAccountId: appId, baseUrl: "https://open.feishu.cn" },
+    account: { appId, domain: "feishu", ownerUserId: "ou_owner" },
+  });
+  fake.adapter.probe = async (account) => ({
+    ok: false,
+    accountId: account.id,
+    message: "机器人权限尚未生效 retained-secret",
+  });
+  const registry = new AdapterRegistry();
+  registry.register(fake.adapter);
+  const secrets = new Map();
+  const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
+    dataDirectory: dir,
+    registry,
+    secretAccess: {
+      get: async (_channel, id) => secrets.get(id) ?? null,
+      set: async (_channel, id, secret) => secrets.set(id, secret),
+      delete: async (_channel, id) => secrets.delete(id),
+    },
+    bridge: {
+      async runTurn() {
+        throw new Error("not used");
+      },
+    },
+  });
+  await manager.snapshot();
+  const event = await manager.waitLogin("feishu", "probe-failure");
+  assert.equal(event.phase, "error");
+  assert.equal(event.accountId, accountId);
+  assert.match(event.message, /机器人权限尚未生效/);
+  assert.doesNotMatch(event.message, /retained-secret/);
+  const snapshot = await manager.snapshot();
+  assert.equal(snapshot.accounts[0].configured, true);
+  assert.equal(snapshot.accounts[0].dmPolicy, "allowlist");
+  assert.equal(secrets.get(accountId).token, "retained-secret");
   await manager.shutdown();
 });
 

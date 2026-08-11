@@ -10,6 +10,7 @@ import type {
   ChannelsSnapshot,
   FeishuDomain,
 } from "@shared/channel-types";
+import { FEISHU_REQUIRED_TENANT_SCOPES } from "@shared/feishu-app";
 import type { SessionInfo } from "@contract/types";
 import { call, listSessions, subscribe } from "@/lib/api-client";
 import { copyText } from "@/lib/clipboard";
@@ -24,15 +25,7 @@ const FEISHU_BASE_URLS: Record<FeishuDomain, string> = {
 export const FEISHU_PERMISSION_IMPORT_JSON = JSON.stringify(
   {
     scopes: {
-      tenant: [
-        "im:message",
-        "im:message.p2p_msg:readonly",
-        "im:message.group_at_msg:readonly",
-        "im:message:send_as_bot",
-        "im:message.reactions:write_only",
-        "im:resource",
-        "cardkit:card:write",
-      ],
+      tenant: FEISHU_REQUIRED_TENANT_SCOPES,
       user: [],
     },
   },
@@ -111,6 +104,7 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
   const [telegramError, setTelegramError] = useState("");
   const [feishuDialogOpen, setFeishuDialogOpen] = useState(false);
   const [feishuError, setFeishuError] = useState("");
+  const [feishuScanDomain, setFeishuScanDomain] = useState<FeishuDomain>("feishu");
 
   const refresh = useCallback(async () => {
     try {
@@ -147,18 +141,25 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
       return;
     }
     let cancelled = false;
+    const delay = Math.min(10_000, Math.max(500, login.pollAfterMs ?? 600));
     const timer = setTimeout(() => {
-      void call("channels.loginWait", { channel: "weixin", sessionKey: login.sessionKey })
+      void call("channels.loginWait", { channel: login.channel, sessionKey: login.sessionKey })
         .then((event) => {
           if (!cancelled) {
             setLogin(event);
-            if (event.phase === "confirmed") void refresh();
+            if (event.phase === "confirmed" || event.accountId) void refresh();
           }
         })
         .catch((cause) => {
-          if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+          if (!cancelled) {
+            setLogin({
+              ...login,
+              phase: "error",
+              message: cause instanceof Error ? cause.message : String(cause),
+            });
+          }
         });
-    }, 600);
+    }, delay);
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -186,6 +187,21 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
       const event = await call("channels.loginStart", { channel: "weixin", force: true });
       setLogin(event);
     });
+
+  const beginFeishuLogin = async (domain: FeishuDomain) => {
+    setBusy(true);
+    setFeishuError("");
+    setFeishuScanDomain(domain);
+    try {
+      const event = await call("channels.loginStart", { channel: "feishu", domain, force: true });
+      setFeishuDialogOpen(false);
+      setLogin(event);
+    } catch (cause) {
+      setFeishuError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const connectTelegram = async (token: string) => {
     setBusy(true);
@@ -282,7 +298,7 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
 
   const closeLogin = () => {
     if (login && !["confirmed", "already_connected", "expired", "error", "cancelled"].includes(login.phase)) {
-      void call("channels.loginCancel", { channel: "weixin", sessionKey: login.sessionKey });
+      void call("channels.loginCancel", { channel: login.channel, sessionKey: login.sessionKey });
     }
     setLogin(null);
     setVerificationCode("");
@@ -499,7 +515,7 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
           onSubmitCode={() =>
             run(async () => {
               await call("channels.loginSubmitCode", {
-                channel: "weixin",
+                channel: login.channel,
                 sessionKey: login.sessionKey,
                 code: verificationCode,
               });
@@ -507,6 +523,10 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
               setLogin({ ...login, phase: "waiting", message: "正在验证…" });
             })
           }
+          onRetry={() => {
+            if (login.channel === "feishu") void beginFeishuLogin(feishuScanDomain);
+            else void beginLogin();
+          }}
           onClose={closeLogin}
         />
       )}
@@ -522,6 +542,7 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
         <FeishuCredentialDialog
           busy={busy}
           error={feishuError}
+          onStartScan={(domain) => void beginFeishuLogin(domain)}
           onConnect={(appId, appSecret, domain) => void connectFeishu(appId, appSecret, domain)}
           onClose={() => setFeishuDialogOpen(false)}
         />
@@ -1372,28 +1393,21 @@ export function TelegramTokenDialog({
 export function FeishuCredentialDialog({
   busy,
   error,
+  onStartScan,
   onConnect,
   onClose,
+  initialMode = "scan",
 }: {
   busy: boolean;
   error: string;
+  onStartScan: (domain: FeishuDomain) => void;
   onConnect: (appId: string, appSecret: string, domain: FeishuDomain) => void;
   onClose: () => void;
+  initialMode?: "scan" | "manual";
 }) {
   const { t } = useI18n();
-  const [appId, setAppId] = useState("");
-  const [appSecret, setAppSecret] = useState("");
+  const [mode, setMode] = useState<"scan" | "manual">(initialMode);
   const [domain, setDomain] = useState<FeishuDomain>("feishu");
-  const [permissionCopyState, setPermissionCopyState] = useState<"idle" | "copied" | "error">("idle");
-  const docsBase = domain === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
-  const copyPermissionJson = async () => {
-    try {
-      await copyText(FEISHU_PERMISSION_IMPORT_JSON);
-      setPermissionCopyState("copied");
-    } catch {
-      setPermissionCopyState("error");
-    }
-  };
   return (
     <div
       style={{
@@ -1421,162 +1435,311 @@ export function FeishuCredentialDialog({
       >
         <h3 style={{ margin: 0, color: "var(--text)", fontSize: 16 }}>{t("connectFeishu", "Connect Feishu / Lark")}</h3>
         <p style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6 }}>
-          {t(
-            "feishuCredentialDescription",
-            "Connect a self-built app through the official WebSocket long connection. App Secret is stored with OS encryption and is never returned to the UI.",
-          )}
+          {mode === "scan"
+            ? t(
+                "feishuScanDescription",
+                "Scan to create a new bot with the official Feishu/Lark flow. Credentials stay in the Agent Host and are stored with OS encryption without entering the UI.",
+              )
+            : t(
+                "feishuCredentialDescription",
+                "Connect an existing self-built app through the official WebSocket long connection. App Secret is stored with OS encryption.",
+              )}
         </p>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 150px", gap: 8 }}>
-          <input
-            autoFocus
-            autoComplete="off"
-            style={inputStyle}
-            value={appId}
-            onChange={(event) => setAppId(event.target.value)}
-            placeholder={t("feishuAppId", "App ID (cli_…)")}
-          />
-          <select style={inputStyle} value={domain} onChange={(event) => setDomain(event.target.value as FeishuDomain)}>
-            <option value="feishu">{t("feishuChina", "Feishu (China)")}</option>
-            <option value="lark">Lark</option>
-          </select>
-        </div>
-        <input
-          type="password"
-          autoComplete="off"
-          style={{ ...inputStyle, marginTop: 8 }}
-          value={appSecret}
-          onChange={(event) => setAppSecret(event.target.value)}
-          placeholder={t("feishuAppSecret", "App Secret")}
-        />
-
         <div
-          style={{
-            marginTop: 14,
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            background: "var(--bg-panel)",
-            padding: "11px 13px",
-            color: "var(--text-muted)",
-            fontSize: 11,
-            lineHeight: 1.6,
-          }}
+          role="tablist"
+          aria-label={t("feishuConnectionMethod", "Connection method")}
+          style={{ display: "flex", gap: 7 }}
         >
-          <div style={{ color: "var(--text)", fontWeight: 700 }}>{t("feishuSetupChecklist", "Quick setup")}</div>
-          <ol style={{ margin: "7px 0 0", paddingLeft: 19 }}>
-            <li>{t("feishuSetupBot", "Create an enterprise self-built app and enable Bot capability.")}</li>
-            <li>
-              {t(
-                "feishuSetupPermissionImport",
-                "Copy the permission JSON below, then paste it under Permissions & Scopes → Batch import/export scopes and apply for access.",
-              )}
-            </li>
-            <li>
-              {t(
-                "feishuSetupConnection",
-                "Under Events and Callbacks, select long connection mode and subscribe to im.message.receive_v1 and application.bot.menu_v6.",
-              )}
-            </li>
-            <li>
-              {t(
-                "feishuSetupMenu",
-                "Optional native menu: enable commands in this account's settings, then add event actions with keys pi_help, pi_status, pi_new, pi_compact, and pi_reload under Bot → Custom menu.",
-              )}
-            </li>
-            <li>
-              {t(
-                "feishuSetupPublish",
-                "Publish a new app version, configure availability, and add the bot to each allowed group.",
-              )}
-            </li>
-          </ol>
-          <pre
-            data-testid="feishu-permission-json"
-            style={{
-              margin: "9px 0 0",
-              maxHeight: 176,
-              overflow: "auto",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-              background: "var(--bg)",
-              color: "var(--text-muted)",
-              padding: "9px 10px",
-              fontSize: 10,
-              lineHeight: 1.45,
-              whiteSpace: "pre",
-              userSelect: "text",
-            }}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "scan"}
+            data-testid="feishu-scan-tab"
+            style={buttonStyle(mode === "scan")}
+            onClick={() => setMode("scan")}
           >
-            {FEISHU_PERMISSION_IMPORT_JSON}
-          </pre>
-          {permissionCopyState === "error" && (
-            <div role="alert" style={{ marginTop: 6, color: "#ef4444" }}>
-              {t("feishuPermissionCopyFailed", "Copy failed. Select and copy the JSON above manually.")}
-            </div>
-          )}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 9 }}>
-            <button
-              type="button"
-              data-testid="copy-feishu-permission-json"
-              style={buttonStyle(true)}
-              onClick={() => void copyPermissionJson()}
-            >
-              {permissionCopyState === "copied"
-                ? t("feishuPermissionJsonCopied", "Permission JSON copied")
-                : t("copyFeishuPermissionJson", "Copy permission JSON")}
-            </button>
-            <button
-              type="button"
-              style={buttonStyle()}
-              onClick={() => void window.piBridge.openExternal(`${docsBase}/app`)}
-            >
-              {t("openDeveloperConsole", "Open developer console")}
-            </button>
-          </div>
-        </div>
-
-        {error && (
-          <div
-            role="alert"
-            data-testid="feishu-connect-error"
-            style={{ marginTop: 10, color: "#ef4444", fontSize: 11, lineHeight: 1.5, overflowWrap: "anywhere" }}
-          >
-            {error}
-          </div>
-        )}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 7, marginTop: 16 }}>
-          <button type="button" disabled={busy} style={buttonStyle()} onClick={onClose}>
-            {t("cancel", "Cancel")}
+            {t("feishuScanCreate", "Scan to create (recommended)")}
           </button>
           <button
             type="button"
-            disabled={busy || !appId.trim() || !appSecret.trim()}
-            style={buttonStyle(true)}
-            onClick={() => onConnect(appId.trim(), appSecret.trim(), domain)}
+            role="tab"
+            aria-selected={mode === "manual"}
+            data-testid="feishu-manual-tab"
+            style={buttonStyle(mode === "manual")}
+            onClick={() => setMode("manual")}
           >
-            {busy ? t("testingConnection", "Testing…") : t("saveAndConnect", "Save and connect")}
+            {t("feishuExistingApp", "Existing app")}
           </button>
         </div>
+
+        {mode === "scan" ? (
+          <div data-testid="feishu-scan-create" style={{ marginTop: 14 }}>
+            <label style={{ display: "grid", gap: 6, color: "var(--text-muted)", fontSize: 11 }}>
+              {t("feishuTenantRegion", "Account region")}
+              <select
+                autoFocus
+                style={inputStyle}
+                value={domain}
+                onChange={(event) => setDomain(event.target.value as FeishuDomain)}
+              >
+                <option value="feishu">{t("feishuChina", "Feishu (China)")}</option>
+                <option value="lark">Lark</option>
+              </select>
+            </label>
+            <div
+              style={{
+                marginTop: 12,
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                background: "var(--bg-panel)",
+                padding: "11px 13px",
+                color: "var(--text-muted)",
+                fontSize: 11,
+                lineHeight: 1.65,
+              }}
+            >
+              <strong style={{ color: "var(--text)" }}>{t("feishuScanCreatesNew", "Creates a new bot")}</strong>
+              <div>
+                {t(
+                  "feishuScanSecurityDefaults",
+                  "The scanning user is the only allowed DM sender by default. Groups, commands, and Agent tools remain disabled until you enable them.",
+                )}
+              </div>
+              <div style={{ marginTop: 6 }}>
+                {t(
+                  "feishuScanExistingHint",
+                  "Already have an app? Use the Existing app tab instead; scanning never reads an existing App Secret.",
+                )}
+              </div>
+            </div>
+            <FeishuDialogError error={error} />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 7, marginTop: 16 }}>
+              <button type="button" disabled={busy} style={buttonStyle()} onClick={onClose}>
+                {t("cancel", "Cancel")}
+              </button>
+              <button
+                type="button"
+                data-testid="start-feishu-scan"
+                disabled={busy}
+                style={buttonStyle(true)}
+                onClick={() => onStartScan(domain)}
+              >
+                {busy ? t("creatingQrCode", "Creating QR code…") : t("createQrCode", "Create QR code")}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <FeishuManualForm
+            busy={busy}
+            error={error}
+            domain={domain}
+            setDomain={setDomain}
+            onConnect={onConnect}
+            onClose={onClose}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function LoginDialog({
+function FeishuDialogError({ error }: { error: string }) {
+  if (!error) return null;
+  return (
+    <div
+      role="alert"
+      data-testid="feishu-connect-error"
+      style={{ marginTop: 10, color: "#ef4444", fontSize: 11, lineHeight: 1.5, overflowWrap: "anywhere" }}
+    >
+      {error}
+    </div>
+  );
+}
+
+function FeishuManualForm({
+  busy,
+  error,
+  domain,
+  setDomain,
+  onConnect,
+  onClose,
+}: {
+  busy: boolean;
+  error: string;
+  domain: FeishuDomain;
+  setDomain: (domain: FeishuDomain) => void;
+  onConnect: (appId: string, appSecret: string, domain: FeishuDomain) => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const [appId, setAppId] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+  const [permissionCopyState, setPermissionCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const docsBase = domain === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
+  const copyPermissionJson = async () => {
+    try {
+      await copyText(FEISHU_PERMISSION_IMPORT_JSON);
+      setPermissionCopyState("copied");
+    } catch {
+      setPermissionCopyState("error");
+    }
+  };
+  return (
+    <div data-testid="feishu-existing-app" style={{ marginTop: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 150px", gap: 8 }}>
+        <input
+          autoFocus
+          autoComplete="off"
+          style={inputStyle}
+          value={appId}
+          onChange={(event) => setAppId(event.target.value)}
+          placeholder={t("feishuAppId", "App ID (cli_…)")}
+        />
+        <select style={inputStyle} value={domain} onChange={(event) => setDomain(event.target.value as FeishuDomain)}>
+          <option value="feishu">{t("feishuChina", "Feishu (China)")}</option>
+          <option value="lark">Lark</option>
+        </select>
+      </div>
+      <input
+        type="password"
+        autoComplete="off"
+        style={{ ...inputStyle, marginTop: 8 }}
+        value={appSecret}
+        onChange={(event) => setAppSecret(event.target.value)}
+        placeholder={t("feishuAppSecret", "App Secret")}
+      />
+
+      <div
+        style={{
+          marginTop: 14,
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          background: "var(--bg-panel)",
+          padding: "11px 13px",
+          color: "var(--text-muted)",
+          fontSize: 11,
+          lineHeight: 1.6,
+        }}
+      >
+        <div style={{ color: "var(--text)", fontWeight: 700 }}>{t("feishuSetupChecklist", "Quick setup")}</div>
+        <ol style={{ margin: "7px 0 0", paddingLeft: 19 }}>
+          <li>{t("feishuSetupBot", "Create an enterprise self-built app and enable Bot capability.")}</li>
+          <li>
+            {t(
+              "feishuSetupPermissionImport",
+              "Copy the permission JSON below, then paste it under Permissions & Scopes → Batch import/export scopes and apply for access.",
+            )}
+          </li>
+          <li>
+            {t(
+              "feishuSetupConnection",
+              "Under Events and Callbacks, select long connection mode and subscribe to im.message.receive_v1 and application.bot.menu_v6.",
+            )}
+          </li>
+          <li>
+            {t(
+              "feishuSetupMenu",
+              "Optional native menu: enable commands in this account's settings, then add event actions with keys pi_help, pi_status, pi_new, pi_compact, and pi_reload under Bot → Custom menu.",
+            )}
+          </li>
+          <li>
+            {t(
+              "feishuSetupPublish",
+              "Publish a new app version, configure availability, and add the bot to each allowed group.",
+            )}
+          </li>
+        </ol>
+        <pre
+          data-testid="feishu-permission-json"
+          style={{
+            margin: "9px 0 0",
+            maxHeight: 176,
+            overflow: "auto",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            background: "var(--bg)",
+            color: "var(--text-muted)",
+            padding: "9px 10px",
+            fontSize: 10,
+            lineHeight: 1.45,
+            whiteSpace: "pre",
+            userSelect: "text",
+          }}
+        >
+          {FEISHU_PERMISSION_IMPORT_JSON}
+        </pre>
+        {permissionCopyState === "error" && (
+          <div role="alert" style={{ marginTop: 6, color: "#ef4444" }}>
+            {t("feishuPermissionCopyFailed", "Copy failed. Select and copy the JSON above manually.")}
+          </div>
+        )}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 9 }}>
+          <button
+            type="button"
+            data-testid="copy-feishu-permission-json"
+            style={buttonStyle(true)}
+            onClick={() => void copyPermissionJson()}
+          >
+            {permissionCopyState === "copied"
+              ? t("feishuPermissionJsonCopied", "Permission JSON copied")
+              : t("copyFeishuPermissionJson", "Copy permission JSON")}
+          </button>
+          <button
+            type="button"
+            style={buttonStyle()}
+            onClick={() => void window.piBridge.openExternal(`${docsBase}/app`)}
+          >
+            {t("openDeveloperConsole", "Open developer console")}
+          </button>
+        </div>
+      </div>
+
+      <FeishuDialogError error={error} />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 7, marginTop: 16 }}>
+        <button type="button" disabled={busy} style={buttonStyle()} onClick={onClose}>
+          {t("cancel", "Cancel")}
+        </button>
+        <button
+          type="button"
+          disabled={busy || !appId.trim() || !appSecret.trim()}
+          style={buttonStyle(true)}
+          onClick={() => onConnect(appId.trim(), appSecret.trim(), domain)}
+        >
+          {busy ? t("testingConnection", "Testing…") : t("saveAndConnect", "Save and connect")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function LoginDialog({
   event,
   code,
   setCode,
   onSubmitCode,
+  onRetry,
   onClose,
 }: {
   event: ChannelLoginEvent;
   code: string;
   setCode: (value: string) => void;
   onSubmitCode: () => void;
+  onRetry?: () => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
   const terminal = ["confirmed", "already_connected", "expired", "error", "cancelled"].includes(event.phase);
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!event.expiresAt || terminal) return;
+    const timer = setInterval(() => setClock(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [event.expiresAt, terminal]);
+  const remainingSeconds = event.expiresAt ? Math.max(0, Math.ceil((event.expiresAt - clock) / 1_000)) : undefined;
+  const isFeishu = event.channel === "feishu";
+  const retryable =
+    event.phase === "expired" || event.phase === "cancelled" || (event.phase === "error" && !event.accountId);
   return (
     <div
       style={{
@@ -1589,6 +1752,7 @@ function LoginDialog({
       }}
     >
       <div
+        data-testid={`channel-login-dialog-${event.channel}`}
         style={{
           width: 390,
           maxWidth: "calc(100vw - 28px)",
@@ -1600,7 +1764,9 @@ function LoginDialog({
           boxShadow: "0 14px 45px rgba(0,0,0,.25)",
         }}
       >
-        <h3 style={{ margin: 0, color: "var(--text)", fontSize: 16 }}>{t("connectWeixin", "Connect WeChat")}</h3>
+        <h3 style={{ margin: 0, color: "var(--text)", fontSize: 16 }}>
+          {isFeishu ? t("feishuScanCreate", "Scan to create Feishu / Lark bot") : t("connectWeixin", "Connect WeChat")}
+        </h3>
         {event.qrContent && !terminal && (
           <div
             style={{
@@ -1617,8 +1783,17 @@ function LoginDialog({
               size={216}
               level="M"
               marginSize={2}
-              title={t("weixinLoginQrCode", "WeChat login QR code")}
+              title={
+                isFeishu
+                  ? t("feishuCreateQrCode", "Feishu / Lark app creation QR code")
+                  : t("weixinLoginQrCode", "WeChat login QR code")
+              }
             />
+          </div>
+        )}
+        {remainingSeconds !== undefined && !terminal && (
+          <div style={{ color: "var(--text-dim)", fontSize: 11, marginTop: 8 }}>
+            {t("qrCodeExpiresIn", "QR code expires in")} {remainingSeconds}s
           </div>
         )}
         <p style={{ color: event.phase === "error" ? "#ef4444" : "var(--text-muted)", fontSize: 12, lineHeight: 1.6 }}>
@@ -1639,11 +1814,22 @@ function LoginDialog({
           </div>
         )}
         {(event.phase === "waiting" || event.phase === "scanned") && (
-          <div style={{ color: "var(--text-dim)", fontSize: 11 }}>{t("pollingSecurely", "Polling securely…")}</div>
+          <div style={{ color: "var(--text-dim)", fontSize: 11 }}>
+            {isFeishu
+              ? t("waitingForFeishuAuthorization", "Waiting securely for Feishu / Lark authorization…")
+              : t("pollingSecurely", "Polling securely…")}
+          </div>
         )}
-        <button type="button" style={{ ...buttonStyle(), marginTop: 16 }} onClick={onClose}>
-          {terminal ? t("close", "Close") : t("cancel", "Cancel")}
-        </button>
+        <div style={{ display: "flex", justifyContent: "center", gap: 7, marginTop: 16 }}>
+          {retryable && onRetry && (
+            <button type="button" style={buttonStyle(true)} onClick={onRetry}>
+              {t("regenerateQrCode", "Generate a new QR code")}
+            </button>
+          )}
+          <button type="button" style={buttonStyle()} onClick={onClose}>
+            {terminal ? t("close", "Close") : t("cancel", "Cancel")}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -240,9 +240,10 @@ export class WeixinAdapter implements ChannelAdapter {
     }
   }
 
-  async startLogin(force = false, localTokens: string[] = []): Promise<ChannelLoginEvent> {
-    if (force) this.logins.clear();
-    const response = await startQrLogin(localTokens);
+  async startLogin(options: Parameters<NonNullable<ChannelAdapter["startLogin"]>>[0]): Promise<ChannelLoginEvent> {
+    if (options.channel !== "weixin") throw new Error("微信登录参数无效");
+    if (options.force) this.logins.clear();
+    const response = await startQrLogin(options.localTokens);
     if (!response.qrcode || !response.qrcode_img_content) throw new Error("微信登录服务未返回二维码");
     const sessionKey = randomUUID();
     this.logins.set(sessionKey, {
@@ -305,8 +306,8 @@ export class WeixinAdapter implements ChannelAdapter {
         token: response.bot_token,
         providerAccountId: response.ilink_bot_id,
         baseUrl: response.baseurl?.trim() || login.baseUrl || WEIXIN_DEFAULT_BASE_URL,
-        ...(response.ilink_user_id ? { userId: response.ilink_user_id } : {}),
       },
+      ...(response.ilink_user_id ? { account: { ownerUserId: response.ilink_user_id } } : {}),
     };
   }
 

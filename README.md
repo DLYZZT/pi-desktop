@@ -84,7 +84,7 @@
 
 ### 微信、Telegram 与飞书/Lark 消息渠道
 
-- 个人微信二维码登录、Telegram BotFather token，以及飞书/Lark 企业自建应用 App ID/App Secret 接入
+- 个人微信二维码登录、Telegram BotFather token，以及飞书/Lark 官方扫码创建新机器人或已有应用 App ID/App Secret 接入
 - 私聊配对，以及 Telegram、飞书/Lark 群聊白名单与 @触发控制；微信群尚未开放，默认不授予远程工具权限
 - 外部对话默认使用独立 Pi Session，也可从当前会话顶部快速绑定并与 UI 共用上下文；绑定列表会在窗口内自动定位，长列表支持内部滚动
 - 模型用户正文只包含 IM 实际文本；桌面端用本地黑、微信绿、Telegram 蓝、飞书/Lark 橙的用户气泡区分来源

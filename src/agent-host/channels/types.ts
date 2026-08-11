@@ -2,9 +2,11 @@ import type {
   ChannelAccountConfig,
   ChannelId,
   ChannelLoginEvent,
+  ChannelLoginStartRequest,
   ChannelProbeResult,
   ChannelStatus,
   DeliveryReceipt,
+  FeishuDomain,
   InboundEnvelope,
 } from "../../shared/channel-types";
 import type { AgentMessage } from "../../shared/types";
@@ -92,8 +94,18 @@ export interface AdapterTurnOutput {
 
 export interface AdapterLoginPollResult {
   event: ChannelLoginEvent;
-  credential?: ChannelSecret & { userId?: string };
+  credential?: ChannelSecret;
+  account?: {
+    appId?: string;
+    domain?: FeishuDomain;
+    ownerUserId?: string;
+    displayName?: string;
+  };
+  /** Clears adapter-held one-time credentials after Channel Manager has handled the result. */
+  finalize?: () => void;
 }
+
+export type AdapterLoginStartOptions = ChannelLoginStartRequest & { localTokens: string[] };
 
 export interface ChannelAdapter {
   id: ChannelId;
@@ -104,7 +116,7 @@ export interface ChannelAdapter {
   beginTurn?(context: AdapterTurnContext): AdapterTurnOutput;
   setTyping?(context: AdapterTypingContext): Promise<void>;
   probe(account: ChannelAccountConfig, secret: ChannelSecret): Promise<ChannelProbeResult>;
-  startLogin?(force?: boolean, localTokens?: string[]): Promise<ChannelLoginEvent>;
+  startLogin?(options: AdapterLoginStartOptions): Promise<ChannelLoginEvent>;
   pollLogin?(sessionKey: string): Promise<AdapterLoginPollResult>;
   submitLoginCode?(sessionKey: string, code: string): void;
   cancelLogin?(sessionKey: string): void;

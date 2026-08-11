@@ -290,6 +290,26 @@ test("channel redaction removes structured and inline credentials", () => {
     safeChannelError(new Error('request failed?appSecret=abc123 body={"app_secret":"def456"}')),
     'request failed?appSecret=[REDACTED] body={"app_secret":"[REDACTED]"}',
   );
+  assert.deepEqual(
+    redactChannelValue({
+      device_code: "device-secret",
+      verificationUri: "https://accounts.feishu.cn/private",
+      qrContent: "https://accounts.feishu.cn/qr-private",
+    }),
+    { device_code: "[REDACTED]", verificationUri: "[REDACTED]", qrContent: "[REDACTED]" },
+  );
+  assert.equal(
+    safeChannelError(
+      new Error(
+        'request?device_code=device-secret&user_code=user-secret body={"verification_uri":"https://accounts.feishu.cn/private"}',
+      ),
+    ),
+    'request?device_code=[REDACTED]&user_code=[REDACTED] body={"verification_uri":"[REDACTED]"}',
+  );
+  assert.equal(
+    safeChannelError(new Error('{"qrContent":"https://accounts.feishu.cn/private"}')),
+    '{"qrContent":"[REDACTED]"}',
+  );
 });
 
 test("outbound text splitting preserves Unicode and readable boundaries", () => {

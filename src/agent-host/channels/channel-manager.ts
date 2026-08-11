@@ -9,6 +9,7 @@ import type {
   ChannelBinding,
   ChannelId,
   ChannelLoginEvent,
+  ChannelLoginStartRequest,
   ChannelProbeResult,
   ChannelStatus,
   ChannelsSnapshot,
@@ -44,6 +45,7 @@ export type ChannelManagerOptions = {
 };
 
 const PAIRING_TTL_MS = 10 * 60_000;
+const LOGIN_SUCCESS_RETENTION_MS = 60_000;
 
 function channelDisplayName(channel: ChannelId): string {
   if (channel === "weixin") return "微信";
@@ -128,6 +130,8 @@ export class ChannelManager {
   private readonly secretAccess: SecretAccess;
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly statuses = new Map<string, ChannelStatus>();
+  private readonly loginWaits = new Map<string, Promise<ChannelLoginEvent>>();
+  private readonly loginWaitCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private initialized: Promise<void> | null = null;
 
   constructor(
@@ -366,52 +370,188 @@ export class ChannelManager {
     return this.registry.get(account.channel).probe(account, secret);
   }
 
-  async startLogin(channel: ChannelId, force?: boolean): Promise<ChannelLoginEvent> {
+  async startLogin(request: ChannelLoginStartRequest): Promise<ChannelLoginEvent> {
+    const channel = request.channel;
     const adapter = this.registry.get(channel);
     if (!adapter.startLogin) throw new Error(`${channel} does not use interactive login`);
     const localTokens: string[] = [];
-    for (const account of this.config.listAccounts().filter((item) => item.channel === channel)) {
-      const secret = await this.getSecret(account).catch(() => null);
-      if (secret?.token) localTokens.push(secret.token);
+    if (channel === "weixin") {
+      for (const account of this.config.listAccounts().filter((item) => item.channel === channel)) {
+        const secret = await this.getSecret(account).catch(() => null);
+        if (secret?.token) localTokens.push(secret.token);
+      }
     }
-    const event = await adapter.startLogin(force, localTokens.slice(-10));
+    const event = await adapter.startLogin({ ...request, localTokens: localTokens.slice(-10) });
     this.server.emit("channels.login", event.sessionKey, event);
     return event;
   }
 
-  async waitLogin(channel: ChannelId, sessionKey: string): Promise<ChannelLoginEvent> {
+  waitLogin(channel: ChannelId, sessionKey: string): Promise<ChannelLoginEvent> {
+    const key = `${channel}\0${sessionKey}`;
+    const existing = this.loginWaits.get(key);
+    if (existing) return existing;
+
+    const pending = this.waitLoginOnce(channel, sessionKey);
+    this.loginWaits.set(key, pending);
+    void pending.then(
+      (event) => {
+        if (this.loginWaits.get(key) !== pending) return;
+        if (event.phase !== "confirmed") {
+          this.loginWaits.delete(key);
+          return;
+        }
+        const timer = setTimeout(() => {
+          if (this.loginWaits.get(key) === pending) this.loginWaits.delete(key);
+          this.loginWaitCleanupTimers.delete(key);
+        }, LOGIN_SUCCESS_RETENTION_MS);
+        timer.unref?.();
+        this.loginWaitCleanupTimers.set(key, timer);
+      },
+      () => {
+        if (this.loginWaits.get(key) === pending) this.loginWaits.delete(key);
+      },
+    );
+    return pending;
+  }
+
+  private async waitLoginOnce(channel: ChannelId, sessionKey: string): Promise<ChannelLoginEvent> {
     const pollLogin = this.registry.get(channel).pollLogin;
     if (!pollLogin) throw new Error(`${channel} does not use interactive login`);
     const result = await pollLogin.call(this.registry.get(channel), sessionKey);
     if (result.credential && result.event.accountId) {
-      const accountId = result.event.accountId;
-      await this.setSecret(channel, accountId, result.credential);
-      const now = new Date().toISOString();
-      const existing = this.config.getAccount(accountId);
-      const allowFrom = new Set(existing?.allowFrom ?? []);
-      if (result.credential.userId) allowFrom.add(result.credential.userId);
-      this.config.upsertAccount({
-        id: accountId,
-        channel,
-        name: existing?.name || `${channelDisplayName(channel)} ${accountId.slice(-6)}`,
-        enabled: true,
-        providerAccountId: result.credential.providerAccountId,
-        ...(result.credential.providerUsername ? { providerUsername: result.credential.providerUsername } : {}),
-        ...(result.credential.userId ? { userId: result.credential.userId } : {}),
-        baseUrl: result.credential.baseUrl,
-        dmPolicy: existing?.dmPolicy ?? "pairing",
-        allowFrom: [...allowFrom],
-        groupPolicy: existing?.groupPolicy ?? "disabled",
-        groupIds: existing?.groupIds ?? [],
-        groupAllowFrom: existing?.groupAllowFrom ?? [],
-        requireMention: existing?.requireMention ?? true,
-        commandsEnabled: existing?.commandsEnabled ?? false,
-        ...(existing?.defaultCwd ? { defaultCwd: existing.defaultCwd } : {}),
-        toolNames: existing?.toolNames ?? [],
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-      });
-      await this.restartAccount(accountId);
+      try {
+        const accountId = result.event.accountId;
+        const now = new Date().toISOString();
+        const existing = this.config.getAccount(accountId);
+        const previousSecret = await this.getSecret({ channel, id: accountId }).catch(() => null);
+        const ownerUserId = result.account?.ownerUserId?.trim();
+        const appId = result.account?.appId?.trim();
+        const domain = result.account?.domain;
+        if (channel === "feishu") {
+          const expectedAccountId =
+            appId && domain
+              ? `feishu-${createHash("sha256").update(`${domain}\0${appId}`).digest("hex").slice(0, 24)}`
+              : "";
+          if (!appId || !/^cli_[A-Za-z0-9]+$/.test(appId) || !domain || expectedAccountId !== accountId) {
+            const event: ChannelLoginEvent = {
+              channel,
+              sessionKey,
+              phase: "error",
+              message: "飞书/Lark 返回的应用信息无效，请重新扫码。",
+            };
+            this.server.emit("channels.login", sessionKey, event);
+            return event;
+          }
+        }
+        const allowFrom = new Set(existing?.allowFrom ?? []);
+        if (ownerUserId) allowFrom.add(ownerUserId);
+        const baseUrl =
+          channel === "feishu"
+            ? domain === "lark"
+              ? "https://open.larksuite.com"
+              : "https://open.feishu.cn"
+            : result.credential.baseUrl;
+        const credential: ChannelSecret = { ...result.credential, baseUrl };
+        const provisional: ChannelAccountConfig = {
+          id: accountId,
+          channel,
+          name:
+            existing?.name || result.account?.displayName || `${channelDisplayName(channel)} ${accountId.slice(-6)}`,
+          enabled: true,
+          ...(channel !== "feishu" ? { providerAccountId: credential.providerAccountId } : {}),
+          ...(credential.providerUsername ? { providerUsername: credential.providerUsername } : {}),
+          ...(ownerUserId ? { userId: ownerUserId } : {}),
+          baseUrl,
+          ...(channel === "feishu" && appId ? { appId } : {}),
+          ...(channel === "feishu" && domain ? { domain } : {}),
+          dmPolicy: existing?.dmPolicy ?? (channel === "feishu" && ownerUserId ? "allowlist" : "pairing"),
+          allowFrom: [...allowFrom],
+          groupPolicy: existing?.groupPolicy ?? "disabled",
+          groupIds: existing?.groupIds ?? [],
+          groupAllowFrom: existing?.groupAllowFrom ?? [],
+          requireMention: existing?.requireMention ?? true,
+          commandsEnabled: existing?.commandsEnabled ?? false,
+          ...(existing?.defaultCwd ? { defaultCwd: existing.defaultCwd } : {}),
+          toolNames: existing?.toolNames ?? [],
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        };
+        try {
+          await this.setSecret(channel, accountId, credential);
+          this.config.upsertAccount(provisional);
+        } catch {
+          if (previousSecret) await this.setSecret(channel, accountId, previousSecret).catch(() => undefined);
+          else await this.secretAccess.delete(channel, accountId).catch(() => undefined);
+          try {
+            if (existing) this.config.upsertAccount(existing);
+            else this.config.deleteAccount(accountId);
+          } catch {
+            /* The original persistence error remains authoritative. */
+          }
+          const event: ChannelLoginEvent = {
+            channel,
+            sessionKey,
+            phase: "error",
+            message: "应用已创建，但安全保存失败。请在飞书/Lark 后台删除该应用后重试。",
+            accountId,
+          };
+          this.server.emit("channels.login", sessionKey, event);
+          return event;
+        }
+
+        const probe = await this.registry
+          .get(channel)
+          .probe(provisional, credential)
+          .catch(() => ({ ok: false as const, accountId, message: "无法验证机器人身份，请检查网络后重试。" }));
+        if (!probe.ok) {
+          const probeMessage = safeChannelError(probe.message).split(credential.token).join("[REDACTED]");
+          const message = `应用已创建并安全保存，但连接检查失败：${probeMessage}`;
+          this.emitStatus(provisional, { state: "error", connected: false, lastError: message });
+          const event: ChannelLoginEvent = { channel, sessionKey, phase: "error", message, accountId };
+          this.server.emit("channels.login", sessionKey, event);
+          return event;
+        }
+
+        const providerAccountId = probe.providerAccountId ?? credential.providerAccountId;
+        const providerUsername = probe.providerUsername ?? credential.providerUsername;
+        const savedSecret: ChannelSecret = {
+          ...credential,
+          providerAccountId,
+          ...(providerUsername ? { providerUsername } : {}),
+        };
+        try {
+          await this.setSecret(channel, accountId, savedSecret);
+          this.config.upsertAccount({
+            ...provisional,
+            name:
+              existing?.name ||
+              providerUsername ||
+              probe.displayName ||
+              result.account?.displayName ||
+              provisional.name,
+            providerAccountId,
+            ...(providerUsername ? { providerUsername } : {}),
+            updatedAt: new Date().toISOString(),
+          });
+          await this.restartAccount(accountId);
+        } catch {
+          const event: ChannelLoginEvent = {
+            channel,
+            sessionKey,
+            phase: "error",
+            message: "应用已创建并安全保存，但机器人启动失败。账号已保留，可稍后重试。",
+            accountId,
+          };
+          this.server.emit("channels.login", sessionKey, event);
+          return event;
+        }
+        result.event = {
+          ...result.event,
+          message: channel === "feishu" ? "飞书/Lark 机器人已创建并连接。" : result.event.message,
+        };
+      } finally {
+        result.finalize?.();
+      }
     }
     this.server.emit("channels.login", sessionKey, result.event);
     return result.event;
@@ -888,5 +1028,8 @@ export class ChannelManager {
 
   async shutdown(): Promise<void> {
     for (const accountId of [...this.runtimes.keys()]) await this.stopAccount(accountId);
+    for (const timer of this.loginWaitCleanupTimers.values()) clearTimeout(timer);
+    this.loginWaitCleanupTimers.clear();
+    this.loginWaits.clear();
   }
 }

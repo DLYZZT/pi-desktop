@@ -31,6 +31,7 @@ import type {
   ChannelBinding,
   ChannelBindingChange,
   ChannelLoginEvent,
+  ChannelLoginStartRequest,
   ChannelProbeResult,
   ChannelsSnapshot,
   ChannelStatus,
@@ -149,7 +150,7 @@ export interface Api {
   "channels.restart": { params: { accountId: string }; result: { ok: true } };
   "channels.probe": { params: { accountId: string }; result: ChannelProbeResult };
   "channels.loginStart": {
-    params: { channel: ChannelId; force?: boolean };
+    params: ChannelLoginStartRequest;
     result: ChannelLoginEvent;
   };
   "channels.loginWait": {

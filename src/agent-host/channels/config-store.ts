@@ -70,7 +70,7 @@ function normalizeAccount(value: ChannelAccountConfig, touchUpdatedAt = false): 
     ...(value.providerUsername?.trim() ? { providerUsername: value.providerUsername.trim() } : {}),
     ...(value.userId?.trim() ? { userId: value.userId.trim() } : {}),
     ...(value.baseUrl?.trim() ? { baseUrl: value.baseUrl.trim() } : {}),
-    ...(value.appId?.trim() ? { appId: value.appId.trim() } : {}),
+    ...(channel === "feishu" && value.appId?.trim() ? { appId: value.appId.trim() } : {}),
     ...(channel === "feishu" ? { domain: normalizeFeishuDomain(value.domain) } : {}),
     dmPolicy: value.dmPolicy ?? "pairing",
     allowFrom: readStringArray(value.allowFrom),

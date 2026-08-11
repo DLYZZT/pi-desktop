@@ -852,7 +852,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
     "channels.probe": async (params) => channelManager.probe(params.accountId),
 
-    "channels.loginStart": async (params) => channelManager.startLogin(params.channel, params.force),
+    "channels.loginStart": async (params) => channelManager.startLogin(params),
 
     "channels.loginWait": async (params) => channelManager.waitLogin(params.channel, params.sessionKey),
 
