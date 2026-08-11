@@ -13,6 +13,7 @@ import {
   type SessionDateGroup,
 } from "@/lib/session-list";
 import { applySessionChangedEvent } from "@/lib/session-sidebar-state";
+import appIconUrl from "../../../build/icon.png";
 
 interface Props {
   selectedSessionId: string | null;
@@ -312,26 +313,18 @@ function PiAgentTitle() {
         minWidth: "6ch",
       }}
     >
-      <span
+      <img
+        src={appIconUrl}
+        alt=""
+        aria-hidden="true"
         style={{
-          width: 22,
-          height: 22,
-          borderRadius: 5,
-          background: "var(--text)",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "var(--font-mono)",
-          fontSize: 12,
-          color: "var(--accent)",
-          fontWeight: 700,
+          width: 28,
+          height: 28,
+          objectFit: "contain",
           flexShrink: 0,
         }}
-        aria-hidden="true"
-      >
-        $
-      </span>
-      <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: "-0.2px", fontFamily: "var(--font-mono)" }}>
+      />
+      <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.2px", fontFamily: "var(--font-mono)" }}>
         {display}
       </span>
     </button>
