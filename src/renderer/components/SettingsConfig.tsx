@@ -921,12 +921,134 @@ function GeneralSettings({
 }) {
   const { t } = useI18n();
   const [backgroundMode, setBackgroundMode] = useState(true);
+  const [httpProxy, setHttpProxy] = useState("");
+  const [httpsProxy, setHttpsProxy] = useState("");
+  const [proxyLoading, setProxyLoading] = useState(true);
+  const [proxySaving, setProxySaving] = useState(false);
+  const [proxySaved, setProxySaved] = useState(false);
+  const [proxyError, setProxyError] = useState<string | null>(null);
+  const [systemProxyLoading, setSystemProxyLoading] = useState(false);
+  const [proxyTesting, setProxyTesting] = useState(false);
+  const [proxyTestOk, setProxyTestOk] = useState<boolean | null>(null);
+  const [proxyTestMessage, setProxyTestMessage] = useState<string | null>(null);
   const languageControlId = useId();
   const backgroundModeControlId = useId();
   const themeControlId = useId();
+  const httpProxyControlId = useId();
+  const httpsProxyControlId = useId();
   useEffect(() => {
     void window.piBridge.getUiState().then((state) => setBackgroundMode(state.backgroundMode !== false));
   }, []);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/network-proxy")
+      .then((r) => r.json())
+      .then((d: { httpProxy?: string; httpsProxy?: string }) => {
+        if (!cancelled) {
+          setHttpProxy(d.httpProxy ?? "");
+          setHttpsProxy(d.httpsProxy ?? "");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setProxyError(t("proxyLoadFailed", "Failed to load proxy settings."));
+      })
+      .finally(() => {
+        if (!cancelled) setProxyLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [t]);
+
+  const saveProxy = async (nextHttp?: string, nextHttps?: string) => {
+    setProxySaving(true);
+    setProxySaved(false);
+    setProxyError(null);
+    try {
+      const res = await fetch("/api/network-proxy", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          httpProxy: nextHttp ?? httpProxy,
+          httpsProxy: nextHttps ?? httpsProxy,
+        }),
+      });
+      const d = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || d.error) {
+        setProxyError(d.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      setProxySaved(true);
+      window.setTimeout(() => setProxySaved(false), 2500);
+    } catch (e) {
+      setProxyError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProxySaving(false);
+    }
+  };
+
+  const clearProxy = async () => {
+    setHttpProxy("");
+    setHttpsProxy("");
+    await saveProxy("", "");
+  };
+
+  const applySystemProxy = async () => {
+    setProxyError(null);
+    setSystemProxyLoading(true);
+    try {
+      const res = await fetch("/api/network-proxy/system");
+      const d = (await res.json()) as { httpProxy?: string; httpsProxy?: string; error?: string };
+      if (!res.ok || d.error) throw new Error(d.error ?? `HTTP ${res.status}`);
+      const http = d.httpProxy ?? "";
+      const https = d.httpsProxy ?? "";
+      setHttpProxy(http);
+      setHttpsProxy(https);
+      await saveProxy(http, https);
+    } catch (e) {
+      setProxyError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSystemProxyLoading(false);
+    }
+  };
+
+  const testProxyConnection = async () => {
+    setProxyError(null);
+    setProxyTestMessage(null);
+    setProxyTestOk(null);
+    setProxyTesting(true);
+    try {
+      const res = await fetch("/api/network-proxy/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ httpProxy, httpsProxy }),
+      });
+      const d = (await res.json()) as {
+        ok?: boolean;
+        probes?: Array<{ protocol: string; ok: boolean; latencyMs?: number; error?: string }>;
+      };
+      const probes = d.probes ?? [];
+      const summary = probes.map((probe) => {
+        const label = probe.protocol.toUpperCase();
+        return probe.ok ? `${label} ${probe.latencyMs ?? 0}ms` : `${label}: ${probe.error ?? "error"}`;
+      });
+      if (d.ok) {
+        setProxyTestOk(true);
+        setProxyTestMessage(`${t("proxyTestOk", "Connection OK")}（${summary.join(" · ")}）`);
+      } else if (probes.length === 0) {
+        setProxyTestOk(false);
+        setProxyTestMessage(t("proxyTestNoProxy", "No proxy configured to test"));
+      } else {
+        setProxyTestOk(false);
+        setProxyTestMessage(`${t("proxyTestFailed", "Connection failed")}：${summary.join(" · ")}`);
+      }
+    } catch (e) {
+      setProxyTestOk(false);
+      setProxyTestMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProxyTesting(false);
+    }
+  };
   return (
     <div style={{ width: "100%", overflowY: "auto", padding: "28px clamp(18px, 5vw, 52px)" }}>
       <section style={{ maxWidth: 620 }}>
@@ -1001,6 +1123,153 @@ function GeneralSettings({
             <option value="dark">{t("dark", "Dark")}</option>
           </select>
         </SettingRow>
+      </section>
+
+      <div style={{ height: 1, background: "var(--border)", maxWidth: 620, margin: "28px 0" }} />
+
+      <section style={{ maxWidth: 620 }}>
+        <h2 style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>{t("networkProxy", "Network proxy")}</h2>
+        <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
+          {t(
+            "networkProxyDescription",
+            'Route model API requests and tool subprocess traffic through an HTTP(S) proxy. Leave empty for no proxy, or click "Use system settings" to apply the OS proxy.',
+          )}
+        </p>
+        <div style={{ display: "grid", gap: 8 }}>
+          <SettingRow label={t("proxyHttpUrl", "HTTP proxy URL")} controlId={httpProxyControlId}>
+            <input
+              id={httpProxyControlId}
+              type="text"
+              value={httpProxy}
+              onChange={(event) => setHttpProxy(event.target.value)}
+              placeholder={t("proxyEmptyHint", "No proxy (leave empty)")}
+              spellCheck={false}
+              style={{
+                ...selectStyle,
+                fontFamily: "var(--font-mono)",
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void saveProxy();
+              }}
+            />
+          </SettingRow>
+          <SettingRow label={t("proxyHttpsUrl", "HTTPS proxy URL")} controlId={httpsProxyControlId}>
+            <input
+              id={httpsProxyControlId}
+              type="text"
+              value={httpsProxy}
+              onChange={(event) => setHttpsProxy(event.target.value)}
+              placeholder={t("proxyEmptyHint", "No proxy (leave empty)")}
+              spellCheck={false}
+              style={{
+                ...selectStyle,
+                fontFamily: "var(--font-mono)",
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void saveProxy();
+              }}
+            />
+          </SettingRow>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+          <button
+            type="button"
+            onClick={() => void saveProxy()}
+            disabled={proxySaving || proxyLoading}
+            style={{
+              height: 34,
+              padding: "0 14px",
+              border: "none",
+              borderRadius: 5,
+              background: "var(--accent)",
+              color: "#fff",
+              cursor: proxySaving || proxyLoading ? "not-allowed" : "pointer",
+              opacity: proxySaving || proxyLoading ? 0.6 : 1,
+              fontSize: 12,
+              fontWeight: 600,
+              flexShrink: 0,
+            }}
+          >
+            {proxySaved ? t("saved", "Saved") : proxySaving ? t("saving", "Saving…") : t("save", "Save")}
+          </button>
+          <button
+            type="button"
+            onClick={() => void applySystemProxy()}
+            disabled={proxySaving || proxyLoading || systemProxyLoading}
+            style={{
+              height: 34,
+              padding: "0 12px",
+              background: "none",
+              border: "1px solid var(--border)",
+              borderRadius: 5,
+              color: "var(--text)",
+              cursor: proxySaving || proxyLoading || systemProxyLoading ? "not-allowed" : "pointer",
+              opacity: proxySaving || proxyLoading || systemProxyLoading ? 0.5 : 1,
+              fontSize: 12,
+              flexShrink: 0,
+            }}
+          >
+            {systemProxyLoading ? t("checking", "Checking…") : t("useSystemProxy", "Use system settings")}
+          </button>
+          <button
+            type="button"
+            onClick={() => void testProxyConnection()}
+            disabled={proxySaving || proxyLoading || proxyTesting || (!httpProxy && !httpsProxy)}
+            style={{
+              height: 34,
+              padding: "0 12px",
+              background: "none",
+              border: "1px solid var(--border)",
+              borderRadius: 5,
+              color: "var(--text)",
+              cursor:
+                proxySaving || proxyLoading || proxyTesting || (!httpProxy && !httpsProxy) ? "not-allowed" : "pointer",
+              opacity: proxySaving || proxyLoading || proxyTesting || (!httpProxy && !httpsProxy) ? 0.5 : 1,
+              fontSize: 12,
+              flexShrink: 0,
+            }}
+          >
+            {proxyTesting ? t("testing", "Testing…") : t("testConnection", "Test connection")}
+          </button>
+          <button
+            type="button"
+            onClick={() => void clearProxy()}
+            disabled={proxySaving || proxyLoading || (!httpProxy && !httpsProxy)}
+            style={{
+              height: 34,
+              padding: "0 12px",
+              background: "none",
+              border: "1px solid rgba(239,68,68,0.3)",
+              borderRadius: 5,
+              color: "#ef4444",
+              cursor: proxySaving || proxyLoading || (!httpProxy && !httpsProxy) ? "not-allowed" : "pointer",
+              opacity: proxySaving || proxyLoading || (!httpProxy && !httpsProxy) ? 0.5 : 1,
+              fontSize: 12,
+              flexShrink: 0,
+            }}
+          >
+            {t("clearProxy", "Clear")}
+          </button>
+        </div>
+        {proxyTestMessage && (
+          <div
+            style={{
+              fontSize: 12,
+              color: proxyTestOk ? "#16a34a" : "#f87171",
+              marginTop: 8,
+              wordBreak: "break-all",
+            }}
+          >
+            {proxyTestMessage}
+          </div>
+        )}
+        {proxyError && <div style={{ fontSize: 12, color: "#f87171", marginTop: 8 }}>{proxyError}</div>}
+        <p style={{ margin: "8px 0 0", fontSize: 11, lineHeight: 1.5, color: "var(--text-dim)" }}>
+          {t(
+            "networkProxyNote",
+            "HTTPS requests fall back to the HTTP proxy when HTTPS is left empty. Applies to new agent sessions.",
+          )}
+        </p>
       </section>
     </div>
   );

@@ -3,6 +3,7 @@
  * Dev orchestration: Vite (renderer) + tsup watch (main/preload/host) + Electron.
  */
 import { spawn } from "child_process";
+import { rmSync } from "node:fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -43,7 +44,10 @@ process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
 // 1) Build main once, then watch
+// tsup configs never clean while watching (sibling instances share out/), so
+// remove the stale output here before the initial build.
 console.log("[dev] building main/preload/host…");
+rmSync(path.join(root, "out"), { recursive: true, force: true });
 const build = spawn("npx", ["tsup", "--config", "tsup.config.ts"], {
   cwd: root,
   stdio: "inherit",

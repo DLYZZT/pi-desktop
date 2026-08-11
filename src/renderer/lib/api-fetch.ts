@@ -153,9 +153,61 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
         return jsonResponse({ success: true });
       }
     }
+
+    if (segs[0] === "network-proxy" && segs[1] === "system" && method === "GET") {
+      return jsonResponse(await call("networkProxy.system"));
+    }
+    if (segs[0] === "network-proxy" && segs[1] === "test" && method === "POST") {
+      const body = await parseBody(init);
+      return jsonResponse(
+        await call("networkProxy.test", {
+          httpProxy: String(body.httpProxy ?? ""),
+          httpsProxy: String(body.httpsProxy ?? ""),
+        }),
+      );
+    }
+    if (segs[0] === "network-proxy" && segs.length === 1) {
+      if (method === "GET") return jsonResponse(await call("networkProxy.get"));
+      if (method === "PUT" || method === "POST") {
+        const body = await parseBody(init);
+        return jsonResponse(
+          await call("networkProxy.set", {
+            httpProxy: String(body.httpProxy ?? ""),
+            httpsProxy: String(body.httpsProxy ?? ""),
+          }),
+        );
+      }
+    }
     if (segs[0] === "models-config" && segs[1] === "test" && method === "POST") {
       const body = await parseBody(init);
       return jsonResponse(await call("modelsConfig.test", body as never));
+    }
+    if (segs[0] === "models-config" && segs[1] === "providers" && method === "GET") {
+      return jsonResponse(await call("modelsConfig.providers"));
+    }
+    if (segs[0] === "models-config" && segs[1] === "provider-models" && method === "POST") {
+      const body = await parseBody(init);
+      return jsonResponse(await call("modelsConfig.providerModels", { providerId: String(body.providerId ?? "") }));
+    }
+    if (segs[0] === "models-config" && segs[1] === "set-provider-overlay" && method === "POST") {
+      const body = await parseBody(init);
+      return jsonResponse(
+        await call("modelsConfig.setProviderOverlay", {
+          providerId: String(body.providerId ?? ""),
+          ...(typeof body.baseUrl === "string" ? { baseUrl: body.baseUrl } : {}),
+          // `null` is meaningful: clear the per-provider filter (enable every model).
+          ...(body.enabledModels === undefined ? {} : { enabledModels: body.enabledModels as string[] | null }),
+        }),
+      );
+    }
+    if (segs[0] === "models-config" && segs[1] === "fetch-models" && method === "POST") {
+      const body = await parseBody(init);
+      return jsonResponse(
+        await call("modelsConfig.fetchModels", {
+          baseUrl: String(body.baseUrl ?? ""),
+          apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
+        }),
+      );
     }
 
     if (segs[0] === "auth" && segs[1] === "providers" && method === "GET") {
