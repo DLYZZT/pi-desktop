@@ -25,6 +25,7 @@ import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { useI18n } from "@/i18n";
+import appIconUrl from "../../../build/icon.png";
 
 interface Props {
   session: SessionInfo | null;
@@ -571,7 +572,6 @@ export function ChatWindow({
                 justifyContent: "center",
                 marginLeft: 16,
                 marginRight: 52,
-                fontFamily: "var(--font-mono)",
               }}
             >
               <div
@@ -582,29 +582,21 @@ export function ChatWindow({
                   lineHeight: 1.4,
                 }}
               >
-                <span
+                <img
+                  src={appIconUrl}
+                  alt=""
+                  aria-hidden="true"
                   style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 6,
-                    background: "var(--text)",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 14,
-                    fontWeight: 700,
-                    color: "var(--accent)",
+                    width: 36,
+                    height: 36,
+                    objectFit: "contain",
                     flexShrink: 0,
                   }}
-                >
-                  $
-                </span>
+                />
                 <span
                   style={{
-                    fontSize: 22,
+                    fontSize: 26,
                     color: "var(--text)",
-                    fontWeight: 700,
-                    letterSpacing: "-0.2px",
                     flexShrink: 0,
                     whiteSpace: "nowrap",
                   }}

@@ -1,6 +1,8 @@
 import type {
   AgentCommand,
   AgentEvent,
+  BuiltinModelInfo,
+  BuiltinProviderInfo,
   CredentialMutationResult,
   DirEntry,
   EntryContentResult,
@@ -12,6 +14,7 @@ import type {
   ModelsConfig,
   ModelsListResult,
   PagedContextInfo,
+  ProviderModelsResult,
   ProviderStatus,
   RunningStateEvent,
   SessionDetail,
@@ -247,6 +250,21 @@ export interface Api {
   };
   "modelsConfig.get": { params: void; result: ModelsConfig };
   "modelsConfig.set": { params: ModelsConfig; result: { ok: true } };
+  /** Built-in providers with their current overlay (custom Base URL / enabled models). */
+  "modelsConfig.providers": { params: void; result: { providers: BuiltinProviderInfo[] } };
+  /** Full model list + overlay for one built-in provider. */
+  "modelsConfig.providerModels": { params: { providerId: string }; result: ProviderModelsResult };
+  /** Persist custom Base URL / enabled models for a built-in provider. */
+  "modelsConfig.setProviderOverlay": {
+    // `enabledModels: null` clears the filter (every model enabled).
+    params: { providerId: string; baseUrl?: string; enabledModels?: string[] | null };
+    result: { ok: true };
+  };
+  /** Fetch `{BaseURL}/models` for a custom provider and parse model names. */
+  "modelsConfig.fetchModels": {
+    params: { baseUrl: string; apiKey?: string };
+    result: { ok: true; models: BuiltinModelInfo[] } | { ok: false; error: string; status?: number };
+  };
   "modelsConfig.test": {
     params: {
       providerName?: string;

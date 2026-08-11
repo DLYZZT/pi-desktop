@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Check, Field, NumInput, SecretTextInput, Select, SectionTitle, TextInput } from "./form-controls";
+import { Check, Field, NumInput, SecretTextInput, Select, SectionTitle, TextInput, inputStyle } from "./form-controls";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import { replaceModelEntry, type ModelEntry, type ModelsJson, type ProviderEntry } from "@/lib/models-config-state";
 import { call, getModelPreferences, setModelPreferences } from "@/lib/api-client";
 import { isModelEnabled, setProviderModelsEnabled, toggleModelEnabled } from "@/lib/model-selection";
-import type { ModelPreferencesResult } from "@contract/types";
+import type { BuiltinProviderInfo, ModelPreferencesResult, ProviderModelsResult } from "@contract/types";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
 import OpenAIIcon from "@lobehub/icons/es/OpenAI/components/Mono";
@@ -130,11 +130,290 @@ type Selection =
   | { type: "provider"; name: string }
   | { type: "model"; providerName: string; index: number }
   | { type: "oauth"; providerId: string }
-  | { type: "apikey"; providerId: string };
+  | { type: "apikey"; providerId: string }
+  | { type: "builtin"; providerId: string };
+
+type ToastType = "success" | "error" | "info";
+
+interface ToastItem {
+  id: number;
+  message: string;
+  type: ToastType;
+  exiting?: boolean;
+}
+
+function ToastStack({ toasts }: { toasts: ToastItem[] }) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        right: 16,
+        bottom: 16,
+        zIndex: 1400,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        pointerEvents: "none",
+        maxWidth: 360,
+      }}
+    >
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "9px 12px",
+            borderRadius: 8,
+            background: "var(--bg-panel)",
+            border: `1px solid ${
+              toast.type === "error"
+                ? "rgba(239,68,68,0.5)"
+                : toast.type === "success"
+                  ? "rgba(74,222,128,0.5)"
+                  : "var(--border)"
+            }`,
+            boxShadow: "0 6px 20px rgba(0,0,0,0.22)",
+            fontSize: 12,
+            color: "var(--text)",
+            lineHeight: 1.4,
+            opacity: toast.exiting ? 0 : 1,
+            transform: toast.exiting ? "translateY(4px)" : "none",
+            transition: "opacity 0.18s ease, transform 0.18s ease",
+          }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              flexShrink: 0,
+              background: toast.type === "error" ? "#ef4444" : toast.type === "success" ? "#4ade80" : "#94a3b8",
+            }}
+          />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{toast.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const API_OPTIONS = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"] as const;
 
 // ── Provider detail ───────────────────────────────────────────────────────────
+
+type FetchModelsState =
+  | { phase: "idle" }
+  | { phase: "fetching" }
+  | { phase: "done"; models: { id: string; name?: string }[] }
+  | { phase: "error"; message: string };
+
+// ── Search Selection: one input that filters a dropdown list as you type ──────
+
+function SearchSelect({
+  options,
+  value,
+  onChange,
+  placeholder,
+  mono,
+}: {
+  options: { id: string; name?: string }[];
+  value: string;
+  onChange: (id: string) => void;
+  placeholder?: string;
+  mono?: boolean;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const [dropdownUp, setDropdownUp] = useState(false);
+  const [dropdownHeight, setDropdownHeight] = useState(240);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? options.filter((m) => m.id.toLowerCase().includes(q) || (m.name ?? "").toLowerCase().includes(q))
+    : options;
+  const selected = value ? options.find((m) => m.id === value) : undefined;
+  const label = (m: { id: string; name?: string }) => (m.name && m.name !== m.id ? `${m.name} — ${m.id}` : m.id);
+
+  // Close when clicking outside the control
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  // Reset the highlight whenever the filter changes
+  useEffect(() => {
+    setHighlight(0);
+  }, [q]);
+
+  // ISSUE: the dropdown must never get clipped by the scroll container or the
+  // viewport bottom. Estimate its height and open upward when there is not
+  // enough room below the input, capping the height to the available space.
+  useEffect(() => {
+    if (!open) return;
+    const el = rootRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const estHeight = Math.min(240, filtered.length * 29 + 12);
+    const spaceBelow = window.innerHeight - rect.bottom - 8;
+    const spaceAbove = rect.top - 8;
+    if (spaceBelow < estHeight && spaceAbove > spaceBelow) {
+      setDropdownUp(true);
+      setDropdownHeight(Math.max(80, Math.min(240, spaceAbove)));
+    } else {
+      setDropdownUp(false);
+      setDropdownHeight(Math.max(80, Math.min(240, spaceBelow)));
+    }
+  }, [open, filtered.length]);
+
+  const choose = (id: string) => {
+    onChange(id);
+    setQuery("");
+    setDirty(false);
+    setOpen(false);
+  };
+
+  const shown = dirty ? query : selected ? label(selected) : "";
+  const shownTitle = dirty ? query : selected ? label(selected) : "";
+
+  return (
+    <div ref={rootRef} style={{ position: "relative", flex: 1, minWidth: 0 }}>
+      <input
+        type="text"
+        value={shown}
+        placeholder={placeholder}
+        title={shownTitle || undefined}
+        onFocus={(e) => {
+          setOpen(true);
+          e.target.select();
+        }}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setDirty(true);
+          setOpen(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            if (!open) setOpen(true);
+            else if (filtered.length > 0) setHighlight((h) => Math.min(h + 1, filtered.length - 1));
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setHighlight((h) => Math.max(h - 1, 0));
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (open && filtered.length > 0) choose(filtered[Math.min(highlight, filtered.length - 1)].id);
+            else if (!open) setOpen(true);
+          } else if (e.key === "Escape") {
+            setOpen(false);
+          }
+        }}
+        style={{
+          ...inputStyle,
+          fontFamily: mono ? "var(--font-mono)" : "inherit",
+          fontSize: 12,
+          paddingRight: 30,
+        }}
+      />
+      <span
+        style={{
+          position: "absolute",
+          right: 8,
+          top: "50%",
+          transform: "translateY(-50%)",
+          pointerEvents: "none",
+          color: "var(--text-dim)",
+          display: "flex",
+        }}
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </span>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            zIndex: 20,
+            maxHeight: dropdownHeight,
+            overflowY: "auto",
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+            ...(dropdownUp ? { bottom: "calc(100% + 4px)" } : { top: "calc(100% + 4px)" }),
+          }}
+        >
+          {filtered.length === 0 ? (
+            <div style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-dim)" }}>
+              {t("noModelsMatch", "No models match “{query}”").replace("{query}", query.trim())}
+            </div>
+          ) : (
+            filtered.map((m, i) => (
+              <div
+                key={m.id}
+                onClick={() => choose(m.id)}
+                onMouseEnter={() => setHighlight(i)}
+                title={label(m)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "7px 10px",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontFamily: "var(--font-mono)",
+                  color: "var(--text)",
+                  background: i === highlight ? "var(--bg-hover)" : "none",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {m.id === value && (
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#4ade80"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ flexShrink: 0 }}
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label(m)}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ProviderDetail({
   name,
@@ -142,17 +421,76 @@ function ProviderDetail({
   onChange,
   onRename,
   onDelete,
+  showToast,
 }: {
   name: string;
   provider: ProviderEntry;
   onChange: (p: ProviderEntry) => void;
   onRename: (n: string) => void;
   onDelete: () => void;
+  showToast: (message: string, type?: ToastType) => void;
 }) {
   const { t } = useI18n();
   const [editingName, setEditingName] = useState(name);
   useEffect(() => setEditingName(name), [name]);
+  const [fetchState, setFetchState] = useState<FetchModelsState>({ phase: "idle" });
+  const [fetchedModel, setFetchedModel] = useState("");
   const set = <K extends keyof ProviderEntry>(k: K, v: ProviderEntry[K]) => onChange({ ...provider, [k]: v });
+
+  // Commit an edited identifier on Enter / blur so Save alone is enough; the
+  // explicit Rename button stays as a visible affordance.
+  const commitRename = useCallback(() => {
+    const next = editingName.trim();
+    if (!next || next === name) {
+      if (!next) setEditingName(name);
+      return;
+    }
+    onRename(next);
+  }, [editingName, name, onRename]);
+
+  const handleFetchModels = useCallback(async () => {
+    const baseUrl = provider.baseUrl?.trim();
+    if (!baseUrl) {
+      showToast(t("enterBaseUrlFirst", "Enter a Base URL first, then fetch the model list"), "error");
+      return;
+    }
+    setFetchState({ phase: "fetching" });
+    setFetchedModel("");
+    try {
+      const res = await fetch("/api/models-config/fetch-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseUrl, apiKey: provider.apiKey }),
+      });
+      const d = (await res.json()) as { ok?: boolean; models?: { id: string; name?: string }[]; error?: string };
+      if (!res.ok || !d.ok || !d.models) {
+        const message = d.error ?? `HTTP ${res.status}`;
+        setFetchState({ phase: "error", message });
+        showToast(message, "error");
+        return;
+      }
+      setFetchState({ phase: "done", models: d.models });
+      showToast(t("modelsFound", "{count} models found").replace("{count}", String(d.models.length)), "success");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setFetchState({ phase: "error", message });
+      showToast(message, "error");
+    }
+  }, [provider.baseUrl, provider.apiKey, showToast, t]);
+
+  const handleAddFetchedModel = useCallback(() => {
+    if (fetchState.phase !== "done" || !fetchedModel) return;
+    const model = fetchState.models.find((m) => m.id === fetchedModel);
+    if (!model) return;
+    const existing = provider.models ?? [];
+    if (existing.some((m) => m.id === model.id)) {
+      showToast(t("modelAlreadyInList", 'Model "{id}" is already in the list').replace("{id}", model.id), "info");
+      return;
+    }
+    onChange({ ...provider, models: [...existing, { id: model.id, name: model.name }] });
+    showToast(t("modelAdded", 'Added "{id}" — click Save to apply').replace("{id}", model.id), "success");
+    setFetchedModel("");
+  }, [fetchState, fetchedModel, onChange, provider, showToast, t]);
 
   useEffect(() => {
     if (!provider.api) onChange({ ...provider, api: "openai-completions" });
@@ -162,7 +500,7 @@ function ProviderDetail({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionTitle>{t("modelProvider", "Provider")}</SectionTitle>
+        <SectionTitle>{provider.name || name}</SectionTitle>
         <button
           type="button"
           onClick={onDelete}
@@ -181,12 +519,32 @@ function ProviderDetail({
         </button>
       </div>
 
-      <Field label={t("modelProviderName", "Provider name")}>
-        <TextInput value={editingName} onChange={setEditingName} placeholder="provider-name" mono />
+      <Field label={t("providerDisplayName", "Provider name")}>
+        <TextInput
+          value={provider.name ?? ""}
+          onChange={(v) => set("name", v || undefined)}
+          placeholder={t("providerNamePlaceholder", "Display name")}
+        />
+        <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
+          {t("providerDisplayNameHint", "Shown in the provider list; leave empty to use the identifier.")}
+        </span>
+      </Field>
+
+      <Field label={t("providerId", "Provider ID")}>
+        <TextInput
+          value={editingName}
+          onChange={setEditingName}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename();
+          }}
+          onBlur={() => commitRename()}
+          placeholder="provider-id"
+          mono
+        />
         {editingName !== name && editingName.trim() && (
           <button
             type="button"
-            onClick={() => onRename(editingName.trim())}
+            onClick={() => commitRename()}
             style={{
               marginTop: 4,
               minHeight: 32,
@@ -205,7 +563,7 @@ function ProviderDetail({
         )}
       </Field>
 
-      <Field label={t("modelBaseUrl", "Base URL")}>
+      <Field label={t("baseUrlLabel", "Base URL")}>
         <TextInput
           value={provider.baseUrl ?? ""}
           onChange={(v) => set("baseUrl", v || undefined)}
@@ -214,19 +572,19 @@ function ProviderDetail({
         />
       </Field>
 
-      <Field label={t("modelApiKey", "API Key")}>
+      <Field label={t("apiKey", "API Key")}>
         <SecretTextInput
           value={provider.apiKey ?? ""}
           onChange={(v) => set("apiKey", v || undefined)}
-          placeholder={t("modelApiKeySourcePlaceholder", "ENV_VAR_NAME, !shell-command, or literal key")}
+          placeholder={t("apiKeyPlaceholder", "ENV_VAR_NAME, !shell-command, or literal key")}
           mono
         />
         <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
-          {t("modelApiKeySourceHint", "Prefix with ! to run a shell command, or use an environment variable name.")}
+          {t("shellCommandHint", "Prefix with ! to run a shell command, or use an env var name")}
         </span>
       </Field>
 
-      <Field label={t("modelApi", "API")}>
+      <Field label={t("api", "API")}>
         <Select
           value={provider.api ?? "openai-completions"}
           onChange={(v) => set("api", v)}
@@ -234,6 +592,99 @@ function ProviderDetail({
           required
         />
       </Field>
+
+      {/* Fetch model list from {BaseURL}/models */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            type="button"
+            onClick={handleFetchModels}
+            disabled={fetchState.phase === "fetching" || !provider.baseUrl?.trim()}
+            title={t("fetchModelsHint", "Fetch the model list from {BaseURL}/models")}
+            style={{
+              height: 34,
+              padding: "0 12px",
+              background: fetchState.phase === "done" ? "#16a34a" : "var(--accent)",
+              border: "none",
+              borderRadius: 5,
+              color: "#fff",
+              cursor: fetchState.phase === "fetching" || !provider.baseUrl?.trim() ? "not-allowed" : "pointer",
+              opacity: fetchState.phase === "fetching" || !provider.baseUrl?.trim() ? 0.6 : 1,
+              fontSize: 12,
+              fontWeight: 600,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              flexShrink: 0,
+            }}
+          >
+            {fetchState.phase === "fetching" && (
+              <span
+                style={{
+                  width: 11,
+                  height: 11,
+                  borderRadius: "50%",
+                  border: "2px solid rgba(255,255,255,0.4)",
+                  borderTopColor: "#fff",
+                  animation: "spin 0.7s linear infinite",
+                }}
+              />
+            )}
+            {fetchState.phase === "fetching" ? t("fetchingModels", "Fetching…") : t("fetchModels", "Fetch models")}
+          </button>
+          {fetchState.phase === "done" && (
+            <span style={{ fontSize: 11, color: "#4ade80" }}>
+              {t("modelsFound", "{count} models found").replace("{count}", String(fetchState.models.length))}
+            </span>
+          )}
+          {fetchState.phase === "error" && (
+            <span
+              style={{
+                fontSize: 11,
+                color: "#f87171",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                maxWidth: 300,
+              }}
+              title={fetchState.message}
+            >
+              {fetchState.message}
+            </span>
+          )}
+        </div>
+
+        {fetchState.phase === "done" && fetchState.models.length > 0 && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <SearchSelect
+              options={fetchState.models}
+              value={fetchedModel}
+              onChange={setFetchedModel}
+              placeholder={t("searchModelsPlaceholder", "Type to search, pick a model to add…")}
+              mono
+            />
+            <button
+              type="button"
+              onClick={handleAddFetchedModel}
+              disabled={!fetchedModel}
+              style={{
+                height: 34,
+                padding: "0 14px",
+                background: fetchedModel ? "var(--accent)" : "var(--bg-panel)",
+                border: "none",
+                borderRadius: 5,
+                color: fetchedModel ? "#fff" : "var(--text-dim)",
+                cursor: fetchedModel ? "pointer" : "not-allowed",
+                fontSize: 12,
+                fontWeight: 600,
+                flexShrink: 0,
+              }}
+            >
+              {t("addModel", "Add model")}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -364,7 +815,7 @@ function ThinkingLevelMapEditor({
                 onClick={() => setLevel(level, "omit")}
                 style={{ ...btnBase, ...(state === "omit" ? btnActive : {}) }}
               >
-                {t("modelDefault", "Default")}
+                {t("default", "Default")}
               </button>
               <button
                 onClick={() => setLevel(level, null)}
@@ -374,7 +825,7 @@ function ThinkingLevelMapEditor({
                   ...(state === "null" ? btnActiveDisabled : {}),
                 }}
               >
-                {t("modelDisabled", "Disabled")}
+                {t("disabled", "Disabled")}
               </button>
             </div>
 
@@ -397,7 +848,7 @@ function ThinkingLevelMapEditor({
                   flexShrink: 0,
                 }}
               >
-                {t("modelCustom", "Custom")}
+                {t("custom", "Custom")}
               </button>
               <input
                 value={strVal}
@@ -473,17 +924,15 @@ function ModelDetail({
   };
   const testSummary = (() => {
     if (testState.phase === "idle") return null;
-    if (testState.phase === "testing") return t("modelTestingConnection", "Testing model connection…");
+    if (testState.phase === "testing") return t("testingModelConnection", "Testing model connection...");
     const meta = [
       testState.latencyMs !== undefined ? `${testState.latencyMs}ms` : null,
       testState.status !== undefined ? `HTTP ${testState.status}` : null,
     ].filter(Boolean);
     if (testState.phase === "success") {
-      return [t("modelConnectionConnected", "Connected"), ...meta, testState.responseText || null]
-        .filter(Boolean)
-        .join(" · ");
+      return [t("connected", "Connected"), ...meta, testState.responseText || null].filter(Boolean).join(" · ");
     }
-    return [t("modelConnectionFailed", "Failed"), ...meta, testState.message].filter(Boolean).join(" · ");
+    return [t("failed", "Failed"), ...meta, testState.message].filter(Boolean).join(" · ");
   })();
 
   useEffect(() => {
@@ -559,7 +1008,7 @@ function ModelDetail({
             type="button"
             onClick={handleTest}
             disabled={!model.id.trim() || testState.phase === "testing"}
-            title={t("modelTestConnection", "Test model connection")}
+            title={t("testModelConnection", "Test model connection")}
             style={{
               height: 32,
               padding: "0 10px",
@@ -596,10 +1045,10 @@ function ModelDetail({
               </svg>
             )}
             {testState.phase === "testing"
-              ? t("testingConnection", "Testing…")
+              ? t("testing", "Testing…")
               : testState.phase === "success"
-                ? "OK"
-                : t("modelTest", "Test")}
+                ? t("ok", "OK")
+                : t("test", "Test")}
           </button>
           <button
             type="button"
@@ -616,7 +1065,7 @@ function ModelDetail({
               boxSizing: "border-box",
             }}
           >
-            {t("modelRemove", "Remove")}
+            {t("remove", "Remove")}
           </button>
         </div>
       </div>
@@ -625,27 +1074,27 @@ function ModelDetail({
         <Field label={t("modelId", "ID *")}>
           <TextInput value={model.id} onChange={(v) => set("id", v)} placeholder="model-id" mono />
         </Field>
-        <Field label={t("modelName", "Name")}>
+        <Field label={t("name", "Name")}>
           <TextInput
             value={model.name ?? ""}
             onChange={(v) => set("name", v || undefined)}
-            placeholder={t("modelDisplayName", "Display name")}
+            placeholder={t("displayName", "Display name")}
           />
         </Field>
       </div>
 
-      <Field label={t("modelApiOverride", "API override")}>
+      <Field label={t("apiOverride", "API override")}>
         <Select value={model.api ?? ""} onChange={(v) => set("api", v || undefined)} options={API_OPTIONS} />
       </Field>
 
       <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
         <Check
-          label={t("modelReasoning", "Reasoning / thinking")}
+          label={t("reasoningThinking", "Reasoning / thinking")}
           checked={model.reasoning ?? false}
           onChange={(v) => set("reasoning", v || undefined)}
         />
         <Check
-          label={t("modelImageInput", "Image input")}
+          label={t("imageInput", "Image input")}
           checked={model.input?.includes("image") ?? false}
           onChange={(v) => set("input", v ? ["text", "image"] : undefined)}
         />
@@ -654,13 +1103,13 @@ function ModelDetail({
       {model.reasoning && (
         <>
           <Check
-            label={t("modelDeepSeekCompat", "DeepSeek thinking compatibility")}
+            label={t("deepseekThinkingCompat", "DeepSeek thinking compat")}
             checked={hasDeepseekCompat(model)}
             onChange={(v) => onChange(setDeepseekCompat(model, v))}
           />
           <div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <SectionTitle>{t("modelThinkingLevelMap", "Thinking level map")}</SectionTitle>
+              <SectionTitle>{t("thinkingLevelMap", "Thinking level map")}</SectionTitle>
               {model.thinkingLevelMap && (
                 <button
                   type="button"
@@ -676,7 +1125,7 @@ function ModelDetail({
                     cursor: "pointer",
                   }}
                 >
-                  {t("modelClearAll", "Clear all")}
+                  {t("clearAll", "clear all")}
                 </button>
               )}
             </div>
@@ -686,14 +1135,14 @@ function ModelDetail({
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label={t("modelContextWindow", "Context window (tokens)")}>
+        <Field label={t("contextWindow", "Context window (tokens)")}>
           <NumInput
             value={model.contextWindow !== undefined ? String(model.contextWindow) : ""}
             onChange={(v) => set("contextWindow", v ? parseInt(v) : undefined)}
             placeholder="128000"
           />
         </Field>
-        <Field label={t("modelMaxOutputTokens", "Max output tokens")}>
+        <Field label={t("maxOutputTokens", "Max output tokens")}>
           <NumInput
             value={model.maxTokens !== undefined ? String(model.maxTokens) : ""}
             onChange={(v) => set("maxTokens", v ? parseInt(v) : undefined)}
@@ -703,18 +1152,19 @@ function ModelDetail({
       </div>
 
       <div>
-        <SectionTitle>{t("modelCostPerMillion", "Cost (per million tokens)")}</SectionTitle>
+        <SectionTitle>{t("costPerMillionTokens", "Cost (per million tokens)")}</SectionTitle>
         <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
           {(["input", "output", "cacheRead", "cacheWrite"] as const).map((k) => (
             <Field
               key={k}
               label={t(
-                {
-                  input: "modelCostInput",
-                  output: "modelCostOutput",
-                  cacheRead: "modelCostCacheRead",
-                  cacheWrite: "modelCostCacheWrite",
-                }[k],
+                k === "input"
+                  ? "usageInput"
+                  : k === "output"
+                    ? "usageOutput"
+                    : k === "cacheRead"
+                      ? "cacheRead"
+                      : "cacheWrite",
                 k,
               )}
             >
@@ -1008,7 +1458,7 @@ function OAuthDetail({
       if (loginAttemptRef.current !== attempt) return;
       setLoginState({
         phase: "error",
-        message: error instanceof Error ? error.message : t("modelUnableResetLogin", "Unable to reset login"),
+        message: error instanceof Error ? error.message : t("unableToResetLogin", "Unable to reset login"),
       });
       return;
     }
@@ -1090,7 +1540,7 @@ function OAuthDetail({
       es.close();
       eventSourceRef.current = null;
       const message =
-        event instanceof ErrorEvent && event.message ? event.message : t("modelConnectionLost", "Connection lost");
+        event instanceof ErrorEvent && event.message ? event.message : t("connectionLost", "Connection lost");
       setLoginState((prev) => (prev.phase === "success" ? prev : { phase: "error", message }));
     };
   }, [provider.id, onRefresh, t]);
@@ -1118,7 +1568,7 @@ function OAuthDetail({
       setLoginState(
         result.warning
           ? { phase: "success", message: result.warning.message, warning: true }
-          : { phase: "success", message: t("modelDisconnectedSuccessfully", "Disconnected successfully.") },
+          : { phase: "success", message: t("disconnectedSuccessfully", "Disconnected successfully.") },
       );
       onRefresh();
     } catch (error) {
@@ -1129,7 +1579,7 @@ function OAuthDetail({
   const submitCode = useCallback(
     async (token: string, code: string) => {
       if (!code.trim()) return;
-      setLoginState({ phase: "progress", message: t("modelVerifying", "Verifying…") });
+      setLoginState({ phase: "progress", message: t("verifying", "Verifying…") });
       try {
         const res = await fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
           method: "POST",
@@ -1147,10 +1597,7 @@ function OAuthDetail({
         setInputValue("");
         // Success path: the auth progress stream emits "success" and updates state.
       } catch (e) {
-        setLoginState({
-          phase: "error",
-          message: e instanceof Error ? e.message : t("modelNetworkError", "Network error"),
-        });
+        setLoginState({ phase: "error", message: e instanceof Error ? e.message : t("networkError", "Network error") });
       }
     },
     [provider.id, t],
@@ -1158,7 +1605,7 @@ function OAuthDetail({
 
   const submitSelection = useCallback(
     async (token: string, value: string) => {
-      setLoginState({ phase: "progress", message: t("modelContinuing", "Continuing…") });
+      setLoginState({ phase: "progress", message: t("continuing", "Continuing…") });
       try {
         const res = await fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
           method: "POST",
@@ -1173,10 +1620,7 @@ function OAuthDetail({
           });
         }
       } catch (e) {
-        setLoginState({
-          phase: "error",
-          message: e instanceof Error ? e.message : t("modelNetworkError", "Network error"),
-        });
+        setLoginState({ phase: "error", message: e instanceof Error ? e.message : t("networkError", "Network error") });
       }
     },
     [provider.id, t],
@@ -1193,7 +1637,7 @@ function OAuthDetail({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionTitle>{t("modelSubscription", "Subscription")}</SectionTitle>
+        <SectionTitle>{t("subscription", "Subscription")}</SectionTitle>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span
             style={{
@@ -1205,7 +1649,7 @@ function OAuthDetail({
             }}
           />
           <span style={{ fontSize: 11, color: provider.loggedIn ? "#4ade80" : "var(--text-dim)" }}>
-            {provider.loggedIn ? t("modelConnected", "connected") : t("modelNotConnected", "not connected")}
+            {provider.loggedIn ? t("connectedStatus", "connected") : t("notConnectedStatus", "not connected")}
           </span>
         </div>
       </div>
@@ -1215,13 +1659,13 @@ function OAuthDetail({
         {loginState.phase === "idle" && (
           <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
             {provider.loggedIn
-              ? t("modelAlreadyConnected", "Already connected. You can re-login or disconnect.")
-              : t("modelConnectAccount", "Connect your {provider} account.").replace("{provider}", provider.name)}
+              ? t("alreadyConnected", "Already connected. You can re-login or disconnect.")
+              : t("connectAccount", "Connect your {name} account.").replace("{name}", provider.name)}
           </p>
         )}
         {loginState.phase === "connecting" && (
           <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
-            {t("modelOpeningBrowser", "Opening browser…")}
+            {t("openingBrowser", "Opening browser…")}
           </p>
         )}
         {loginState.phase === "select" && (
@@ -1254,21 +1698,21 @@ function OAuthDetail({
             <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
               {loginState.phase === "auth"
                 ? t(
-                    "modelCompleteSignIn",
+                    "completeSignIn",
                     "Complete sign-in in the browser, then copy the redirect URL from the address bar and paste it below.",
                   )
                 : loginState.message}
             </p>
             {loginState.phase === "auth" && (
               <p style={{ margin: 0, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
-                {t("modelBrowserDidNotOpen", "If the browser window did not open,")}{" "}
+                {t("browserDidNotOpen", "If the browser window did not open,")}{" "}
                 <a
                   href={loginState.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{ color: "var(--accent)", wordBreak: "break-all" }}
                 >
-                  {t("modelOpenLoginPage", "click here to open the login page")}
+                  {t("clickHereToOpenLogin", "click here to open the login page")}
                 </a>
                 .
               </p>
@@ -1284,7 +1728,7 @@ function OAuthDetail({
                 placeholder={
                   loginState.phase === "auth"
                     ? "http://localhost:1455/auth/callback?code=…"
-                    : (loginState.placeholder ?? t("modelEnterValue", "Enter value…"))
+                    : (loginState.placeholder ?? t("enterValue", "Enter value…"))
                 }
                 style={{
                   flex: 1,
@@ -1322,7 +1766,7 @@ function OAuthDetail({
         {loginState.phase === "device_code" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-              {t("modelOpenVerificationPage", "Open the verification page and enter this code:")}
+              {t("verificationPageHint", "Open the verification page and enter this code:")}
             </p>
             <div
               style={{
@@ -1349,10 +1793,11 @@ function OAuthDetail({
                 {loginState.verificationUri}
               </a>
               {loginState.expiresInSeconds
-                ? ` ${t("modelCodeExpires", "Expires in {minutes} minutes.").replace(
-                    "{minutes}",
+                ? " " +
+                  t("expiresInMinutes", "Expires in {n} minutes.").replace(
+                    "{n}",
                     String(Math.ceil(loginState.expiresInSeconds / 60)),
-                  )}`
+                  )
                 : ""}
             </p>
           </div>
@@ -1362,7 +1807,7 @@ function OAuthDetail({
         )}
         {loginState.phase === "success" && (
           <p style={{ margin: 0, fontSize: 12, color: loginState.warning ? "#d97706" : "#4ade80" }}>
-            {loginState.message ?? t("modelConnectedSuccessfully", "Connected successfully.")}
+            {loginState.message ?? t("connectedSuccessfully", "Connected successfully.")}
           </p>
         )}
         {loginState.phase === "error" && (
@@ -1402,7 +1847,7 @@ function OAuthDetail({
                 fontWeight: 600,
               }}
             >
-              {provider.loggedIn ? t("modelRelogin", "Re-login") : t("modelLogin", "Login")}
+              {provider.loggedIn ? t("relogin", "Re-login") : t("login", "Login")}
             </button>
             {provider.loggedIn && (
               <button
@@ -1417,7 +1862,7 @@ function OAuthDetail({
                   fontSize: 12,
                 }}
               >
-                {t("modelDisconnect", "Disconnect")}
+                {t("disconnect", "Disconnect")}
               </button>
             )}
           </>
@@ -1515,7 +1960,7 @@ function ApiKeyDetail({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionTitle>{t("modelApiKey", "API Key")}</SectionTitle>
+        <SectionTitle>{t("apiKey", "API Key")}</SectionTitle>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span
             style={{
@@ -1527,23 +1972,20 @@ function ApiKeyDetail({
             }}
           />
           <span style={{ fontSize: 11, color: provider.configured ? "#4ade80" : "var(--text-dim)" }}>
-            {provider.configured ? t("configured", "configured") : t("notConfigured", "not configured")}
+            {provider.configured ? t("configuredStatus", "configured") : t("notConfiguredStatus", "not configured")}
           </span>
         </div>
       </div>
 
       <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
         {provider.configured
-          ? t(
-              "modelApiKeyStored",
-              "API key is stored. Enter a new key below to replace it, or disconnect to remove it.",
-            )
-          : t("modelEnterApiKey", "Enter your {provider} API key to enable {count} models.")
-              .replace("{provider}", provider.displayName)
+          ? t("apiKeyStoredHint", "API key is stored. Enter a new key below to replace it, or disconnect to remove it.")
+          : t("enterApiKeyHint", "Enter your {name} API key to enable {count} models.")
+              .replace("{name}", provider.displayName)
               .replace("{count}", String(provider.modelCount))}
       </p>
 
-      <Field label={t("modelApiKey", "API Key")}>
+      <Field label={t("apiKey", "API Key")}>
         <div style={{ display: "flex", gap: 6 }}>
           <SecretTextInput
             value={apiKey}
@@ -1551,7 +1993,7 @@ function ApiKeyDetail({
             onKeyDown={(e) => {
               if (e.key === "Enter" && apiKey.trim()) void handleSave();
             }}
-            placeholder={provider.configured ? t("modelReplaceApiKey", "Enter new key to replace…") : "sk-…"}
+            placeholder={provider.configured ? t("enterNewKey", "Enter new key to replace…") : "sk-…"}
             style={{ flex: 1 }}
             autoComplete="off"
             spellCheck={false}
@@ -1614,9 +2056,309 @@ function ApiKeyDetail({
             fontSize: 12,
           }}
         >
-          {removing ? t("modelRemoving", "Removing…") : t("modelDisconnect", "Disconnect")}
+          {removing ? t("removing", "Removing…") : t("disconnect", "Disconnect")}
         </button>
       )}
+    </div>
+  );
+}
+
+// ── Built-in provider detail (custom Base URL + enabled model toggles) ────────
+
+function BuiltinProviderDetail({
+  providerId,
+  onChanged,
+  onApplied,
+  showToast,
+}: {
+  providerId: string;
+  onChanged: () => void;
+  onApplied?: (overlay: { providerId: string; baseUrl: string; enabledModels: string[] | null }) => void;
+  showToast: (message: string, type?: ToastType) => void;
+}) {
+  const { t } = useI18n();
+  const [data, setData] = useState<ProviderModelsResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [baseUrl, setBaseUrl] = useState("");
+  // null = no filter (all models enabled by default)
+  const [enabledModels, setEnabledModels] = useState<string[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedOk, setSavedOk] = useState(false);
+  const pendingRef = useRef<{ baseUrl: string; enabledModels: string[] | null } | null>(null);
+  const saveTimerRef = useRef<number | null>(null);
+
+  const persist = useCallback(
+    async (nextBaseUrl: string, nextEnabledModels: string[] | null) => {
+      // Consume the pending request so a re-render / unmount cannot re-fire it.
+      pendingRef.current = null;
+      setSaving(true);
+      try {
+        const res = await fetch("/api/models-config/set-provider-overlay", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ providerId, baseUrl: nextBaseUrl, enabledModels: nextEnabledModels }),
+        });
+        const d = (await res.json()) as { error?: string };
+        if (!res.ok || d.error) throw new Error(d.error ?? `HTTP ${res.status}`);
+        setSavedOk(true);
+        setTimeout(() => setSavedOk(false), 1500);
+        onChanged();
+        // Mirror the overlay into the parent config snapshot so a later full-config
+        // save (custom provider form) does not revert this built-in provider.
+        onApplied?.({ providerId, baseUrl: nextBaseUrl, enabledModels: nextEnabledModels });
+        showToast(t("settingsSaved", "Settings saved"), "success");
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [onChanged, onApplied, providerId, showToast, t],
+  );
+
+  const scheduleSave = useCallback(
+    (nextBaseUrl: string, nextEnabledModels: string[] | null) => {
+      pendingRef.current = { baseUrl: nextBaseUrl, enabledModels: nextEnabledModels };
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(() => {
+        const pending = pendingRef.current;
+        if (pending) void persist(pending.baseUrl, pending.enabledModels);
+      }, 500);
+    },
+    [persist],
+  );
+
+  // Flush any pending save only when actually unmounting (switching provider /
+  // closing the panel). The effect must not re-run on every render — `persist`
+  // is recreated when the parent re-renders, and re-running would re-fire the
+  // pending save and loop forever.
+  const persistRef = useRef(persist);
+  persistRef.current = persist;
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+      const pending = pendingRef.current;
+      if (pending) void persistRef.current(pending.baseUrl, pending.enabledModels);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    setBaseUrl("");
+    setEnabledModels(null);
+    fetch("/api/models-config/provider-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const d = (await r.json().catch(() => ({}))) as { error?: string };
+          throw new Error(d.error ?? `HTTP ${r.status}`);
+        }
+        return r.json() as Promise<ProviderModelsResult>;
+      })
+      .then((d) => {
+        if (cancelled) return;
+        setData(d);
+        setBaseUrl(d.provider.customBaseUrl ?? "");
+        setEnabledModels(d.enabledModels);
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setLoadError(e instanceof Error ? e.message : String(e));
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [providerId]);
+
+  if (loading) {
+    return (
+      <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-muted)" }}>{t("loading", "Loading…")}</div>
+    );
+  }
+  if (loadError || !data) {
+    return (
+      <div style={{ padding: "20px 0", fontSize: 12, color: "#f87171" }}>
+        {loadError ?? t("failedToLoadProvider", "Failed to load provider")}
+      </div>
+    );
+  }
+
+  const allEnabled = enabledModels === null;
+  const enabledSet = new Set(allEnabled ? [] : enabledModels);
+  const enabledCount = allEnabled ? data.models.length : enabledModels!.length;
+
+  const isChecked = (id: string) => allEnabled || enabledSet.has(id);
+
+  const toggleModel = (id: string) => {
+    if (allEnabled) {
+      // First uncheck: everything except this model becomes the explicit list.
+      const next = data.models.filter((m) => m.id !== id).map((m) => m.id);
+      setEnabledModels(next);
+      scheduleSave(baseUrl, next);
+    } else {
+      const next = new Set(enabledModels);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      const list = [...next];
+      // Re-enabling every model collapses back to the default (no filter).
+      const value = list.length === data.models.length ? null : list;
+      setEnabledModels(value);
+      scheduleSave(baseUrl, value);
+    }
+  };
+
+  const selectAll = () => {
+    setEnabledModels(null);
+    scheduleSave(baseUrl, null);
+  };
+
+  const deselectAll = () => {
+    const next: string[] = [];
+    setEnabledModels(next);
+    scheduleSave(baseUrl, next);
+  };
+
+  const statusText = saving ? t("saving", "Saving…") : savedOk ? t("saved", "Saved") : null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <SectionTitle>{t("provider", "Provider")}</SectionTitle>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--text-dim)" }}>
+          {statusText && <span style={{ color: savedOk ? "#4ade80" : "var(--text-dim)" }}>{statusText}</span>}
+          <ProviderIcon id={providerId} size={22} />
+          <span style={{ color: "var(--text-muted)", fontWeight: 600 }}>{data.provider.name}</span>
+        </div>
+      </div>
+
+      <Field label={t("baseUrlLabel", "Base URL")}>
+        <TextInput
+          value={baseUrl}
+          onChange={(v) => {
+            setBaseUrl(v);
+            scheduleSave(v, enabledModels);
+          }}
+          placeholder={data.provider.defaultBaseUrl || "https://api.example.com/v1"}
+          mono
+        />
+        <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
+          {t("leaveEmptyForOfficial", "Leave empty to use the official endpoint ({url})").replace(
+            "{url}",
+            data.provider.defaultBaseUrl || "—",
+          )}
+        </span>
+      </Field>
+
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <SectionTitle>
+            {t("enabledModelsCount", "Enabled models — {enabled} / {total}")
+              .replace("{enabled}", String(enabledCount))
+              .replace("{total}", String(data.models.length))}
+          </SectionTitle>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              type="button"
+              onClick={selectAll}
+              style={{
+                minHeight: 26,
+                padding: "0 9px",
+                fontSize: 11,
+                background: "none",
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                color: "var(--text-muted)",
+                cursor: "pointer",
+              }}
+            >
+              {t("selectAll", "Select all")}
+            </button>
+            <button
+              type="button"
+              onClick={deselectAll}
+              style={{
+                minHeight: 26,
+                padding: "0 9px",
+                fontSize: 11,
+                background: "none",
+                border: "1px solid rgba(239,68,68,0.3)",
+                borderRadius: 4,
+                color: "#ef4444",
+                cursor: "pointer",
+              }}
+            >
+              {t("deselectAll", "Deselect all")}
+            </button>
+          </div>
+        </div>
+        <p style={{ margin: 0, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
+          {t("enabledModelsHint", "Only enabled models appear in the chat model picker.")}
+        </p>
+        <div
+          style={{
+            marginTop: 10,
+            maxHeight: 320,
+            overflowY: "auto",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            padding: "6px 10px",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(min(220px, 100%), 1fr))",
+            gap: 2,
+          }}
+        >
+          {data.models.map((m) => (
+            <label
+              key={m.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "4px 4px",
+                borderRadius: 4,
+                cursor: "pointer",
+                fontSize: 12,
+                color: "var(--text-muted)",
+                minWidth: 0,
+              }}
+              title={m.id}
+            >
+              <input
+                type="checkbox"
+                checked={isChecked(m.id)}
+                onChange={() => toggleModel(m.id)}
+                style={{
+                  width: 15,
+                  height: 15,
+                  margin: 0,
+                  accentColor: "var(--accent)",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 11,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {m.id}
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1786,7 +2528,7 @@ function AddProviderPicker({
             onKeyDown={(e) => {
               if (e.key === "Escape") onClose();
             }}
-            placeholder={t("modelSearchProviders", "Search providers…")}
+            placeholder={t("searchProviders", "Search providers…")}
             style={{
               flex: 1,
               background: "none",
@@ -1803,7 +2545,7 @@ function AddProviderPicker({
         <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
           {totalCount === 0 ? (
             <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-dim)", textAlign: "center" }}>
-              {t("modelNoProvidersMatch", "No providers match")}
+              {t("noProvidersMatch", "No providers match")}
             </div>
           ) : (
             <div
@@ -1824,7 +2566,7 @@ function AddProviderPicker({
                     letterSpacing: "0.07em",
                   }}
                 >
-                  {t("modelCustom", "Custom")}
+                  {t("custom", "Custom")}
                 </div>
               )}
               {showCustom && (
@@ -1855,10 +2597,10 @@ function AddProviderPicker({
                         whiteSpace: "nowrap",
                       }}
                     >
-                      {t("modelCompatibleProvider", "OpenAI / Anthropic compatible")}
+                      {t("customCompatible", "OpenAI / Anthropic compatible")}
                     </div>
                     <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
-                      {t("modelCustomEndpointFormat", "Custom endpoint format")}
+                      {t("customEndpointFormat", "Custom endpoint format")}
                     </div>
                   </div>
                   <span
@@ -1904,7 +2646,7 @@ function AddProviderPicker({
                     letterSpacing: "0.07em",
                   }}
                 >
-                  {t("modelSubscriptions", "Subscriptions")}
+                  {t("subscriptions", "Subscriptions")}
                 </div>
               )}
               {availableOAuth.map((p) => (
@@ -1938,7 +2680,7 @@ function AddProviderPicker({
                     >
                       {p.name}
                     </div>
-                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>OAuth</div>
+                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>{t("oauth", "OAuth")}</div>
                   </div>
                   <ProviderIcon id={p.id} size={28} />
                 </button>
@@ -1956,7 +2698,7 @@ function AddProviderPicker({
                     letterSpacing: "0.07em",
                   }}
                 >
-                  {t("modelApiKey", "API Key")}
+                  {t("apiKey", "API Key")}
                 </div>
               )}
               {availableApiKey.map((p) => (
@@ -2032,7 +2774,20 @@ export function ModelsConfig({
   const [modelPreferencesLoading, setModelPreferencesLoading] = useState(true);
   const [modelPreferencesSaving, setModelPreferencesSaving] = useState(false);
   const [modelPreferencesError, setModelPreferencesError] = useState<string | null>(null);
+  const [builtinProviders, setBuiltinProviders] = useState<BuiltinProviderInfo[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const toastIdRef = useRef(0);
+
+  const showToast = useCallback((message: string, type: ToastType = "info") => {
+    if (!message.trim()) return;
+    const id = ++toastIdRef.current;
+    setToasts((prev) => [...prev.slice(-3), { id, message, type }]);
+    window.setTimeout(() => {
+      setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, exiting: true } : t)));
+      window.setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 200);
+    }, 3500);
+  }, []);
 
   const loadOAuthProviders = useCallback(() => {
     fetch("/api/auth/providers")
@@ -2077,15 +2832,12 @@ export function ModelsConfig({
     [cwd, onChanged],
   );
 
-  const refreshOAuthProviders = useCallback(() => {
-    loadOAuthProviders();
-    void loadModelPreferences();
-  }, [loadModelPreferences, loadOAuthProviders]);
-
-  const refreshApiKeyProviders = useCallback(() => {
-    loadApiKeyProviders();
-    void loadModelPreferences();
-  }, [loadApiKeyProviders, loadModelPreferences]);
+  const loadBuiltinProviders = useCallback(() => {
+    fetch("/api/models-config/providers")
+      .then((r) => r.json())
+      .then((d: { providers: BuiltinProviderInfo[] }) => setBuiltinProviders(d.providers))
+      .catch(() => {});
+  }, []);
 
   const [loadFailed, setLoadFailed] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -2118,7 +2870,8 @@ export function ModelsConfig({
       .finally(() => setLoading(false));
     loadOAuthProviders();
     loadApiKeyProviders();
-  }, [loadOAuthProviders, loadApiKeyProviders]);
+    loadBuiltinProviders();
+  }, [loadOAuthProviders, loadApiKeyProviders, loadBuiltinProviders]);
 
   useEffect(() => {
     void loadModelPreferences();
@@ -2139,21 +2892,31 @@ export function ModelsConfig({
     setConfig((prev) => ({ ...prev, providers: { ...(prev.providers ?? {}), [name]: p } }));
   }, []);
 
-  const renameProvider = useCallback((oldName: string, newName: string) => {
-    setConfig((prev) => {
-      const entries = Object.entries(prev.providers ?? {});
-      const idx = entries.findIndex(([k]) => k === oldName);
-      if (idx === -1) return prev;
-      entries[idx] = [newName, entries[idx][1]];
-      return { ...prev, providers: Object.fromEntries(entries) };
-    });
-    setSelection((prev) => {
-      if (!prev) return prev;
-      if (prev.type === "provider" && prev.name === oldName) return { type: "provider", name: newName };
-      if (prev.type === "model" && prev.providerName === oldName) return { ...prev, providerName: newName };
-      return prev;
-    });
-  }, []);
+  const renameProvider = useCallback(
+    (oldName: string, newName: string) => {
+      const trimmed = newName.trim();
+      if (!trimmed || trimmed === oldName) return;
+      const exists = Boolean(config.providers?.[trimmed]) || builtinProviders.some((p) => p.id === trimmed);
+      if (exists) {
+        showToast(t("providerIdExists", "A provider with this identifier already exists"), "error");
+        return;
+      }
+      setConfig((prev) => {
+        const entries = Object.entries(prev.providers ?? {});
+        const idx = entries.findIndex(([k]) => k === oldName);
+        if (idx === -1) return prev;
+        entries[idx] = [trimmed, entries[idx][1]];
+        return { ...prev, providers: Object.fromEntries(entries) };
+      });
+      setSelection((prev) => {
+        if (!prev) return prev;
+        if (prev.type === "provider" && prev.name === oldName) return { type: "provider", name: trimmed };
+        if (prev.type === "model" && prev.providerName === oldName) return { ...prev, providerName: trimmed };
+        return prev;
+      });
+    },
+    [config.providers, builtinProviders, showToast, t],
+  );
 
   const deleteProvider = useCallback((name: string) => {
     setConfig((prev) => {
@@ -2227,8 +2990,47 @@ export function ModelsConfig({
   }, [config, loadModelPreferences, onChanged]);
 
   const providers = Object.entries(config.providers ?? {});
+  // Built-in provider overlays (Base URL / enabled models) are stored under the
+  // provider's id in models.json; they are managed by the "Providers" section
+  // above and must not be listed here as if they were user-created providers.
+  const builtinIds = new Set(builtinProviders.map((p) => p.id));
+  const customProviders = providers.filter(([name]) => !builtinIds.has(name));
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
   const activeApiKey = apiKeyProviders.filter((p) => p.configured);
+
+  // Only show built-in providers that are actually usable (credentials present) or
+  // carry an existing overlay, so the model list stays focused instead of listing
+  // every built-in provider the user has never configured.
+  const visibleBuiltin = builtinProviders.filter(
+    (p) => p.configured || p.enabledModels !== undefined || p.customBaseUrl !== undefined,
+  );
+
+  const renderBuiltinDetail = (providerId: string) => (
+    <BuiltinProviderDetail
+      key={providerId}
+      providerId={providerId}
+      onChanged={() => {
+        onChanged?.();
+        loadBuiltinProviders();
+      }}
+      onApplied={({ providerId: pid, baseUrl, enabledModels }) => {
+        // Keep the config snapshot in sync with auto-saved built-in overlays so
+        // a later full-config save cannot revert them to stale values.
+        setConfig((prev) => {
+          const providers = { ...(prev.providers ?? {}) };
+          const existing = { ...(providers[pid] ?? {}) };
+          if (baseUrl) existing.baseUrl = baseUrl;
+          else delete existing.baseUrl;
+          if (enabledModels === null) delete existing.enabledModels;
+          else existing.enabledModels = enabledModels;
+          if (Object.keys(existing).length === 0) delete providers[pid];
+          else providers[pid] = existing;
+          return { ...prev, providers };
+        });
+      }}
+      showToast={showToast}
+    />
+  );
 
   // Resolve current detail
   const detailContent = (() => {
@@ -2240,7 +3042,13 @@ export function ModelsConfig({
         <OAuthDetail
           key={p.id}
           provider={p}
-          onRefresh={refreshOAuthProviders}
+          onRefresh={() => {
+            loadOAuthProviders();
+            void loadModelPreferences();
+            // Connect/disconnect changes which built-in providers have credentials,
+            // so refresh the configured list to show/hide the model selection.
+            loadBuiltinProviders();
+          }}
           modelSelection={{
             preferences: modelPreferences,
             loading: modelPreferencesLoading,
@@ -2258,7 +3066,13 @@ export function ModelsConfig({
         <ApiKeyDetail
           key={p.id}
           provider={p}
-          onRefresh={refreshApiKeyProviders}
+          onRefresh={() => {
+            loadApiKeyProviders();
+            void loadModelPreferences();
+            // Connect/disconnect changes which built-in providers have credentials,
+            // so refresh the configured list to show/hide the model selection.
+            loadBuiltinProviders();
+          }}
           modelSelection={{
             preferences: modelPreferences,
             loading: modelPreferencesLoading,
@@ -2269,7 +3083,15 @@ export function ModelsConfig({
         />
       );
     }
+    if (selection.type === "builtin") {
+      return renderBuiltinDetail(selection.providerId);
+    }
     if (selection.type === "provider") {
+      if (builtinIds.has(selection.name)) {
+        // Built-in overlays used to surface here as pseudo custom providers;
+        // route any stale selection to the built-in detail instead.
+        return renderBuiltinDetail(selection.name);
+      }
       const provider = config.providers?.[selection.name];
       if (!provider) return null;
       return (
@@ -2280,6 +3102,7 @@ export function ModelsConfig({
           onChange={(p) => updateProvider(selection.name, p)}
           onRename={(n) => renameProvider(selection.name, n)}
           onDelete={() => deleteProvider(selection.name)}
+          showToast={showToast}
         />
       );
     }
@@ -2365,8 +3188,8 @@ export function ModelsConfig({
               <button
                 type="button"
                 onClick={onClose}
-                title={t("modelCloseModels", "Close models")}
-                aria-label={t("modelCloseModels", "Close models")}
+                title={t("closeModels", "Close models")}
+                aria-label={t("closeModels", "Close models")}
                 style={{
                   background: "none",
                   border: "none",
@@ -2481,10 +3304,101 @@ export function ModelsConfig({
                   );
                 })}
 
-                {/* Divider before custom providers, only when there are active managed providers */}
-                {(activeOAuth.length > 0 || activeApiKey.length > 0) && providers.length > 0 && (
+                {/* Divider before built-in provider settings */}
+                {(activeOAuth.length > 0 || activeApiKey.length > 0) && visibleBuiltin.length > 0 && (
                   <div style={{ margin: "4px 8px", borderTop: "1px solid var(--border)" }} />
                 )}
+
+                {/* Built-in provider settings (custom Base URL + enabled models) */}
+                {visibleBuiltin.length > 0 && (
+                  <div
+                    style={{
+                      padding: "6px 8px 2px",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: "var(--text-dim)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.07em",
+                    }}
+                  >
+                    Providers ({visibleBuiltin.length})
+                  </div>
+                )}
+                {visibleBuiltin.map((p) => {
+                  const isSelected = selection?.type === "builtin" && selection.providerId === p.id;
+                  const configured = p.enabledModels !== undefined || p.customBaseUrl !== undefined;
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => setSelection({ type: "builtin", providerId: p.id })}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                        padding: "5px 8px",
+                        borderRadius: 5,
+                        cursor: "pointer",
+                        background: isSelected ? "var(--bg-selected)" : "none",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isSelected) e.currentTarget.style.background = "var(--bg-hover)";
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isSelected) e.currentTarget.style.background = "none";
+                      }}
+                    >
+                      <svg
+                        width="11"
+                        height="11"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        style={{ color: "var(--text-dim)", flexShrink: 0 }}
+                      >
+                        <circle cx="12" cy="12" r="3" />
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+                      </svg>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: "var(--text)",
+                          flex: 1,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {p.name}
+                      </span>
+                      {configured && (
+                        <span
+                          style={{
+                            fontSize: 9,
+                            padding: "1px 5px",
+                            background: "rgba(74,222,128,0.12)",
+                            color: "#4ade80",
+                            borderRadius: 3,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {p.enabledModels !== undefined
+                            ? `${p.enabledModels.length}/${p.modelCount}`
+                            : t("custom", "Custom")}
+                        </span>
+                      )}
+                      <ProviderIcon id={p.id} size={16} />
+                    </div>
+                  );
+                })}
+
+                {/* Divider before custom providers, only when there are active managed providers */}
+                {(activeOAuth.length > 0 || activeApiKey.length > 0 || visibleBuiltin.length > 0) &&
+                  customProviders.length > 0 && (
+                    <div style={{ margin: "4px 8px", borderTop: "1px solid var(--border)" }} />
+                  )}
 
                 {/* Custom providers */}
                 {loading ? (
@@ -2492,9 +3406,10 @@ export function ModelsConfig({
                     {t("loading", "Loading…")}
                   </div>
                 ) : (
-                  providers.map(([pName, pData]) => {
+                  customProviders.map(([pName, pData]) => {
                     const isProviderSelected = selection?.type === "provider" && selection.name === pName;
                     const models = pData.models ?? [];
+                    const providerLabel = pData.name || pName;
                     return (
                       <div key={pName} style={{ marginBottom: 2 }}>
                         {/* Provider row */}
@@ -2543,14 +3458,15 @@ export function ModelsConfig({
                               fontSize: 12,
                               fontWeight: isProviderSelected ? 600 : 400,
                               color: "var(--text)",
-                              fontFamily: "var(--font-mono)",
+                              fontFamily: pData.name && pData.name !== pName ? "inherit" : "var(--font-mono)",
                               flex: 1,
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
                             }}
+                            title={pData.name && pData.name !== pName ? `${pData.name} (${pName})` : pName}
                           >
-                            {pName}
+                            {providerLabel}
                           </span>
                         </div>
 
@@ -2589,7 +3505,7 @@ export function ModelsConfig({
                                   whiteSpace: "nowrap",
                                 }}
                               >
-                                {m.id || t("modelNewModel", "new model")}
+                                {m.id || t("newModel", "new model")}
                               </span>
                               {m.reasoning && (
                                 <span
@@ -2633,7 +3549,7 @@ export function ModelsConfig({
                             e.currentTarget.style.background = "none";
                           }}
                         >
-                          <span style={{ fontSize: 11 }}>+ {t("modelAddModel", "model")}</span>
+                          <span style={{ fontSize: 11 }}>{t("addModelShort", "+ model")}</span>
                         </div>
                       </div>
                     );
@@ -2726,9 +3642,7 @@ export function ModelsConfig({
             <button
               onClick={handleSave}
               disabled={saving || savedOk || loading || loadFailed || !configLoaded}
-              title={
-                loadFailed ? t("modelCannotSaveBeforeLoad", "Cannot save until config loads successfully") : undefined
-              }
+              title={loadFailed ? t("cannotSaveUntilLoaded", "Cannot save until config loads successfully") : undefined}
               style={{
                 position: "relative",
                 padding: "6px 16px",
@@ -2782,6 +3696,7 @@ export function ModelsConfig({
           onClose={() => setPickerOpen(false)}
         />
       )}
+      <ToastStack toasts={toasts} />
     </>
   );
 }

@@ -12,6 +12,7 @@ import {
   type KeyboardEventHandler,
   type ReactNode,
 } from "react";
+import { useI18n } from "@/i18n";
 
 const FieldControlIdContext = createContext<string | undefined>(undefined);
 
@@ -52,11 +53,15 @@ export function TextInput({
   onChange,
   placeholder,
   mono,
+  onKeyDown,
+  onBlur,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   mono?: boolean;
+  onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
+  onBlur?: () => void;
 }) {
   const controlId = useFieldControlId();
 
@@ -65,6 +70,8 @@ export function TextInput({
       id={controlId}
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onKeyDown={onKeyDown}
+      onBlur={onBlur}
       placeholder={placeholder}
       style={{ ...inputStyle, fontFamily: mono ? "var(--font-mono)" : "inherit" }}
     />
@@ -203,6 +210,7 @@ export function Select({
   required?: boolean;
 }) {
   const controlId = useFieldControlId();
+  const { t } = useI18n();
 
   return (
     <select
@@ -211,7 +219,7 @@ export function Select({
       onChange={(e) => onChange(e.target.value)}
       style={{ ...inputStyle, color: value ? "var(--text)" : "var(--text-dim)" }}
     >
-      {!required && <option value="">— inherit / none —</option>}
+      {!required && <option value="">{t("inheritNone", "— inherit / none —")}</option>}
       {options.map((o) => (
         <option key={o} value={o}>
           {o}

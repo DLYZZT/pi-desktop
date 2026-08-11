@@ -14,6 +14,8 @@ export interface ModelEntry {
 }
 
 export interface ProviderEntry {
+  // Optional display name; when absent the provider key (the identifier) is shown.
+  name?: string;
   baseUrl?: string;
   api?: string;
   apiKey?: string;

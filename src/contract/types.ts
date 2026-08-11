@@ -160,6 +160,39 @@ export interface TestResult {
   [key: string]: unknown;
 }
 
+export interface BuiltinModelInfo {
+  id: string;
+  name: string;
+}
+
+export interface BuiltinProviderInfo {
+  id: string;
+  name: string;
+  /** Official endpoint used when the user has not set a custom Base URL. */
+  defaultBaseUrl: string;
+  /** User-provided Base URL override, if any. */
+  customBaseUrl?: string;
+  /** Model ids the user enabled for the chat model picker. */
+  enabledModels?: string[];
+  modelCount: number;
+  api: string;
+  /** Provider has usable credentials (API key / OAuth / env / models.json key). */
+  configured: boolean;
+}
+
+export interface ProviderModelsResult {
+  provider: {
+    id: string;
+    name: string;
+    defaultBaseUrl: string;
+    customBaseUrl?: string;
+    api: string;
+  };
+  models: BuiltinModelInfo[];
+  /** null = no filter (all models enabled by default). */
+  enabledModels: string[] | null;
+}
+
 export interface ProviderStatus {
   id: string;
   name: string;

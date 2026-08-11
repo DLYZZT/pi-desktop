@@ -15,6 +15,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
+import { execSync } from "child_process";
+import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
 import { homedir, tmpdir } from "os";
 import path from "path";
 import {
@@ -31,6 +33,7 @@ import { getSupportedThinkingLevels, type AuthInteraction } from "@earendil-work
 import type { RpcServer } from "../contract/rpc";
 import {
   RpcError,
+  type BuiltinModelInfo,
   type HistoryWindow,
   type ModelInfo,
   type ModelCatalogStatus,
@@ -228,6 +231,132 @@ function writeModelsJson(data: Record<string, unknown>): void {
   }
 }
 
+// ── Built-in provider overlays (custom Base URL + enabled models) ────────────
+
+function getBuiltinProviderDefaults(): Map<
+  string,
+  { id: string; name: string; baseUrl: string; api: string; getModels: () => { id: string; name: string }[] }
+> {
+  const result = new Map<
+    string,
+    { id: string; name: string; baseUrl: string; api: string; getModels: () => { id: string; name: string }[] }
+  >();
+  for (const provider of builtinProviderCatalog.builtinProviders()) {
+    const models = provider.getModels();
+    result.set(provider.id, {
+      id: provider.id,
+      name: provider.name,
+      baseUrl: provider.baseUrl ?? "",
+      api: models[0]?.api ?? "",
+      getModels: () => models.map((m) => ({ id: m.id, name: m.name ?? m.id })),
+    });
+  }
+  return result;
+}
+
+function getProviderOverlay(
+  config: Record<string, unknown>,
+  providerId: string,
+  defaultBaseUrl: string,
+): {
+  customBaseUrl?: string;
+  enabledModels?: string[];
+} {
+  const providers = (config.providers ?? {}) as Record<string, Record<string, unknown>>;
+  const entry = providers[providerId] ?? {};
+  const rawBaseUrl = typeof entry.baseUrl === "string" ? entry.baseUrl.trim() : "";
+  // A Base URL identical to the official endpoint is not a customization.
+  const customBaseUrl = rawBaseUrl && rawBaseUrl !== defaultBaseUrl ? rawBaseUrl : undefined;
+  const enabledModels = Array.isArray(entry.enabledModels)
+    ? entry.enabledModels.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+    : undefined;
+  return { customBaseUrl, enabledModels };
+}
+
+/**
+ * Resolve a models.json-style config value (literal, `$ENV_VAR` / `${ENV_VAR}`,
+ * or `!shell-command`) to a concrete string for outbound model-list requests.
+ */
+function resolveConfigValueSafely(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (value.startsWith("!")) {
+    try {
+      const out = execSync(value.slice(1), { encoding: "utf8", timeout: 10_000 });
+      return out.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (match, braced, bare) => {
+    const name: string | undefined = braced ?? bare;
+    return name && process.env[name] !== undefined ? (process.env[name] as string) : match;
+  });
+}
+
+function parseModelsResponse(data: unknown): BuiltinModelInfo[] {
+  if (!data || typeof data !== "object") return [];
+  const record = data as Record<string, unknown>;
+  let list: unknown = record.data;
+  if (!Array.isArray(list)) list = record.models;
+  if (Array.isArray(list)) {
+    const out: BuiltinModelInfo[] = [];
+    for (const item of list) {
+      if (typeof item === "string") {
+        if (item.trim()) out.push({ id: item.trim(), name: item.trim() });
+      } else if (item && typeof item === "object") {
+        const entry = item as Record<string, unknown>;
+        const rawId =
+          typeof entry.id === "string"
+            ? entry.id
+            : typeof entry.model === "string"
+              ? entry.model
+              : typeof entry.name === "string"
+                ? entry.name
+                : undefined;
+        if (rawId && rawId.trim()) {
+          const trimmed = rawId.trim();
+          // Google lists models as "models/<id>" with a separate display name.
+          const id = trimmed.startsWith("models/") ? trimmed.slice("models/".length) : trimmed;
+          const name =
+            typeof entry.displayName === "string" && entry.displayName.trim()
+              ? entry.displayName.trim()
+              : typeof entry.name === "string" && entry.name.trim() && entry.name.trim() !== trimmed
+                ? entry.name.trim()
+                : id;
+          out.push({ id, name });
+        }
+      }
+    }
+    return out;
+  }
+  // Object keyed by model id (some gateways / proxies return this shape).
+  const out: BuiltinModelInfo[] = [];
+  for (const [id, value] of Object.entries(record)) {
+    if (!id.trim()) continue;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const name = (value as Record<string, unknown>).name;
+      out.push({ id: id.trim(), name: typeof name === "string" ? name : id.trim() });
+    }
+  }
+  return out;
+}
+
+function extractApiErrorBody(text: string): string | undefined {
+  if (!text) return undefined;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (typeof parsed.error === "string" && parsed.error) return parsed.error;
+    if (parsed.error && typeof parsed.error === "object") {
+      const msg = (parsed.error as Record<string, unknown>).message;
+      if (typeof msg === "string" && msg) return msg;
+    }
+    if (typeof parsed.message === "string" && parsed.message) return parsed.message;
+  } catch {
+    return text.slice(0, 300);
+  }
+  return undefined;
+}
+
 async function resolveLoadedSkill(cwd: string, filePath: string) {
   if (!cwd || !filePath) {
     throw new RpcError({ code: "BAD_REQUEST", message: "cwd and filePath are required" });
@@ -273,13 +402,43 @@ function stripThinkingSuffix(modelRef: string): string {
   return THINKING_SUFFIXES.has(suffix) ? trimmed.substring(0, colonIndex) : trimmed;
 }
 
-function filterByExactEnabledModels<T extends { id: string; provider: string }>(
+/**
+ * Exact model allowlist from settings (`enabledModels`), applied to the model
+ * picker. Refs are bare model ids or `provider/model` pairs.
+ *
+ * The provider portion matches case-insensitively, so renaming a custom
+ * provider's identifier (e.g. "VectorEngine" → "vector-engine") does not orphan
+ * its models out of the picker. Refs naming a provider that no longer exists
+ * are treated as stale and kept alive by bare model id instead, so a rename or
+ * removal cannot silently hide that provider's models while other allowlisted
+ * models keep the fallback from triggering.
+ */
+export function filterByExactEnabledModels<T extends { id: string; provider: string }>(
   available: T[],
   enabledModels: string[] | undefined,
 ): T[] {
   if (!enabledModels || enabledModels.length === 0) return available;
-  const refs = new Set(enabledModels.map(stripThinkingSuffix).filter(Boolean));
-  const visible = available.filter((m) => refs.has(`${m.provider}/${m.id}`) || refs.has(m.id));
+  const providers = new Set(available.map((m) => m.provider.toLowerCase()));
+  const refs = new Set<string>();
+  for (const raw of enabledModels) {
+    const ref = stripThinkingSuffix(raw);
+    if (!ref) continue;
+    const slash = ref.lastIndexOf("/");
+    if (slash === -1) {
+      refs.add(ref);
+      continue;
+    }
+    const refProvider = ref.slice(0, slash);
+    const refModel = ref.slice(slash + 1);
+    if (providers.has(refProvider.toLowerCase())) {
+      refs.add(`${refProvider.toLowerCase()}/${refModel}`);
+    } else {
+      // Provider no longer exists (renamed or removed): keep the model enabled
+      // by bare id so a stale identifier cannot hide it.
+      refs.add(refModel);
+    }
+  }
+  const visible = available.filter((m) => refs.has(m.id) || refs.has(`${m.provider.toLowerCase()}/${m.id}`));
   return visible.length > 0 ? visible : available;
 }
 
@@ -329,6 +488,37 @@ function hasMatchingEnabledModel<T extends { id: string; provider: string }>(
   return available.some((model) => refs.has(`${model.provider}/${model.id}`) || refs.has(model.id));
 }
 
+/**
+ * Per-provider enabled model ids persisted in models.json (`providers.<id>.enabledModels`).
+ * Unlike the global settings allowlist this filter is authoritative: disabling every
+ * model of a provider removes that provider from the chat model picker.
+ */
+function filterByProviderEnabledModels<T extends { id: string; provider: string }>(
+  available: T[],
+  config: Record<string, unknown> | undefined,
+): T[] {
+  const providers = (config?.providers ?? {}) as Record<string, { enabledModels?: unknown }>;
+  const byProvider = new Map<string, Set<string>>();
+  for (const [providerId, entry] of Object.entries(providers)) {
+    // Absent → no filter (all models). An empty array is explicit: disable every model.
+    if (!Array.isArray(entry?.enabledModels)) continue;
+    const ids = new Set<string>();
+    for (const ref of entry.enabledModels) {
+      if (typeof ref === "string") {
+        const stripped = stripThinkingSuffix(ref);
+        if (stripped) ids.add(stripped);
+      }
+    }
+    byProvider.set(providerId, ids);
+  }
+  if (byProvider.size === 0) return available;
+  return available.filter((m) => {
+    const ids = byProvider.get(m.provider);
+    if (!ids) return true;
+    return ids.has(m.id) || ids.has(`${m.provider}/${m.id}`);
+  });
+}
+
 export async function credentialMutationFailure(
   modelRuntime: ModelRuntime,
   providerId: string,
@@ -366,7 +556,14 @@ async function projectModelsList(
 ): Promise<ModelsListResult> {
   const available = [...(await modelRuntime.getAvailable())];
   const enabledModels = settings.getEnabledModels();
-  const visible = filterByExactEnabledModels(available, enabledModels);
+  let modelsConfig: Record<string, unknown> | undefined;
+  try {
+    modelsConfig = readModelsJson();
+  } catch {
+    // A corrupt models.json must not break model listing; the editor surfaces the parse error.
+    modelsConfig = undefined;
+  }
+  const visible = filterByProviderEnabledModels(filterByExactEnabledModels(available, enabledModels), modelsConfig);
   const models = visible
     .map((model) => ({ id: model.id, name: model.name, provider: model.provider }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.provider.localeCompare(b.provider));
@@ -1301,6 +1498,203 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
             /* ignore */
           }
         }
+      }
+    },
+
+    "modelsConfig.providers": async () => {
+      const defaults = getBuiltinProviderDefaults();
+      const config = readModelsJson();
+      const runtime = await getSharedModelRuntime();
+      const result = [...defaults.values()]
+        .map((defaultProvider) => {
+          const overlay = getProviderOverlay(config, defaultProvider.id, defaultProvider.baseUrl);
+          const composed = runtime.getProvider(defaultProvider.id);
+          const modelCount = (composed?.getModels() ?? defaultProvider.getModels()).length;
+          const auth = runtime.getProviderAuthStatus(defaultProvider.id);
+          return {
+            id: defaultProvider.id,
+            name: composed?.name ?? defaultProvider.name,
+            defaultBaseUrl: defaultProvider.baseUrl,
+            ...(overlay.customBaseUrl ? { customBaseUrl: overlay.customBaseUrl } : {}),
+            ...(overlay.enabledModels ? { enabledModels: overlay.enabledModels } : {}),
+            modelCount,
+            api: defaultProvider.api,
+            // True when the provider has usable credentials (stored API key / OAuth
+            // token / models.json key / environment variable).
+            configured: auth?.configured ?? false,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return { providers: result };
+    },
+
+    "modelsConfig.providerModels": async (params) => {
+      const { providerId } = params as { providerId?: string };
+      const id = typeof providerId === "string" ? providerId.trim() : "";
+      if (!id) throw new RpcError({ code: "BAD_REQUEST", message: "providerId is required" });
+      const defaults = getBuiltinProviderDefaults();
+      const defaultProvider = defaults.get(id);
+      if (!defaultProvider) {
+        throw new RpcError({ code: "NOT_FOUND", message: `Unknown built-in provider: ${id}` });
+      }
+      const config = readModelsJson();
+      const overlay = getProviderOverlay(config, id, defaultProvider.baseUrl);
+      const runtime = await getSharedModelRuntime();
+      const composed = runtime.getProvider(id);
+      const models = (composed?.getModels() ?? defaultProvider.getModels()).map((m) => ({ id: m.id, name: m.name }));
+      return {
+        provider: {
+          id: defaultProvider.id,
+          name: composed?.name ?? defaultProvider.name,
+          defaultBaseUrl: defaultProvider.baseUrl,
+          ...(overlay.customBaseUrl ? { customBaseUrl: overlay.customBaseUrl } : {}),
+          api: defaultProvider.api,
+        },
+        models,
+        // null = no filter (all models enabled by default)
+        enabledModels: overlay.enabledModels ?? null,
+      };
+    },
+
+    "modelsConfig.setProviderOverlay": async (params) => {
+      const body = params as { providerId?: string; baseUrl?: string; enabledModels?: string[] };
+      const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
+      if (!providerId) throw new RpcError({ code: "BAD_REQUEST", message: "providerId is required" });
+      const defaults = getBuiltinProviderDefaults();
+      const defaultProvider = defaults.get(providerId);
+      if (!defaultProvider) {
+        throw new RpcError({ code: "NOT_FOUND", message: `Unknown built-in provider: ${providerId}` });
+      }
+      const config = readModelsJson();
+      const providers = (config.providers ?? {}) as Record<string, Record<string, unknown>>;
+      const next = { ...(providers[providerId] ?? {}) };
+
+      if (body.baseUrl !== undefined) {
+        const trimmed = body.baseUrl.trim();
+        if (trimmed && trimmed !== defaultProvider.baseUrl) next.baseUrl = trimmed;
+        else delete next.baseUrl;
+      }
+      if (body.enabledModels !== undefined) {
+        if (body.enabledModels === null) {
+          delete next.enabledModels;
+        } else {
+          const list = [...new Set(body.enabledModels.map((m) => m.trim()).filter(Boolean))];
+          // Empty array is explicit: disable every model (absent means all enabled).
+          next.enabledModels = list;
+        }
+      }
+
+      // pi-ai validates provider entries and rejects a config with no meaningful
+      // fields; `enabledModels` alone is not one of them. Anchor with the default
+      // Base URL (a no-op override) so a model-only toggle still loads.
+      const meaningful = Object.keys(next).filter((k) => k !== "enabledModels");
+      if (Object.keys(next).length > 0 && meaningful.length === 0) {
+        next.baseUrl = defaultProvider.baseUrl;
+      }
+      // Drop empty entries and entries that only anchor the default Base URL.
+      if (
+        Object.keys(next).length === 0 ||
+        (Object.keys(next).length === 1 && next.baseUrl === defaultProvider.baseUrl)
+      ) {
+        delete providers[providerId];
+      } else {
+        providers[providerId] = next;
+      }
+
+      writeModelsJson(config);
+      await reloadSharedModelRuntimeConfig();
+      return { ok: true as const };
+    },
+
+    "modelsConfig.fetchModels": async (params) => {
+      const body = params as { baseUrl?: string; apiKey?: string };
+      const rawBaseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
+      if (!rawBaseUrl) return { ok: false as const, error: "Base URL is required" };
+      let base: URL;
+      try {
+        base = new URL(rawBaseUrl);
+      } catch {
+        return { ok: false as const, error: "Invalid Base URL — expected https://api.example.com/v1" };
+      }
+      if (base.protocol !== "https:" && base.protocol !== "http:") {
+        return { ok: false as const, error: "Base URL must start with http:// or https://" };
+      }
+      const modelsUrl = `${base.toString().replace(/\/+$/, "")}/models`;
+      // Google Generative Language API (generativelanguage.googleapis.com) uses a
+      // different auth header (x-goog-api-key), returns models as "models/<id>"
+      // entries, and paginates via nextPageToken — handle it specially.
+      const isGoogle =
+        base.hostname === "generativelanguage.googleapis.com" ||
+        base.hostname.endsWith(".generativelanguage.googleapis.com");
+      const apiKey = resolveConfigValueSafely(typeof body.apiKey === "string" ? body.apiKey : undefined);
+      const headers: Record<string, string> = { Accept: "application/json" };
+      if (apiKey) {
+        if (isGoogle) {
+          headers["x-goog-api-key"] = apiKey;
+        } else {
+          // Cover both OpenAI-compatible (Bearer) and Anthropic-compatible (x-api-key) endpoints.
+          headers["Authorization"] = `Bearer ${apiKey}`;
+          headers["x-api-key"] = apiKey;
+        }
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const collected: BuiltinModelInfo[] = [];
+        let pageToken: string | null = null;
+        for (let page = 0; page < 10; page += 1) {
+          let url = modelsUrl;
+          if (isGoogle) {
+            const u = new URL(modelsUrl);
+            u.searchParams.set("pageSize", "100");
+            if (pageToken) u.searchParams.set("pageToken", pageToken);
+            url = u.toString();
+          }
+          const response = await fetch(url, { headers, signal: controller.signal });
+          if (!response.ok) {
+            const text = await response.text().catch(() => "");
+            const detail = extractApiErrorBody(text);
+            return {
+              ok: false as const,
+              error: detail ? `HTTP ${response.status}: ${detail}` : `Request failed with HTTP ${response.status}`,
+              status: response.status,
+            };
+          }
+          const data: unknown = await response.json().catch(() => null);
+          const models = parseModelsResponse(data);
+          if (page === 0 && models.length === 0) {
+            return {
+              ok: false as const,
+              error: 'The response did not contain a model list (expected { "data": [...] })',
+            };
+          }
+          const seen = new Set(collected.map((m) => m.id));
+          for (const model of models) {
+            if (!seen.has(model.id)) {
+              seen.add(model.id);
+              collected.push(model);
+            }
+          }
+          if (!isGoogle) break;
+          const token = (data as { nextPageToken?: unknown } | null)?.nextPageToken;
+          if (typeof token !== "string" || !token) break;
+          pageToken = token;
+        }
+        return { ok: true as const, models: collected };
+      } catch (e) {
+        if (controller.signal.aborted) return { ok: false as const, error: "Request timed out after 15 seconds" };
+        const raw = e instanceof Error ? e.message : String(e);
+        const cause = e instanceof Error && e.cause instanceof Error ? e.cause.message : "";
+        const detail = cause && !raw.includes(cause) ? `${raw} — ${cause}` : raw;
+        const friendly = /ENOTFOUND|EAI_AGAIN/.test(detail)
+          ? "Could not resolve the host — check the Base URL"
+          : /ECONNREFUSED|ECONNRESET/.test(detail)
+            ? "Connection refused — is the endpoint reachable?"
+            : detail;
+        return { ok: false as const, error: friendly };
+      } finally {
+        clearTimeout(timer);
       }
     },
 
