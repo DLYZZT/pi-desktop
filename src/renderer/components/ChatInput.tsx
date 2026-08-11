@@ -52,6 +52,7 @@ interface Props {
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
   modelList?: { id: string; name: string; provider: string }[];
+  modelListError?: string | null;
   modelCatalog?: ModelCatalogStatus;
   modelRefreshing?: boolean;
   onModelChange?: (provider: string, modelId: string) => void;
@@ -220,6 +221,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     isAutoModelSelection,
     modelNames,
     modelList,
+    modelListError,
     modelCatalog,
     modelRefreshing,
     onModelChange,
@@ -1932,6 +1934,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                   {warning.message}
                                 </div>
                               ))}
+                              {modelListError && (
+                                <div role="alert" style={{ marginTop: 6, color: "#ef4444", fontSize: 11, whiteSpace: "normal" }}>
+                                  {t("modelListLoadFailed", "Failed to refresh the model list")}
+                                  {modelListError ? `: ${modelListError}` : ""}
+                                </div>
+                              )}
                             </div>
                           )}
                           {modelsByProvider.map((group, gi) => (

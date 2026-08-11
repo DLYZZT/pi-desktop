@@ -254,6 +254,7 @@ export function ChatWindow({
     agentRunning,
     modelNames,
     modelList,
+    modelListError,
     modelCatalog,
     modelRefreshing,
     modelThinkingLevels,
@@ -431,6 +432,7 @@ export function ChatWindow({
       isAutoModelSelection={isAutoModelSelection}
       modelNames={modelNames}
       modelList={modelList}
+      modelListError={modelListError}
       modelCatalog={modelCatalog}
       modelRefreshing={modelRefreshing}
       onModelChange={handleModelChange}

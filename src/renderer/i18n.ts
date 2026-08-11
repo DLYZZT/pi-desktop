@@ -450,6 +450,7 @@ const zhCN: Record<string, string> = {
   modelSearchModels: "搜索模型…",
   modelSearchProviderModels: "搜索服务商模型",
   modelNoMatchingModels: "没有匹配的模型。",
+  modelListLoadFailed: "刷新模型列表失败",
   modelSubscription: "订阅账号",
   modelConnected: "已连接",
   modelNotConnected: "未连接",

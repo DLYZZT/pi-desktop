@@ -349,6 +349,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     warnings: [],
   });
   const [modelRefreshing, setModelRefreshing] = useState(false);
+  const [modelListError, setModelListError] = useState<string | null>(null);
   const [modelThinkingLevels, setModelThinkingLevels] = useState<Record<string, string[]>>({});
   const [modelThinkingLevelMaps, setModelThinkingLevelMaps] = useState<Record<string, Record<string, string | null>>>(
     {},
@@ -1906,13 +1907,31 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     return () => cancelAnimationFrame(frame);
   }, [agentRunning, agentPhase, messages.length, scrollLiveContentToBottom, streamState.streamingMessage]);
 
-  // Load model list
+  // Load model list. A failed reload must not leave the chat model picker
+  // silently stale (e.g. after an enabled-models change in Settings): retry a
+  // few times on transient failures, then surface a visible error instead.
   useEffect(() => {
     const controller = new AbortController();
-    loadModels(controller.signal).catch((e) => {
-      if (e instanceof DOMException && e.name === "AbortError") return;
-    });
-    return () => controller.abort();
+    let attempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const load = () => {
+      loadModels(controller.signal).catch((e) => {
+        if (controller.signal.aborted) return;
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        if (attempt < 3) {
+          attempt += 1;
+          retryTimer = setTimeout(load, 300 * attempt);
+          return;
+        }
+        setModelListError(e instanceof Error ? e.message : String(e));
+      });
+    };
+    setModelListError(null);
+    load();
+    return () => {
+      controller.abort();
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [loadModels, modelsRefreshKey]);
 
   useEffect(() => cancelModelRefresh, [cancelModelRefresh, newSessionCwd, session?.cwd]);
@@ -1963,6 +1982,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunning,
     modelNames,
     modelList,
+    modelListError,
     modelCatalog,
     modelRefreshing,
     modelThinkingLevels,

@@ -1706,6 +1706,10 @@ export function AppShell() {
           onClose={() => {
             setSettingsOpen(false);
             setSettingsInitialTab("general");
+            // The models tab auto-saves overlays with a debounce; a toggle saved
+            // right before closing may still be in flight, so refresh the chat
+            // model list once settings closes to pick up any last write.
+            setModelsRefreshKey((key) => key + 1);
           }}
           onModelsChanged={() => setModelsRefreshKey((key) => key + 1)}
           onPluginsReloaded={() => setSessionKey((key) => key + 1)}
