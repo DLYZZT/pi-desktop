@@ -270,9 +270,7 @@ export function SettingsConfig({
               />
             )}
             {activeTab === "browser" && <BrowserSettings sessionId={sessionId} />}
-            {activeTab === "models" && (
-              <ModelsConfig embedded onClose={() => undefined} onChanged={onModelsChanged} />
-            )}
+            {activeTab === "models" && <ModelsConfig embedded onClose={() => undefined} onChanged={onModelsChanged} />}
             {activeTab === "tools" && <ToolchainsConfig cwd={cwd} />}
             {activeTab === "channels" && <ChannelsConfig onSnapshotChange={onChannelsChanged} />}
             {activeTab === "skills" &&

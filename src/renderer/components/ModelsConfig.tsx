@@ -1176,13 +1176,7 @@ function ModelDetail({
   );
 }
 
-function OAuthDetail({
-  provider,
-  onRefresh,
-}: {
-  provider: OAuthProvider;
-  onRefresh: () => void;
-}) {
+function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefresh: () => void }) {
   const { t } = useI18n();
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
   const [inputValue, setInputValue] = useState("");
@@ -1641,20 +1635,13 @@ function OAuthDetail({
           </>
         )}
       </div>
-
     </div>
   );
 }
 
 // ── API Key detail ────────────────────────────────────────────────────────────
 
-function ApiKeyDetail({
-  provider,
-  onRefresh,
-}: {
-  provider: ApiKeyProvider;
-  onRefresh: () => void;
-}) {
+function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRefresh: () => void }) {
   const { t } = useI18n();
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1808,7 +1795,6 @@ function ApiKeyDetail({
 
       {error && <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{error}</p>}
       {warning && <p style={{ margin: 0, fontSize: 12, color: "#d97706" }}>{warning}</p>}
-
 
       {provider.configured && (
         <button
@@ -1969,8 +1955,7 @@ function BuiltinProviderDetail({
   const visibleModels = normalizedQuery
     ? data.models.filter(
         (m) =>
-          m.name.toLocaleLowerCase().includes(normalizedQuery) ||
-          m.id.toLocaleLowerCase().includes(normalizedQuery),
+          m.name.toLocaleLowerCase().includes(normalizedQuery) || m.id.toLocaleLowerCase().includes(normalizedQuery),
       )
     : data.models;
 
@@ -2627,7 +2612,6 @@ export function ModelsConfig({
       .catch(() => {});
   }, []);
 
-
   const loadBuiltinProviders = useCallback(() => {
     fetch("/api/models-config/providers")
       .then((r) => r.json())
@@ -2668,7 +2652,6 @@ export function ModelsConfig({
     loadApiKeyProviders();
     loadBuiltinProviders();
   }, [loadOAuthProviders, loadApiKeyProviders, loadBuiltinProviders]);
-
 
   const addCustomProvider = useCallback(() => {
     let finalName = "new-provider";

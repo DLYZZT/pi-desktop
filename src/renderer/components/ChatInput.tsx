@@ -1935,7 +1935,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 </div>
                               ))}
                               {modelListError && (
-                                <div role="alert" style={{ marginTop: 6, color: "#ef4444", fontSize: 11, whiteSpace: "normal" }}>
+                                <div
+                                  role="alert"
+                                  style={{ marginTop: 6, color: "#ef4444", fontSize: 11, whiteSpace: "normal" }}
+                                >
                                   {t("modelListLoadFailed", "Failed to refresh the model list")}
                                   {modelListError ? `: ${modelListError}` : ""}
                                 </div>
