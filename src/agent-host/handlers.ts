@@ -35,9 +35,7 @@ import {
   RpcError,
   type BuiltinModelInfo,
   type HistoryWindow,
-  type ModelInfo,
   type ModelCatalogStatus,
-  type ModelPreferencesResult,
   type ModelsListResult,
   type SessionDetail,
   type SessionRuntimeState,
@@ -440,52 +438,6 @@ export function filterByExactEnabledModels<T extends { id: string; provider: str
   }
   const visible = available.filter((m) => refs.has(m.id) || refs.has(`${m.provider.toLowerCase()}/${m.id}`));
   return visible.length > 0 ? visible : available;
-}
-
-function projectModelPreferences<T extends { id: string; name: string; provider: string }>(
-  available: readonly T[],
-  enabledModels: string[] | undefined,
-): ModelPreferencesResult {
-  const models: ModelInfo[] = available
-    .map((model) => ({ id: model.id, name: model.name, provider: model.provider }))
-    .sort((a, b) => a.name.localeCompare(b.name) || a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
-  const normalized = [...new Set((enabledModels ?? []).map(stripThinkingSuffix).filter(Boolean))];
-  return { models, enabledModels: normalized.length > 0 ? normalized : null };
-}
-
-function normalizeEnabledModelsInput(value: unknown): string[] | undefined {
-  if (value === null) return undefined;
-  if (!Array.isArray(value) || value.length === 0 || value.length > 2000) {
-    throw new RpcError({
-      code: "BAD_REQUEST",
-      message: "enabledModels must be null or a non-empty array with at most 2000 entries",
-    });
-  }
-
-  const normalized: string[] = [];
-  const seen = new Set<string>();
-  for (const valueEntry of value) {
-    if (typeof valueEntry !== "string") {
-      throw new RpcError({ code: "BAD_REQUEST", message: "Every enabled model reference must be a string" });
-    }
-    const modelReference = stripThinkingSuffix(valueEntry);
-    if (!modelReference || modelReference.length > 512) {
-      throw new RpcError({ code: "BAD_REQUEST", message: "Invalid enabled model reference" });
-    }
-    if (!seen.has(modelReference)) {
-      seen.add(modelReference);
-      normalized.push(modelReference);
-    }
-  }
-  return normalized;
-}
-
-function hasMatchingEnabledModel<T extends { id: string; provider: string }>(
-  available: readonly T[],
-  enabledModels: string[],
-): boolean {
-  const refs = new Set(enabledModels);
-  return available.some((model) => refs.has(`${model.provider}/${model.id}`) || refs.has(model.id));
 }
 
 /**
@@ -1360,26 +1312,6 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     "models.refreshCancel": (params) => {
       const { requestId } = params as { requestId: string };
       return { ok: true as const, cancelled: modelCatalogRefreshCoordinator.cancel(requestId) };
-    },
-
-    "models.preferences.get": async (params) => {
-      const cwd = resolveModelsCwd(params as { cwd?: string } | void);
-      const services = await createAgentSessionServices({ cwd, agentDir: getAgentDir() });
-      const available = await services.modelRuntime.getAvailable();
-      return projectModelPreferences(available, services.settingsManager.getEnabledModels());
-    },
-
-    "models.preferences.set": async (params) => {
-      const body = params as { cwd?: string; enabledModels?: unknown };
-      const cwd = resolveModelsCwd(body);
-      const enabledModels = normalizeEnabledModelsInput(body.enabledModels);
-      const services = await createAgentSessionServices({ cwd, agentDir: getAgentDir() });
-      const available = await services.modelRuntime.getAvailable();
-      if (enabledModels && !hasMatchingEnabledModel(available, enabledModels)) {
-        throw new RpcError({ code: "BAD_REQUEST", message: "At least one available model must remain enabled" });
-      }
-      services.settingsManager.setEnabledModels(enabledModels);
-      return projectModelPreferences(available, enabledModels);
     },
 
     "modelsConfig.get": () => readModelsJson() as never,

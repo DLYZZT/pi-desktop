@@ -3,9 +3,8 @@ import { Check, Field, NumInput, SecretTextInput, Select, SectionTitle, TextInpu
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import { replaceModelEntry, type ModelEntry, type ModelsJson, type ProviderEntry } from "@/lib/models-config-state";
-import { call, getModelPreferences, setModelPreferences } from "@/lib/api-client";
-import { isModelEnabled, setProviderModelsEnabled, toggleModelEnabled } from "@/lib/model-selection";
-import type { BuiltinProviderInfo, ModelPreferencesResult, ProviderModelsResult } from "@contract/types";
+import { call } from "@/lib/api-client";
+import type { BuiltinProviderInfo, ProviderModelsResult } from "@contract/types";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
 import OpenAIIcon from "@lobehub/icons/es/OpenAI/components/Mono";
@@ -1177,238 +1176,12 @@ function ModelDetail({
   );
 }
 
-// ── Managed provider models ──────────────────────────────────────────────────
-
-interface ModelSelectionControl {
-  preferences: ModelPreferencesResult | null;
-  loading: boolean;
-  saving: boolean;
-  error: string | null;
-  onChange: (enabledModels: string[] | null) => Promise<void>;
-}
-
-function ManagedModelsControl({
-  providerId,
-  preferences,
-  loading,
-  saving,
-  error,
-  onChange,
-}: ModelSelectionControl & { providerId: string }) {
-  const { t } = useI18n();
-  const [query, setQuery] = useState("");
-  useEffect(() => setQuery(""), [providerId]);
-
-  const providerModels = (preferences?.models ?? []).filter((model) => model.provider === providerId);
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visibleModels = normalizedQuery
-    ? providerModels.filter(
-        (model) =>
-          model.name.toLocaleLowerCase().includes(normalizedQuery) ||
-          model.id.toLocaleLowerCase().includes(normalizedQuery),
-      )
-    : providerModels;
-  const enabledCount = preferences
-    ? providerModels.filter((model) => isModelEnabled(model, preferences.enabledModels)).length
-    : 0;
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        paddingTop: 16,
-        borderTop: "1px solid var(--border)",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <SectionTitle>{t("models", "Models")}</SectionTitle>
-        {!loading && preferences && (
-          <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>
-            {t("modelEnabledCount", "{enabled} of {total} enabled")
-              .replace("{enabled}", String(enabledCount))
-              .replace("{total}", String(providerModels.length))}
-          </span>
-        )}
-      </div>
-
-      <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>
-        {t(
-          "modelSelectionDescription",
-          "Choose which models appear in the model picker. The active model in an existing session is not changed.",
-        )}
-      </p>
-
-      {loading && (
-        <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
-          {t("modelLoadingModels", "Loading models…")}
-        </p>
-      )}
-      {!loading && preferences && providerModels.length === 0 && (
-        <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
-          {t("modelNoAvailableModels", "No models are currently available for this provider.")}
-        </p>
-      )}
-
-      {!loading && preferences && providerModels.length > 0 && (
-        <>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
-              type="button"
-              disabled={saving || enabledCount === providerModels.length}
-              onClick={() =>
-                void onChange(setProviderModelsEnabled(preferences.models, preferences.enabledModels, providerId, true))
-              }
-              style={{
-                padding: "4px 9px",
-                background: "none",
-                border: "1px solid var(--border)",
-                borderRadius: 5,
-                color: "var(--text-muted)",
-                cursor: saving || enabledCount === providerModels.length ? "not-allowed" : "pointer",
-                fontSize: 11,
-              }}
-            >
-              {t("modelEnableAll", "Enable all")}
-            </button>
-            <button
-              type="button"
-              disabled={saving || enabledCount === 0}
-              onClick={() =>
-                void onChange(
-                  setProviderModelsEnabled(preferences.models, preferences.enabledModels, providerId, false),
-                )
-              }
-              style={{
-                padding: "4px 9px",
-                background: "none",
-                border: "1px solid var(--border)",
-                borderRadius: 5,
-                color: "var(--text-muted)",
-                cursor: saving || enabledCount === 0 ? "not-allowed" : "pointer",
-                fontSize: 11,
-              }}
-            >
-              {t("modelDisableAll", "Disable all")}
-            </button>
-          </div>
-
-          {providerModels.length > 8 && (
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("modelSearchModels", "Search models…")}
-              aria-label={t("modelSearchProviderModels", "Search provider models")}
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                padding: "6px 9px",
-                background: "var(--bg)",
-                border: "1px solid var(--border)",
-                borderRadius: 5,
-                color: "var(--text)",
-                fontSize: 12,
-                outline: "none",
-              }}
-            />
-          )}
-
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              maxHeight: 300,
-              overflowY: "auto",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-            }}
-          >
-            {visibleModels.map((model, index) => {
-              const enabled = isModelEnabled(model, preferences.enabledModels);
-              return (
-                <label
-                  key={`${model.provider}/${model.id}`}
-                  style={{
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: 9,
-                    padding: "8px 10px",
-                    borderTop: index > 0 ? "1px solid var(--border)" : undefined,
-                    cursor: saving ? "not-allowed" : "pointer",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={enabled}
-                    disabled={saving}
-                    onChange={(event) =>
-                      void onChange(
-                        toggleModelEnabled(preferences.models, preferences.enabledModels, model, event.target.checked),
-                      )
-                    }
-                    style={{ margin: "2px 0 0", accentColor: "var(--accent)", flexShrink: 0 }}
-                  />
-                  <span style={{ minWidth: 0 }}>
-                    <span
-                      style={{
-                        display: "block",
-                        color: "var(--text)",
-                        fontSize: 12,
-                        lineHeight: 1.35,
-                        overflowWrap: "anywhere",
-                      }}
-                    >
-                      {model.name}
-                    </span>
-                    {model.name !== model.id && (
-                      <code
-                        style={{
-                          display: "block",
-                          marginTop: 2,
-                          color: "var(--text-dim)",
-                          fontSize: 10,
-                          fontFamily: "var(--font-mono)",
-                          overflowWrap: "anywhere",
-                        }}
-                      >
-                        {model.id}
-                      </code>
-                    )}
-                  </span>
-                </label>
-              );
-            })}
-            {visibleModels.length === 0 && (
-              <span style={{ padding: "10px", color: "var(--text-muted)", fontSize: 12 }}>
-                {t("modelNoMatchingModels", "No matching models.")}
-              </span>
-            )}
-          </div>
-        </>
-      )}
-
-      {saving && (
-        <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)" }}>
-          {t("modelSavingSelection", "Saving selection…")}
-        </p>
-      )}
-      {error && <p style={{ margin: 0, fontSize: 11, color: "#f87171", lineHeight: 1.4 }}>{error}</p>}
-    </div>
-  );
-}
-
-// ── OAuth detail ──────────────────────────────────────────────────────────────
-
 function OAuthDetail({
   provider,
   onRefresh,
-  modelSelection,
 }: {
   provider: OAuthProvider;
   onRefresh: () => void;
-  modelSelection: ModelSelectionControl;
 }) {
   const { t } = useI18n();
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
@@ -1869,7 +1642,6 @@ function OAuthDetail({
         )}
       </div>
 
-      {provider.loggedIn && <ManagedModelsControl providerId={provider.id} {...modelSelection} />}
     </div>
   );
 }
@@ -1879,11 +1651,9 @@ function OAuthDetail({
 function ApiKeyDetail({
   provider,
   onRefresh,
-  modelSelection,
 }: {
   provider: ApiKeyProvider;
   onRefresh: () => void;
-  modelSelection: ModelSelectionControl;
 }) {
   const { t } = useI18n();
   const [apiKey, setApiKey] = useState("");
@@ -2039,7 +1809,6 @@ function ApiKeyDetail({
       {error && <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{error}</p>}
       {warning && <p style={{ margin: 0, fontSize: 12, color: "#d97706" }}>{warning}</p>}
 
-      {provider.configured && <ManagedModelsControl providerId={provider.id} {...modelSelection} />}
 
       {provider.configured && (
         <button
@@ -2087,6 +1856,8 @@ function BuiltinProviderDetail({
   const [savedOk, setSavedOk] = useState(false);
   const pendingRef = useRef<{ baseUrl: string; enabledModels: string[] | null } | null>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const [query, setQuery] = useState("");
+  useEffect(() => setQuery(""), [providerId]);
 
   const persist = useCallback(
     async (nextBaseUrl: string, nextEnabledModels: string[] | null) => {
@@ -2194,6 +1965,14 @@ function BuiltinProviderDetail({
   const allEnabled = enabledModels === null;
   const enabledSet = new Set(allEnabled ? [] : enabledModels);
   const enabledCount = allEnabled ? data.models.length : enabledModels!.length;
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const visibleModels = normalizedQuery
+    ? data.models.filter(
+        (m) =>
+          m.name.toLocaleLowerCase().includes(normalizedQuery) ||
+          m.id.toLocaleLowerCase().includes(normalizedQuery),
+      )
+    : data.models;
 
   const isChecked = (id: string) => allEnabled || enabledSet.has(id);
 
@@ -2300,64 +2079,115 @@ function BuiltinProviderDetail({
           </div>
         </div>
         <p style={{ margin: 0, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
-          {t("enabledModelsHint", "Only enabled models appear in the chat model picker.")}
+          {t(
+            "enabledModelsHint",
+            "Only enabled models appear in the chat model picker. The active model in an existing session is not changed.",
+          )}
         </p>
-        <div
-          style={{
-            marginTop: 10,
-            maxHeight: 320,
-            overflowY: "auto",
-            border: "1px solid var(--border)",
-            borderRadius: 6,
-            padding: "6px 10px",
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(min(220px, 100%), 1fr))",
-            gap: 2,
-          }}
-        >
-          {data.models.map((m) => (
-            <label
-              key={m.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 7,
-                padding: "4px 4px",
-                borderRadius: 4,
-                cursor: "pointer",
-                fontSize: 12,
-                color: "var(--text-muted)",
-                minWidth: 0,
-              }}
-              title={m.id}
-            >
-              <input
-                type="checkbox"
-                checked={isChecked(m.id)}
-                onChange={() => toggleModel(m.id)}
+        {data.models.length > 0 && (
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("modelSearchModels", "Search models…")}
+            aria-label={t("modelSearchProviderModels", "Search provider models")}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              marginTop: 8,
+              padding: "6px 9px",
+              background: "var(--bg)",
+              border: "1px solid var(--border)",
+              borderRadius: 5,
+              color: "var(--text)",
+              fontSize: 12,
+              outline: "none",
+            }}
+          />
+        )}
+        {data.models.length === 0 ? (
+          <p style={{ margin: "10px 0 0", fontSize: 12, color: "var(--text-muted)" }}>
+            {t("modelNoAvailableModels", "No models are currently available for this provider.")}
+          </p>
+        ) : (
+          <div
+            style={{
+              marginTop: 8,
+              maxHeight: 320,
+              overflowY: "auto",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              padding: "6px 10px",
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(min(220px, 100%), 1fr))",
+              gap: 2,
+            }}
+          >
+            {visibleModels.map((m) => (
+              <label
+                key={m.id}
                 style={{
-                  width: 15,
-                  height: 15,
-                  margin: 0,
-                  accentColor: "var(--accent)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  padding: "4px 4px",
+                  borderRadius: 4,
                   cursor: "pointer",
-                  flexShrink: 0,
+                  fontSize: 12,
+                  color: "var(--text-muted)",
+                  minWidth: 0,
                 }}
-              />
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
+                title={`${m.name} — ${m.id}`}
               >
-                {m.id}
+                <input
+                  type="checkbox"
+                  checked={isChecked(m.id)}
+                  onChange={() => toggleModel(m.id)}
+                  style={{
+                    width: 15,
+                    height: 15,
+                    margin: 0,
+                    accentColor: "var(--accent)",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                />
+                <span style={{ minWidth: 0, lineHeight: 1.3 }}>
+                  <span
+                    style={{
+                      display: "block",
+                      color: "var(--text)",
+                      fontSize: 12,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {m.name}
+                  </span>
+                  <span
+                    style={{
+                      display: "block",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      color: "var(--text-dim)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {m.id}
+                  </span>
+                </span>
+              </label>
+            ))}
+            {visibleModels.length === 0 && (
+              <span style={{ padding: "10px 0", color: "var(--text-muted)", fontSize: 12 }}>
+                {t("modelNoMatchingModels", "No matching models.")}
               </span>
-            </label>
-          ))}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2753,12 +2583,10 @@ export function ModelsConfig({
   onClose,
   onChanged,
   embedded = false,
-  cwd = null,
 }: {
   onClose: () => void;
   onChanged?: () => void;
   embedded?: boolean;
-  cwd?: string | null;
 }) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
@@ -2770,10 +2598,6 @@ export function ModelsConfig({
   const [selection, setSelection] = useState<Selection | null>(null);
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
-  const [modelPreferences, setModelPreferencesState] = useState<ModelPreferencesResult | null>(null);
-  const [modelPreferencesLoading, setModelPreferencesLoading] = useState(true);
-  const [modelPreferencesSaving, setModelPreferencesSaving] = useState(false);
-  const [modelPreferencesError, setModelPreferencesError] = useState<string | null>(null);
   const [builtinProviders, setBuiltinProviders] = useState<BuiltinProviderInfo[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -2803,34 +2627,6 @@ export function ModelsConfig({
       .catch(() => {});
   }, []);
 
-  const loadModelPreferences = useCallback(async () => {
-    setModelPreferencesLoading(true);
-    setModelPreferencesError(null);
-    try {
-      setModelPreferencesState(await getModelPreferences(cwd ?? undefined));
-    } catch (error) {
-      setModelPreferencesError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setModelPreferencesLoading(false);
-    }
-  }, [cwd]);
-
-  const updateModelPreferences = useCallback(
-    async (enabledModels: string[] | null) => {
-      setModelPreferencesSaving(true);
-      setModelPreferencesError(null);
-      try {
-        const result = await setModelPreferences(cwd ?? undefined, enabledModels);
-        setModelPreferencesState(result);
-        onChanged?.();
-      } catch (error) {
-        setModelPreferencesError(error instanceof Error ? error.message : String(error));
-      } finally {
-        setModelPreferencesSaving(false);
-      }
-    },
-    [cwd, onChanged],
-  );
 
   const loadBuiltinProviders = useCallback(() => {
     fetch("/api/models-config/providers")
@@ -2873,9 +2669,6 @@ export function ModelsConfig({
     loadBuiltinProviders();
   }, [loadOAuthProviders, loadApiKeyProviders, loadBuiltinProviders]);
 
-  useEffect(() => {
-    void loadModelPreferences();
-  }, [loadModelPreferences]);
 
   const addCustomProvider = useCallback(() => {
     let finalName = "new-provider";
@@ -2979,7 +2772,6 @@ export function ModelsConfig({
       else {
         setSavedOk(true);
         onChanged?.();
-        void loadModelPreferences();
         setTimeout(() => setSavedOk(false), 2000);
       }
     } catch (e) {
@@ -2987,7 +2779,7 @@ export function ModelsConfig({
     } finally {
       setSaving(false);
     }
-  }, [config, loadModelPreferences, onChanged]);
+  }, [config, onChanged]);
 
   const providers = Object.entries(config.providers ?? {});
   // Built-in provider overlays (Base URL / enabled models) are stored under the
@@ -3044,17 +2836,9 @@ export function ModelsConfig({
           provider={p}
           onRefresh={() => {
             loadOAuthProviders();
-            void loadModelPreferences();
             // Connect/disconnect changes which built-in providers have credentials,
             // so refresh the configured list to show/hide the model selection.
             loadBuiltinProviders();
-          }}
-          modelSelection={{
-            preferences: modelPreferences,
-            loading: modelPreferencesLoading,
-            saving: modelPreferencesSaving,
-            error: modelPreferencesError,
-            onChange: updateModelPreferences,
           }}
         />
       );
@@ -3068,17 +2852,9 @@ export function ModelsConfig({
           provider={p}
           onRefresh={() => {
             loadApiKeyProviders();
-            void loadModelPreferences();
             // Connect/disconnect changes which built-in providers have credentials,
             // so refresh the configured list to show/hide the model selection.
             loadBuiltinProviders();
-          }}
-          modelSelection={{
-            preferences: modelPreferences,
-            loading: modelPreferencesLoading,
-            saving: modelPreferencesSaving,
-            error: modelPreferencesError,
-            onChange: updateModelPreferences,
           }}
         />
       );
