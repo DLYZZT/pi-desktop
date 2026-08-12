@@ -213,6 +213,7 @@ export interface Api {
     result: {
       files: string[];
       truncated: boolean;
+      truncatedReason?: "depth" | "count";
       matches?: Array<{ path: string; isDir?: boolean; score?: number }>;
     };
   };

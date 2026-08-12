@@ -262,6 +262,22 @@ test("file, git, worktree, skill, plugin, and system handlers return contract-sh
   assert.equal(Array.isArray(index.files), true);
   assert.equal(index.files.includes("hello.txt"), true);
 
+  let deepDirectory = project;
+  for (let depth = 0; depth < 9; depth += 1) {
+    deepDirectory = path.join(deepDirectory, `depth-${depth}`);
+    mkdirSync(deepDirectory);
+  }
+  writeFileSync(path.join(deepDirectory, "beyond-depth.txt"), "too deep", "utf8");
+  const depthLimitedIndex = await handlers["files.index"]({ root: project });
+  assert.equal(
+    depthLimitedIndex.files.includes(
+      "depth-0/depth-1/depth-2/depth-3/depth-4/depth-5/depth-6/depth-7/depth-8/beyond-depth.txt",
+    ),
+    false,
+  );
+  assert.equal(depthLimitedIndex.truncated, true);
+  assert.equal(depthLimitedIndex.truncatedReason, "depth");
+
   const git = await handlers["git.status"]({ path: project });
   assert.equal(git.isGit, false);
 

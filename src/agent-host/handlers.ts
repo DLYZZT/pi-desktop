@@ -1204,12 +1204,12 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       const { root, query } = params as { root: string; query?: string };
       await assertPathAllowed(root);
       let relFiles: string[] = [];
-      let hardTruncated = false;
+      let truncatedReason: "depth" | "count" | undefined;
 
       try {
         const all = await listGitFiles(root);
         if (all.length > 50_000) {
-          hardTruncated = true;
+          truncatedReason = "count";
           relFiles = all.slice(0, 50_000);
         } else {
           relFiles = all;
@@ -1217,8 +1217,12 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       } catch {
         const abs: string[] = [];
         const walk = (dir: string, depth: number) => {
-          if (depth > 8 || abs.length >= 5000) {
-            if (abs.length >= 5000) hardTruncated = true;
+          if (depth > 8) {
+            truncatedReason ??= "depth";
+            return;
+          }
+          if (abs.length >= 5000) {
+            truncatedReason = "count";
             return;
           }
           let names: string[];
@@ -1238,7 +1242,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
               /* skip */
             }
             if (abs.length >= 5000) {
-              hardTruncated = true;
+              truncatedReason = "count";
               return;
             }
           }
@@ -1253,7 +1257,8 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
       const CLIENT_CAP = 5000;
       const filesForClient = relFiles.slice(0, CLIENT_CAP);
-      const truncated = hardTruncated || relFiles.length > CLIENT_CAP;
+      if (relFiles.length > CLIENT_CAP) truncatedReason = "count";
+      const truncated = truncatedReason !== undefined;
       const entries = buildEntriesFromFiles(filesForClient);
 
       if (query?.trim()) {
@@ -1261,6 +1266,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         return {
           files: filesForClient,
           truncated,
+          ...(truncatedReason ? { truncatedReason } : {}),
           matches: matches.map((m) => ({
             path: m.path,
             isDir: m.isDir,
@@ -1272,6 +1278,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       return {
         files: filesForClient,
         truncated,
+        ...(truncatedReason ? { truncatedReason } : {}),
         matches: entries.slice(0, 100).map((m) => ({
           path: m.path,
           isDir: m.isDir,
