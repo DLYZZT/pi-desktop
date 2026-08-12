@@ -404,7 +404,7 @@ test("session, model configuration, and auth handlers isolate state and preserve
   assert.deepEqual(await handlers["auth.loginCancel"]({ provider: "handler-test" }), { ok: true });
   await assert.rejects(
     handlers["auth.loginSubmit"]({ provider: "one", token: "two-token", code: "code" }),
-    (error) => error.code === "BAD_REQUEST",
+    (error) => error.code === "NOT_FOUND",
   );
 
   const modelsPath = path.join(isolatedAgentDirectory, "models.json");

@@ -9,6 +9,7 @@ import { getSharedModelRuntime } from "./model-runtime";
 import { recoverCommittedCredential } from "./credential-sync";
 
 type Pending = {
+  provider: string;
   resolve: (v: string) => void;
   reject: (e: Error) => void;
 };
@@ -16,9 +17,9 @@ type Pending = {
 const loginCallbacks = new Map<string, Pending>();
 const activeLogins = new Map<string, AbortController>();
 
-export function resolveLoginCode(token: string, code: string): boolean {
+export function resolveLoginCode(provider: string, token: string, code: string): boolean {
   const pending = loginCallbacks.get(token);
-  if (!pending) return false;
+  if (!pending || pending.provider !== provider) return false;
   pending.resolve(code);
   loginCallbacks.delete(token);
   return true;
@@ -31,7 +32,7 @@ export function cancelLogin(provider: string): void {
     activeLogins.delete(provider);
   }
   for (const [token, pending] of [...loginCallbacks.entries()]) {
-    if (token.startsWith(`${provider}-`)) {
+    if (pending.provider === provider) {
       pending.reject(new Error("Login cancelled"));
       loginCallbacks.delete(token);
     }
@@ -77,6 +78,7 @@ export function createAuthLoginService(
         const promise = new Promise<string>((resolve, reject) => {
           let removeAbortListener = () => {};
           const pending: Pending = {
+            provider,
             resolve: (value) => {
               activeTokens.delete(token);
               loginCallbacks.delete(token);

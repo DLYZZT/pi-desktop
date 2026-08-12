@@ -105,7 +105,7 @@ test("ModelRuntime auth notifications and prompts map onto the desktop login str
   assert.deepEqual(await service.start("test-oauth"), { started: true });
   const promptEvent = events.find((event) => event.data.type === "prompt_request");
   assert.ok(promptEvent?.data.token);
-  assert.equal(resolveLoginCode(promptEvent.data.token, "approved"), true);
+  assert.equal(resolveLoginCode("test-oauth", promptEvent.data.token, "approved"), true);
   await nextTurn();
 
   assert.deepEqual(
@@ -113,6 +113,49 @@ test("ModelRuntime auth notifications and prompts map onto the desktop login str
     ["auth", "device_code", "progress", "prompt_request", "success"],
   );
   assert.equal(events[0].data.token, promptEvent.data.token);
+});
+
+test("pending login tokens are cancelled and resolved by exact provider ownership", async () => {
+  const { createAuthLoginService, resolveLoginCode } = await loadAuthLoginModule();
+  const events = [];
+  const service = createAuthLoginService(
+    {
+      emit(_topic, key, data) {
+        events.push({ provider: key, ...data });
+      },
+    },
+    () => ({
+      getProvider() {
+        return { auth: { oauth: {} } };
+      },
+      async login(provider, _type, interaction) {
+        const code = await interaction.prompt({ type: "manual_code", message: `Code for ${provider}` });
+        assert.equal(code, `${provider}-approved`);
+      },
+    }),
+  );
+
+  await service.start("openai");
+  await service.start("openai-codex-test");
+  const openaiToken = events.find((event) => event.provider === "openai" && event.type === "prompt_request").token;
+  const codexToken = events.find(
+    (event) => event.provider === "openai-codex-test" && event.type === "prompt_request",
+  ).token;
+
+  assert.equal(resolveLoginCode("openai", codexToken, "wrong-owner"), false);
+  service.cancel("openai");
+  assert.equal(resolveLoginCode("openai", openaiToken, "too-late"), false);
+  assert.equal(resolveLoginCode("openai-codex-test", codexToken, "openai-codex-test-approved"), true);
+  await nextTurn();
+
+  assert.equal(
+    events.some((event) => event.provider === "openai" && event.type === "cancelled"),
+    true,
+  );
+  assert.equal(
+    events.some((event) => event.provider === "openai-codex-test" && event.type === "success"),
+    true,
+  );
 });
 
 test("OAuth credential synchronization failure emits success with a safe warning after read-back", async () => {

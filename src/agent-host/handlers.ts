@@ -1580,10 +1580,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         token: string;
         code: string;
       };
-      if (!token.startsWith(`${provider}-`)) {
-        throw new RpcError({ code: "BAD_REQUEST", message: "Token does not match provider" });
-      }
-      if (!resolveLoginCode(token, code)) {
+      if (!resolveLoginCode(provider, token, code)) {
         throw new RpcError({ code: "NOT_FOUND", message: "No pending login for token" });
       }
       return { ok: true as const };
