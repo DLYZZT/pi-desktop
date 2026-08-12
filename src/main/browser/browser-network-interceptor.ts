@@ -12,6 +12,7 @@ import type {
 import { BrowserNetworkPolicy, createSessionNetworkPolicyOptions } from "./browser-network-policy.ts";
 import { applyHeaderRules, validateHeaderRules } from "./browser-header-rules.ts";
 import { BrowserError } from "./browser-error.ts";
+import { BrowserPermissionGrantStore } from "./browser-permission-grants.ts";
 
 const PERMISSION_TIMEOUT_MS = 30_000;
 
@@ -41,8 +42,7 @@ export class BrowserNetworkInterceptor {
   private readonly policy: BrowserNetworkPolicy;
   private requestRules: BrowserHeaderRule[] = [];
   private responseRules: BrowserHeaderRule[] = [];
-  private readonly sessionPermissionKeys = new Set<string>();
-  private readonly oncePermissionKeys = new Set<string>();
+  private readonly permissionGrants = new BrowserPermissionGrantStore();
   private readonly locallyApprovedPrivateOrigins = new Set<string>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private disposed = false;
@@ -74,8 +74,8 @@ export class BrowserNetworkInterceptor {
     if (!pending) throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser permission request is no longer active");
     this.pendingPermissions.delete(requestId);
     clearTimeout(pending.timer);
-    if (decision === "allow-session") this.sessionPermissionKeys.add(pending.key);
-    else if (decision === "allow-once") this.oncePermissionKeys.add(pending.key);
+    if (decision === "allow-session") this.permissionGrants.allowSession(pending.key);
+    else if (decision === "allow-once") this.permissionGrants.allowOnce(pending.key);
     pending.callback(decision !== "deny");
     this.options.emit({ type: "permission-resolved", requestId });
   }
@@ -104,8 +104,7 @@ export class BrowserNetworkInterceptor {
       this.options.emit({ type: "permission-resolved", requestId: pending.request.id });
     }
     this.pendingPermissions.clear();
-    this.sessionPermissionKeys.clear();
-    this.oncePermissionKeys.clear();
+    this.permissionGrants.clear();
     this.locallyApprovedPrivateOrigins.clear();
     this.options.session.setPermissionCheckHandler(null);
     this.options.session.setPermissionRequestHandler(null);
@@ -119,9 +118,7 @@ export class BrowserNetworkInterceptor {
     session.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
       if (!webContents) return false;
       const key = permissionKey(webContents, permission, requestingOrigin);
-      if (this.sessionPermissionKeys.has(key)) return true;
-      if (this.oncePermissionKeys.delete(key)) return true;
-      return false;
+      return this.permissionGrants.peek(key);
     });
     session.setPermissionRequestHandler((webContents, permission, callback, details) => {
       if (this.disposed) return callback(false);
@@ -130,8 +127,7 @@ export class BrowserNetworkInterceptor {
       const origin = safeOrigin(details.requestingUrl || webContents.getURL());
       if (!origin) return callback(false);
       const key = permissionKey(webContents, permission, origin);
-      if (this.sessionPermissionKeys.has(key)) return callback(true);
-      if (this.oncePermissionKeys.delete(key)) return callback(true);
+      if (this.permissionGrants.consume(key)) return callback(true);
 
       const id = randomUUID();
       const request: BrowserPermissionRequest = {
