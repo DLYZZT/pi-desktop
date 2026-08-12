@@ -24,5 +24,6 @@ test("all desktop IPC registrations pass through the trusted wrappers", () => {
   const source = readFileSync(path.join(import.meta.dirname, "ipc.ts"), "utf8");
   assert.equal(source.match(/ipcMain\.handle\(/g)?.length, 1, "only trustedHandle may call ipcMain.handle");
   assert.equal(source.match(/ipcMain\.on\(/g)?.length, 1, "only trustedOn may call ipcMain.on");
+  assert.equal(source.includes('"desktop:clear-badge"'), false, "the unused invoke badge channel must stay removed");
   assert.doesNotMatch(source, /assertTrustedToolchainSender/);
 });

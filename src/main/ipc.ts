@@ -288,8 +288,6 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
       browser: getBrowserService()?.getRedactedDiagnostics(),
     });
   });
-  trustedHandle("desktop:clear-badge", () => applyBadgeCount(0));
-
   browserHandler("desktop:browser:get-state", (browser) => browser.getState());
   browserHandler("desktop:browser:get-settings", (browser) => browser.getSettings());
   browserHandler(
