@@ -26,6 +26,7 @@ import {
   validateCwd,
   defaultCwd,
 } from "./api-client";
+import { isApiShimRequest } from "./api-fetch-policy";
 
 type Json = unknown;
 
@@ -522,8 +523,7 @@ export class ApiEventSource {
 export function installApiShims(): void {
   const originalFetch = window.fetch.bind(window);
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (typeof url === "string" && (url.startsWith("/api/") || url.includes("/api/"))) {
+    if (isApiShimRequest(input, window.location.href)) {
       return apiFetch(input as string, init);
     }
     return originalFetch(input as RequestInfo, init);
