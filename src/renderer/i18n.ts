@@ -379,6 +379,8 @@ const zhCN: Record<string, string> = {
   backgroundMode: "后台运行",
   backgroundModeDescription: "窗口关闭后保持消息渠道在线。",
   closeToTray: "关闭窗口时最小化到托盘",
+  backgroundModeSaveFailed: "无法保存后台运行设置，已恢复之前的选项。",
+  backgroundModeLoadFailed: "无法读取后台运行设置，当前保留默认选项。",
   currentProject: "当前项目",
   noProject: "未选择项目",
   refresh: "刷新",
