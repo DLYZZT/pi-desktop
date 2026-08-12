@@ -40,6 +40,12 @@ import {
 } from "@/lib/session-performance";
 import { mergeHistoryTail, prependHistoryPage } from "@/lib/session-pagination";
 import { LatestRequestGate } from "@/lib/latest-request-gate";
+import {
+  connectTimedEventStream,
+  EventStreamConnectionManager,
+  type EventStreamConnectionResult,
+  type EventStreamConnectionStatus,
+} from "@/lib/event-stream-connection";
 
 export type SessionData = SessionDetail;
 type AgentStateResponse = SessionRuntimeState;
@@ -170,13 +176,6 @@ const MAX_NOTICES = 5;
 const NOTICE_VISIBLE_MS = 5000;
 const NOTICE_EXIT_ANIMATION_MS = 180;
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Space", "Spacebar"]);
-
-type EventStreamConnectionStatus = "connected" | "timeout" | "closed";
-
-type EventStreamConnectionResult = {
-  status: EventStreamConnectionStatus;
-  unsubscribe: () => void;
-};
 
 class EventStreamConnectionError extends Error {
   constructor(public readonly status: Exclude<EventStreamConnectionStatus, "connected">) {
@@ -388,6 +387,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [loadingOlder, setLoadingOlder] = useState(false);
 
   const eventUnsubRef = useRef<(() => void) | null>(null);
+  const [eventConnectionManager] = useState(() => new EventStreamConnectionManager(eventUnsubRef));
   const modelRefreshRequestRef = useRef<string | null>(null);
   const modelListRequestGateRef = useRef(new LatestRequestGate());
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
@@ -787,52 +787,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [ensureNewSession]);
 
-  const connectEvents = useCallback(async (sid: string): Promise<EventStreamConnectionResult> => {
-    if (eventUnsubRef.current) {
-      eventUnsubRef.current();
-      eventUnsubRef.current = null;
-    }
-
-    let settled = false;
-    let resolveResult: (r: EventStreamConnectionResult) => void = () => {};
-    const resultPromise = new Promise<EventStreamConnectionResult>((resolve) => {
-      resolveResult = resolve;
-    });
-    const timeout = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        resolveResult({ status: "timeout", unsubscribe: () => {} });
-      }
-    }, EVENT_STREAM_CONNECT_TIMEOUT_MS);
-
-    const unsubscribe = await subscribeAgentEvents(sid, (event) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timeout);
-        resolveResult({ status: "connected", unsubscribe: () => eventUnsubRef.current?.() });
-      }
-      handleAgentEventRef.current?.(event as AgentEvent);
-    });
-    eventUnsubRef.current = unsubscribe;
-
-    // IPC is immediately ready — mark connected if no event yet
-    if (!settled) {
-      settled = true;
-      clearTimeout(timeout);
-      resolveResult({ status: "connected", unsubscribe });
-    }
-
-    return resultPromise;
-  }, []);
+  const connectEvents = useCallback(
+    async (sid: string): Promise<EventStreamConnectionResult> => {
+      return connectTimedEventStream({
+        manager: eventConnectionManager,
+        subscribe: (onEvent) => subscribeAgentEvents(sid, onEvent),
+        onEvent: (event) => handleAgentEventRef.current?.(event as AgentEvent),
+        timeoutMs: EVENT_STREAM_CONNECT_TIMEOUT_MS,
+      });
+    },
+    [eventConnectionManager],
+  );
 
   const ensureEventsConnected = useCallback(
     async (sid: string) => {
       const result = await connectEvents(sid);
       if (result.status === "connected") return;
-      if (eventUnsubRef.current) {
-        eventUnsubRef.current();
-        eventUnsubRef.current = null;
-      }
       throw new EventStreamConnectionError(result.status);
     },
     [connectEvents],
@@ -1857,8 +1827,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       disposed = true;
       historyGenerationRef.current += 1;
       unsubscribeLiveSync?.();
-      eventUnsubRef.current?.();
-      eventUnsubRef.current = null;
+      eventConnectionManager.invalidate();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- session identity owns this lifecycle effect.
   }, []);
