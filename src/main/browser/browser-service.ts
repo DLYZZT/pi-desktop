@@ -48,6 +48,7 @@ import { BrowserSnippetStore } from "./browser-snippet-store.ts";
 import { BrowserTabManager } from "./browser-tab-manager.ts";
 import { BrowserTabRestoreStore } from "./browser-tab-restore-store.ts";
 import { appendMainLog } from "../logger.ts";
+import { countAdvancedProfileTabs, toBrowserRestoreRecords } from "./browser-tab-restoration.ts";
 
 const RESTORE_DEBOUNCE_MS = 500;
 const RUNTIME_GRANT_TTL_MS = 8 * 60 * 60 * 1_000;
@@ -201,7 +202,7 @@ export class BrowserService {
       runtime: {
         policyRevision: this.policy.getRevision(),
         advancedBrowserModeEnabled: this.policy.isAdvancedEnabled(),
-        advancedTabCount: this.tabs.list().filter((tab) => tab.advanced).length,
+        advancedTabCount: countAdvancedProfileTabs(this.tabs.list()),
       },
       compatibilityReadOnly: parsed.compatibilityReadOnly,
     };
@@ -1179,11 +1180,7 @@ export class BrowserService {
   private persistRestoreTabs(): void {
     const settings = this.policy.getSettings();
     if (!settings.panel.restoreTabs) return;
-    const records = this.tabs
-      .list()
-      .filter((tab) => !tab.advanced)
-      .map((tab, order) => ({ profileId: tab.profileId, url: tab.url, ownerSessionId: tab.ownerSessionId, order }));
-    this.restoreStore.write(records);
+    this.restoreStore.write(toBrowserRestoreRecords(this.tabs.list()));
   }
 
   private getDiagnostics(): BrowserDiagnostics {
@@ -1227,7 +1224,7 @@ export class BrowserService {
             "unrestricted-cdp",
           ]
         : [],
-      advancedTabCount: tabs.filter((tab) => tab.advanced).length,
+      advancedTabCount: countAdvancedProfileTabs(tabs),
       capturedRequestCount: this.tabs.countCapturedRequests(),
       snippetCount: this.snippetStore.count(),
     };

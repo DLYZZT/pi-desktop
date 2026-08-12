@@ -275,7 +275,10 @@ export interface BrowserTabInfo {
   canGoForward: boolean;
   crashed: boolean;
   control: BrowserControlState;
+  /** True only while an Agent advanced action is executing. */
   advanced: boolean;
+  /** True when the tab uses an unsafe Profile and must not be restored. */
+  advancedProfile: boolean;
   createdAt: number;
   lastActiveAt: number;
 }

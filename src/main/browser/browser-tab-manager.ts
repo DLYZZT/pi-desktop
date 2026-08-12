@@ -269,7 +269,8 @@ export class BrowserTabManager {
         canGoForward: false,
         crashed: false,
         control: "user",
-        advanced: settings.advancedBrowserMode.enabled,
+        advanced: false,
+        advancedProfile: profile.mode === "unsafe",
         createdAt: now,
         lastActiveAt: now,
       },
@@ -1775,10 +1776,8 @@ export class BrowserTabManager {
   }
 
   async applyAdvancedMode(): Promise<void> {
-    const advanced = this.options.getSettings().advancedBrowserMode.enabled;
     const pending: Promise<void>[] = [];
     for (const record of this.tabs.values()) {
-      record.info.advanced = advanced;
       const previous = record.advancedReady;
       record.advancedReady = previous.catch(() => undefined).then(() => this.prepareAdvancedRecord(record));
       pending.push(record.advancedReady);
@@ -2241,6 +2240,7 @@ export class BrowserTabManager {
         record.pendingActions.delete(abort);
         if (record.activeAbort === abort) record.activeAbort = undefined;
         record.info.control = "user";
+        record.info.advanced = false;
         this.emitUpdate(record);
       }
     };

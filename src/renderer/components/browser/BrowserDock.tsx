@@ -189,7 +189,9 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
               {tab.title || t("browserNewTab", "New tab")}
             </span>
-            {tab.advanced ? <Badge danger>{t("browserAdvancedModeBadge", "Advanced Browser Mode")}</Badge> : null}
+            {tab.advanced || tab.advancedProfile ? (
+              <Badge danger>{t("browserAdvancedModeBadge", "Advanced Browser Mode")}</Badge>
+            ) : null}
             <span
               role="button"
               aria-label={t("browserCloseTab", "Close tab")}
@@ -388,7 +390,9 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
               ? t("browserStrictIsolation", "Strict isolation")
               : t("browserBestEffortIsolation", "Best-effort network isolation")}
           </span>
-          {activeTab.advanced ? <Badge danger>{t("browserAdvancedModeBadge", "Advanced Browser Mode")}</Badge> : null}
+          {activeTab.advanced || activeTab.advancedProfile ? (
+            <Badge danger>{t("browserAdvancedModeBadge", "Advanced Browser Mode")}</Badge>
+          ) : null}
         </div>
       )}
     </div>
