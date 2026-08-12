@@ -347,8 +347,6 @@ export interface Streams {
     size?: number;
     message?: string;
   };
-  "host.restarted": { reason: string };
-  "host.ready": { ts: number };
   "channels.status": ChannelStatus;
   "channels.login": ChannelLoginEvent;
   "channels.pairing": ChannelPairingRequest;
