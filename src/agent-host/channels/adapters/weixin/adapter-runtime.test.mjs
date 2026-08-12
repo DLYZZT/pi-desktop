@@ -15,7 +15,7 @@ mkdirSync(path.dirname(output), { recursive: true });
 await build({
   stdin: {
     contents: [
-      'export { WeixinAdapter } from "./adapter.ts";',
+      'export { WeixinAdapter, delay } from "./adapter.ts";',
       'export { ChannelStateStore } from "../../state-store.ts";',
     ].join("\n"),
     resolveDir: import.meta.dirname,
@@ -30,7 +30,43 @@ await build({
   logLevel: "silent",
 });
 
-const { ChannelStateStore, WeixinAdapter } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
+const { ChannelStateStore, WeixinAdapter, delay } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
+
+class TrackedAbortSignal {
+  aborted = false;
+  listeners = new Set();
+  removeCount = 0;
+
+  addEventListener(type, listener) {
+    assert.equal(type, "abort");
+    this.listeners.add(listener);
+  }
+
+  removeEventListener(type, listener) {
+    assert.equal(type, "abort");
+    this.removeCount += 1;
+    this.listeners.delete(listener);
+  }
+
+  abort() {
+    this.aborted = true;
+    for (const listener of [...this.listeners]) listener();
+  }
+}
+
+test("delay removes its abort listener after timeout and abort completion", async () => {
+  const timedSignal = new TrackedAbortSignal();
+  await delay(0, timedSignal);
+  assert.equal(timedSignal.listeners.size, 0);
+  assert.equal(timedSignal.removeCount, 1);
+
+  const abortedSignal = new TrackedAbortSignal();
+  const pending = delay(60_000, abortedSignal);
+  abortedSignal.abort();
+  await pending;
+  assert.equal(abortedSignal.listeners.size, 0);
+  assert.equal(abortedSignal.removeCount, 1);
+});
 
 function jsonResponse(value = {}) {
   return {

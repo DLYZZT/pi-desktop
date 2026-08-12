@@ -35,18 +35,20 @@ type ActiveLogin = {
 const LOGIN_TTL_MS = 5 * 60_000;
 const STALE_TOKEN_CODE = -14;
 
-function delay(ms: number, signal: AbortSignal): Promise<void> {
+export function delay(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const onAbort = (): void => finish();
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
