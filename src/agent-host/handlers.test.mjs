@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -230,6 +230,17 @@ test("file, git, worktree, skill, plugin, and system handlers return contract-sh
   const downloaded = await handlers["files.download"]({ path: textFile });
   assert.equal(Buffer.from(downloaded.base64, "base64").toString("utf8"), "hello handler tests\n");
   assert.equal(downloaded.size, Buffer.byteLength("hello handler tests\n"));
+
+  const oversizedFile = path.join(project, "oversized.bin");
+  writeFileSync(oversizedFile, "");
+  truncateSync(oversizedFile, 50 * 1024 * 1024 + 1);
+  await assert.rejects(
+    handlers["files.download"]({ path: oversizedFile }),
+    (error) =>
+      error.code === "RESULT_TOO_LARGE" &&
+      error.detail?.size === 50 * 1024 * 1024 + 1 &&
+      error.detail?.maxBytes === 50 * 1024 * 1024,
+  );
 
   const meta = await handlers["files.meta"]({ path: textFile });
   assert.equal(meta.language, "text");

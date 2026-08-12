@@ -1,6 +1,7 @@
 export const TEXT_PREVIEW_MAX_BYTES = 256 * 1024;
 export const IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 export const DOCX_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
+export const FILE_DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024;
 
 export type DocumentPreviewKind = "pdf" | "docx";
 

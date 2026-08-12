@@ -64,6 +64,7 @@ import {
 import { buildEntriesFromFiles, filterFileEntries } from "../shared/file-fuzzy";
 import {
   DOCX_PREVIEW_MAX_BYTES,
+  FILE_DOWNLOAD_MAX_BYTES,
   IMAGE_PREVIEW_MAX_BYTES,
   TEXT_PREVIEW_MAX_BYTES,
   documentPreviewKind,
@@ -1065,6 +1066,13 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       const st = statSync(filePath);
       if (!st.isFile()) {
         throw new RpcError({ code: "BAD_REQUEST", message: "Not a file" });
+      }
+      if (st.size > FILE_DOWNLOAD_MAX_BYTES) {
+        throw new RpcError({
+          code: "RESULT_TOO_LARGE",
+          message: `File exceeds the ${FILE_DOWNLOAD_MAX_BYTES / 1024 / 1024} MiB download limit`,
+          detail: { size: st.size, maxBytes: FILE_DOWNLOAD_MAX_BYTES },
+        });
       }
       return {
         base64: readFileSync(filePath).toString("base64"),
