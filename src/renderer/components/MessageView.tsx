@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { memo, useState, useRef, useEffect, useMemo } from "react";
 import { MarkdownBody } from "./MarkdownBody";
 import { copyText } from "@/lib/clipboard";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
@@ -28,7 +28,8 @@ import type {
 interface Props {
   message: AgentMessage;
   isStreaming?: boolean;
-  toolResults?: Map<string, ToolResultMessage>;
+  toolResults?: ReadonlyMap<string, ToolResultMessage>;
+  toolCallDurations?: ReadonlyMap<string, number>;
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -117,10 +118,11 @@ function DeferredContentActions({
   );
 }
 
-export function MessageView({
+export const MessageView = memo(function MessageView({
   message,
   isStreaming,
   toolResults,
+  toolCallDurations,
   modelNames,
   cwd,
   onOpenFile,
@@ -156,6 +158,7 @@ export function MessageView({
         message={message as AssistantMessage}
         isStreaming={isStreaming}
         toolResults={toolResults}
+        toolCallDurations={toolCallDurations}
         modelNames={modelNames}
         cwd={cwd}
         onOpenFile={onOpenFile}
@@ -188,7 +191,7 @@ export function MessageView({
     );
   }
   return null;
-}
+});
 
 function UserMessageView({
   message,
@@ -518,6 +521,7 @@ function AssistantMessageView({
   message,
   isStreaming,
   toolResults,
+  toolCallDurations,
   modelNames,
   cwd,
   onOpenFile,
@@ -527,7 +531,8 @@ function AssistantMessageView({
 }: {
   message: AssistantMessage;
   isStreaming?: boolean;
-  toolResults?: Map<string, ToolResultMessage>;
+  toolResults?: ReadonlyMap<string, ToolResultMessage>;
+  toolCallDurations?: ReadonlyMap<string, number>;
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -566,21 +571,6 @@ function AssistantMessageView({
     const secs = Math.round((message.timestamp - prevTimestamp) / 1000);
     return secs > 0 ? secs : undefined;
   }, [message.timestamp, prevTimestamp]);
-
-  // Tool call durations derived from session file timestamps (accurate for completed messages)
-  // assistant message timestamp = when generation ended = when tools started running
-  // toolResult timestamp = when tool execution finished
-  const toolCallDurations = useMemo<Map<string, number>>(() => {
-    const map = new Map<string, number>();
-    if (!toolResults || !message.timestamp) return map;
-    for (const [callId, result] of toolResults) {
-      if (result.timestamp && message.timestamp) {
-        const secs = Math.round((result.timestamp - message.timestamp) / 1000);
-        if (secs > 0) map.set(callId, secs);
-      }
-    }
-    return map;
-  }, [toolResults, message.timestamp]);
 
   const textContent = blocks
     .filter((b): b is TextContent => b.type === "text")
@@ -866,10 +856,10 @@ function BlockView({
   onLoadDeferredContent,
 }: {
   block: AssistantContentBlock;
-  toolResults?: Map<string, ToolResultMessage>;
+  toolResults?: ReadonlyMap<string, ToolResultMessage>;
   isStreaming?: boolean;
   streamingDuration?: number;
-  toolCallDurations?: Map<string, number>;
+  toolCallDurations?: ReadonlyMap<string, number>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
   onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;

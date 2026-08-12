@@ -43,6 +43,10 @@ await build({
 
 const { MessageView } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
+test("MessageView is memoized to preserve unchanged historical messages", () => {
+  assert.equal(MessageView.$$typeof, Symbol.for("react.memo"));
+});
+
 function assistant(overrides = {}) {
   return {
     role: "assistant",
