@@ -55,6 +55,7 @@ import {
   readBoundedResponseBody,
   runBoundedNetworkAction,
 } from "./browser-response-body.ts";
+import { canResumeSensitiveAgentControl } from "./browser-sensitive-control.ts";
 
 const SNAPSHOT_WORLD_ID = 99_911;
 const MAX_SCREENSHOT_BYTES = 12 * 1024 * 1024;
@@ -97,6 +98,7 @@ type TabRecord = {
   queue: Promise<void>;
   activeAbort?: AbortController;
   pendingActions: Map<AbortController, { code: BrowserErrorCode; message: string } | null>;
+  controlGeneration: number;
   syntheticInput: number;
   bounds?: Electron.Rectangle;
   advancedReady: Promise<void>;
@@ -277,6 +279,7 @@ export class BrowserTabManager {
       },
       queue: Promise.resolve(),
       pendingActions: new Map(),
+      controlGeneration: 0,
       syntheticInput: 0,
       advancedReady: Promise.resolve(),
       nativeUserAgent,
@@ -1722,7 +1725,7 @@ export class BrowserTabManager {
     for (const record of this.tabs.values()) {
       if (sessionId && record.info.ownerSessionId !== sessionId) continue;
       this.cancelAgentActions(record, "CAPABILITY_LEASE_EXPIRED", "Browser capability was revoked");
-      record.info.control = "user";
+      this.setUserControl(record);
       this.emitUpdate(record);
     }
     if (sessionId) this.inspections.clearSession(sessionId);
@@ -1984,9 +1987,9 @@ export class BrowserTabManager {
   }
 
   private handleUserInput(record: TabRecord): void {
-    if (record.syntheticInput > 0 || record.info.control !== "agent") return;
+    if (record.syntheticInput > 0 || record.info.control === "user") return;
     record.pendingFileUpload = undefined;
-    record.info.control = "user";
+    this.setUserControl(record);
     record.info.generation += 1;
     record.snapshot = undefined;
     this.inspections.clearTab(record.info.id);
@@ -2004,9 +2007,13 @@ export class BrowserTabManager {
   private async approveSensitiveAction(record: TabRecord, description: string): Promise<void> {
     const policy = this.options.getSettings().automation.sensitiveActions;
     if (policy === "deny") throw new BrowserError("PERMISSION_DENIED", "Sensitive Browser action is denied");
+    const controlGeneration = record.controlGeneration;
     record.info.control = "waiting-for-approval";
     this.emitUpdate(record);
     const accepted = await (this.options.confirmSensitiveAction?.(description) ?? Promise.resolve(false));
+    if (!canResumeSensitiveAgentControl(controlGeneration, record.controlGeneration, record.info.control)) {
+      throw new BrowserError("USER_TOOK_CONTROL", "User took control during sensitive Browser approval");
+    }
     record.info.control = "agent";
     this.emitUpdate(record);
     if (!accepted) throw new BrowserError("PERMISSION_DENIED", "Sensitive Browser action was not approved");
@@ -2196,7 +2203,7 @@ export class BrowserTabManager {
     void permission;
     if (!sessionId) {
       if (record.pendingActions.size > 0) {
-        record.info.control = "user";
+        this.setUserControl(record);
         record.info.generation += 1;
         record.snapshot = undefined;
         this.cancelAgentActions(record, "USER_TOOK_CONTROL", "User took control of the Browser tab");
@@ -2240,13 +2247,18 @@ export class BrowserTabManager {
       } finally {
         record.pendingActions.delete(abort);
         if (record.activeAbort === abort) record.activeAbort = undefined;
-        record.info.control = "user";
+        this.setUserControl(record);
         record.info.advanced = false;
         this.emitUpdate(record);
       }
     };
     record.queue = record.queue.then(run, run);
     return result;
+  }
+
+  private setUserControl(record: TabRecord): void {
+    if (record.info.control !== "user") record.controlGeneration += 1;
+    record.info.control = "user";
   }
 
   private assertSnapshotRef(record: TabRecord, ref: string, snapshotId: string, generation: number): void {
