@@ -83,6 +83,14 @@ test("registerHandlers exposes every contract method exactly once", async () => 
   }
 });
 
+test("agent.new uses a unique temporary lock key for every request", async () => {
+  const { createAgentNewLockKey } = await loadHandlersModule();
+  const keys = Array.from({ length: 1_000 }, () => createAgentNewLockKey());
+
+  assert.equal(new Set(keys).size, keys.length);
+  assert.ok(keys.every((key) => /^__new__[0-9a-f-]{36}$/.test(key)));
+});
+
 test("channel initialization failure is reported without an unhandled rejection", async () => {
   const { initializeChannels } = await loadHandlersModule();
   const reports = [];

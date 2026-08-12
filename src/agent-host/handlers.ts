@@ -17,7 +17,7 @@ import {
 } from "fs";
 import { homedir, tmpdir } from "os";
 import path from "path";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import {
   DefaultResourceLoader,
   CredentialSynchronizationError,
@@ -914,7 +914,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         throw new RpcError({ code: "BAD_REQUEST", message: `Directory does not exist: ${cwd}` });
       }
 
-      const tempKey = `__new__${Date.now()}`;
+      const tempKey = createAgentNewLockKey();
       const { session, realSessionId } = await startRpcSession(tempKey, "", cwd, toolNames);
       allowFileRoot(cwd);
 
@@ -1735,6 +1735,10 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     stopAllFileWatches();
     await disposeAllRpcSessions();
   };
+}
+
+export function createAgentNewLockKey(): string {
+  return `__new__${randomUUID()}`;
 }
 
 /** ISSUE-003: track bindings per wrapper instance, not permanent sessionId set */
