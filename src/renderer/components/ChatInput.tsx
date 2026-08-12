@@ -52,9 +52,13 @@ interface ModelOption {
 interface Props {
   onSend: (message: string, images?: AttachedImage[]) => void;
   onAbort: () => void;
-  onSteer?: (message: string, images?: AttachedImage[]) => void;
-  onFollowUp?: (message: string, images?: AttachedImage[]) => void;
-  onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => void;
+  onSteer?: (message: string, images?: AttachedImage[]) => Promise<void> | void;
+  onFollowUp?: (message: string, images?: AttachedImage[]) => Promise<void> | void;
+  onPromptWithStreamingBehavior?: (
+    message: string,
+    behavior: "steer" | "followUp",
+    images?: AttachedImage[],
+  ) => Promise<void> | void;
   isStreaming: boolean;
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;

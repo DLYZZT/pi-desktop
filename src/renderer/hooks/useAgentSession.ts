@@ -1570,25 +1570,38 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // the real user message when pi delivers it (user message_end event). An
   // optimistic chat bubble here would duplicate the queue panel and turn into
   // a ghost message if the queue is recalled.
-  const handleSteer = useCallback(async (message: string, images?: AttachedImage[]) => {
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
-    try {
-      await sendAgentCommand(sid, {
-        type: "steer",
-        message,
-        ...(piImages?.length ? { images: piImages } : {}),
-      });
-    } catch (e) {
-      console.error("Failed to steer:", e);
-    }
-  }, []);
+  const handleSteer = useCallback(
+    async (message: string, images?: AttachedImage[]) => {
+      const sid = sessionIdRef.current;
+      if (!sid) {
+        const error = new Error("The active session is no longer available");
+        addNotice({ type: "error", message: "Unable to steer the running agent. The message was not queued." });
+        throw error;
+      }
+      const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
+      try {
+        await sendAgentCommand(sid, {
+          type: "steer",
+          message,
+          ...(piImages?.length ? { images: piImages } : {}),
+        });
+      } catch (error) {
+        console.error("Failed to steer:", error);
+        addNotice({ type: "error", message: "Unable to steer the running agent. The message was not queued." });
+        throw error;
+      }
+    },
+    [addNotice],
+  );
 
   const handlePromptWithStreamingBehavior = useCallback(
     async (message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => {
       const sid = sessionIdRef.current;
-      if (!sid) return;
+      if (!sid) {
+        const error = new Error("The active session is no longer available");
+        addNotice({ type: "error", message: "Unable to queue this prompt. The message was not queued." });
+        throw error;
+      }
       const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
       try {
         await sendAgentCommand(sid, {
@@ -1597,27 +1610,38 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           streamingBehavior: behavior,
           ...(piImages?.length ? { images: piImages } : {}),
         });
-      } catch (e) {
-        console.error("Failed to queue prompt:", e);
+      } catch (error) {
+        console.error("Failed to queue prompt:", error);
+        addNotice({ type: "error", message: "Unable to queue this prompt. The message was not queued." });
+        throw error;
       }
     },
-    [],
+    [addNotice],
   );
 
-  const handleFollowUp = useCallback(async (message: string, images?: AttachedImage[]) => {
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
-    try {
-      await sendAgentCommand(sid, {
-        type: "follow_up",
-        message,
-        ...(piImages?.length ? { images: piImages } : {}),
-      });
-    } catch (e) {
-      console.error("Failed to follow up:", e);
-    }
-  }, []);
+  const handleFollowUp = useCallback(
+    async (message: string, images?: AttachedImage[]) => {
+      const sid = sessionIdRef.current;
+      if (!sid) {
+        const error = new Error("The active session is no longer available");
+        addNotice({ type: "error", message: "Unable to queue this follow-up. The message was not queued." });
+        throw error;
+      }
+      const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
+      try {
+        await sendAgentCommand(sid, {
+          type: "follow_up",
+          message,
+          ...(piImages?.length ? { images: piImages } : {}),
+        });
+      } catch (error) {
+        console.error("Failed to follow up:", error);
+        addNotice({ type: "error", message: "Unable to queue this follow-up. The message was not queued." });
+        throw error;
+      }
+    },
+    [addNotice],
+  );
 
   const handleAbortCompaction = useCallback(async () => {
     const sid = sessionIdRef.current;
