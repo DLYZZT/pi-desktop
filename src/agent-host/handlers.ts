@@ -79,7 +79,7 @@ import {
   getDocumentMime,
   getImageMime,
 } from "../shared/file-types";
-import { createFileWatchService } from "./file-watch";
+import { createFileWatchService, stopAllFileWatches } from "./file-watch";
 import { callMain } from "./parent-rpc";
 import { createAuthLoginService, resolveLoginCode } from "./auth-login";
 import { getSharedModelRuntime, modelCatalogRefreshCoordinator, reloadSharedModelRuntimeConfig } from "./model-runtime";
@@ -1678,18 +1678,22 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       return applyPluginAction(params);
     },
 
-    "files.watchStart": async (params) => {
+    "files.watchStart": async (params, context) => {
       const { path: filePath, sourceSessionId } = params as {
         path: string;
         sourceSessionId?: string;
       };
-      await fileWatch.start(filePath, sourceSessionId);
+      const leaseKey = `files.watch:${filePath}`;
+      context?.releaseLease(leaseKey);
+      const release = await fileWatch.start(filePath, sourceSessionId);
+      context?.setLease(leaseKey, release);
       return { ok: true as const };
     },
 
-    "files.watchStop": async (params) => {
+    "files.watchStop": async (params, context) => {
       const { path: filePath } = params as { path: string };
-      fileWatch.stop(filePath);
+      if (context) context.releaseLease(`files.watch:${filePath}`);
+      else fileWatch.stop(filePath);
       return { ok: true as const };
     },
 
@@ -1728,6 +1732,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
   return async () => {
     modelCatalogRefreshCoordinator.cancelAll();
     await channelManager.shutdown();
+    stopAllFileWatches();
     await disposeAllRpcSessions();
   };
 }

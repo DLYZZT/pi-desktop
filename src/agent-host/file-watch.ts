@@ -24,7 +24,7 @@ export function createFileWatchService(server: RpcServer) {
   }
 
   return {
-    async start(filePath: string, sourceSessionId?: string): Promise<void> {
+    async start(filePath: string, sourceSessionId?: string): Promise<() => void> {
       await assertAllowed(filePath, sourceSessionId);
       const existing = watches.get(filePath);
       if (existing) {
@@ -33,7 +33,7 @@ export function createFileWatchService(server: RpcServer) {
           path: filePath,
           event: "connected",
         });
-        return;
+        return releaseFileWatch(filePath);
       }
 
       if (!fs.existsSync(filePath)) {
@@ -106,11 +106,21 @@ export function createFileWatchService(server: RpcServer) {
         path: filePath,
         event: "connected",
       });
+      return releaseFileWatch(filePath);
     },
 
     stop(filePath: string, force = false): void {
       stop(filePath, force);
     },
+  };
+}
+
+function releaseFileWatch(filePath: string): () => void {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    stop(filePath);
   };
 }
 
@@ -130,4 +140,8 @@ function stop(filePath: string, force = false): void {
 
 export function stopAllFileWatches(): void {
   for (const [path] of watches) stop(path, true);
+}
+
+export function getActiveFileWatchCount(): number {
+  return watches.size;
 }

@@ -265,6 +265,52 @@ test("server attach/detach is idempotent and removes message and close listeners
   assert.equal(closeCalls, 1);
 });
 
+test("port leases replace, release explicitly, and finalize on detach", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const server = createRpcServer();
+  const client = createRpcClient(port2);
+  const released = [];
+  let calls = 0;
+  server.handle({
+    "host.ping": (_params, context) => {
+      calls += 1;
+      if (calls === 3) context.releaseLease("watch:/project");
+      else context.setLease("watch:/project", () => released.push(calls));
+      return { ok: true, ts: calls };
+    },
+  });
+  server.attachPort(port1);
+
+  await client.call("host.ping");
+  await client.call("host.ping");
+  assert.deepEqual(released, [2], "replacing a lease releases its prior resource");
+  await client.call("host.ping");
+  assert.deepEqual(released, [2, 3], "explicit release finalizes the current resource");
+  await client.call("host.ping");
+  server.detachPort(port1);
+  assert.deepEqual(released, [2, 3, 4], "detach finalizes all remaining port resources");
+  client.close();
+});
+
+test("remote port close finalizes owned resources", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const server = createRpcServer();
+  const client = createRpcClient(port2);
+  let releases = 0;
+  server.handle({
+    "host.ping": (_params, context) => {
+      context.setLease("watch:/project", () => releases++);
+      return { ok: true, ts: 1 };
+    },
+  });
+  server.attachPort(port1);
+  await client.call("host.ping");
+
+  client.close();
+  for (let attempt = 0; attempt < 10 && releases === 0; attempt += 1) await nextTurn();
+  assert.equal(releases, 1);
+});
+
 test("server detaches a port when response fallback or event delivery also fails", async () => {
   const listeners = new Map();
   let closeCalls = 0;

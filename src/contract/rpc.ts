@@ -220,8 +220,13 @@ export function createRpcClient(port: MessagePort, options: RpcClientOptions = {
 // Server (agent-host)
 // ---------------------------------------------------------------------------
 
+export type RpcRequestContext = {
+  setLease(key: string, release: () => void): void;
+  releaseLease(key: string): boolean;
+};
+
 export type ApiHandler = {
-  [M in ApiMethod]?: (params: ApiParams<M>) => Promise<ApiResult<M>> | ApiResult<M>;
+  [M in ApiMethod]?: (params: ApiParams<M>, context: RpcRequestContext) => Promise<ApiResult<M>> | ApiResult<M>;
 };
 
 export type StreamSink = {
@@ -287,20 +292,58 @@ function listenPort(port: AnyMessagePort, onData: (data: unknown) => void): () =
 }
 
 export function createRpcServer(): RpcServer {
-  const handlers = new Map<string, (params: unknown) => Promise<unknown> | unknown>();
+  const handlers = new Map<string, (params: unknown, context: RpcRequestContext) => Promise<unknown> | unknown>();
   const ports = new Set<AnyMessagePort>();
   /** port → subscription id → { topic, key } */
   const portSubs = new Map<AnyMessagePort, Map<string, { topic: string; key: string }>>();
   const portUnlisten = new Map<AnyMessagePort, () => void>();
   const portCloseUnlisten = new Map<AnyMessagePort, () => void>();
+  const portLeases = new Map<AnyMessagePort, Map<string, () => void>>();
 
   function forgetPort(port: AnyMessagePort): void {
     ports.delete(port);
     portSubs.delete(port);
+    const leases = portLeases.get(port);
+    portLeases.delete(port);
+    for (const release of leases?.values() ?? []) {
+      try {
+        release();
+      } catch {
+        /* isolate resource finalizers */
+      }
+    }
     portUnlisten.get(port)?.();
     portUnlisten.delete(port);
     portCloseUnlisten.get(port)?.();
     portCloseUnlisten.delete(port);
+  }
+
+  function requestContext(port: AnyMessagePort): RpcRequestContext {
+    return {
+      setLease(key, release) {
+        if (!ports.has(port)) {
+          release();
+          return;
+        }
+        const leases = portLeases.get(port) ?? new Map<string, () => void>();
+        const previous = leases.get(key);
+        leases.set(key, release);
+        portLeases.set(port, leases);
+        if (previous && previous !== release) previous();
+      },
+      releaseLease(key) {
+        const leases = portLeases.get(port);
+        const release = leases?.get(key);
+        if (!release) return false;
+        leases?.delete(key);
+        try {
+          release();
+        } catch {
+          /* isolate explicit resource release */
+        }
+        return true;
+      },
+    };
   }
 
   function ensureSubs(port: AnyMessagePort): Map<string, { topic: string; key: string }> {
@@ -336,7 +379,7 @@ export function createRpcServer(): RpcServer {
           message: `Unknown method: ${msg.method}`,
         });
       }
-      const result = await handler(msg.params);
+      const result = await handler(msg.params, requestContext(port));
       response = { kind: "response", id: msg.id, ok: true, result };
     } catch (err) {
       const error: RpcErrorShape =
@@ -380,7 +423,7 @@ export function createRpcServer(): RpcServer {
     handle(next) {
       for (const [method, handler] of Object.entries(next)) {
         if (typeof handler === "function")
-          handlers.set(method, handler as (params: unknown) => Promise<unknown> | unknown);
+          handlers.set(method, handler as (params: unknown, context: RpcRequestContext) => Promise<unknown> | unknown);
       }
     },
 
@@ -419,6 +462,7 @@ export function createRpcServer(): RpcServer {
       if (ports.has(port)) return;
       ports.add(port);
       ensureSubs(port);
+      portLeases.set(port, new Map());
       const unlisten = listenPort(port, (data) => {
         void onPortMessage(port, data);
       });
