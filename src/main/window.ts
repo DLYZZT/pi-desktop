@@ -1,4 +1,4 @@
-import { BrowserWindow, screen, shell } from "electron";
+import { BrowserWindow, nativeTheme, screen, shell } from "electron";
 import { appendMainLog } from "./logger";
 import { resolvePreloadPath, resolveRendererEntry } from "./host-manager";
 import { releaseHtmlPreviewsForOwner } from "./protocol";
@@ -8,7 +8,12 @@ import { applyWindowBounds, loadUiState, shouldMaximize, trackWindowState } from
 import { RendererCrashRecovery } from "./renderer-crash-recovery";
 import { installWindowShowFallback } from "./window-show-fallback";
 
-const BACKGROUND = "#f7f6f3";
+const LIGHT_BACKGROUND = "#f7f6f3";
+const DARK_BACKGROUND = "#141210";
+
+function currentTheme(): "light" | "dark" {
+  return nativeTheme.shouldUseDarkColors ? "dark" : "light";
+}
 
 export type CreateMainWindowOptions = {
   isDev: boolean;
@@ -37,7 +42,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     minWidth: 900,
     minHeight: 600,
     title: "Pi Agent Desktop",
-    backgroundColor: BACKGROUND,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? DARK_BACKGROUND : LIGHT_BACKGROUND,
     show: false,
     webPreferences: {
       preload: resolvePreloadPath(options.runtimeMainDirectory),
@@ -111,7 +116,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     if (action.kind === "ignore") return;
     if (action.kind === "halt") {
       showingCrashPage = true;
-      const page = createRendererCrashPage(action.reason);
+      const page = createRendererCrashPage(action.reason, currentTheme());
       void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(page)}`);
       return;
     }
@@ -143,7 +148,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
   win.webContents.on("did-fail-load", (_event, code, description, validatedURL, isMainFrame) => {
     if (!isMainFrame || code === -3) return;
     appendMainLog(`did-fail-load code=${code} desc=${description} url=${validatedURL}`);
-    const help = createLoadFailurePage(code, description, validatedURL);
+    const help = createLoadFailurePage(code, description, validatedURL, currentTheme());
     void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(help)}`);
   });
 
