@@ -3,6 +3,7 @@ import { Check, Field, NumInput, SecretTextInput, Select, SectionTitle, TextInpu
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import {
+  renameProviderEntry,
   replaceModelEntry,
   setProviderBaseUrl,
   type ModelEntry,
@@ -2164,21 +2165,24 @@ export function ModelsConfig({
     setConfig((prev) => ({ ...prev, providers: { ...(prev.providers ?? {}), [name]: p } }));
   }, []);
 
-  const renameProvider = useCallback((oldName: string, newName: string) => {
-    setConfig((prev) => {
-      const entries = Object.entries(prev.providers ?? {});
-      const idx = entries.findIndex(([k]) => k === oldName);
-      if (idx === -1) return prev;
-      entries[idx] = [newName, entries[idx][1]];
-      return { ...prev, providers: Object.fromEntries(entries) };
-    });
-    setSelection((prev) => {
-      if (!prev) return prev;
-      if (prev.type === "provider" && prev.name === oldName) return { type: "provider", name: newName };
-      if (prev.type === "model" && prev.providerName === oldName) return { ...prev, providerName: newName };
-      return prev;
-    });
-  }, []);
+  const renameProvider = useCallback(
+    (oldName: string, newName: string) => {
+      const result = renameProviderEntry(config, oldName, newName);
+      if (!result.ok) {
+        setSaveError(result.error);
+        return;
+      }
+      setSaveError(null);
+      setConfig(result.config);
+      setSelection((prev) => {
+        if (!prev) return prev;
+        if (prev.type === "provider" && prev.name === oldName) return { type: "provider", name: result.name };
+        if (prev.type === "model" && prev.providerName === oldName) return { ...prev, providerName: result.name };
+        return prev;
+      });
+    },
+    [config],
+  );
 
   const deleteProvider = useCallback((name: string) => {
     setConfig((prev) => {

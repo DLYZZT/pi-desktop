@@ -29,6 +29,33 @@ export interface ModelsJson {
   [key: string]: unknown;
 }
 
+const RESERVED_PROVIDER_NAMES = new Set(["__proto__", "prototype", "constructor"]);
+
+export type RenameProviderResult =
+  { ok: true; config: ModelsJson; name: string } | { ok: false; config: ModelsJson; error: string };
+
+export function renameProviderEntry(config: ModelsJson, oldName: string, requestedName: string): RenameProviderResult {
+  const name = requestedName.trim();
+  if (!name) return { ok: false, config, error: "Provider name cannot be empty." };
+  if (RESERVED_PROVIDER_NAMES.has(name)) {
+    return { ok: false, config, error: `Provider name “${name}” is reserved.` };
+  }
+
+  const providers = config.providers ?? {};
+  if (!Object.prototype.hasOwnProperty.call(providers, oldName)) {
+    return { ok: false, config, error: `Provider “${oldName}” no longer exists.` };
+  }
+  if (name !== oldName && Object.prototype.hasOwnProperty.call(providers, name)) {
+    return { ok: false, config, error: `Provider “${name}” already exists.` };
+  }
+  if (name === oldName) return { ok: true, config, name };
+
+  const entries = Object.entries(providers);
+  const index = entries.findIndex(([providerName]) => providerName === oldName);
+  entries[index] = [name, entries[index][1]];
+  return { ok: true, config: { ...config, providers: Object.fromEntries(entries) }, name };
+}
+
 export function setProviderBaseUrl(config: ModelsJson, providerName: string, baseUrl: string): ModelsJson {
   const providers = { ...(config.providers ?? {}) };
   const provider = { ...(providers[providerName] ?? {}) };

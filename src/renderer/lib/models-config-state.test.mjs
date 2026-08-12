@@ -100,3 +100,29 @@ test("clearing a provider base URL preserves other provider fields and removes e
     { providers: {} },
   );
 });
+
+test("provider rename rejects conflicts and reserved or empty names without changing config", async () => {
+  const { renameProviderEntry } = await loadModule();
+  const original = {
+    revision: 7,
+    providers: {
+      alpha: { api: "openai-completions", futureField: "alpha" },
+      beta: { api: "anthropic-messages", futureField: "beta" },
+    },
+  };
+
+  for (const requestedName of [" beta ", "", "   ", "__proto__", "prototype", "constructor"]) {
+    const result = renameProviderEntry(original, "alpha", requestedName);
+    assert.equal(result.ok, false, requestedName);
+    assert.equal(result.config, original);
+    assert.deepEqual(Object.keys(original.providers), ["alpha", "beta"]);
+  }
+
+  const renamed = renameProviderEntry(original, "alpha", " gamma ");
+  assert.equal(renamed.ok, true);
+  assert.equal(renamed.name, "gamma");
+  assert.deepEqual(Object.keys(renamed.config.providers), ["gamma", "beta"]);
+  assert.deepEqual(renamed.config.providers.gamma, original.providers.alpha);
+  assert.deepEqual(renamed.config.providers.beta, original.providers.beta);
+  assert.deepEqual(Object.keys(original.providers), ["alpha", "beta"]);
+});
