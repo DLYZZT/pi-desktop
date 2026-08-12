@@ -138,3 +138,27 @@ test("UI prompts and messaging-channel turns share one serial session scheduler"
     ["message_end", "message_update"],
   );
 });
+
+test("session destroy notifies every teardown owner once and isolates failures", () => {
+  const wrapper = new AgentSessionWrapper({
+    sessionId: "destroy-session",
+    sessionManager: { getHeader: () => ({ cwd: "/tmp" }) },
+    agent: { state: { messages: [] } },
+  });
+  const calls = [];
+  wrapper.onDestroy(() => calls.push("registry"));
+  wrapper.onDestroy(() => {
+    calls.push("failing-owner");
+    throw new Error("teardown failed");
+  });
+  wrapper.onDestroy(() => calls.push("event-binding"));
+  const cancel = wrapper.onDestroy(() => calls.push("cancelled"));
+  cancel();
+
+  wrapper.destroy();
+  wrapper.destroy();
+  assert.deepEqual(calls, ["registry", "failing-owner", "event-binding"]);
+
+  wrapper.onDestroy(() => calls.push("late-owner"));
+  assert.deepEqual(calls, ["registry", "failing-owner", "event-binding", "late-owner"]);
+});

@@ -155,7 +155,7 @@ export class AgentSessionWrapper {
   private toolchainPrompt = "";
   private unsubscribe: (() => void) | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
-  private onDestroyCallback: (() => void) | null = null;
+  private destroyCallbacks = new Set<() => void>();
   private _alive = true;
 
   constructor(inner: AgentSessionLike) {
@@ -478,8 +478,13 @@ export class AgentSessionWrapper {
     };
   }
 
-  onDestroy(cb: () => void): void {
-    this.onDestroyCallback = cb;
+  onDestroy(cb: () => void): () => void {
+    if (!this._alive) {
+      cb();
+      return () => undefined;
+    }
+    this.destroyCallbacks.add(cb);
+    return () => this.destroyCallbacks.delete(cb);
   }
 
   async send(command: Record<string, unknown>): Promise<unknown> {
@@ -769,7 +774,15 @@ export class AgentSessionWrapper {
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
     this.listeners = [];
-    this.onDestroyCallback?.();
+    const destroyCallbacks = [...this.destroyCallbacks];
+    this.destroyCallbacks.clear();
+    for (const callback of destroyCallbacks) {
+      try {
+        callback();
+      } catch {
+        /* isolate teardown owners */
+      }
+    }
     notifyRunningChange();
   }
 

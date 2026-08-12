@@ -1746,7 +1746,7 @@ function ensureSessionEvents(
   session: {
     sessionId: string;
     onEvent: (l: (e: { type: string; [k: string]: unknown }) => void) => () => void;
-    onDestroy?: (cb: () => void) => void;
+    onDestroy?: (cb: () => void) => void | (() => void);
   },
   sessionId: string,
 ): void {
