@@ -35,6 +35,19 @@ export type ModelsConfigSelection =
   | { type: "oauth"; providerId: string }
   | { type: "apikey"; providerId: string };
 
+export interface ModelsConfigEditorState {
+  config: ModelsJson;
+  selection: ModelsConfigSelection | null;
+}
+
+export type ModelsConfigUpdate = ModelsJson | ((current: ModelsJson) => ModelsJson);
+
+export type ModelsConfigEditorAction =
+  | { type: "config.replace"; config: ModelsJson; selection: ModelsConfigSelection | null }
+  | { type: "config.update"; update: ModelsConfigUpdate }
+  | { type: "selection.set"; selection: ModelsConfigSelection | null }
+  | { type: "provider.addCustom" };
+
 const RESERVED_PROVIDER_NAMES = new Set(["__proto__", "prototype", "constructor"]);
 
 export type RenameProviderResult =
@@ -111,6 +124,42 @@ export function addModelTransition(
     },
     selection: { type: "model", providerName, index: models.length - 1 },
   };
+}
+
+export function addCustomProviderTransition(config: ModelsJson): {
+  config: ModelsJson;
+  selection: ModelsConfigSelection;
+} {
+  const providers = config.providers ?? {};
+  let name = "new-provider";
+  let suffix = 1;
+  while (Object.prototype.hasOwnProperty.call(providers, name)) name = `new-provider-${suffix++}`;
+  return {
+    config: {
+      ...config,
+      providers: { ...providers, [name]: { api: "openai-completions" } },
+    },
+    selection: { type: "provider", name },
+  };
+}
+
+export function modelsConfigEditorReducer(
+  state: ModelsConfigEditorState,
+  action: ModelsConfigEditorAction,
+): ModelsConfigEditorState {
+  switch (action.type) {
+    case "config.replace":
+      return { config: action.config, selection: action.selection };
+    case "config.update":
+      return {
+        ...state,
+        config: typeof action.update === "function" ? action.update(state.config) : action.update,
+      };
+    case "selection.set":
+      return { ...state, selection: action.selection };
+    case "provider.addCustom":
+      return addCustomProviderTransition(state.config);
+  }
 }
 
 export function setProviderBaseUrl(config: ModelsJson, providerName: string, baseUrl: string): ModelsJson {

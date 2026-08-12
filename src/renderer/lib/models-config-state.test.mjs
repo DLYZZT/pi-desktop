@@ -160,3 +160,25 @@ test("provider deletion and model addition compute config and selection without 
   assert.deepEqual(original.providers.alpha.models, [{ id: "one" }]);
   assert.equal(original.providers.alpha.futureField, true);
 });
+
+test("consecutive custom providers derive unique names from the reducer current state", async () => {
+  const { modelsConfigEditorReducer } = await loadModule();
+  const original = {
+    config: {
+      revision: 7,
+      providers: { "new-provider": { api: "anthropic-messages", futureField: true } },
+    },
+    selection: null,
+  };
+
+  const first = modelsConfigEditorReducer(original, { type: "provider.addCustom" });
+  const second = modelsConfigEditorReducer(first, { type: "provider.addCustom" });
+
+  assert.deepEqual(Object.keys(second.config.providers), ["new-provider", "new-provider-1", "new-provider-2"]);
+  assert.deepEqual(second.config.providers["new-provider-1"], { api: "openai-completions" });
+  assert.deepEqual(second.config.providers["new-provider-2"], { api: "openai-completions" });
+  assert.deepEqual(second.selection, { type: "provider", name: "new-provider-2" });
+  assert.deepEqual(original.config.providers, {
+    "new-provider": { api: "anthropic-messages", futureField: true },
+  });
+});

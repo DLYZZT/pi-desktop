@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useReducer } from "react";
 import { Check, Field, NumInput, SecretTextInput, Select, SectionTitle, TextInput } from "./form-controls";
 import { applyStrictOptionalPositiveInteger } from "@/lib/strict-integer";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -6,12 +6,14 @@ import { useI18n } from "@/i18n";
 import {
   addModelTransition,
   deleteProviderTransition,
+  modelsConfigEditorReducer,
   renameProviderEntry,
   replaceModelEntry,
   selectionAfterProviderRename,
   setProviderBaseUrl,
   type ModelEntry,
   type ModelsConfigSelection,
+  type ModelsConfigUpdate,
   type ModelsJson,
   type ProviderEntry,
 } from "@/lib/models-config-state";
@@ -2045,14 +2047,21 @@ export function ModelsConfig({
 }) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
-  const [config, setConfig] = useState<ModelsJson>({ providers: {} });
+  const [{ config, selection }, dispatchEditor] = useReducer(modelsConfigEditorReducer, {
+    config: { providers: {} },
+    selection: null,
+  });
+  const setConfig = useCallback((update: ModelsConfigUpdate) => dispatchEditor({ type: "config.update", update }), []);
+  const setSelection = useCallback(
+    (nextSelection: Selection | null) => dispatchEditor({ type: "selection.set", selection: nextSelection }),
+    [],
+  );
   const [configVersion, setConfigVersion] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
-  const [selection, setSelection] = useState<Selection | null>(null);
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
   const [modelPreferences, setModelPreferencesState] = useState<ModelPreferencesResult | null>(null);
@@ -2131,13 +2140,16 @@ export function ModelsConfig({
       if (snapshot.error) throw new Error(snapshot.error);
       if (!snapshot.config || typeof snapshot.version !== "string") throw new Error("Invalid models config snapshot");
       const normalized = snapshot.config.providers ? snapshot.config : { ...snapshot.config, providers: {} };
-      setConfig(normalized);
+      const keys = Object.keys(normalized.providers ?? {});
+      dispatchEditor({
+        type: "config.replace",
+        config: normalized,
+        selection: keys.length > 0 ? { type: "provider", name: keys[0] } : null,
+      });
       setConfigVersion(snapshot.version);
       setConfigLoaded(true);
       setSaveConflict(false);
       setSaveError(null);
-      const keys = Object.keys(normalized.providers ?? {});
-      setSelection(keys.length > 0 ? { type: "provider", name: keys[0] } : null);
     } catch (error) {
       setLoadFailed(true);
       setSaveError(error instanceof Error ? error.message : String(error));
@@ -2158,19 +2170,15 @@ export function ModelsConfig({
   }, [loadModelPreferences]);
 
   const addCustomProvider = useCallback(() => {
-    let finalName = "new-provider";
-    let n = 1;
-    while (config.providers?.[finalName]) finalName = `new-provider-${n++}`;
-    setConfig((prev) => ({
-      ...prev,
-      providers: { ...(prev.providers ?? {}), [finalName]: { api: "openai-completions" } },
-    }));
-    setSelection({ type: "provider", name: finalName });
-  }, [config.providers]);
-
-  const updateProvider = useCallback((name: string, p: ProviderEntry) => {
-    setConfig((prev) => ({ ...prev, providers: { ...(prev.providers ?? {}), [name]: p } }));
+    dispatchEditor({ type: "provider.addCustom" });
   }, []);
+
+  const updateProvider = useCallback(
+    (name: string, p: ProviderEntry) => {
+      setConfig((prev) => ({ ...prev, providers: { ...(prev.providers ?? {}), [name]: p } }));
+    },
+    [setConfig],
+  );
 
   const renameProvider = useCallback(
     (oldName: string, newName: string) => {
@@ -2183,7 +2191,7 @@ export function ModelsConfig({
       setConfig(result.config);
       setSelection(selectionAfterProviderRename(selection, oldName, result.name));
     },
-    [config, selection],
+    [config, selection, setConfig, setSelection],
   );
 
   const deleteProvider = useCallback(
@@ -2192,7 +2200,7 @@ export function ModelsConfig({
       setConfig(transition.config);
       setSelection(transition.selection);
     },
-    [config, selection],
+    [config, selection, setConfig, setSelection],
   );
 
   const addModel = useCallback(
@@ -2201,28 +2209,34 @@ export function ModelsConfig({
       setConfig(transition.config);
       setSelection(transition.selection);
     },
-    [config],
+    [config, setConfig, setSelection],
   );
 
-  const updateModel = useCallback((providerName: string, index: number, m: ModelEntry) => {
-    setConfig((prev) => replaceModelEntry(prev, providerName, index, m));
-  }, []);
+  const updateModel = useCallback(
+    (providerName: string, index: number, m: ModelEntry) => {
+      setConfig((prev) => replaceModelEntry(prev, providerName, index, m));
+    },
+    [setConfig],
+  );
 
-  const removeModel = useCallback((providerName: string, index: number) => {
-    setConfig((prev) => {
-      const provider = prev.providers?.[providerName] ?? {};
-      const models = [...(provider.models ?? [])];
-      models.splice(index, 1);
-      return {
-        ...prev,
-        providers: {
-          ...(prev.providers ?? {}),
-          [providerName]: { ...provider, models: models.length ? models : undefined },
-        },
-      };
-    });
-    setSelection({ type: "provider", name: providerName });
-  }, []);
+  const removeModel = useCallback(
+    (providerName: string, index: number) => {
+      setConfig((prev) => {
+        const provider = prev.providers?.[providerName] ?? {};
+        const models = [...(provider.models ?? [])];
+        models.splice(index, 1);
+        return {
+          ...prev,
+          providers: {
+            ...(prev.providers ?? {}),
+            [providerName]: { ...provider, models: models.length ? models : undefined },
+          },
+        };
+      });
+      setSelection({ type: "provider", name: providerName });
+    },
+    [setConfig, setSelection],
+  );
 
   const handleSave = useCallback(async () => {
     if (!configVersion) return;
