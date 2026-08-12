@@ -1,6 +1,7 @@
 import { BrowserWindow, shell } from "electron";
 import { appendMainLog } from "./logger";
 import { resolvePreloadPath, resolveRendererEntry } from "./host-manager";
+import { isAllowedMainNavigation } from "./window-navigation-policy";
 import { applyWindowBounds, loadUiState, shouldMaximize, trackWindowState } from "./window-state";
 
 const BACKGROUND = "#f7f6f3";
@@ -63,9 +64,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
   });
 
   win.webContents.on("will-navigate", (event, url) => {
-    const allowed =
-      url.startsWith("app://") || url.startsWith("http://localhost:5173") || url.startsWith("http://127.0.0.1:5173");
-    if (!allowed) {
+    if (!isAllowedMainNavigation(url, options.isDev)) {
       event.preventDefault();
       if (/^https?:/i.test(url)) void shell.openExternal(url);
     }
