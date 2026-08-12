@@ -91,25 +91,52 @@ function HtmlPreview({
   sourceSessionId?: string | null;
 }) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
     let activeUrl: string | null = null;
+    setPreviewUrl(null);
+    setPreviewError(null);
 
-    void window.piBridge.createHtmlPreview(content, filePath, sourceSessionId).then((url) => {
-      if (disposed) {
-        void window.piBridge.releaseHtmlPreview(url);
-        return;
-      }
-      activeUrl = url;
-      setPreviewUrl(url);
-    });
+    void window.piBridge
+      .createHtmlPreview(content, filePath, sourceSessionId)
+      .then((url) => {
+        if (disposed) {
+          void window.piBridge.releaseHtmlPreview(url).catch(() => {});
+          return;
+        }
+        activeUrl = url;
+        setPreviewUrl(url);
+      })
+      .catch((error) => {
+        if (!disposed) setPreviewError(error instanceof Error ? error.message : String(error));
+      });
 
     return () => {
       disposed = true;
-      if (activeUrl) void window.piBridge.releaseHtmlPreview(activeUrl);
+      if (activeUrl) void window.piBridge.releaseHtmlPreview(activeUrl).catch(() => {});
     };
   }, [content, filePath, sourceSessionId]);
+
+  if (previewError) {
+    return (
+      <div
+        role="alert"
+        style={{
+          height: "100%",
+          display: "grid",
+          placeItems: "center",
+          padding: 20,
+          color: "#f87171",
+          fontSize: 13,
+          textAlign: "center",
+        }}
+      >
+        HTML preview could not be created: {previewError}
+      </div>
+    );
+  }
 
   if (!previewUrl) return null;
 
