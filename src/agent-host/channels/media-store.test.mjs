@@ -88,3 +88,35 @@ test("media staging refuses a symlinked root", async () => {
   await symlink(real, link, "dir");
   await assert.rejects(new ChannelMediaStore(link).initialize(), /不是安全的本地目录/);
 });
+
+test("periodic and opportunistic cleanup stop when the media store is disposed", async () => {
+  const periodicRoot = mkdtempSync(path.join(tmpdir(), "pi-channel-media-periodic-"));
+  const periodic = new ChannelMediaStore(periodicRoot, { cleanupIntervalMs: 5 });
+  let periodicCleanups = 0;
+  periodic.cleanupExpired = async () => {
+    periodicCleanups += 1;
+  };
+  await periodic.initialize();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(periodicCleanups > 1, "the periodic timer should clean after startup");
+  await periodic.dispose();
+  const cleanupsAtDispose = periodicCleanups;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(periodicCleanups, cleanupsAtDispose);
+
+  let now = 1_000;
+  const opportunisticRoot = mkdtempSync(path.join(tmpdir(), "pi-channel-media-opportunistic-"));
+  const opportunistic = new ChannelMediaStore(opportunisticRoot, {
+    cleanupIntervalMs: 60_000,
+    now: () => now,
+  });
+  let opportunisticCleanups = 0;
+  opportunistic.cleanupExpired = async () => {
+    opportunisticCleanups += 1;
+  };
+  await opportunistic.initialize();
+  now += 60_001;
+  await opportunistic.stage("account", "event", [{ kind: "file", data: Buffer.from("x") }]);
+  await opportunistic.dispose();
+  assert.equal(opportunisticCleanups, 2);
+});

@@ -1057,5 +1057,6 @@ export class ChannelManager {
     for (const timer of this.loginWaitCleanupTimers.values()) clearTimeout(timer);
     this.loginWaitCleanupTimers.clear();
     this.loginWaits.clear();
+    await this.media.dispose();
   }
 }
