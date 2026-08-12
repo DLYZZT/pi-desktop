@@ -77,6 +77,24 @@ export function releaseHtmlPreviewUrl(previewUrl: string): void {
   }
 }
 
+export function resolveHtmlPreviewAssetPath(filePath: string, encodedPath: string): string | null {
+  let relativePath: string;
+  try {
+    relativePath = decodeURIComponent(encodedPath);
+  } catch {
+    return null;
+  }
+  if (!relativePath || path.isAbsolute(relativePath)) return null;
+
+  const previewDirectory = path.resolve(path.dirname(filePath));
+  const assetPath = path.resolve(previewDirectory, relativePath);
+  const containment = path.relative(previewDirectory, assetPath);
+  if (!containment || containment === ".." || containment.startsWith(`..${path.sep}`) || path.isAbsolute(containment)) {
+    return null;
+  }
+  return assetPath;
+}
+
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -131,8 +149,8 @@ export function handleAppProtocol(rendererRoot: string): void {
           });
         }
 
-        const relativePath = decodeURIComponent(assetSegments.join("/"));
-        const assetPath = path.resolve(path.dirname(preview.filePath), relativePath);
+        const assetPath = resolveHtmlPreviewAssetPath(preview.filePath, assetSegments.join("/"));
+        if (!assetPath) return new Response("Forbidden", { status: 403 });
         const asset = await preview.loadAsset(assetPath);
         if (asset.size > HTML_PREVIEW_ASSET_MAX_BYTES) {
           return new Response("Asset too large", { status: 413 });
