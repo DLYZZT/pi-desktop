@@ -1,5 +1,13 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import type { SessionTreeEntry, SessionTreeNode } from "@/lib/types";
+import {
+  buildActivePath,
+  compressBranchNode,
+  flattenBranchTree,
+  shouldDismissBranchNavigator,
+  treeHasBranch,
+  type BranchTreeRow,
+} from "@/lib/branch-navigator-model";
 
 interface Props {
   tree: SessionTreeNode[];
@@ -19,193 +27,167 @@ interface Props {
   compact?: boolean;
 }
 
-// Find the visible entry IDs on the path from root to activeLeafId.
-function buildActivePath(nodes: SessionTreeNode[], targetId: string | null): Set<string> {
-  if (!targetId) return new Set();
-  const target = targetId;
-  function search(nodes: SessionTreeNode[], path: string[]): string[] | null {
-    for (const node of nodes) {
-      const next = [...path, node.entry.id];
-      if (node.entry.id === target || node.compressedEntryIds?.includes(target)) {
-        return next;
-      }
-      const found = search(node.children, next);
-      if (found) return found;
-    }
-    return null;
-  }
-  return new Set(search(nodes, []) ?? []);
-}
-
-// Compress a visible linear chain into the first branching/leaf node.
-// Server-side compressed IDs also count as skipped nodes.
-function compress(node: SessionTreeNode): { node: SessionTreeNode; skipped: number } {
-  let current = node;
-  let skipped = current.compressedEntryIds?.length ?? 0;
-  while (current.children.length === 1) {
-    current = current.children[0];
-    skipped += 1 + (current.compressedEntryIds?.length ?? 0);
-  }
-  return { node: current, skipped };
-}
-
 function getLabel(entry: SessionTreeEntry): string {
   if (entry.preview) return entry.preview.length > 40 ? `${entry.preview.slice(0, 40)}…` : entry.preview;
   if (entry.role === "assistant") return "[assistant]";
   return entry.type;
 }
 
-// Does the tree have any branching at all?
-function hasBranch(nodes: SessionTreeNode[]): boolean {
-  for (const node of nodes) {
-    if (node.children.length > 1) return true;
-    if (hasBranch(node.children)) return true;
-  }
-  return false;
-}
-
-interface TreeNodeProps {
-  node: SessionTreeNode;
+interface BranchTreeRowProps {
+  row: BranchTreeRow;
   activePathIds: Set<string>;
-  depth: number;
-  isLast: boolean;
-  parentLines: boolean[]; // whether ancestor at each depth has more siblings after
   onSelect: (id: string) => void;
 }
 
-function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelect }: TreeNodeProps) {
-  const { node: rep, skipped } = compress(node);
+function BranchTreeRowView({ row, activePathIds, onSelect }: BranchTreeRowProps) {
+  const rep = row.representative;
   const isActive = activePathIds.has(rep.entry.id);
-  const isOnPath = activePathIds.has(node.entry.id) || activePathIds.has(rep.entry.id);
+  const isOnPath = activePathIds.has(row.node.entry.id) || activePathIds.has(rep.entry.id);
   const label = getLabel(rep.entry);
   const role = rep.entry.role ?? null;
 
   return (
-    <div>
-      {/* This node row */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          height: 24,
-          cursor: "pointer",
-        }}
-        onClick={() => onSelect(rep.entry.id)}
-      >
-        {/* Indent guide lines */}
-        {parentLines.map((hasLine, i) => (
-          <div key={i} style={{ width: 16, flexShrink: 0, position: "relative", height: "100%", alignSelf: "stretch" }}>
-            {hasLine && (
-              <div
-                style={{
-                  position: "absolute",
-                  left: 7,
-                  top: 0,
-                  bottom: 0,
-                  width: 1,
-                  background: "var(--border)",
-                }}
-              />
-            )}
-          </div>
-        ))}
-
-        {/* Branch connector */}
-        <div style={{ width: 16, flexShrink: 0, position: "relative", height: "100%", alignSelf: "stretch" }}>
-          {/* vertical line up (to parent) */}
-          <div
-            style={{
-              position: "absolute",
-              left: 7,
-              top: 0,
-              bottom: isLast ? "50%" : 0,
-              width: 1,
-              background: "var(--border)",
-            }}
-          />
-          {/* horizontal line to node */}
-          <div
-            style={{
-              position: "absolute",
-              left: 7,
-              top: "50%",
-              width: 9,
-              height: 1,
-              background: "var(--border)",
-            }}
-          />
-        </div>
-
-        {/* Node dot */}
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        height: 24,
+        cursor: "pointer",
+      }}
+      onClick={() => onSelect(rep.entry.id)}
+    >
+      {/* Indent guide lines are capped so pathological depth has bounded per-row work. */}
+      {row.guideLines.map((hasLine, index) => (
         <div
+          key={index}
           style={{
-            width: 7,
-            height: 7,
-            borderRadius: "50%",
+            width: 16,
             flexShrink: 0,
-            background: isActive ? "var(--accent)" : isOnPath ? "var(--text-muted)" : "var(--border)",
-            border: isActive ? "none" : "1px solid var(--text-dim)",
-            marginRight: 6,
-            transition: "background 0.12s",
-          }}
-        />
-
-        {/* Role badge */}
-        {role && (
-          <span
-            style={{
-              fontSize: 9,
-              fontFamily: "var(--font-mono)",
-              color: role === "user" ? "var(--accent)" : "var(--text-dim)",
-              background: role === "user" ? "var(--accent-soft)" : "var(--bg-hover)",
-              border: `1px solid ${role === "user" ? "var(--accent-soft-border)" : "var(--border)"}`,
-              borderRadius: 3,
-              padding: "0 4px",
-              marginRight: 5,
-              flexShrink: 0,
-              lineHeight: "16px",
-            }}
-          >
-            {role === "user" ? "U" : "A"}
-          </span>
-        )}
-
-        {/* Skipped indicator */}
-        {skipped > 0 && (
-          <span style={{ fontSize: 10, color: "var(--text-dim)", marginRight: 5, flexShrink: 0 }}>+{skipped}</span>
-        )}
-
-        {/* Label */}
-        <span
-          style={{
-            fontSize: 11,
-            color: isActive ? "var(--text)" : isOnPath ? "var(--text-muted)" : "var(--text-dim)",
-            fontWeight: isActive ? 500 : 400,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            flex: 1,
-            minWidth: 0,
+            position: "relative",
+            height: "100%",
+            alignSelf: "stretch",
           }}
         >
-          {label}
-        </span>
+          {hasLine && (
+            <div
+              style={{
+                position: "absolute",
+                left: 7,
+                top: 0,
+                bottom: 0,
+                width: 1,
+                background: "var(--border)",
+              }}
+            />
+          )}
+        </div>
+      ))}
+
+      {row.depth > row.guideLines.length && (
+        <div
+          title={`Branch depth ${row.depth + 1}`}
+          style={{ width: 16, flexShrink: 0, color: "var(--text-dim)", fontSize: 10, textAlign: "center" }}
+        >
+          …
+        </div>
+      )}
+
+      {/* Branch connector */}
+      <div style={{ width: 16, flexShrink: 0, position: "relative", height: "100%", alignSelf: "stretch" }}>
+        {/* vertical line up (to parent) */}
+        <div
+          style={{
+            position: "absolute",
+            left: 7,
+            top: 0,
+            bottom: row.isLast ? "50%" : 0,
+            width: 1,
+            background: "var(--border)",
+          }}
+        />
+        {/* horizontal line to node */}
+        <div
+          style={{
+            position: "absolute",
+            left: 7,
+            top: "50%",
+            width: 9,
+            height: 1,
+            background: "var(--border)",
+          }}
+        />
       </div>
 
-      {/* Children */}
-      {rep.children.map((child, idx) => (
-        <TreeNodeView
-          key={child.entry.id}
-          node={child}
-          activePathIds={activePathIds}
-          depth={depth + 1}
-          isLast={idx === rep.children.length - 1}
-          parentLines={[...parentLines, !isLast]}
-          onSelect={onSelect}
-        />
-      ))}
+      {/* Node dot */}
+      <div
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          flexShrink: 0,
+          background: isActive ? "var(--accent)" : isOnPath ? "var(--text-muted)" : "var(--border)",
+          border: isActive ? "none" : "1px solid var(--text-dim)",
+          marginRight: 6,
+          transition: "background 0.12s",
+        }}
+      />
+
+      {/* Role badge */}
+      {role && (
+        <span
+          style={{
+            fontSize: 9,
+            fontFamily: "var(--font-mono)",
+            color: role === "user" ? "var(--accent)" : "var(--text-dim)",
+            background: role === "user" ? "var(--accent-soft)" : "var(--bg-hover)",
+            border: `1px solid ${role === "user" ? "var(--accent-soft-border)" : "var(--border)"}`,
+            borderRadius: 3,
+            padding: "0 4px",
+            marginRight: 5,
+            flexShrink: 0,
+            lineHeight: "16px",
+          }}
+        >
+          {role === "user" ? "U" : "A"}
+        </span>
+      )}
+
+      {/* Skipped indicator */}
+      {row.skipped > 0 && (
+        <span style={{ fontSize: 10, color: "var(--text-dim)", marginRight: 5, flexShrink: 0 }}>+{row.skipped}</span>
+      )}
+
+      {/* Label */}
+      <span
+        style={{
+          fontSize: 11,
+          color: isActive ? "var(--text)" : isOnPath ? "var(--text-muted)" : "var(--text-dim)",
+          fontWeight: isActive ? 500 : 400,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          flex: 1,
+          minWidth: 0,
+        }}
+      >
+        {label}
+      </span>
     </div>
   );
+}
+
+function BranchTreeRows({
+  rows,
+  activePathIds,
+  onSelect,
+}: {
+  rows: BranchTreeRow[];
+  activePathIds: Set<string>;
+  onSelect: (id: string) => void;
+}) {
+  return rows.map((row) => (
+    <BranchTreeRowView key={row.key} row={row} activePathIds={activePathIds} onSelect={onSelect} />
+  ));
 }
 
 export function BranchNavigator({
@@ -221,8 +203,20 @@ export function BranchNavigator({
 }: Props) {
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
+  const rootRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  const handleInlineToggle = useCallback(() => {
+    if (onToggle) onToggle();
+    else setOpenInternal((value) => !value);
+  }, [onToggle]);
+
+  const closeInline = useCallback(() => {
+    if (!open) return;
+    if (openProp !== undefined) onToggle?.();
+    else setOpenInternal(false);
+  }, [onToggle, open, openProp]);
 
   useEffect(() => {
     if (!open || !inline) return;
@@ -238,7 +232,30 @@ export function BranchNavigator({
     return () => ro.disconnect();
   }, [open, inline, containerRef]);
 
+  useEffect(() => {
+    if (!open || !inline) return;
+    const root = rootRef.current;
+    if (!root) return;
+    const handleDismiss = (event: Event) => {
+      if (shouldDismissBranchNavigator(event, root)) closeInline();
+    };
+    document.addEventListener("keydown", handleDismiss);
+    document.addEventListener("pointerdown", handleDismiss, true);
+    return () => {
+      document.removeEventListener("keydown", handleDismiss);
+      document.removeEventListener("pointerdown", handleDismiss, true);
+    };
+  }, [closeInline, inline, open]);
+
   const activePathIds = useMemo(() => buildActivePath(tree, activeLeafId), [tree, activeLeafId]);
+  const branchModel = useMemo(() => {
+    const firstNode = tree.length > 0 ? compressBranchNode(tree[0]).node : null;
+    return {
+      hasBranch: treeHasBranch(tree),
+      firstNode,
+      rows: firstNode ? flattenBranchTree(firstNode.children) : [],
+    };
+  }, [tree]);
 
   const handleSelect = useCallback(
     (id: string) => {
@@ -247,11 +264,12 @@ export function BranchNavigator({
     [onLeafChange],
   );
 
-  const noBranchReason = !hasSession ? "No active session" : !hasBranch(tree) ? "This session has no branches" : null;
-
-  // Find first meaningful node (skip pure linear prefix)
-  const compressed = tree.length > 0 ? compress(tree[0]) : null;
-  const firstNode = compressed?.node ?? null;
+  const { firstNode, rows } = branchModel;
+  const noBranchReason = !hasSession
+    ? "No active session"
+    : !branchModel.hasBranch
+      ? "This session has no branches"
+      : null;
   const hasContent = !noBranchReason && firstNode && firstNode.children.length > 1;
 
   const branchIcon = (
@@ -291,10 +309,10 @@ export function BranchNavigator({
 
   if (inline) {
     return (
-      <div style={{ height: "100%", display: "flex", alignItems: "stretch" }}>
+      <div ref={rootRef} style={{ height: "100%", display: "flex", alignItems: "stretch" }}>
         <button
           ref={btnRef}
-          onClick={() => (onToggle ? onToggle() : setOpenInternal((v) => !v))}
+          onClick={handleInlineToggle}
           style={{
             display: "flex",
             alignItems: "center",
@@ -338,17 +356,7 @@ export function BranchNavigator({
           >
             {hasContent && firstNode ? (
               <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>
-                {firstNode.children.map((child, idx) => (
-                  <TreeNodeView
-                    key={child.entry.id}
-                    node={child}
-                    activePathIds={activePathIds}
-                    depth={0}
-                    isLast={idx === firstNode.children.length - 1}
-                    parentLines={[]}
-                    onSelect={handleSelect}
-                  />
-                ))}
+                <BranchTreeRows rows={rows} activePathIds={activePathIds} onSelect={handleSelect} />
               </div>
             ) : (
               <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
@@ -403,17 +411,7 @@ export function BranchNavigator({
         >
           {hasContent && firstNode ? (
             <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>
-              {firstNode.children.map((child, idx) => (
-                <TreeNodeView
-                  key={child.entry.id}
-                  node={child}
-                  activePathIds={activePathIds}
-                  depth={0}
-                  isLast={idx === firstNode.children.length - 1}
-                  parentLines={[]}
-                  onSelect={handleSelect}
-                />
-              ))}
+              <BranchTreeRows rows={rows} activePathIds={activePathIds} onSelect={handleSelect} />
             </div>
           ) : (
             <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
