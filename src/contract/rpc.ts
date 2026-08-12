@@ -260,7 +260,7 @@ function listenPort(port: AnyMessagePort, onData: (data: unknown) => void): () =
 }
 
 export function createRpcServer(): RpcServer {
-  const handlers: ApiHandler = {};
+  const handlers = new Map<string, (params: unknown) => Promise<unknown> | unknown>();
   const ports = new Set<AnyMessagePort>();
   /** port → subscription id → { topic, key } */
   const portSubs = new Map<AnyMessagePort, Map<string, { topic: string; key: string }>>();
@@ -299,7 +299,7 @@ export function createRpcServer(): RpcServer {
     }
     if (msg.kind !== "request") return;
 
-    const handler = handlers[msg.method as ApiMethod] as ((params: unknown) => Promise<unknown> | unknown) | undefined;
+    const handler = handlers.get(msg.method);
 
     let response: WireResponse;
     try {
@@ -336,7 +336,10 @@ export function createRpcServer(): RpcServer {
 
   return {
     handle(next) {
-      Object.assign(handlers, next);
+      for (const [method, handler] of Object.entries(next)) {
+        if (typeof handler === "function")
+          handlers.set(method, handler as (params: unknown) => Promise<unknown> | unknown);
+      }
     },
 
     emit(topic, key, data) {

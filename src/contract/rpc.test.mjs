@@ -33,6 +33,14 @@ test("performs request/response calls and reports missing methods", async (t) =>
     assert.match(error.message, /not\.registered/);
     return true;
   });
+  for (const inheritedName of ["constructor", "toString", "__proto__"]) {
+    await assert.rejects(client.call(inheritedName), (error) => {
+      assert.equal(error instanceof RpcError, true);
+      assert.equal(error.code, "METHOD_NOT_FOUND");
+      assert.match(error.message, new RegExp(inheritedName));
+      return true;
+    });
+  }
 });
 
 test("serializes RpcError detail and maps ordinary errors to INTERNAL", async (t) => {
