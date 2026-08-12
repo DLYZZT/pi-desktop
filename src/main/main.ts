@@ -25,6 +25,7 @@ import { isExecutionIntent, type ToolchainSnapshot } from "../shared/toolchains/
 import { readLegacyNpmCommand } from "./toolchains/legacy-npm-command";
 import { createElectronRuntimeFetch } from "./toolchains/electron-runtime-fetch";
 import { BrowserService } from "./browser/browser-service";
+import { findDesktopDeepLink, parseDesktopDeepLink } from "./deep-link";
 
 // Must run before app ready
 registerAppProtocol();
@@ -125,24 +126,9 @@ function applyBadgeCount(count: number): void {
   app.setBadgeCount(unreadBadge);
 }
 
-function parseDeepLink(url: string): { sessionId?: string } | null {
-  try {
-    const u = new URL(url);
-    if (u.protocol !== "pi-agent-desktop:") return null;
-    // pi-agent-desktop://session/<id>
-    if (u.hostname === "session" || u.pathname.startsWith("/session/")) {
-      const id = u.hostname === "session" ? u.pathname.replace(/^\//, "") : u.pathname.replace(/^\/session\//, "");
-      return id ? { sessionId: id } : null;
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
 function handleDeepLink(url: string): void {
-  appendMainLog(`deep link: ${url}`);
-  const parsed = parseDeepLink(url);
+  const parsed = parseDesktopDeepLink(url);
+  appendMainLog(`deep link received valid=${Boolean(parsed?.sessionId)}`);
   if (!parsed?.sessionId) return;
   const win = getMainWindow();
   if (win) {
@@ -157,7 +143,7 @@ function handleDeepLink(url: string): void {
 function startMainProcess(): void {
   if (
     !acquireSingleInstanceLock(getMainWindow, (argv) => {
-      const url = argv.find((a) => a.startsWith("pi-agent-desktop://"));
+      const url = findDesktopDeepLink(argv);
       if (url) handleDeepLink(url);
     })
   ) {
