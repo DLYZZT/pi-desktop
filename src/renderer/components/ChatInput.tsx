@@ -29,6 +29,12 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import type { ModelCatalogStatus } from "@contract/types";
 import { processImageFileBatch } from "@/lib/image-file-processing";
+import {
+  captureComposerSubmission,
+  failedComposerSubmissionAction,
+  mergeFailedSubmissionImages,
+  type ComposerSubmissionSnapshot,
+} from "@/lib/composer-submission";
 
 export interface AttachedImage {
   data: string; // base64, no prefix
@@ -255,12 +261,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 ) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
-  const [value, setValue] = useState(() => (draftKey ? (getDraft(draftKey)?.value ?? "") : ""));
+  const [value, setValueState] = useState(() => (draftKey ? (getDraft(draftKey)?.value ?? "") : ""));
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const [toolDropdownOpen, setToolDropdownOpen] = useState(false);
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
-  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>(() =>
+  const [attachedImages, setAttachedImagesState] = useState<AttachedImage[]>(() =>
     draftKey ? (getDraft(draftKey)?.images.map(draftImageToAttachedImage) ?? []) : [],
   );
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
@@ -278,6 +284,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     matches: FileIndexEntry[];
   } | null>(null);
   const [imageAttachNotice, setImageAttachNotice] = useState<string | null>(null);
+  const [submissionNotice, setSubmissionNotice] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -302,6 +309,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const imageBatchGenerationRef = useRef(0);
   const imageProcessingActiveRef = useRef(true);
   const pendingImagePreviewsRef = useRef(new Set<string>());
+  const inputRevisionRef = useRef(0);
+  const setValue = useCallback((next: React.SetStateAction<string>) => {
+    inputRevisionRef.current += 1;
+    setValueState(next);
+  }, []);
+  const setAttachedImages = useCallback((next: React.SetStateAction<AttachedImage[]>) => {
+    inputRevisionRef.current += 1;
+    setAttachedImagesState(next);
+  }, []);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
 
@@ -389,24 +405,27 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         );
       }
     },
-    [isStreaming],
+    [isStreaming, setAttachedImages],
   );
 
-  const removeImage = useCallback((index: number) => {
-    setAttachedImages((prev) => {
-      const next = [...prev];
-      const [removed] = next.splice(index, 1);
-      if (removed) revokeImagePreview(removed);
-      return next;
-    });
-  }, []);
+  const removeImage = useCallback(
+    (index: number) => {
+      setAttachedImages((prev) => {
+        const next = [...prev];
+        const [removed] = next.splice(index, 1);
+        if (removed) revokeImagePreview(removed);
+        return next;
+      });
+    },
+    [setAttachedImages],
+  );
 
   const clearImages = useCallback(() => {
     setAttachedImages((prev) => {
       prev.forEach(revokeImagePreview);
       return [];
     });
-  }, []);
+  }, [setAttachedImages]);
 
   const clearInput = useCallback(() => {
     setValue("");
@@ -417,7 +436,29 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [clearImages, draftKey]);
+  }, [clearImages, draftKey, setValue]);
+
+  const restoreFailedSubmission = useCallback(
+    (snapshot: ComposerSubmissionSnapshot, clearedAtRevision: number, kind: "send" | "queue") => {
+      const action = failedComposerSubmissionAction(clearedAtRevision, inputRevisionRef.current);
+      if (action === "restore") {
+        setValue(snapshot.value);
+        setAttachedImages(snapshot.images);
+      } else if (snapshot.images.length > 0) {
+        setAttachedImages((current) => mergeFailedSubmissionImages(current, snapshot.images));
+      }
+      setSubmissionNotice(
+        action === "restore"
+          ? kind === "send"
+            ? "Message was not sent. Your draft was restored."
+            : "Message could not be queued. Your draft was restored."
+          : kind === "send"
+            ? "The previous message was not sent. Your newer draft was kept."
+            : "The previous message could not be queued. Your newer draft was kept.",
+      );
+    },
+    [setAttachedImages, setValue],
+  );
 
   useEffect(() => {
     if (!draftKey || draftKeyRef.current !== draftKey) return;
@@ -446,7 +487,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       prev.forEach(revokeImagePreview);
       return draft?.images.map(draftImageToAttachedImage) ?? [];
     });
-  }, [draftKey]);
+  }, [draftKey, setAttachedImages, setValue]);
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -475,33 +516,38 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     if (!msg && !attachedImages.length) return;
     if (isStreaming) return;
     onAudioUnlock?.();
-    // ISSUE-006: snapshot draft before clear; restore on failure
-    const snapshot = {
-      value,
-      images: attachedImages.map((img) => ({ ...img })),
-    };
-    if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
-      const result = await onBuiltinCommand(msg);
-      if (result.handled) {
-        if (!result.error) clearInput();
-        return;
-      }
-    }
+    const snapshot = captureComposerSubmission(value, attachedImages);
+    setSubmissionNotice(null);
+    clearInput();
+    const clearedAtRevision = inputRevisionRef.current;
     try {
+      if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
+        const result = await onBuiltinCommand(msg);
+        if (result.handled) {
+          if (result.error) restoreFailedSubmission(snapshot, clearedAtRevision, "send");
+          return;
+        }
+      }
       const result = onSend(msg, attachedImages.length ? attachedImages : undefined) as
         void | Promise<unknown> | { ok?: boolean };
-      const settled = result instanceof Promise ? await result : result;
+      const settled = await Promise.resolve(result);
       if (settled && typeof settled === "object" && "ok" in settled && settled.ok === false) {
-        setValue(snapshot.value);
-        setAttachedImages(snapshot.images);
+        restoreFailedSubmission(snapshot, clearedAtRevision, "send");
         return;
       }
-      clearInput();
     } catch {
-      setValue(snapshot.value);
-      setAttachedImages(snapshot.images);
+      restoreFailedSubmission(snapshot, clearedAtRevision, "send");
     }
-  }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
+  }, [
+    attachedImages,
+    clearInput,
+    isStreaming,
+    onAudioUnlock,
+    onBuiltinCommand,
+    onSend,
+    restoreFailedSubmission,
+    value,
+  ]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1)) ? value.slice(1).toLowerCase() : null;
 
@@ -671,7 +717,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
       });
     },
-    [atQuery, value],
+    [atQuery, setValue, value],
   );
 
   useEffect(() => {
@@ -689,20 +735,23 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     atItemRefs.current[atActiveIndex]?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [atActiveIndex, atMenuOpen]);
 
-  const applySlashCommand = useCallback((command: SlashCommandPaletteItem) => {
-    const nextValue = `/${command.name} `;
-    setValue(nextValue);
-    setSlashMenuOpen(false);
-    setSlashActiveIndex(0);
-    requestAnimationFrame(() => {
-      const ta = textareaRef.current;
-      if (!ta) return;
-      ta.focus();
-      ta.setSelectionRange(nextValue.length, nextValue.length);
-      ta.style.height = "auto";
-      ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
-    });
-  }, []);
+  const applySlashCommand = useCallback(
+    (command: SlashCommandPaletteItem) => {
+      const nextValue = `/${command.name} `;
+      setValue(nextValue);
+      setSlashMenuOpen(false);
+      setSlashActiveIndex(0);
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.focus();
+        ta.setSelectionRange(nextValue.length, nextValue.length);
+        ta.style.height = "auto";
+        ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+      });
+    },
+    [setValue],
+  );
 
   const sendQueued = useCallback(
     async (mode: "steer" | "followup") => {
@@ -710,12 +759,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       if (!msg && !attachedImages.length) return;
       if (attachedImages.length) return;
       onAudioUnlock?.();
-      const snapshot = value;
+      const snapshot = captureComposerSubmission(value, attachedImages);
       const streamingBehavior = mode === "steer" ? "steer" : "followUp";
+      setSubmissionNotice(null);
+      clearInput();
+      const clearedAtRevision = inputRevisionRef.current;
       try {
         if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
           await Promise.resolve(onPromptWithStreamingBehavior(msg, streamingBehavior, undefined));
-          clearInput();
           return;
         }
         if (mode === "steer" && onSteer) {
@@ -723,12 +774,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         } else if (mode === "followup" && onFollowUp) {
           await Promise.resolve(onFollowUp(msg, undefined));
         }
-        clearInput();
       } catch {
-        setValue(snapshot);
+        restoreFailedSubmission(snapshot, clearedAtRevision, "queue");
       }
     },
-    [value, attachedImages, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock],
+    [
+      attachedImages,
+      clearInput,
+      onAudioUnlock,
+      onFollowUp,
+      onPromptWithStreamingBehavior,
+      onSteer,
+      restoreFailedSubmission,
+      value,
+    ],
   );
 
   const getNextSlashIndex = useCallback(
@@ -1255,6 +1314,42 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
               type="button"
               onClick={() => setImageAttachNotice(null)}
               aria-label="Dismiss image attachment error"
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "inherit",
+                cursor: "pointer",
+                padding: 2,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )}
+        {submissionNotice && (
+          <div
+            role="alert"
+            data-testid="composer-submission-error"
+            style={{
+              marginBottom: 8,
+              padding: "5px 10px",
+              background: "color-mix(in srgb, var(--danger) 8%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--danger) 28%, var(--border))",
+              borderRadius: 6,
+              fontSize: 12,
+              color: "var(--danger)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <span>{submissionNotice}</span>
+            <button
+              type="button"
+              onClick={() => setSubmissionNotice(null)}
+              aria-label="Dismiss submission error"
               style={{
                 border: "none",
                 background: "transparent",
