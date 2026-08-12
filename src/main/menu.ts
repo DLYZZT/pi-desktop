@@ -1,6 +1,11 @@
 import { app, Menu, shell, type BrowserWindow } from "electron";
+import { developerViewRoles } from "./menu-policy";
 
-export function installAppMenu(getWindow: () => BrowserWindow | null, onCheckForUpdates?: () => void): void {
+export function installAppMenu(
+  getWindow: () => BrowserWindow | null,
+  onCheckForUpdates?: () => void,
+  isDev = false,
+): void {
   const isMac = process.platform === "darwin";
   const isWindows = process.platform === "win32";
 
@@ -92,10 +97,8 @@ export function installAppMenu(getWindow: () => BrowserWindow | null, onCheckFor
     {
       label: "View",
       submenu: [
-        { role: "reload" },
-        { role: "forceReload" },
-        { role: "toggleDevTools" },
-        { type: "separator" },
+        ...developerViewRoles(isDev).map((role) => ({ role })),
+        ...(isDev ? [{ type: "separator" as const }] : []),
         { role: "resetZoom" },
         { role: "zoomIn" },
         { role: "zoomOut" },

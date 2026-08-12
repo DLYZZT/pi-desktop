@@ -372,7 +372,7 @@ function startMainProcess(): void {
       getBrowserService: () => browserService,
       updateManager,
     });
-    installAppMenu(getMainWindow, () => openUpdateSettings(true));
+    installAppMenu(getMainWindow, () => openUpdateSettings(true), isDev);
 
     createTray(getMainWindow);
 
