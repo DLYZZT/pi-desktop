@@ -39,6 +39,7 @@ import {
   type SessionLoadTrace,
 } from "@/lib/session-performance";
 import { mergeHistoryTail, prependHistoryPage } from "@/lib/session-pagination";
+import { LatestRequestGate } from "@/lib/latest-request-gate";
 
 export type SessionData = SessionDetail;
 type AgentStateResponse = SessionRuntimeState;
@@ -388,6 +389,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const eventUnsubRef = useRef<(() => void) | null>(null);
   const modelRefreshRequestRef = useRef<string | null>(null);
+  const modelListRequestGateRef = useRef(new LatestRequestGate());
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const agentRunningRef = useRef(false);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
@@ -1473,10 +1475,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const loadModels = useCallback(
     async (signal?: AbortSignal) => {
+      const generation = modelListRequestGateRef.current.begin();
+      const activeRefreshRequestId = modelRefreshRequestRef.current;
+      if (activeRefreshRequestId) {
+        modelRefreshRequestRef.current = null;
+        setModelRefreshing(false);
+        void cancelModelsRefresh(activeRefreshRequestId).catch(() => {});
+      }
       const modelCwd = newSessionCwd ?? session?.cwd ?? "";
       if (signal?.aborted) return;
       const d = await listModels(modelCwd || undefined);
-      if (signal?.aborted) return;
+      if (signal?.aborted || !modelListRequestGateRef.current.isCurrent(generation)) return;
       applyModelsResult(d);
     },
     [applyModelsResult, newSessionCwd, session?.cwd],
@@ -1486,6 +1495,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const requestId = modelRefreshRequestRef.current;
     if (!requestId) return;
     modelRefreshRequestRef.current = null;
+    modelListRequestGateRef.current.invalidate();
     setModelRefreshing(false);
     void cancelModelsRefresh(requestId).catch(() => {});
   }, []);
@@ -1494,15 +1504,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const previousRequestId = modelRefreshRequestRef.current;
     if (previousRequestId) void cancelModelsRefresh(previousRequestId).catch(() => {});
     const requestId = `models_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+    const generation = modelListRequestGateRef.current.begin();
     modelRefreshRequestRef.current = requestId;
     setModelRefreshing(true);
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
     try {
       const result = await requestModelsRefresh(modelCwd || undefined, requestId);
-      if (modelRefreshRequestRef.current !== requestId) return;
+      if (modelRefreshRequestRef.current !== requestId || !modelListRequestGateRef.current.isCurrent(generation))
+        return;
       applyModelsResult(result);
     } catch {
-      if (modelRefreshRequestRef.current !== requestId) return;
+      if (modelRefreshRequestRef.current !== requestId || !modelListRequestGateRef.current.isCurrent(generation))
+        return;
       addNotice({
         type: "error",
         message: "Unable to refresh the model directory. Cached models remain available.",

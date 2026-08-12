@@ -124,7 +124,7 @@ export interface ModelInfo {
 
 export interface ModelCatalogWarning {
   provider: string;
-  code: "PROVIDER_REFRESH_FAILED" | "MODEL_REFRESH_TIMEOUT";
+  code: "PROVIDER_REFRESH_FAILED" | "PROVIDER_AVAILABILITY_FAILED" | "MODEL_REFRESH_TIMEOUT";
   message: string;
 }
 

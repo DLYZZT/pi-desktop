@@ -29,6 +29,23 @@ export interface ModelsJson {
   [key: string]: unknown;
 }
 
+export function setProviderBaseUrl(config: ModelsJson, providerName: string, baseUrl: string): ModelsJson {
+  const providers = { ...(config.providers ?? {}) };
+  const provider = { ...(providers[providerName] ?? {}) };
+  const normalized = baseUrl.trim();
+
+  if (normalized) {
+    provider.baseUrl = normalized;
+    providers[providerName] = provider;
+  } else {
+    delete provider.baseUrl;
+    if (Object.keys(provider).length > 0) providers[providerName] = provider;
+    else delete providers[providerName];
+  }
+
+  return { ...config, providers };
+}
+
 export function replaceModelEntry(
   config: ModelsJson,
   providerName: string,

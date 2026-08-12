@@ -34,6 +34,7 @@ import {
   type HistoryWindow,
   type ModelInfo,
   type ModelCatalogStatus,
+  type ModelCatalogWarning,
   type ModelPreferencesResult,
   type ModelsListResult,
   type SessionDetail,
@@ -359,12 +360,57 @@ function resolveModelsCwd(params: { cwd?: string } | void): string {
   return cwd;
 }
 
-async function projectModelsList(
+type AvailableModel = Awaited<ReturnType<ModelRuntime["getAvailable"]>>[number];
+
+async function resolveAvailableModels(
+  modelRuntime: ModelRuntime,
+  signal?: AbortSignal,
+): Promise<{ models: AvailableModel[]; warnings: ModelCatalogWarning[] }> {
+  const snapshot = [...modelRuntime.getAvailableSnapshot()];
+  const snapshotByProvider = new Map<string, AvailableModel[]>();
+  for (const model of snapshot) {
+    const models = snapshotByProvider.get(model.provider) ?? [];
+    models.push(model);
+    snapshotByProvider.set(model.provider, models);
+  }
+
+  const results = await Promise.all(
+    [...modelRuntime.getProviders()]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map(async (provider) => {
+        try {
+          const models = [...(await modelRuntime.getAvailable(provider.id, { signal }))];
+          return { models, warning: undefined };
+        } catch (error) {
+          if (signal?.aborted) throw signal.reason ?? error;
+          return {
+            models: snapshotByProvider.get(provider.id) ?? [],
+            warning: {
+              provider: provider.id,
+              code: "PROVIDER_AVAILABILITY_FAILED" as const,
+              message: `Unable to check ${provider.id} model availability; the last known state remains available.`,
+            },
+          };
+        }
+      }),
+  );
+  signal?.throwIfAborted();
+  return {
+    models: results.flatMap((result) => result.models),
+    warnings: results.flatMap((result) => (result.warning ? [result.warning] : [])),
+  };
+}
+
+export async function projectModelsList(
   modelRuntime: ModelRuntime,
   settings: SettingsManager,
   catalog: ModelCatalogStatus,
+  options: { signal?: AbortSignal; cachedOnly?: boolean } = {},
 ): Promise<ModelsListResult> {
-  const available = [...(await modelRuntime.getAvailable())];
+  const availability = options.cachedOnly
+    ? { models: [...modelRuntime.getAvailableSnapshot()], warnings: [] }
+    : await resolveAvailableModels(modelRuntime, options.signal);
+  const available = availability.models;
   const enabledModels = settings.getEnabledModels();
   const visible = filterByExactEnabledModels(available, enabledModels);
   const models = visible
@@ -388,7 +434,16 @@ async function projectModelsList(
     defaultModel = { provider, modelId };
   }
 
-  return { models, defaultModel, thinkingLevels, thinkingLevelMaps, nameMap, catalog };
+  return {
+    models,
+    defaultModel,
+    thinkingLevels,
+    thinkingLevelMaps,
+    nameMap,
+    catalog: availability.warnings.length
+      ? { ...catalog, warnings: [...catalog.warnings, ...availability.warnings] }
+      : catalog,
+  };
 }
 
 export function registerHandlers(server: RpcServer): () => Promise<void> {
@@ -1154,10 +1209,16 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       }
       const cwd = resolveModelsCwd(params);
       const agentDir = getAgentDir();
-      const { services, catalog } = await modelCatalogRefreshCoordinator.refresh(cwd, requestId, (signal) =>
-        createAgentSessionServices({ cwd, agentDir, modelRuntimeSignal: signal }),
+      return modelCatalogRefreshCoordinator.refresh(
+        cwd,
+        requestId,
+        (signal) => createAgentSessionServices({ cwd, agentDir, modelRuntimeSignal: signal }),
+        ({ services, catalog }, signal) =>
+          projectModelsList(services.modelRuntime, services.settingsManager, catalog, {
+            signal,
+            cachedOnly: catalog.aborted,
+          }),
       );
-      return projectModelsList(services.modelRuntime, services.settingsManager, catalog);
     },
 
     "models.refreshCancel": (params) => {
@@ -1168,7 +1229,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     "models.preferences.get": async (params) => {
       const cwd = resolveModelsCwd(params as { cwd?: string } | void);
       const services = await createAgentSessionServices({ cwd, agentDir: getAgentDir() });
-      const available = await services.modelRuntime.getAvailable();
+      const { models: available } = await resolveAvailableModels(services.modelRuntime);
       return projectModelPreferences(available, services.settingsManager.getEnabledModels());
     },
 
@@ -1177,7 +1238,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       const cwd = resolveModelsCwd(body);
       const enabledModels = normalizeEnabledModelsInput(body.enabledModels);
       const services = await createAgentSessionServices({ cwd, agentDir: getAgentDir() });
-      const available = await services.modelRuntime.getAvailable();
+      const { models: available } = await resolveAvailableModels(services.modelRuntime);
       if (enabledModels && !hasMatchingEnabledModel(available, enabledModels)) {
         throw new RpcError({ code: "BAD_REQUEST", message: "At least one available model must remain enabled" });
       }

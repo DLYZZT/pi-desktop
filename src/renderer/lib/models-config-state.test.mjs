@@ -61,3 +61,42 @@ test("editing one model preserves v0.84 sampling, nullable headers, and unknown 
   assert.equal(updated.revision, 7);
   assert.equal(original.providers.custom.models[0].name, "Old name");
 });
+
+test("setting a built-in provider base URL creates an override without redefining models", async () => {
+  const { setProviderBaseUrl } = await loadModule();
+  const original = { revision: 7, providers: {} };
+
+  const updated = setProviderBaseUrl(original, "openai", "  https://proxy.example.com/v1  ");
+
+  assert.deepEqual(updated, {
+    revision: 7,
+    providers: { openai: { baseUrl: "https://proxy.example.com/v1" } },
+  });
+  assert.deepEqual(original, { revision: 7, providers: {} });
+});
+
+test("clearing a provider base URL preserves other provider fields and removes empty overrides", async () => {
+  const { setProviderBaseUrl } = await loadModule();
+  const withOtherFields = {
+    providers: {
+      openai: {
+        baseUrl: "https://proxy.example.com/v1",
+        headers: { "X-Tenant": "tenant-one", "X-Optional": null },
+        futureField: true,
+      },
+    },
+  };
+
+  assert.deepEqual(setProviderBaseUrl(withOtherFields, "openai", ""), {
+    providers: {
+      openai: {
+        headers: { "X-Tenant": "tenant-one", "X-Optional": null },
+        futureField: true,
+      },
+    },
+  });
+  assert.deepEqual(
+    setProviderBaseUrl({ providers: { openai: { baseUrl: "https://proxy.example.com/v1" } } }, "openai", "  "),
+    { providers: {} },
+  );
+});

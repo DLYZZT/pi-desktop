@@ -416,6 +416,8 @@ const zhCN: Record<string, string> = {
   modelProvider: "服务商",
   modelProviderName: "服务商名称",
   modelBaseUrl: "Base URL",
+  modelBaseUrlPlaceholder: "留空则使用服务商默认地址",
+  modelBaseUrlHint: "覆盖该服务商的请求地址；点击页面底部的“保存”后生效。",
   modelApiKey: "API Key",
   modelApiKeySourcePlaceholder: "环境变量名、!shell 命令或直接填写密钥",
   modelApiKeySourceHint: "以 ! 开头可运行 shell 命令，也可以填写环境变量名。",

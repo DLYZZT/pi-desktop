@@ -104,6 +104,29 @@ test("the timeout bounds service creation even when an extension ignores cancell
   assert.ok(Date.now() - started < 100, "hung service creation must not escape the refresh deadline");
 });
 
+test("the timeout also bounds final model-list projection", async () => {
+  const { ModelCatalogRefreshCoordinator } = await loadModelRuntimeModule();
+  const coordinator = new ModelCatalogRefreshCoordinator(5, () => false);
+  const started = Date.now();
+  const result = await coordinator.refresh(
+    "/project",
+    "hung-projection",
+    async () => ({
+      modelRuntime: {
+        async refresh() {
+          return { aborted: false, errors: new Map() };
+        },
+      },
+    }),
+    ({ catalog }) => (catalog.aborted ? { catalog, source: "cached-snapshot" } : new Promise(() => {})),
+  );
+
+  assert.equal(result.source, "cached-snapshot");
+  assert.equal(result.catalog.aborted, true);
+  assert.equal(result.catalog.warnings[0].code, "MODEL_REFRESH_TIMEOUT");
+  assert.ok(Date.now() - started < 100, "final projection must not escape the refresh deadline");
+});
+
 test("a replacement refresh cancels the older cwd generation", async () => {
   const { ModelCatalogRefreshCoordinator } = await loadModelRuntimeModule();
   const coordinator = new ModelCatalogRefreshCoordinator(500, () => false);

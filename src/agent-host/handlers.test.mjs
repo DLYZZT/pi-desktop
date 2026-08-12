@@ -130,6 +130,51 @@ test("credential mutation failures distinguish committed state from an unverifie
   );
 });
 
+test("model list projection isolates provider availability failures and keeps the last known state", async () => {
+  const { projectModelsList } = await loadHandlersModule();
+  const goodModel = { id: "fresh", name: "Fresh model", provider: "good", reasoning: false };
+  const cachedModel = { id: "cached", name: "Cached model", provider: "broken", reasoning: false };
+  const result = await projectModelsList(
+    {
+      getProviders() {
+        return [{ id: "good" }, { id: "broken" }];
+      },
+      getAvailableSnapshot() {
+        return [cachedModel];
+      },
+      async getAvailable(providerId) {
+        if (providerId === "good") return [goodModel];
+        throw new Error("secret provider failure detail");
+      },
+    },
+    {
+      getEnabledModels() {
+        return undefined;
+      },
+      getDefaultProvider() {
+        return undefined;
+      },
+      getDefaultModel() {
+        return undefined;
+      },
+    },
+    { source: "network", refreshed: true, aborted: false, warnings: [] },
+  );
+
+  assert.deepEqual(result.models.map((model) => `${model.provider}/${model.id}`).sort(), [
+    "broken/cached",
+    "good/fresh",
+  ]);
+  assert.deepEqual(result.catalog.warnings, [
+    {
+      provider: "broken",
+      code: "PROVIDER_AVAILABILITY_FAILED",
+      message: "Unable to check broken model availability; the last known state remains available.",
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(result), /secret provider failure detail/);
+});
+
 test("file, git, worktree, skill, plugin, and system handlers return contract-shaped results", async (t) => {
   const base = mkdtempSync(path.join(tmpdir(), "pi-handler-test-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));

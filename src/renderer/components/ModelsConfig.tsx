@@ -2,7 +2,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Check, Field, NumInput, SecretTextInput, Select, SectionTitle, TextInput } from "./form-controls";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
-import { replaceModelEntry, type ModelEntry, type ModelsJson, type ProviderEntry } from "@/lib/models-config-state";
+import {
+  replaceModelEntry,
+  setProviderBaseUrl,
+  type ModelEntry,
+  type ModelsJson,
+  type ProviderEntry,
+} from "@/lib/models-config-state";
 import { call, getModelPreferences, setModelPreferences } from "@/lib/api-client";
 import { isModelEnabled, setProviderModelsEnabled, toggleModelEnabled } from "@/lib/model-selection";
 import type { ModelPreferencesResult } from "@contract/types";
@@ -1433,10 +1439,14 @@ function OAuthDetail({
 
 function ApiKeyDetail({
   provider,
+  baseUrl,
+  onBaseUrlChange,
   onRefresh,
   modelSelection,
 }: {
   provider: ApiKeyProvider;
+  baseUrl: string;
+  onBaseUrlChange: (baseUrl: string) => void;
   onRefresh: () => void;
   modelSelection: ModelSelectionControl;
 }) {
@@ -1542,6 +1552,21 @@ function ApiKeyDetail({
               .replace("{provider}", provider.displayName)
               .replace("{count}", String(provider.modelCount))}
       </p>
+
+      <Field label={t("modelBaseUrl", "Base URL")}>
+        <TextInput
+          value={baseUrl}
+          onChange={onBaseUrlChange}
+          placeholder={t("modelBaseUrlPlaceholder", "Leave empty to use the provider default")}
+          mono
+        />
+        <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
+          {t(
+            "modelBaseUrlHint",
+            "Overrides the endpoint for this provider. Use the Save button below to apply changes.",
+          )}
+        </span>
+      </Field>
 
       <Field label={t("modelApiKey", "API Key")}>
         <div style={{ display: "flex", gap: 6 }}>
@@ -2258,6 +2283,8 @@ export function ModelsConfig({
         <ApiKeyDetail
           key={p.id}
           provider={p}
+          baseUrl={config.providers?.[p.id]?.baseUrl ?? ""}
+          onBaseUrlChange={(baseUrl) => setConfig((prev) => setProviderBaseUrl(prev, p.id, baseUrl))}
           onRefresh={refreshApiKeyProviders}
           modelSelection={{
             preferences: modelPreferences,
