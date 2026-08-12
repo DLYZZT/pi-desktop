@@ -20,7 +20,9 @@ function fixture(options = {}) {
     emitResolved: (...args) => resolved.push(args),
     createId: () => `request-${++nextId}`,
     timeoutMs: options.timeoutMs ?? 1_000,
-    denyCooldownMs: 1_000,
+    denyCooldownMs: options.denyCooldownMs ?? 1_000,
+    maxDeniedCooldowns: options.maxDeniedCooldowns,
+    now: options.now,
   });
   return {
     coordinator,
@@ -150,4 +152,25 @@ test("a persistent-policy grant failure follows the same cleanup rule", async ()
   await assert.rejects(pending, failure);
   assert.equal(value.resolved[0][1], "denied");
   assert.equal(value.coordinator.listPending().length, 0);
+});
+
+test("denial cooldowns expire on read, clear with sessions, and remain bounded", async () => {
+  let now = 100;
+  const value = fixture({ now: () => now, denyCooldownMs: 50, maxDeniedCooldowns: 2 });
+
+  for (const sessionId of ["session-a", "session-b", "session-c"]) {
+    const pending = value.coordinator.request(sessionId, "local", "read");
+    value.coordinator.respond(value.requests.at(-1).id, "deny");
+    await assert.rejects(pending, (error) => error.code === "USER_DENIED");
+  }
+  assert.deepEqual([...value.coordinator.deniedUntil.keys()], ["session-b", "session-c"]);
+
+  value.coordinator.cancelSession("session-b");
+  assert.deepEqual([...value.coordinator.deniedUntil.keys()], ["session-c"]);
+
+  now += 50;
+  const retried = value.coordinator.request("session-c", "local", "read");
+  assert.equal(value.coordinator.deniedUntil.has("session-c"), false);
+  value.coordinator.cancelSession("session-c");
+  await assert.rejects(retried, (error) => error.code === "CAPABILITY_DISABLED");
 });

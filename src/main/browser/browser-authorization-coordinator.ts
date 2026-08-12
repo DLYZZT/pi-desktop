@@ -16,6 +16,7 @@ const RANK: Record<BrowserPermissionLevel | "ask" | "deny" | "inherit", number> 
   interact: 2,
   advanced: 3,
 };
+const DEFAULT_MAX_DENIED_COOLDOWNS = 1_024;
 
 type RequiredPermission = "read" | "interact" | "advanced";
 type ResolveOutcome = "denied" | "allowed-session" | "persistent-policy" | "timeout" | "cancelled";
@@ -42,6 +43,7 @@ export interface BrowserAuthorizationCoordinatorOptions {
   createId?: () => string;
   timeoutMs?: number;
   denyCooldownMs?: number;
+  maxDeniedCooldowns?: number;
 }
 
 export class BrowserAuthorizationCoordinator {
@@ -54,6 +56,7 @@ export class BrowserAuthorizationCoordinator {
   private readonly createId: () => string;
   private readonly timeoutMs: number;
   private readonly denyCooldownMs: number;
+  private readonly maxDeniedCooldowns: number;
   private readonly options: BrowserAuthorizationCoordinatorOptions;
 
   constructor(options: BrowserAuthorizationCoordinatorOptions) {
@@ -62,6 +65,7 @@ export class BrowserAuthorizationCoordinator {
     this.createId = options.createId ?? randomUUID;
     this.timeoutMs = options.timeoutMs ?? 60_000;
     this.denyCooldownMs = options.denyCooldownMs ?? 2_000;
+    this.maxDeniedCooldowns = Math.max(1, options.maxDeniedCooldowns ?? DEFAULT_MAX_DENIED_COOLDOWNS);
   }
 
   async request(sessionId: string, source: "local" | "channel", minimumPermission: RequiredPermission): Promise<void> {
@@ -73,7 +77,9 @@ export class BrowserAuthorizationCoordinator {
       this.options.grant(sessionId, minimumPermission, source, "persistent-policy");
       return;
     }
-    if ((this.deniedUntil.get(sessionId) ?? 0) > this.now()) {
+    const now = this.now();
+    this.pruneDeniedUntil(now);
+    if ((this.deniedUntil.get(sessionId) ?? 0) > now) {
       throw new BrowserError("USER_DENIED", "Browser access was recently denied");
     }
     if (!this.options.isRendererAvailable()) {
@@ -136,7 +142,7 @@ export class BrowserAuthorizationCoordinator {
       throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser authorization request is stale");
     }
     if (decision === "deny") {
-      this.deniedUntil.set(pending.request.sessionId, this.now() + this.denyCooldownMs);
+      this.recordDenial(pending.request.sessionId);
       this.finish(pending, "denied", new BrowserError("USER_DENIED", "The user denied Browser access"));
       return;
     }
@@ -224,5 +230,23 @@ export class BrowserAuthorizationCoordinator {
   private activate(pending: Pending): void {
     this.active = pending;
     this.options.emitRequest(structuredClone(pending.request));
+  }
+
+  private recordDenial(sessionId: string): void {
+    const now = this.now();
+    this.pruneDeniedUntil(now);
+    this.deniedUntil.delete(sessionId);
+    while (this.deniedUntil.size >= this.maxDeniedCooldowns) {
+      const oldestSessionId = this.deniedUntil.keys().next().value as string | undefined;
+      if (oldestSessionId === undefined) break;
+      this.deniedUntil.delete(oldestSessionId);
+    }
+    this.deniedUntil.set(sessionId, now + this.denyCooldownMs);
+  }
+
+  private pruneDeniedUntil(now: number): void {
+    for (const [sessionId, expiresAt] of this.deniedUntil) {
+      if (expiresAt <= now) this.deniedUntil.delete(sessionId);
+    }
   }
 }
