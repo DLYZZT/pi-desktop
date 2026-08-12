@@ -1,15 +1,9 @@
 import { useState } from "react";
 import { getFileIcon } from "./FileIcons";
-
-export interface Tab {
-  id: string;
-  label: string;
-  filePath: string;
-  sourceSessionId?: string | null;
-}
+import type { FileTab } from "@/lib/file-tab-state";
 
 interface Props {
-  tabs: Tab[];
+  tabs: FileTab[];
   activeTabId: string;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;

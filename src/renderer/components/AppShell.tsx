@@ -1,6 +1,7 @@
 import { call, listSessions, subscribe } from "@/lib/api-client";
 import {
   useState,
+  useReducer,
   useCallback,
   useRef,
   useEffect,
@@ -12,7 +13,7 @@ import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileExplorer } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
-import { TabBar, type Tab } from "./TabBar";
+import { TabBar } from "./TabBar";
 import { SettingsConfig, type SettingsTab } from "./SettingsConfig";
 import { QuickChannelBinding } from "./channels/QuickChannelBinding";
 import { BrowserDock } from "./browser/BrowserDock";
@@ -24,6 +25,7 @@ import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
 import { getSessionDisplayTitle } from "@/lib/session-list";
 import { beginSessionLoadTrace } from "@/lib/session-performance";
+import { reduceFileTabState } from "@/lib/file-tab-state";
 import { readSessionIdFromSearch, routerCompat } from "@/lib/router-compat";
 import { SessionProfiler } from "./SessionProfiler";
 import { buildAtMentionText } from "@/lib/file-fuzzy";
@@ -186,8 +188,10 @@ export function AppShell() {
   }, [isMobile]);
 
   // Right panel — file tabs only
-  const [fileTabs, setFileTabs] = useState<Tab[]>([]);
-  const [activeFileTabId, setActiveFileTabId] = useState<string | null>(EXPLORER_TAB_ID);
+  const [{ tabs: fileTabs, activeTabId: activeFileTabId }, dispatchFileTab] = useReducer(reduceFileTabState, {
+    tabs: [],
+    activeTabId: EXPLORER_TAB_ID,
+  });
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [rightPanelBounds, setRightPanelBounds] = useState(() =>
     getRightPanelWidthBounds(window.innerWidth, sidebarOpen),
@@ -289,7 +293,7 @@ export function AppShell() {
   useEffect(() => {
     const openBrowserTab = (event: Event) => {
       const tabId = (event as CustomEvent<{ tabId?: string }>).detail?.tabId;
-      setActiveFileTabId(BROWSER_TAB_ID);
+      dispatchFileTab({ type: "select", tabId: BROWSER_TAB_ID });
       openRightPanel();
       if (tabId) void window.piBridge.browserActivateTab(tabId).catch(() => undefined);
     };
@@ -303,7 +307,7 @@ export function AppShell() {
         if (event.type !== "tab-created" || !event.tab.ownerSessionId) return;
         void window.piBridge.browserGetSettings().then((settings) => {
           if (!settings.settings.panel.openOnAgentUse) return;
-          setActiveFileTabId(BROWSER_TAB_ID);
+          dispatchFileTab({ type: "select", tabId: BROWSER_TAB_ID });
           openRightPanel();
         });
       }),
@@ -566,13 +570,10 @@ export function AppShell() {
   const handleOpenFile = useCallback(
     (filePath: string, fileName: string, sourceSessionId?: string | null) => {
       const tabId = `file:${filePath}`;
-      setFileTabs((prev) => {
-        const existing = prev.find((t) => t.id === tabId);
-        if (!existing) return [...prev, { id: tabId, label: fileName, filePath, sourceSessionId }];
-        if (!sourceSessionId || existing.sourceSessionId === sourceSessionId) return prev;
-        return prev.map((t) => (t.id === tabId ? { ...t, sourceSessionId } : t));
+      dispatchFileTab({
+        type: "open",
+        tab: { id: tabId, label: fileName, filePath, sourceSessionId },
       });
-      setActiveFileTabId(tabId);
       openRightPanel();
     },
     [openRightPanel],
@@ -585,21 +586,15 @@ export function AppShell() {
     [handleOpenFile, selectedSession?.id],
   );
 
-  const handleCloseFileTab = useCallback(
-    (tabId: string) => {
-      setFileTabs((prev) => {
-        const next = prev.filter((t) => t.id !== tabId);
-        if (next.length === 0) setRightPanelOpen(false);
-        return next;
-      });
-      setActiveFileTabId((cur) => {
-        if (cur !== tabId) return cur;
-        const remaining = fileTabs.filter((t) => t.id !== tabId);
-        return remaining.length > 0 ? remaining[remaining.length - 1].id : EXPLORER_TAB_ID;
-      });
-    },
-    [fileTabs],
-  );
+  const handleCloseFileTab = useCallback((tabId: string) => {
+    dispatchFileTab({ type: "close", tabId, fallbackTabId: EXPLORER_TAB_ID });
+  }, []);
+
+  const previousFileTabCountRef = useRef(fileTabs.length);
+  useEffect(() => {
+    if (previousFileTabCountRef.current > 0 && fileTabs.length === 0) setRightPanelOpen(false);
+    previousFileTabCountRef.current = fileTabs.length;
+  }, [fileTabs.length]);
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
@@ -612,7 +607,7 @@ export function AppShell() {
 
   useEffect(() => {
     if (!activeCwd || isMobile) return;
-    setActiveFileTabId(EXPLORER_TAB_ID);
+    dispatchFileTab({ type: "select", tabId: EXPLORER_TAB_ID });
   }, [activeCwd, isMobile]);
 
   const sidebarContent = (
@@ -1450,7 +1445,7 @@ export function AppShell() {
           >
             <button
               type="button"
-              onClick={() => setActiveFileTabId(EXPLORER_TAB_ID)}
+              onClick={() => dispatchFileTab({ type: "select", tabId: EXPLORER_TAB_ID })}
               aria-pressed={activeFileTabId === EXPLORER_TAB_ID}
               style={{
                 display: "flex",
@@ -1485,7 +1480,7 @@ export function AppShell() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveFileTabId(BROWSER_TAB_ID)}
+              onClick={() => dispatchFileTab({ type: "select", tabId: BROWSER_TAB_ID })}
               aria-pressed={activeFileTabId === BROWSER_TAB_ID}
               style={{
                 display: "flex",
@@ -1522,8 +1517,8 @@ export function AppShell() {
             <div style={{ flex: 1, overflow: "hidden" }}>
               <TabBar
                 tabs={fileTabs}
-                activeTabId={activeFileTabId ?? ""}
-                onSelectTab={setActiveFileTabId}
+                activeTabId={activeFileTabId}
+                onSelectTab={(tabId) => dispatchFileTab({ type: "select", tabId })}
                 onCloseTab={handleCloseFileTab}
               />
             </div>
