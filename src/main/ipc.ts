@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell } from "electron";
-import type { IpcMainInvokeEvent } from "electron";
+import type { IpcMainEvent, IpcMainInvokeEvent } from "electron";
 import type {
   ChannelCredentialWrite,
   DesktopUpdateState,
@@ -20,6 +20,7 @@ import {
 import { ToolchainError } from "../shared/toolchains/errors";
 import type { BrowserService } from "./browser/browser-service";
 import { BrowserError } from "./browser/browser-error";
+import { isTrustedDesktopIpcSender } from "./ipc-trust";
 import type {
   BrowserConfirmationKind,
   BrowserConfirmationProof,
@@ -72,19 +73,30 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     getBrowserService,
     updateManager,
   } = options;
-  const assertTrustedToolchainSender = (event: IpcMainInvokeEvent): void => {
+  const assertTrustedSender = (event: IpcMainInvokeEvent): void => {
     const win = getMainWindow();
-    if (
-      !win ||
-      win.isDestroyed() ||
-      event.sender !== win.webContents ||
-      event.senderFrame !== win.webContents.mainFrame
-    ) {
-      throw new Error("Untrusted toolchain IPC sender");
-    }
+    if (!isTrustedDesktopIpcSender(win, event)) throw new Error("Untrusted desktop IPC sender");
+  };
+  const trustedHandle = <T extends unknown[], R>(
+    channel: string,
+    handler: (event: IpcMainInvokeEvent, ...args: T) => R | Promise<R>,
+  ): void => {
+    ipcMain.handle(channel, (event, ...args) => {
+      assertTrustedSender(event);
+      return handler(event, ...(args as T));
+    });
+  };
+  const trustedOn = <T extends unknown[]>(
+    channel: string,
+    listener: (event: IpcMainEvent, ...args: T) => void,
+  ): void => {
+    ipcMain.on(channel, (event, ...args) => {
+      if (!isTrustedDesktopIpcSender(getMainWindow(), event)) return;
+      listener(event, ...(args as T));
+    });
   };
   const requireTrustedBrowser = (event: IpcMainInvokeEvent): BrowserService => {
-    assertTrustedToolchainSender(event);
+    assertTrustedSender(event);
     const browser = getBrowserService();
     if (!browser) throw new Error("BROWSER_DISABLED: Browser service is unavailable");
     return browser;
@@ -93,7 +105,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     channel: string,
     handler: (browser: BrowserService, ...args: T) => R | Promise<R>,
   ): void => {
-    ipcMain.handle(channel, async (event, ...args: T) => {
+    trustedHandle(channel, async (event, ...args: T) => {
       const browser = requireTrustedBrowser(event);
       try {
         return await handler(browser, ...args);
@@ -104,28 +116,25 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     });
   };
 
-  ipcMain.handle("desktop:get-version", () => app.getVersion());
-  ipcMain.handle("desktop:update:get-state", () => updateManager.getState());
-  ipcMain.handle("desktop:update:check", () => updateManager.checkForUpdates());
-  ipcMain.handle("desktop:update:download", () => updateManager.downloadUpdate());
-  ipcMain.handle("desktop:update:install", () => updateManager.installUpdate());
-  ipcMain.handle("desktop:update:set-automatic-checks", (_event, enabled: unknown) => {
+  trustedHandle("desktop:get-version", () => app.getVersion());
+  trustedHandle("desktop:update:get-state", () => updateManager.getState());
+  trustedHandle("desktop:update:check", () => updateManager.checkForUpdates());
+  trustedHandle("desktop:update:download", () => updateManager.downloadUpdate());
+  trustedHandle("desktop:update:install", () => updateManager.installUpdate());
+  trustedHandle("desktop:update:set-automatic-checks", (_event, enabled: unknown) => {
     if (typeof enabled !== "boolean") throw new Error("Automatic update checks must be a boolean");
     saveUiState({ automaticUpdateChecks: enabled });
     return updateManager.setAutomaticChecksEnabled(enabled);
   });
-  ipcMain.handle("desktop:get-host-status", () => getHostManager()?.getStatus() ?? "stopped");
-  ipcMain.handle("desktop:toolchains:get-state", (event, cwd: unknown) => {
-    assertTrustedToolchainSender(event);
+  trustedHandle("desktop:get-host-status", () => getHostManager()?.getStatus() ?? "stopped");
+  trustedHandle("desktop:toolchains:get-state", (_event, cwd: unknown) => {
     return getToolchainState(validateOptionalToolchainCwd(cwd));
   });
-  ipcMain.handle("desktop:toolchains:rescan", (event, cwd: unknown) => {
-    assertTrustedToolchainSender(event);
+  trustedHandle("desktop:toolchains:rescan", (_event, cwd: unknown) => {
     const validatedCwd = validateOptionalToolchainCwd(cwd);
     return rescanToolchains(validatedCwd);
   });
-  ipcMain.handle("desktop:toolchains:action", async (event, request: unknown) => {
-    assertTrustedToolchainSender(event);
+  trustedHandle("desktop:toolchains:action", async (event, request: unknown) => {
     if (!isToolchainActionRequest(request)) throw new Error("Invalid toolchain action request");
     if (request.action === "choose-custom-tool") {
       const win = BrowserWindow.fromWebContents(event.sender);
@@ -158,24 +167,24 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     }
   });
 
-  ipcMain.on("desktop:connect-host", (event) => {
+  trustedOn("desktop:connect-host", (event) => {
     const manager = getHostManager();
     if (!manager) return;
     const { port1 } = manager.createRendererChannel();
     event.sender.postMessage("desktop:host-port", null, [port1]);
   });
 
-  ipcMain.handle("desktop:open-external", async (_event, url: string) => {
+  trustedHandle("desktop:open-external", async (_event, url: string) => {
     if (typeof url !== "string") return;
     if (!/^(https?:|mailto:)/i.test(url)) throw new Error("Blocked non-http(s)/mailto URL");
     await shell.openExternal(url);
   });
 
-  ipcMain.handle("desktop:show-item-in-folder", async (_event, fsPath: string) => {
+  trustedHandle("desktop:show-item-in-folder", async (_event, fsPath: string) => {
     if (typeof fsPath === "string") shell.showItemInFolder(fsPath);
   });
 
-  ipcMain.handle("desktop:select-directory", async (event) => {
+  trustedHandle("desktop:select-directory", async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const ui = loadUiState();
     const result = await dialog.showOpenDialog(win ?? undefined!, {
@@ -189,7 +198,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     return directory;
   });
 
-  ipcMain.handle("desktop:set-channel-credential", (_event, payload: ChannelCredentialWrite) => {
+  trustedHandle("desktop:set-channel-credential", (_event, payload: ChannelCredentialWrite) => {
     if (!payload || typeof payload !== "object") throw new Error("Invalid channel credential payload");
     if (!payload.credential?.token?.trim() || !payload.credential.baseUrl?.trim()) {
       throw new Error("Channel credential is incomplete");
@@ -197,7 +206,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     setChannelCredential(payload);
   });
 
-  ipcMain.handle("desktop:save-file", async (event, saveOptions: SaveTextFileOptions) => {
+  trustedHandle("desktop:save-file", async (event, saveOptions: SaveTextFileOptions) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showSaveDialog(win ?? undefined!, {
       defaultPath: saveOptions.defaultPath,
@@ -209,7 +218,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     return result.filePath;
   });
 
-  ipcMain.handle("desktop:save-binary-file", async (event, saveOptions: SaveBinaryFileOptions) => {
+  trustedHandle("desktop:save-binary-file", async (event, saveOptions: SaveBinaryFileOptions) => {
     if (!saveOptions || typeof saveOptions.base64 !== "string") throw new Error("Invalid binary save payload");
     const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showSaveDialog(win ?? undefined!, { defaultPath: saveOptions.defaultPath });
@@ -219,7 +228,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     return result.filePath;
   });
 
-  ipcMain.handle(
+  trustedHandle(
     "desktop:create-html-preview",
     (_event, content: string, filePath: string, sourceSessionId?: string | null) =>
       createHtmlPreviewUrl(content, filePath, async (assetPath) => {
@@ -236,11 +245,11 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
         });
       }),
   );
-  ipcMain.handle("desktop:release-html-preview", (_event, previewUrl: string) => {
+  trustedHandle("desktop:release-html-preview", (_event, previewUrl: string) => {
     releaseHtmlPreviewUrl(previewUrl);
   });
 
-  ipcMain.on("desktop:notify-agent-end", (_event, payload: { sessionId: string; title?: string }) => {
+  trustedOn("desktop:notify-agent-end", (_event, payload: { sessionId: string; title?: string }) => {
     if (!Notification.isSupported()) return;
     const notification = new Notification({
       title: payload.title || "Agent finished",
@@ -258,23 +267,23 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     applyBadgeCount(getUnreadBadge() + 1);
   });
 
-  ipcMain.on("desktop:set-badge-count", (_event, count: number) => applyBadgeCount(count));
-  ipcMain.handle("desktop:get-ui-state", () => loadUiState());
-  ipcMain.handle("desktop:set-ui-state", (_event, patch: Record<string, unknown>) => saveUiState(patch));
-  ipcMain.handle("desktop:get-theme-source", () => nativeTheme.themeSource);
-  ipcMain.handle("desktop:set-theme-source", (_event, source: "system" | "light" | "dark") => {
+  trustedOn("desktop:set-badge-count", (_event, count: number) => applyBadgeCount(count));
+  trustedHandle("desktop:get-ui-state", () => loadUiState());
+  trustedHandle("desktop:set-ui-state", (_event, patch: Record<string, unknown>) => saveUiState(patch));
+  trustedHandle("desktop:get-theme-source", () => nativeTheme.themeSource);
+  trustedHandle("desktop:set-theme-source", (_event, source: "system" | "light" | "dark") => {
     nativeTheme.themeSource = source;
     saveUiState({ theme: source });
   });
-  ipcMain.handle("desktop:open-logs", () => shell.showItemInFolder(getMainLogPath()));
-  ipcMain.handle("desktop:export-diagnostics", async (event) => {
+  trustedHandle("desktop:open-logs", () => shell.showItemInFolder(getMainLogPath()));
+  trustedHandle("desktop:export-diagnostics", async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     return exportDiagnostics(win, {
       toolchainState: await getToolchainState(),
       browser: getBrowserService()?.getRedactedDiagnostics(),
     });
   });
-  ipcMain.handle("desktop:clear-badge", () => applyBadgeCount(0));
+  trustedHandle("desktop:clear-badge", () => applyBadgeCount(0));
 
   browserHandler("desktop:browser:get-state", (browser) => browser.getState());
   browserHandler("desktop:browser:get-settings", (browser) => browser.getSettings());
