@@ -9,6 +9,7 @@ import { appendMainLog } from "./logger";
 import type { ToolchainSnapshot } from "../shared/toolchains/types";
 import type { BrowserCapabilitySnapshot } from "../contract/browser";
 import { BrowserError } from "./browser/browser-error";
+import { reserveHostRestart, trySpawnHost } from "./host-restart-core";
 
 const CRASH_WINDOW_MS = 30_000;
 const MAX_RESTARTS = 2;
@@ -205,11 +206,19 @@ export class HostManager {
     env.PI_DESKTOP_USER_DATA = app.getPath("userData");
     env.PI_DESKTOP_VERSION = app.getVersion();
 
-    const child = utilityProcess.fork(this.hostEntry, [], {
-      serviceName: "pi-agent-host",
-      stdio: "pipe",
-      env,
-    });
+    const spawnResult = trySpawnHost(() =>
+      utilityProcess.fork(this.hostEntry, [], {
+        serviceName: "pi-agent-host",
+        stdio: "pipe",
+        env,
+      }),
+    );
+    if (!spawnResult.ok) {
+      appendMainLog(`agent-host spawn failed: ${spawnResult.error}`);
+      this.scheduleRestart(`Host failed to spawn: ${spawnResult.error}`);
+      return;
+    }
+    const child = spawnResult.child;
 
     this.child = child;
     this.lastPong = Date.now();
@@ -298,16 +307,7 @@ export class HostManager {
       if (this.status === "stopped") return;
 
       this.wasReadyBeforeExit = this.status === "ready" || this.status === "starting";
-      const now = Date.now();
-      this.restartTimes = this.restartTimes.filter((t) => now - t < CRASH_WINDOW_MS);
-      if (this.restartTimes.length >= MAX_RESTARTS) {
-        this.setStatus("crashed", `Host exited (code ${code}) and restart budget exhausted`);
-        return;
-      }
-      this.restartTimes.push(now);
-      appendMainLog(`restarting agent-host (attempt ${this.restartTimes.length}/${MAX_RESTARTS})`);
-      this.setStatus("starting", `restarting after exit ${code}`);
-      setTimeout(() => this.spawn(), 500);
+      this.scheduleRestart(`Host exited (code ${code})`);
     });
 
     child.stdout?.on("data", (buf: Buffer) => {
@@ -318,6 +318,24 @@ export class HostManager {
       const line = buf.toString().trim();
       if (line) appendMainLog(`[host:err] ${line}`);
     });
+  }
+
+  private scheduleRestart(reason: string): void {
+    if (this.status === "stopped") return;
+
+    const reservation = reserveHostRestart(this.restartTimes, Date.now(), CRASH_WINDOW_MS, MAX_RESTARTS);
+    this.restartTimes = reservation.restartTimes;
+    if (reservation.attempt === null) {
+      appendMainLog(`${reason}; restart budget exhausted`);
+      this.setStatus("crashed", `${reason} and restart budget exhausted`);
+      return;
+    }
+
+    appendMainLog(`restarting agent-host (attempt ${reservation.attempt}/${MAX_RESTARTS}): ${reason}`);
+    this.setStatus("starting", `${reason}; restarting`);
+    setTimeout(() => {
+      if (this.status === "starting" && !this.child) this.spawn();
+    }, 500).unref();
   }
 
   private startPing(): void {
