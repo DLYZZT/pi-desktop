@@ -140,13 +140,7 @@ export class BrowserAuthorizationCoordinator {
       this.finish(pending, "denied", new BrowserError("USER_DENIED", "The user denied Browser access"));
       return;
     }
-    this.options.grant(
-      pending.request.sessionId,
-      pending.request.minimumPermission,
-      pending.request.source,
-      "user-prompt",
-    );
-    this.finish(pending, "allowed-session");
+    this.grantAndFinish(pending, "user-prompt", "allowed-session");
   }
 
   persistentPolicyChanged(sessionId: string): void {
@@ -158,8 +152,7 @@ export class BrowserAuthorizationCoordinator {
       return;
     }
     if (RANK[permission] >= RANK[pending.request.minimumPermission]) {
-      this.options.grant(sessionId, pending.request.minimumPermission, pending.request.source, "persistent-policy");
-      this.finish(pending, "persistent-policy");
+      this.grantAndFinish(pending, "persistent-policy", "persistent-policy");
     }
   }
 
@@ -203,6 +196,29 @@ export class BrowserAuthorizationCoordinator {
       const next = this.queue.shift();
       if (next && this.pendingById.has(next.request.id)) this.activate(next);
     }
+  }
+
+  private grantAndFinish(
+    pending: Pending,
+    grantSource: "user-prompt" | "persistent-policy",
+    outcome: "allowed-session" | "persistent-policy",
+  ): void {
+    try {
+      this.options.grant(
+        pending.request.sessionId,
+        pending.request.minimumPermission,
+        pending.request.source,
+        grantSource,
+      );
+    } catch (error) {
+      const failure =
+        error instanceof Error
+          ? error
+          : new BrowserError("CAPABILITY_DISABLED", "Browser authorization grant failed", { cause: error });
+      this.finish(pending, "denied", failure);
+      throw failure;
+    }
+    this.finish(pending, outcome);
   }
 
   private activate(pending: Pending): void {

@@ -12,7 +12,10 @@ function fixture(options = {}) {
   const coordinator = new BrowserAuthorizationCoordinator({
     getPersistentPermission: () => permission,
     isRendererAvailable: () => options.rendererAvailable !== false,
-    grant: (...args) => grants.push(args),
+    grant: (...args) => {
+      options.grant?.(...args);
+      grants.push(args);
+    },
     emitRequest: (request) => requests.push(request),
     emitResolved: (...args) => resolved.push(args),
     createId: () => `request-${++nextId}`,
@@ -105,4 +108,46 @@ test("settings can resolve a pending request while timeout and unavailable Rende
     (error) => error.code === "CAPABILITY_DISABLED",
   );
   assert.equal(unavailable.requests.length, 0);
+});
+
+test("a prompt grant failure immediately clears pending state and advances the queue", async () => {
+  let shouldFail = true;
+  const failure = new Error("grant store unavailable");
+  const value = fixture({
+    grant: () => {
+      if (shouldFail) throw failure;
+    },
+  });
+  const first = value.coordinator.request("session-a", "local", "read");
+  const second = value.coordinator.request("session-b", "local", "read");
+
+  assert.throws(() => value.coordinator.respond(value.requests[0].id, "allow-session"), failure);
+  await assert.rejects(first, failure);
+  assert.equal(value.resolved[0][1], "denied");
+  assert.deepEqual(
+    value.coordinator.listPending().map(({ sessionId }) => sessionId),
+    ["session-b"],
+  );
+  assert.equal(value.requests[1].sessionId, "session-b");
+
+  shouldFail = false;
+  value.coordinator.respond(value.requests[1].id, "allow-session");
+  await second;
+  assert.equal(value.coordinator.listPending().length, 0);
+});
+
+test("a persistent-policy grant failure follows the same cleanup rule", async () => {
+  const failure = new Error("policy grant failed");
+  const value = fixture({
+    grant: () => {
+      throw failure;
+    },
+  });
+  const pending = value.coordinator.request("session", "local", "interact");
+  value.setPermission("interact");
+
+  assert.throws(() => value.coordinator.persistentPolicyChanged("session"), failure);
+  await assert.rejects(pending, failure);
+  assert.equal(value.resolved[0][1], "denied");
+  assert.equal(value.coordinator.listPending().length, 0);
 });
