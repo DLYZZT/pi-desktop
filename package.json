@@ -13,7 +13,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
-    "build:main": "tsup --config tsup.config.ts",
+    "build:main": "node scripts/build-main.mjs",
     "build:renderer": "vite build",
     "build:smoke": "tsup --config tsup.smoke.config.ts",
     "lint": "eslint src scripts *.ts *.mjs --max-warnings=0",
@@ -36,6 +36,7 @@
     "smoke": "node scripts/smoke-electron.mjs",
     "test:browser-electron": "node scripts/test-browser-electron.mjs",
     "test:browser-agent-e2e": "node scripts/test-browser-agent-e2e.mjs",
+    "test:build-watch": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/test-tsup-watch.mjs",
     "verify": "node scripts/verify.mjs",
     "prepare": "husky",
     "start": "electron .",

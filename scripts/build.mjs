@@ -11,6 +11,6 @@ function run(cmd, args) {
   if (r.status !== 0) process.exit(r.status ?? 1);
 }
 
-run("npx", ["tsup", "--config", "tsup.config.ts"]);
+run(process.execPath, ["scripts/build-main.mjs"]);
 run("npx", ["vite", "build", "--config", "vite.config.ts"]);
 console.log("[build] done → out/");

@@ -44,7 +44,7 @@ process.on("SIGTERM", () => shutdown(0));
 
 // 1) Build main once, then watch
 console.log("[dev] building main/preload/host…");
-const build = spawn("npx", ["tsup", "--config", "tsup.config.ts"], {
+const build = spawn(process.execPath, ["scripts/build-main.mjs"], {
   cwd: root,
   stdio: "inherit",
   shell: isWin,

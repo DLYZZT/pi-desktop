@@ -21,7 +21,7 @@ export default defineConfig([
     platform: "node",
     target: "node22",
     outDir: "out/main",
-    clean: true,
+    clean: false,
     sourcemap: true,
     // electron-updater is a production runtime dependency and resolves its
     // provider/platform implementation dynamically from the packaged app.
@@ -73,7 +73,7 @@ export default defineConfig([
     platform: "browser",
     target: "es2022",
     outDir: "out/preload",
-    clean: true,
+    clean: false,
     sourcemap: true,
     external: ["electron"],
     splitting: false,
