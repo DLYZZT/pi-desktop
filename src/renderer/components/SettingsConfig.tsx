@@ -1,9 +1,9 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n, type AppLanguage } from "@/i18n";
 import { ModelsConfig } from "./ModelsConfig";
-import { SkillsConfig } from "./SkillsConfig";
+import { SkillsConfig, type SkillsConfigHandle } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ToolchainsConfig } from "./ToolchainsConfig";
 import { BrowserSettings } from "./browser/BrowserSettings";
@@ -41,15 +41,27 @@ export function SettingsConfig({
   const { isDark, toggleTheme } = useTheme();
   const { language, setLanguage, t } = useI18n();
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const skillsConfigRef = useRef<SkillsConfigHandle>(null);
   const returnFocusRef = useRef<HTMLElement | null>(
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   );
 
+  const requestSettingsTransition = useCallback((action: () => void) => {
+    if (activeTabRef.current === "skills" && skillsConfigRef.current) {
+      skillsConfigRef.current.requestLeave(action);
+      return;
+    }
+    action();
+  }, []);
+
   useEffect(() => {
-    setActiveTab(initialTab);
-  }, [initialTab, navigationRequestId]);
+    if (initialTab !== activeTabRef.current) requestSettingsTransition(() => setActiveTab(initialTab));
+    // navigationRequestId intentionally retries an externally requested tab after a cancelled dirty-editor prompt.
+  }, [initialTab, navigationRequestId, requestSettingsTransition]);
 
   useEffect(() => {
     const returnFocus = returnFocusRef.current;
@@ -90,7 +102,7 @@ export function SettingsConfig({
         justifyContent: "center",
       }}
       onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) requestSettingsTransition(onClose);
       }}
     >
       <div
@@ -101,7 +113,7 @@ export function SettingsConfig({
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
-            onClose();
+            requestSettingsTransition(onClose);
             return;
           }
           if (event.key !== "Tab") return;
@@ -166,7 +178,7 @@ export function SettingsConfig({
           <button
             ref={closeButtonRef}
             type="button"
-            onClick={onClose}
+            onClick={() => requestSettingsTransition(onClose)}
             aria-label={t("close", "Close")}
             style={{
               background: "none",
@@ -216,7 +228,9 @@ export function SettingsConfig({
                   aria-selected={active}
                   aria-controls="settings-tabpanel"
                   tabIndex={active ? 0 : -1}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => {
+                    if (!active) requestSettingsTransition(() => setActiveTab(tab.id));
+                  }}
                   onKeyDown={(event) => {
                     const currentIndex = tabs.findIndex((item) => item.id === tab.id);
                     let nextIndex: number | undefined;
@@ -227,8 +241,10 @@ export function SettingsConfig({
                     if (nextIndex === undefined) return;
                     event.preventDefault();
                     const nextTab = tabs[nextIndex];
-                    setActiveTab(nextTab.id);
-                    document.getElementById(`settings-tab-${nextTab.id}`)?.focus();
+                    requestSettingsTransition(() => {
+                      setActiveTab(nextTab.id);
+                      document.getElementById(`settings-tab-${nextTab.id}`)?.focus();
+                    });
                   }}
                   style={{
                     position: "relative",
@@ -276,7 +292,11 @@ export function SettingsConfig({
             {activeTab === "tools" && <ToolchainsConfig cwd={cwd} />}
             {activeTab === "channels" && <ChannelsConfig onSnapshotChange={onChannelsChanged} />}
             {activeTab === "skills" &&
-              (cwd ? <SkillsConfig embedded cwd={cwd} onClose={() => undefined} /> : <ProjectRequired />)}
+              (cwd ? (
+                <SkillsConfig ref={skillsConfigRef} embedded cwd={cwd} onClose={() => undefined} />
+              ) : (
+                <ProjectRequired />
+              ))}
             {activeTab === "plugins" &&
               (cwd ? (
                 <PluginsConfig

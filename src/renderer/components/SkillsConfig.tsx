@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { forwardRef, useState, useEffect, useCallback, useImperativeHandle, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import type { SkillSearchResult } from "@/lib/api-types";
@@ -71,21 +71,23 @@ function Toggle({ enabled, loading, onToggle }: { enabled: boolean; loading: boo
   );
 }
 
-function SkillDetail({
-  skill,
-  cwd,
-  onToggle,
-  toggling,
-  saveError,
-  onSaved,
-}: {
-  skill: Skill;
-  cwd: string;
-  onToggle: (skill: Skill) => void;
-  toggling: boolean;
-  saveError: string | null;
-  onSaved: () => void;
-}) {
+interface SkillDetailHandle {
+  hasUnsavedChanges: () => boolean;
+  save: () => Promise<boolean>;
+}
+
+const SkillDetail = forwardRef<
+  SkillDetailHandle,
+  {
+    skill: Skill;
+    cwd: string;
+    onToggle: (skill: Skill) => void;
+    toggling: boolean;
+    saveError: string | null;
+    onSaved: () => void;
+    onDirtyChange: (dirty: boolean) => void;
+  }
+>(function SkillDetail({ skill, cwd, onToggle, toggling, saveError, onSaved, onDirtyChange }, ref) {
   const label = sourceLabel(skill);
   const enabled = !skill.disableModelInvocation;
   const [content, setContent] = useState("");
@@ -116,7 +118,8 @@ function SkillDetail({
     };
   }, [cwd, skill.filePath]);
 
-  const saveContent = useCallback(async () => {
+  const saveContent = useCallback(async (): Promise<boolean> => {
+    if (content === savedContent) return true;
     setContentSaving(true);
     setContentError(null);
     try {
@@ -129,12 +132,28 @@ function SkillDetail({
       if (!res.ok || result.error) throw new Error(result.error ?? `HTTP ${res.status}`);
       setSavedContent(content);
       onSaved();
+      return true;
     } catch (error) {
       setContentError(error instanceof Error ? error.message : String(error));
+      return false;
     } finally {
       setContentSaving(false);
     }
-  }, [content, cwd, onSaved, skill.filePath]);
+  }, [content, cwd, onSaved, savedContent, skill.filePath]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      hasUnsavedChanges: () => content !== savedContent,
+      save: saveContent,
+    }),
+    [content, saveContent, savedContent],
+  );
+
+  useEffect(() => {
+    onDirtyChange(content !== savedContent);
+    return () => onDirtyChange(false);
+  }, [content, onDirtyChange, savedContent]);
 
   function displayPath(p: string): string {
     if (label === "project" && p.startsWith(cwd)) {
@@ -217,6 +236,7 @@ function SkillDetail({
           <textarea
             value={content}
             onChange={(event) => setContent(event.target.value)}
+            disabled={contentSaving}
             spellCheck={false}
             aria-label="Skill markdown content"
             style={{
@@ -245,7 +265,7 @@ function SkillDetail({
       </div>
     </div>
   );
-}
+});
 
 function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => void }) {
   const [query, setQuery] = useState("");
@@ -578,15 +598,18 @@ function safeInstallError(message: string | undefined, fallback: string): string
   return message;
 }
 
-export function SkillsConfig({
-  cwd,
-  onClose,
-  embedded = false,
-}: {
-  cwd: string;
-  onClose: () => void;
-  embedded?: boolean;
-}) {
+export interface SkillsConfigHandle {
+  requestLeave: (onAllowed: () => void) => void;
+}
+
+export const SkillsConfig = forwardRef<
+  SkillsConfigHandle,
+  {
+    cwd: string;
+    onClose: () => void;
+    embedded?: boolean;
+  }
+>(function SkillsConfig({ cwd, onClose, embedded = false }, ref) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -596,7 +619,51 @@ export function SkillsConfig({
   const [toggling, setToggling] = useState<Set<string>>(new Set());
   const [saveError, setSaveError] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
+  const [detailDirty, setDetailDirty] = useState(false);
+  const [pendingTransition, setPendingTransition] = useState<(() => void) | null>(null);
+  const [transitionSaving, setTransitionSaving] = useState(false);
   const skillsRequestRef = useRef(new LatestAbortableRequest());
+  const detailRef = useRef<SkillDetailHandle>(null);
+
+  const requestTransition = useCallback(
+    (action: () => void) => {
+      if (!(detailRef.current?.hasUnsavedChanges() ?? detailDirty)) {
+        action();
+        return;
+      }
+      setPendingTransition(() => action);
+    },
+    [detailDirty],
+  );
+
+  useImperativeHandle(ref, () => ({ requestLeave: requestTransition }), [requestTransition]);
+
+  useEffect(() => {
+    if (!detailDirty) return;
+    const preventReload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventReload);
+    return () => window.removeEventListener("beforeunload", preventReload);
+  }, [detailDirty]);
+
+  const discardAndContinue = useCallback(() => {
+    const action = pendingTransition;
+    setPendingTransition(null);
+    setDetailDirty(false);
+    action?.();
+  }, [pendingTransition]);
+
+  const saveAndContinue = useCallback(async () => {
+    setTransitionSaving(true);
+    const saved = (await detailRef.current?.save()) ?? false;
+    setTransitionSaving(false);
+    if (!saved) return;
+    const action = pendingTransition;
+    setPendingTransition(null);
+    action?.();
+  }, [pendingTransition]);
 
   const loadSkills = useCallback(async () => {
     const request = skillsRequestRef.current.begin();
@@ -690,7 +757,7 @@ export function SkillsConfig({
             }
       }
       onClick={(e) => {
-        if (!embedded && e.target === e.currentTarget) onClose();
+        if (!embedded && e.target === e.currentTarget) requestTransition(onClose);
       }}
     >
       <div
@@ -737,7 +804,7 @@ export function SkillsConfig({
               </code>
             </div>
             <button
-              onClick={onClose}
+              onClick={() => requestTransition(onClose)}
               style={{
                 background: "none",
                 border: "none",
@@ -827,8 +894,11 @@ export function SkillsConfig({
                           <div
                             key={skill.filePath}
                             onClick={() => {
-                              setSelected(skill.filePath);
-                              setAddMode(false);
+                              if (isSelected) return;
+                              requestTransition(() => {
+                                setSelected(skill.filePath);
+                                setAddMode(false);
+                              });
                             }}
                             style={{
                               display: "flex",
@@ -888,7 +958,7 @@ export function SkillsConfig({
               }}
             >
               <div
-                onClick={() => setAddMode(true)}
+                onClick={() => requestTransition(() => setAddMode(true))}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -936,6 +1006,7 @@ export function SkillsConfig({
               />
             ) : loading ? null : selectedSkill ? (
               <SkillDetail
+                ref={detailRef}
                 key={selectedSkill.filePath}
                 skill={selectedSkill}
                 cwd={cwd}
@@ -943,6 +1014,7 @@ export function SkillsConfig({
                 toggling={toggling.has(selectedSkill.filePath)}
                 saveError={saveError}
                 onSaved={() => void loadSkills()}
+                onDirtyChange={setDetailDirty}
               />
             ) : (
               <div
@@ -974,7 +1046,7 @@ export function SkillsConfig({
             }}
           >
             <button
-              onClick={onClose}
+              onClick={() => requestTransition(onClose)}
               style={{
                 padding: "6px 14px",
                 background: "none",
@@ -990,6 +1062,94 @@ export function SkillsConfig({
           </div>
         )}
       </div>
+      {pendingTransition && (
+        <div
+          role="presentation"
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 2,
+            display: "grid",
+            placeItems: "center",
+            padding: 16,
+            background: "rgba(0,0,0,0.35)",
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !transitionSaving) setPendingTransition(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="unsaved-skill-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !transitionSaving) {
+                event.preventDefault();
+                event.stopPropagation();
+                setPendingTransition(null);
+              }
+            }}
+            style={{
+              width: 420,
+              maxWidth: "100%",
+              padding: 18,
+              border: "1px solid var(--border)",
+              borderRadius: 9,
+              background: "var(--bg)",
+              boxShadow: "0 16px 48px rgba(0,0,0,0.3)",
+            }}
+          >
+            <h3 id="unsaved-skill-title" style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>
+              {t("unsavedSkillChanges", "Unsaved skill changes")}
+            </h3>
+            <p style={{ margin: "8px 0 16px", fontSize: 12, lineHeight: 1.55, color: "var(--text-muted)" }}>
+              {t("unsavedSkillChangesDescription", "Save your SKILL.md changes before leaving this editor?")}
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                type="button"
+                disabled={transitionSaving}
+                onClick={discardAndContinue}
+                style={leavePromptButtonStyle}
+              >
+                {t("discard", "Discard")}
+              </button>
+              <button
+                type="button"
+                disabled={transitionSaving}
+                onClick={() => setPendingTransition(null)}
+                style={leavePromptButtonStyle}
+              >
+                {t("cancel", "Cancel")}
+              </button>
+              <button
+                type="button"
+                disabled={transitionSaving}
+                onClick={() => void saveAndContinue()}
+                style={{
+                  ...leavePromptButtonStyle,
+                  borderColor: "var(--accent)",
+                  background: "var(--accent)",
+                  color: "#fff",
+                }}
+              >
+                {transitionSaving ? t("saving", "Saving…") : t("save", "Save")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
+});
+
+const leavePromptButtonStyle: React.CSSProperties = {
+  minHeight: 34,
+  padding: "6px 12px",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  background: "var(--bg-panel)",
+  color: "var(--text-muted)",
+  cursor: "pointer",
+  fontSize: 12,
+};
