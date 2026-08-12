@@ -3,10 +3,14 @@ import { Check, Field, NumInput, SecretTextInput, Select, SectionTitle, TextInpu
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import {
+  addModelTransition,
+  deleteProviderTransition,
   renameProviderEntry,
   replaceModelEntry,
+  selectionAfterProviderRename,
   setProviderBaseUrl,
   type ModelEntry,
+  type ModelsConfigSelection,
   type ModelsJson,
   type ProviderEntry,
 } from "@/lib/models-config-state";
@@ -133,11 +137,7 @@ type ModelTestState =
   | { phase: "success"; latencyMs?: number; status?: number; responseText?: string }
   | { phase: "error"; message: string; latencyMs?: number; status?: number };
 
-type Selection =
-  | { type: "provider"; name: string }
-  | { type: "model"; providerName: string; index: number }
-  | { type: "oauth"; providerId: string }
-  | { type: "apikey"; providerId: string };
+type Selection = ModelsConfigSelection;
 
 const API_OPTIONS = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"] as const;
 
@@ -2182,41 +2182,28 @@ export function ModelsConfig({
       }
       setSaveError(null);
       setConfig(result.config);
-      setSelection((prev) => {
-        if (!prev) return prev;
-        if (prev.type === "provider" && prev.name === oldName) return { type: "provider", name: result.name };
-        if (prev.type === "model" && prev.providerName === oldName) return { ...prev, providerName: result.name };
-        return prev;
-      });
+      setSelection(selectionAfterProviderRename(selection, oldName, result.name));
+    },
+    [config, selection],
+  );
+
+  const deleteProvider = useCallback(
+    (name: string) => {
+      const transition = deleteProviderTransition(config, selection, name);
+      setConfig(transition.config);
+      setSelection(transition.selection);
+    },
+    [config, selection],
+  );
+
+  const addModel = useCallback(
+    (providerName: string) => {
+      const transition = addModelTransition(config, providerName);
+      setConfig(transition.config);
+      setSelection(transition.selection);
     },
     [config],
   );
-
-  const deleteProvider = useCallback((name: string) => {
-    setConfig((prev) => {
-      const providers = { ...(prev.providers ?? {}) };
-      delete providers[name];
-      return { ...prev, providers };
-    });
-    setConfig((prev) => {
-      const remaining = Object.keys(prev.providers ?? {});
-      setSelection(remaining.length > 0 ? { type: "provider", name: remaining[0] } : null);
-      return prev;
-    });
-  }, []);
-
-  const addModel = useCallback((providerName: string) => {
-    setConfig((prev) => {
-      const provider = prev.providers?.[providerName] ?? {};
-      const models = [...(provider.models ?? []), { id: "" }];
-      return { ...prev, providers: { ...(prev.providers ?? {}), [providerName]: { ...provider, models } } };
-    });
-    setConfig((prev) => {
-      const idx = (prev.providers?.[providerName]?.models?.length ?? 1) - 1;
-      setSelection({ type: "model", providerName, index: idx });
-      return prev;
-    });
-  }, []);
 
   const updateModel = useCallback((providerName: string, index: number, m: ModelEntry) => {
     setConfig((prev) => replaceModelEntry(prev, providerName, index, m));

@@ -29,6 +29,12 @@ export interface ModelsJson {
   [key: string]: unknown;
 }
 
+export type ModelsConfigSelection =
+  | { type: "provider"; name: string }
+  | { type: "model"; providerName: string; index: number }
+  | { type: "oauth"; providerId: string }
+  | { type: "apikey"; providerId: string };
+
 const RESERVED_PROVIDER_NAMES = new Set(["__proto__", "prototype", "constructor"]);
 
 export type RenameProviderResult =
@@ -54,6 +60,57 @@ export function renameProviderEntry(config: ModelsJson, oldName: string, request
   const index = entries.findIndex(([providerName]) => providerName === oldName);
   entries[index] = [name, entries[index][1]];
   return { ok: true, config: { ...config, providers: Object.fromEntries(entries) }, name };
+}
+
+export function selectionAfterProviderRename(
+  selection: ModelsConfigSelection | null,
+  oldName: string,
+  newName: string,
+): ModelsConfigSelection | null {
+  if (selection?.type === "provider" && selection.name === oldName) return { type: "provider", name: newName };
+  if (selection?.type === "model" && selection.providerName === oldName) {
+    return { ...selection, providerName: newName };
+  }
+  return selection;
+}
+
+export function deleteProviderTransition(
+  config: ModelsJson,
+  selection: ModelsConfigSelection | null,
+  providerName: string,
+): { config: ModelsJson; selection: ModelsConfigSelection | null } {
+  const currentProviders = config.providers ?? {};
+  if (!Object.prototype.hasOwnProperty.call(currentProviders, providerName)) return { config, selection };
+
+  const providers = { ...currentProviders };
+  delete providers[providerName];
+  const selectionWasDeleted =
+    (selection?.type === "provider" && selection.name === providerName) ||
+    (selection?.type === "model" && selection.providerName === providerName);
+  const nextProviderName = Object.keys(providers)[0];
+  return {
+    config: { ...config, providers },
+    selection: selectionWasDeleted
+      ? nextProviderName
+        ? { type: "provider", name: nextProviderName }
+        : null
+      : selection,
+  };
+}
+
+export function addModelTransition(
+  config: ModelsJson,
+  providerName: string,
+): { config: ModelsJson; selection: ModelsConfigSelection } {
+  const provider = config.providers?.[providerName] ?? {};
+  const models = [...(provider.models ?? []), { id: "" }];
+  return {
+    config: {
+      ...config,
+      providers: { ...(config.providers ?? {}), [providerName]: { ...provider, models } },
+    },
+    selection: { type: "model", providerName, index: models.length - 1 },
+  };
 }
 
 export function setProviderBaseUrl(config: ModelsJson, providerName: string, baseUrl: string): ModelsJson {

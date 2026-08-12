@@ -126,3 +126,37 @@ test("provider rename rejects conflicts and reserved or empty names without chan
   assert.deepEqual(renamed.config.providers.beta, original.providers.beta);
   assert.deepEqual(Object.keys(original.providers), ["alpha", "beta"]);
 });
+
+test("provider deletion and model addition compute config and selection without side effects", async () => {
+  const { addModelTransition, deleteProviderTransition, selectionAfterProviderRename } = await loadModule();
+  const original = {
+    revision: 7,
+    providers: {
+      alpha: { models: [{ id: "one" }], futureField: true },
+      beta: { api: "anthropic-messages" },
+    },
+  };
+  const selectedBeta = { type: "provider", name: "beta" };
+
+  const unrelatedDelete = deleteProviderTransition(original, selectedBeta, "alpha");
+  assert.equal(unrelatedDelete.selection, selectedBeta);
+  assert.deepEqual(Object.keys(unrelatedDelete.config.providers), ["beta"]);
+
+  const selectedAlphaModel = { type: "model", providerName: "alpha", index: 0 };
+  const selectedDelete = deleteProviderTransition(original, selectedAlphaModel, "alpha");
+  assert.deepEqual(selectedDelete.selection, { type: "provider", name: "beta" });
+  assert.deepEqual(Object.keys(selectedDelete.config.providers), ["beta"]);
+
+  const added = addModelTransition(original, "alpha");
+  assert.deepEqual(added.selection, { type: "model", providerName: "alpha", index: 1 });
+  assert.deepEqual(added.config.providers.alpha.models, [{ id: "one" }, { id: "" }]);
+  assert.equal(added.config.providers.alpha.futureField, true);
+
+  assert.deepEqual(selectionAfterProviderRename(selectedAlphaModel, "alpha", "gamma"), {
+    type: "model",
+    providerName: "gamma",
+    index: 0,
+  });
+  assert.deepEqual(original.providers.alpha.models, [{ id: "one" }]);
+  assert.equal(original.providers.alpha.futureField, true);
+});
