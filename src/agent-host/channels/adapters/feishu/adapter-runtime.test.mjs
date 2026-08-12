@@ -15,7 +15,7 @@ mkdirSync(path.dirname(output), { recursive: true });
 await build({
   stdin: {
     contents: [
-      'export { FeishuAdapter, normalizeFeishuEvent, normalizeFeishuMenuEvent } from "./adapter.ts";',
+      'export { FeishuAdapter, feishuReconnectDelay, isFatalFeishuConnectionError, normalizeFeishuEvent, normalizeFeishuMenuEvent } from "./adapter.ts";',
       'export { FeishuApiError } from "./api.ts";',
       'export { ChannelStateStore } from "../../state-store.ts";',
     ].join("\n"),
@@ -31,8 +31,15 @@ await build({
   logLevel: "silent",
 });
 
-const { ChannelStateStore, FeishuAdapter, FeishuApiError, normalizeFeishuEvent, normalizeFeishuMenuEvent } =
-  await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
+const {
+  ChannelStateStore,
+  FeishuAdapter,
+  FeishuApiError,
+  feishuReconnectDelay,
+  isFatalFeishuConnectionError,
+  normalizeFeishuEvent,
+  normalizeFeishuMenuEvent,
+} = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 function account(overrides = {}) {
   const now = new Date().toISOString();
@@ -346,6 +353,92 @@ test("failed Channel Core handling does not persist the Feishu message as proces
     log: () => undefined,
   });
   assert.equal(state.isProcessed("feishu-runtime", "om_retryable"), false);
+});
+
+test("recoverable terminal WebSocket errors rebuild the connection with bounded jitter", async () => {
+  const controller = new globalThis.AbortController();
+  const statuses = [];
+  const delays = [];
+  let connectCalls = 0;
+  let closeCalls = 0;
+  const adapter = new FeishuAdapter(
+    dependencies({
+      async connect(_credentials, _handlers, hooks) {
+        connectCalls += 1;
+        if (connectCalls === 1) {
+          globalThis.queueMicrotask(() => hooks.onError(new Error("WebSocket reconnect exhausted after 3 attempts")));
+        } else {
+          globalThis.queueMicrotask(() => controller.abort());
+        }
+        return { close: () => (closeCalls += 1) };
+      },
+    }),
+    undefined,
+    undefined,
+    {
+      random: () => 0,
+      sleep: async (ms) => delays.push(ms),
+    },
+  );
+
+  await adapter.start({
+    account: account(),
+    secret: { token: "app-secret", providerAccountId: "ou_bot", baseUrl: "https://open.feishu.cn" },
+    signal: controller.signal,
+    state: stateStore(),
+    onInbound: async () => undefined,
+    onStatus: (status) => statuses.push(status),
+    log: () => undefined,
+  });
+
+  assert.equal(connectCalls, 2);
+  assert.equal(closeCalls, 2);
+  assert.deepEqual(delays, [1_000]);
+  assert.equal(
+    statuses.some((status) => status.state === "reconnecting" && status.retryCount === 1),
+    true,
+  );
+  assert.equal(isFatalFeishuConnectionError(new Error("WebSocket reconnect exhausted after 3 attempts")), false);
+  assert.equal(feishuReconnectDelay(100, () => 0.999_999) <= 30_000, true);
+});
+
+test("credential and permission WebSocket errors remain terminal", async () => {
+  const statuses = [];
+  const delays = [];
+  let connectCalls = 0;
+  const adapter = new FeishuAdapter(
+    dependencies({
+      async connect(_credentials, _handlers, hooks) {
+        connectCalls += 1;
+        globalThis.queueMicrotask(() => hooks.onError(new Error("pullConnectConfig failed: invalid App Secret")));
+        return { close() {} };
+      },
+    }),
+    undefined,
+    undefined,
+    { sleep: async (ms) => delays.push(ms) },
+  );
+
+  await assert.rejects(
+    adapter.start({
+      account: account(),
+      secret: { token: "app-secret", providerAccountId: "ou_bot", baseUrl: "https://open.feishu.cn" },
+      signal: new globalThis.AbortController().signal,
+      state: stateStore(),
+      onInbound: async () => undefined,
+      onStatus: (status) => statuses.push(status),
+      log: () => undefined,
+    }),
+    /invalid App Secret/,
+  );
+
+  assert.equal(connectCalls, 1);
+  assert.deepEqual(delays, []);
+  assert.equal(
+    statuses.some((status) => status.state === "error"),
+    true,
+  );
+  assert.equal(isFatalFeishuConnectionError(new Error("permission denied for required scope")), true);
 });
 
 test("native Feishu menu dispatches existing commands and suppresses replay", async () => {

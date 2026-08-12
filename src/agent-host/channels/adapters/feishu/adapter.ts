@@ -37,6 +37,8 @@ import {
 
 const FEISHU_TEXT_LIMIT = 20_000;
 const DEFAULT_CARD_UPDATE_INTERVAL_MS = 400;
+const FEISHU_RECONNECT_STABLE_MS = 60_000;
+const FEISHU_RECONNECT_MAX_DELAY_MS = 30_000;
 const FEISHU_MENU_COMMANDS: Readonly<Record<string, string>> = {
   pi_help: "/help",
   pi_status: "/status",
@@ -54,6 +56,42 @@ function credentials(account: ChannelAccountConfig, secret: ChannelSecret): Feis
     domain: (account.domain === "lark" ? "lark" : "feishu") satisfies FeishuDomain,
   };
 }
+
+export function isFatalFeishuConnectionError(error: Error): boolean {
+  return /(?:app[ _-]?(?:id|secret)|credential|client assertion|token).{0,40}(?:invalid|incorrect|expired|missing|empty|mismatch)|(?:invalid|incorrect|expired|missing|empty|mismatch).{0,40}(?:app[ _-]?(?:id|secret)|credential|client assertion|token)|permission|forbidden|unauthori[sz]ed|access denied|scope|权限|授权|凭证|密钥|鉴权|认证/i.test(
+    error.message,
+  );
+}
+
+export function feishuReconnectDelay(retryCount: number, random = Math.random): number {
+  const exponent = Math.max(0, Math.min(5, Math.floor(retryCount) - 1));
+  const base = Math.min(1_000 * 2 ** exponent, 25_000);
+  const jitterWindow = Math.min(5_000, Math.ceil(base * 0.2));
+  const jitter = Math.floor(Math.max(0, Math.min(0.999_999, random())) * (jitterWindow + 1));
+  return Math.min(FEISHU_RECONNECT_MAX_DELAY_MS, base + jitter);
+}
+
+function waitForReconnect(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
+type FeishuRuntimeOptions = {
+  random?: () => number;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  now?: () => number;
+};
 
 function parseContent(content: string): Record<string, unknown> | null {
   try {
@@ -420,6 +458,7 @@ export class FeishuAdapter implements ChannelAdapter {
     private readonly dependencies: FeishuAdapterDependencies = defaultFeishuDependencies,
     private readonly cardUpdateIntervalMs = DEFAULT_CARD_UPDATE_INTERVAL_MS,
     private readonly appRegistration = new FeishuAppRegistration(),
+    private readonly runtimeOptions: FeishuRuntimeOptions = {},
   ) {}
 
   async startLogin(options: Parameters<NonNullable<ChannelAdapter["startLogin"]>>[0]) {
@@ -438,13 +477,12 @@ export class FeishuAdapter implements ChannelAdapter {
     const { account, secret, signal, state, onInbound, onStatus } = context;
     const credential = credentials(account, secret);
     let connection: FeishuWsConnection | undefined;
-    let terminalError: Error | undefined;
-    let finishRuntime: (() => void) | undefined;
+    let finishConnection: (() => void) | undefined;
     let retryCount = 0;
-    const runtimeDone = new Promise<void>((resolve) => {
-      finishRuntime = resolve;
-    });
-    const onAbort = () => finishRuntime?.();
+    let outerFailures = 0;
+    const now = this.runtimeOptions.now ?? Date.now;
+    const sleep = this.runtimeOptions.sleep ?? waitForReconnect;
+    const onAbort = () => finishConnection?.();
     signal.addEventListener("abort", onAbort, { once: true });
     onStatus({ state: "starting", connected: false, lastStartAt: Date.now(), retryCount: 0, lastError: undefined });
 
@@ -502,42 +540,74 @@ export class FeishuAdapter implements ChannelAdapter {
         dispatchInbound(eventId, envelope);
       };
 
-      connection = await this.dependencies.connect(
-        credential,
-        { onMessage, onMenu },
-        {
-          onError: (error) => {
-            terminalError = error;
-            onStatus({ state: "error", connected: false, lastError: safeChannelError(error) });
-            finishRuntime?.();
-          },
-          onReconnecting: () => {
-            retryCount += 1;
-            onStatus({ state: "reconnecting", connected: false, retryCount });
-          },
-          onReconnected: () => {
-            retryCount = 0;
+      while (!signal.aborted) {
+        let connectionError: Error | undefined;
+        let connectedAt: number | undefined;
+        const connectionDone = new Promise<void>((resolve) => {
+          finishConnection = resolve;
+        });
+        try {
+          connection = await this.dependencies.connect(
+            credential,
+            { onMessage, onMenu },
+            {
+              onError: (error) => {
+                connectionError ??= error;
+                finishConnection?.();
+              },
+              onReconnecting: () => {
+                retryCount += 1;
+                onStatus({ state: "reconnecting", connected: false, retryCount });
+              },
+              onReconnected: () => {
+                retryCount = 0;
+                onStatus({
+                  state: "running",
+                  connected: true,
+                  retryCount: 0,
+                  lastConnectedAt: now(),
+                  lastError: undefined,
+                });
+              },
+            },
+            signal,
+          );
+          if (!connectionError && !signal.aborted) {
+            connectedAt = now();
             onStatus({
               state: "running",
               connected: true,
               retryCount: 0,
-              lastConnectedAt: Date.now(),
+              lastConnectedAt: connectedAt,
               lastError: undefined,
             });
-          },
-        },
-        signal,
-      );
-      if (signal.aborted) return;
-      onStatus({
-        state: "running",
-        connected: true,
-        retryCount: 0,
-        lastConnectedAt: Date.now(),
-        lastError: undefined,
-      });
-      await runtimeDone;
-      if (terminalError && !signal.aborted) throw terminalError;
+          }
+          await connectionDone;
+        } catch (error) {
+          connectionError ??= error instanceof Error ? error : new Error(String(error));
+        }
+
+        connection?.close();
+        connection = undefined;
+        finishConnection = undefined;
+        if (signal.aborted) break;
+        if (!connectionError) continue;
+        if (isFatalFeishuConnectionError(connectionError)) {
+          onStatus({ state: "error", connected: false, lastError: safeChannelError(connectionError) });
+          throw connectionError;
+        }
+
+        if (connectedAt !== undefined && now() - connectedAt >= FEISHU_RECONNECT_STABLE_MS) outerFailures = 0;
+        outerFailures += 1;
+        retryCount = outerFailures;
+        onStatus({
+          state: "reconnecting",
+          connected: false,
+          retryCount,
+          lastError: safeChannelError(connectionError),
+        });
+        await sleep(feishuReconnectDelay(outerFailures, this.runtimeOptions.random), signal);
+      }
     } finally {
       signal.removeEventListener("abort", onAbort);
       connection?.close();
