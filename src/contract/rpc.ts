@@ -66,6 +66,7 @@ export interface PiRpc {
 type Pending = {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
 };
 
 type SubEntry = {
@@ -80,9 +81,28 @@ function makeId(): string {
   return `r${nextId}_${Date.now().toString(36)}`;
 }
 
-export function createRpcClient(port: MessagePort): PiRpc {
+export type RpcClientOptions = {
+  callTimeoutMs?: number;
+};
+
+const DEFAULT_CALL_TIMEOUT_MS = 120_000;
+
+export function createRpcClient(port: MessagePort, options: RpcClientOptions = {}): PiRpc {
   const pending = new Map<string, Pending>();
   const subs = new Map<string, SubEntry>();
+  const configuredTimeout = options.callTimeoutMs;
+  const callTimeoutMs =
+    typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) && configuredTimeout > 0
+      ? configuredTimeout
+      : DEFAULT_CALL_TIMEOUT_MS;
+
+  const rejectPending = (shape: RpcErrorShape) => {
+    for (const [, entry] of pending) {
+      clearTimeout(entry.timer);
+      entry.reject(new RpcError(shape));
+    }
+    pending.clear();
+  };
 
   const onMessage = (ev: MessageEvent) => {
     const msg = ev.data as WireMessage;
@@ -92,6 +112,7 @@ export function createRpcClient(port: MessagePort): PiRpc {
       const p = pending.get(msg.id);
       if (!p) return;
       pending.delete(msg.id);
+      clearTimeout(p.timer);
       if (msg.ok) p.resolve(msg.result);
       else {
         p.reject(new RpcError(msg.error ?? { code: "UNKNOWN", message: "Unknown RPC error" }));
@@ -112,7 +133,13 @@ export function createRpcClient(port: MessagePort): PiRpc {
     }
   };
 
+  const onClose = () => {
+    rejectPending({ code: "CLOSED", message: "RPC port closed" });
+    subs.clear();
+  };
+
   port.addEventListener("message", onMessage);
+  port.addEventListener("close", onClose);
   port.start();
 
   return {
@@ -120,9 +147,14 @@ export function createRpcClient(port: MessagePort): PiRpc {
       const params = (args[0] ?? undefined) as unknown;
       const id = makeId();
       return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          if (!pending.delete(id)) return;
+          reject(new RpcError({ code: "TIMEOUT", message: `RPC call timed out: ${String(method)}` }));
+        }, callTimeoutMs);
         pending.set(id, {
           resolve: resolve as (v: unknown) => void,
           reject,
+          timer,
         });
         const req: WireRequest = {
           kind: "request",
@@ -134,6 +166,7 @@ export function createRpcClient(port: MessagePort): PiRpc {
           port.postMessage(req);
         } catch (err) {
           pending.delete(id);
+          clearTimeout(timer);
           reject(err instanceof Error ? err : new Error(String(err)));
         }
       });
@@ -175,10 +208,8 @@ export function createRpcClient(port: MessagePort): PiRpc {
 
     close() {
       port.removeEventListener("message", onMessage);
-      for (const [, p] of pending) {
-        p.reject(new RpcError({ code: "CLOSED", message: "RPC port closed" }));
-      }
-      pending.clear();
+      port.removeEventListener("close", onClose);
+      rejectPending({ code: "CLOSED", message: "RPC port closed" });
       subs.clear();
       try {
         port.close();
@@ -330,7 +361,22 @@ export function createRpcServer(): RpcServer {
     try {
       port.postMessage(response);
     } catch {
-      /* port closed */
+      const fallback: WireResponse = {
+        kind: "response",
+        id: msg.id,
+        ok: false,
+        error: { code: "SERIALIZATION_FAILED", message: "RPC response could not be serialized" },
+      };
+      try {
+        port.postMessage(fallback);
+      } catch {
+        forgetPort(port);
+        try {
+          port.close?.();
+        } catch {
+          /* ignore a transport that is already closed */
+        }
+      }
     }
   }
 
@@ -363,7 +409,12 @@ export function createRpcServer(): RpcServer {
         try {
           port.postMessage(wire);
         } catch {
-          /* ignore */
+          forgetPort(port);
+          try {
+            port.close?.();
+          } catch {
+            /* ignore a transport that is already closed */
+          }
         }
       }
     },
