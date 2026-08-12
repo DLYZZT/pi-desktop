@@ -1,4 +1,4 @@
-import { BrowserWindow, shell } from "electron";
+import { BrowserWindow, screen, shell } from "electron";
 import { appendMainLog } from "./logger";
 import { resolvePreloadPath, resolveRendererEntry } from "./host-manager";
 import { releaseHtmlPreviewsForOwner } from "./protocol";
@@ -21,10 +21,11 @@ export type CreateMainWindowOptions = {
 
 export function createMainWindow(options: CreateMainWindowOptions): BrowserWindow {
   const ui = loadUiState();
-  const bounds = applyWindowBounds(
-    { x: undefined as unknown as number, y: undefined as unknown as number, width: 1280, height: 840 },
-    ui,
-  );
+  const primaryWorkArea = screen.getPrimaryDisplay().workArea;
+  const bounds = applyWindowBounds({ width: 1280, height: 840 }, ui, {
+    primary: primaryWorkArea,
+    all: screen.getAllDisplays().map((display) => display.workArea),
+  });
 
   const win = new BrowserWindow({
     width: bounds.width,

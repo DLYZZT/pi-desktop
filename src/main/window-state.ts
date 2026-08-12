@@ -1,6 +1,7 @@
-import { app, type BrowserWindow, type Rectangle } from "electron";
+import { app, type BrowserWindow } from "electron";
 import fs from "fs";
 import path from "path";
+import { persistableWindowState, resolveWindowBounds, type DisplayBounds } from "./window-state-core";
 
 export type UiState = {
   window?: {
@@ -43,14 +44,8 @@ export function saveUiState(patch: Partial<UiState>): void {
 
 export function trackWindowState(win: BrowserWindow): void {
   const persist = () => {
-    if (win.isDestroyed()) return;
-    const bounds = win.getBounds();
-    saveUiState({
-      window: {
-        ...bounds,
-        isMaximized: win.isMaximized(),
-      },
-    });
+    const window = persistableWindowState(win);
+    if (window) saveUiState({ window });
   };
 
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -64,15 +59,12 @@ export function trackWindowState(win: BrowserWindow): void {
   win.on("close", persist);
 }
 
-export function applyWindowBounds(defaults: Rectangle, state: UiState): Rectangle {
-  const w = state.window;
-  if (!w) return defaults;
-  return {
-    x: w.x ?? defaults.x,
-    y: w.y ?? defaults.y,
-    width: Math.max(900, w.width || defaults.width),
-    height: Math.max(600, w.height || defaults.height),
-  };
+export function applyWindowBounds(
+  defaults: { x?: number; y?: number; width: number; height: number },
+  state: UiState,
+  displays?: DisplayBounds,
+): { x?: number; y?: number; width: number; height: number } {
+  return resolveWindowBounds(defaults, state.window, displays);
 }
 
 export function shouldMaximize(state: UiState): boolean {
