@@ -83,6 +83,22 @@ test("registerHandlers exposes every contract method exactly once", async () => 
   }
 });
 
+test("channel initialization failure is reported without an unhandled rejection", async () => {
+  const { initializeChannels } = await loadHandlersModule();
+  const reports = [];
+  initializeChannels(
+    {
+      async initialize() {
+        throw new Error("media init failed?token=sensitive-token");
+      },
+    },
+    (message) => reports.push(message),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(reports, ["media init failed?token=[REDACTED]"]);
+});
+
 test("credential mutation failures distinguish committed state from an unverified mutation", async () => {
   const { credentialMutationFailure } = await loadHandlersModule();
   const synchronizationError = new CredentialSynchronizationError("test-provider", "setRuntimeApiKey", undefined, {

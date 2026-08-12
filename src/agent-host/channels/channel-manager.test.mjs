@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -159,6 +159,22 @@ test("concurrent starts create only one adapter runtime per account", async () =
   await Promise.all([pendingStart, pendingStop]);
   assert.equal(fake.startCount, 2, "a stop during credential lookup must cancel the pending adapter launch");
   assert.equal(fake.activeCount, 0);
+  await manager.shutdown();
+});
+
+test("initialization can retry after a transient media directory failure", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-manager-init-retry-"));
+  const mediaPath = path.join(dir, "channel-media");
+  await writeFile(mediaPath, "temporarily blocked");
+  const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
+    dataDirectory: dir,
+  });
+
+  await assert.rejects(manager.initialize(), /EEXIST|媒体暂存目录不是安全的本地目录/);
+  await rm(mediaPath, { force: true });
+  await manager.initialize();
+  const info = await stat(mediaPath);
+  assert.equal(info.isDirectory(), true);
   await manager.shutdown();
 });
 

@@ -172,12 +172,16 @@ export class ChannelManager {
 
   initialize(): Promise<void> {
     if (!this.initialized) {
-      this.initialized = (async () => {
+      const attempt = (async () => {
         await this.media.initialize();
         for (const account of this.config.listAccounts()) {
           if (account.enabled) await this.startAccount(account.id).catch(() => undefined);
         }
       })();
+      this.initialized = attempt;
+      void attempt.catch(() => {
+        if (this.initialized === attempt) this.initialized = null;
+      });
     }
     return this.initialized;
   }

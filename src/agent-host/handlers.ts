@@ -79,6 +79,7 @@ import { applyPluginAction, readPlugins } from "./plugins-service";
 import { installSkill, searchSkills } from "./skills-service";
 import { projectSessionTreeForResponse } from "./project-tree";
 import { ChannelManager } from "./channels/channel-manager";
+import { safeChannelError } from "./channels/redaction";
 import { ToolchainError } from "../shared/toolchains/errors";
 import { toolchainRuntime } from "./toolchain-runtime";
 import {
@@ -446,13 +447,26 @@ export async function projectModelsList(
   };
 }
 
+export function initializeChannels(
+  manager: Pick<ChannelManager, "initialize">,
+  report: (message: string) => void = (message) => {
+    try {
+      process.parentPort?.postMessage({ type: "log", message: `[channels] initialization failed: ${message}` });
+    } catch {
+      /* ignore logging failure */
+    }
+  },
+): void {
+  void manager.initialize().catch((error) => report(safeChannelError(error)));
+}
+
 export function registerHandlers(server: RpcServer): () => Promise<void> {
   const fileWatch = createFileWatchService(server);
   const authLogin = createAuthLoginService(server);
   const channelManager = new ChannelManager(server, (session, sessionId) =>
     ensureSessionEvents(server, session, sessionId),
   );
-  void channelManager.initialize();
+  initializeChannels(channelManager);
 
   // Running sessions stream + tray badge signal to main via parentPort
   subscribeRunningSessions((ids) => {
