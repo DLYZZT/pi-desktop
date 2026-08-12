@@ -578,6 +578,8 @@ const zhCN: Record<string, string> = {
   messages: "消息",
   tokens: "Token",
   copied: "已复制",
+  copyFailed: "复制失败",
+  checkClipboardPermission: "请检查剪贴板权限后重试。",
   copyFilePath: "复制文件路径",
   copySessionId: "复制会话 ID",
   loadSessionInfoHint: "发送一条消息或运行 /session 以加载会话信息",

@@ -47,6 +47,7 @@ import type { ChannelsSnapshot } from "@shared/channel-types";
 import type { BrowserAgentAuthorizationRequest, BrowserAgentAuthorizationDecision } from "../../contract/browser";
 
 type SessionCopyField = "file" | "id";
+type SessionCopyFeedback = { field: SessionCopyField; status: "copied" | "error" };
 const EXPLORER_TAB_ID = "explorer";
 const BROWSER_TAB_ID = "browser";
 const BROWSER_PANEL_WIDTH_KEY = "pi-desktop.browser-panel-width";
@@ -141,14 +142,20 @@ export function AppShell() {
   const handleSessionStatsChange = useCallback((stats: SessionStatsInfo | null) => {
     setSessionStats(stats);
   }, []);
-  const [copiedSessionField, setCopiedSessionField] = useState<SessionCopyField | null>(null);
+  const [sessionCopyFeedback, setSessionCopyFeedback] = useState<SessionCopyFeedback | null>(null);
   const sessionCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleCopySessionField = useCallback((field: SessionCopyField, value: string) => {
-    void copyText(value).then(() => {
-      if (sessionCopyTimerRef.current) clearTimeout(sessionCopyTimerRef.current);
-      setCopiedSessionField(field);
-      sessionCopyTimerRef.current = setTimeout(() => setCopiedSessionField(null), 1400);
-    });
+    if (sessionCopyTimerRef.current) clearTimeout(sessionCopyTimerRef.current);
+    setSessionCopyFeedback(null);
+    void copyText(value)
+      .then(() => {
+        setSessionCopyFeedback({ field, status: "copied" });
+        sessionCopyTimerRef.current = setTimeout(() => setSessionCopyFeedback(null), 1_400);
+      })
+      .catch(() => {
+        setSessionCopyFeedback({ field, status: "error" });
+        sessionCopyTimerRef.current = setTimeout(() => setSessionCopyFeedback(null), 3_000);
+      });
   }, []);
 
   useEffect(() => {
@@ -1189,17 +1196,23 @@ export function AppShell() {
                           </div>
                         );
                         const copyButton = (field: SessionCopyField, value: string) => {
-                          const copied = copiedSessionField === field;
+                          const feedback = sessionCopyFeedback?.field === field ? sessionCopyFeedback.status : null;
+                          const copied = feedback === "copied";
+                          const failed = feedback === "error";
+                          const defaultLabel =
+                            field === "file"
+                              ? t("copyFilePath", "Copy file path")
+                              : t("copySessionId", "Copy session ID");
+                          const label = copied
+                            ? t("copied", "Copied")
+                            : failed
+                              ? t("copyFailed", "Copy failed")
+                              : defaultLabel;
                           return (
                             <button
                               type="button"
-                              title={
-                                copied
-                                  ? t("copied", "Copied")
-                                  : field === "file"
-                                    ? t("copyFilePath", "Copy file path")
-                                    : t("copySessionId", "Copy session ID")
-                              }
+                              title={label}
+                              aria-label={label}
                               onClick={() => handleCopySessionField(field, value)}
                               style={{
                                 alignSelf: "start",
@@ -1209,7 +1222,7 @@ export function AppShell() {
                                 width: 22,
                                 height: 22,
                                 marginTop: -2,
-                                color: copied ? "var(--accent)" : "var(--text-dim)",
+                                color: failed ? "var(--error, #ef4444)" : copied ? "var(--accent)" : "var(--text-dim)",
                                 background: "transparent",
                                 border: "1px solid var(--border)",
                                 borderRadius: 4,
@@ -1223,12 +1236,31 @@ export function AppShell() {
                                 e.currentTarget.style.background = "var(--bg-hover)";
                               }}
                               onMouseLeave={(e) => {
-                                e.currentTarget.style.color = copied ? "var(--accent)" : "var(--text-dim)";
+                                e.currentTarget.style.color = failed
+                                  ? "var(--error, #ef4444)"
+                                  : copied
+                                    ? "var(--accent)"
+                                    : "var(--text-dim)";
                                 e.currentTarget.style.borderColor = "var(--border)";
                                 e.currentTarget.style.background = "transparent";
                               }}
                             >
-                              {copied ? (
+                              {failed ? (
+                                <svg
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  aria-hidden="true"
+                                >
+                                  <circle cx="12" cy="12" r="9" />
+                                  <line x1="12" y1="7" x2="12" y2="13" />
+                                  <line x1="12" y1="17" x2="12" y2="17" />
+                                </svg>
+                              ) : copied ? (
                                 <svg
                                   width="12"
                                   height="12"
@@ -1293,6 +1325,12 @@ export function AppShell() {
                                 </div>
                               ))}
                             </div>
+                            {sessionCopyFeedback?.status === "error" && (
+                              <div role="alert" style={{ marginTop: 8, color: "var(--error, #ef4444)" }}>
+                                {t("copyFailed", "Copy failed")}.{" "}
+                                {t("checkClipboardPermission", "Check clipboard permission and retry.")}
+                              </div>
+                            )}
                           </div>
                         );
 
