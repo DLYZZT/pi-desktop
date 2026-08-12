@@ -47,6 +47,16 @@ test("MessageView is memoized to preserve unchanged historical messages", () => 
   assert.equal(MessageView.$$typeof, Symbol.for("react.memo"));
 });
 
+test("keeps the user copy action without timestamp or branch actions", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: { role: "user", content: "copy me" },
+    }),
+  );
+
+  assert.match(html, /title="Copy message"/);
+});
+
 function assistant(overrides = {}) {
   return {
     role: "assistant",
