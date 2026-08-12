@@ -14,7 +14,7 @@ mkdirSync(path.join(sessionsRoot, "project"), { recursive: true });
 mkdirSync(projectRoot, { recursive: true });
 process.env.PI_CODING_AGENT_SESSION_DIR = sessionsRoot;
 process.env.PI_CODING_AGENT_DIR = fixtureRoot;
-process.once("exit", () => rmSync(fixtureRoot, { recursive: true, force: true }));
+test.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
 const { SessionManager } = await import("@earendil-works/pi-coding-agent");
 
 const output = path.join(root, ".artifacts", "test-modules", `session-index-${process.pid}.mjs`);

@@ -13,7 +13,7 @@ const isolatedAgentDirectory = mkdtempSync(path.join(tmpdir(), "pi-handler-agent
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDirectory;
 process.env.PI_CODING_AGENT_SESSION_DIR = path.join(isolatedAgentDirectory, "sessions");
 process.env.PI_OFFLINE = "1";
-process.once("exit", () => rmSync(isolatedAgentDirectory, { recursive: true, force: true }));
+test.after(() => rmSync(isolatedAgentDirectory, { recursive: true, force: true }));
 let modulePromise;
 
 async function loadHandlersModule() {
