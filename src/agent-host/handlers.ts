@@ -361,6 +361,20 @@ function resolveModelsCwd(params: { cwd?: string } | void): string {
   return cwd;
 }
 
+type DirectoryValidation = { ok: true; path: string; canonicalPath: string } | { ok: false; error: string };
+
+function validateExistingDirectory(candidate: unknown): DirectoryValidation {
+  if (typeof candidate !== "string" || !candidate) return { ok: false, error: "Directory does not exist" };
+  try {
+    const realpath = realpathSync.native ?? realpathSync;
+    const canonicalPath = realpath(candidate);
+    if (!statSync(canonicalPath).isDirectory()) return { ok: false, error: "Not a directory" };
+    return { ok: true, path: candidate, canonicalPath };
+  } catch {
+    return { ok: false, error: "Directory does not exist" };
+  }
+}
+
 type AvailableModel = Awaited<ReturnType<ModelRuntime["getAvailable"]>>[number];
 
 async function resolveAvailableModels(
@@ -1617,15 +1631,11 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
     "system.validateCwd": async (params) => {
       const { path: dir } = params as { path: string };
-      try {
-        const st = statSync(dir);
-        if (!st.isDirectory()) return { ok: false, error: "Not a directory" };
-        allowFileRoot(dir);
-        invalidateAllowedRootsCache();
-        return { ok: true, path: dir };
-      } catch {
-        return { ok: false, error: "Directory does not exist" };
-      }
+      const validation = validateExistingDirectory(dir);
+      if (!validation.ok) return validation;
+      allowFileRoot(validation.canonicalPath);
+      invalidateAllowedRootsCache();
+      return { ok: true as const, path: validation.path };
     },
 
     "system.defaultCwd": async () => {
@@ -1639,7 +1649,9 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
     "system.allowRoot": async (params) => {
       const { path: dir } = params as { path: string };
-      allowFileRoot(dir);
+      const validation = validateExistingDirectory(dir);
+      if (!validation.ok) throw new RpcError({ code: "BAD_REQUEST", message: validation.error });
+      allowFileRoot(validation.canonicalPath);
       invalidateAllowedRootsCache();
       return { ok: true as const };
     },

@@ -198,10 +198,24 @@ test("file, git, worktree, skill, plugin, and system handlers return contract-sh
   mkdirSync(path.join(project, "nested"), { recursive: true });
   const textFile = path.join(project, "hello.txt");
   writeFileSync(textFile, "hello handler tests\n");
+  const outsideFile = path.join(base, "outside.txt");
+  writeFileSync(outsideFile, "must not become an allowed root\n");
 
   const { handlers } = await captureHandlers();
   assert.deepEqual(await handlers["system.allowRoot"]({ path: project }), { ok: true });
   assert.deepEqual(await handlers["system.validateCwd"]({ path: project }), { ok: true, path: project });
+  assert.deepEqual(await handlers["system.validateCwd"]({ path: outsideFile }), {
+    ok: false,
+    error: "Not a directory",
+  });
+  await assert.rejects(
+    handlers["system.allowRoot"]({ path: outsideFile }),
+    (error) => error.code === "BAD_REQUEST" && /Not a directory/.test(error.message),
+  );
+  await assert.rejects(
+    handlers["system.allowRoot"]({ path: path.join(base, "missing") }),
+    (error) => error.code === "BAD_REQUEST" && /Directory does not exist/.test(error.message),
+  );
 
   const listed = await handlers["files.list"]({ path: project });
   assert.equal(
