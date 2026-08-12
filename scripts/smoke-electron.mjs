@@ -9,23 +9,23 @@ import { spawn, spawnSync } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
+import { assertSuccessfulSpawn, resolveElectronBinary, resolvePackageFile } from "./process-utils.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const main = path.join(root, ".artifacts", "smoke", "main.js");
 
-const build = spawnSync(
-  process.platform === "win32" ? "npx.cmd" : "npx",
-  ["tsup", "--config", "tsup.smoke.config.ts"],
-  { cwd: root, stdio: "inherit" },
+const tsupCli = resolvePackageFile(root, "tsup", "dist/cli-default.js");
+assertSuccessfulSpawn(
+  spawnSync(process.execPath, [tsupCli, "--config", "tsup.smoke.config.ts"], { cwd: root, stdio: "inherit" }),
+  "smoke build",
 );
-if (build.status !== 0) process.exit(build.status ?? 1);
 
 if (!existsSync(main)) {
-  console.error("Build first: npm run build");
+  console.error(`Smoke build did not produce ${main}; rerun npm run build:smoke for diagnostics.`);
   process.exit(1);
 }
 
-const electronBin = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "electron.cmd" : "electron");
+const electronBin = resolveElectronBinary(root);
 
 const child = spawn(electronBin, [main], {
   cwd: root,
@@ -42,7 +42,14 @@ const timer = setTimeout(() => {
   process.exit(1);
 }, 45_000);
 
-child.on("exit", (code) => {
+child.on("error", (error) => {
   clearTimeout(timer);
+  console.error(`smoke Electron failed to start: ${error.message}`);
+  process.exit(1);
+});
+
+child.on("exit", (code, signal) => {
+  clearTimeout(timer);
+  if (signal) console.error(`smoke Electron terminated by signal ${signal}`);
   process.exit(code ?? 1);
 });

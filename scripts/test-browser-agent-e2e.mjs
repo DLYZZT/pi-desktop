@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertSuccessfulSpawn, resolveElectronBinary, resolvePackageFile } from "./process-utils.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Keep the ESM Host bundle under the project root so its external production
@@ -10,12 +11,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temp = fs.mkdtempSync(path.join(root, ".browser-agent-e2e-build-"));
 const hostOutfile = path.join(temp, "browser-agent-host.mjs");
 const mainOutfile = path.join(temp, "browser-agent-e2e-harness.cjs");
-const esbuild = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "esbuild.cmd" : "esbuild");
+const esbuild = resolvePackageFile(root, "esbuild", "bin/esbuild");
 
 function build(entry, outfile, format, externals) {
   const result = spawnSync(
-    esbuild,
+    process.execPath,
     [
+      esbuild,
       entry,
       "--bundle",
       "--platform=node",
@@ -26,7 +28,7 @@ function build(entry, outfile, format, externals) {
     ],
     { cwd: root, stdio: "inherit" },
   );
-  if (result.status !== 0) throw new Error(`esbuild failed for ${entry}`);
+  assertSuccessfulSpawn(result, `esbuild for ${entry}`);
 }
 
 try {
@@ -40,12 +42,7 @@ try {
   ]);
   build("src/smoke/browser-agent-e2e-harness.ts", mainOutfile, "cjs", ["electron"]);
 
-  const electronBinary = path.join(
-    root,
-    "node_modules",
-    ".bin",
-    process.platform === "win32" ? "electron.cmd" : "electron",
-  );
+  const electronBinary = resolveElectronBinary(root);
   const child = spawn(electronBinary, [mainOutfile], {
     cwd: root,
     stdio: "inherit",
@@ -66,8 +63,9 @@ try {
       console.error(error);
       resolve(1);
     });
-    child.once("exit", (code) => {
+    child.once("exit", (code, signal) => {
       clearTimeout(timer);
+      if (signal) console.error(`Browser Agent E2E harness terminated by signal ${signal}`);
       resolve(code ?? 1);
     });
   });

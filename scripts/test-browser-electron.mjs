@@ -4,30 +4,30 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { assertSuccessfulSpawn, resolveElectronBinary, resolvePackageFile } from "./process-utils.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-browser-harness-build-"));
 const outfile = path.join(temp, "browser-electron-harness.cjs");
 try {
-  const build = spawnSync(
-    path.join(root, "node_modules", ".bin", process.platform === "win32" ? "esbuild.cmd" : "esbuild"),
-    [
-      "src/smoke/browser-electron-harness.ts",
-      "--bundle",
-      "--platform=node",
-      "--format=cjs",
-      "--external:electron",
-      `--outfile=${outfile}`,
-    ],
-    { cwd: root, stdio: "inherit" },
+  const esbuild = resolvePackageFile(root, "esbuild", "bin/esbuild");
+  assertSuccessfulSpawn(
+    spawnSync(
+      process.execPath,
+      [
+        esbuild,
+        "src/smoke/browser-electron-harness.ts",
+        "--bundle",
+        "--platform=node",
+        "--format=cjs",
+        "--external:electron",
+        `--outfile=${outfile}`,
+      ],
+      { cwd: root, stdio: "inherit" },
+    ),
+    "Browser Electron harness build",
   );
-  if (build.status !== 0) process.exit(build.status ?? 1);
-  const electronBinary = path.join(
-    root,
-    "node_modules",
-    ".bin",
-    process.platform === "win32" ? "electron.cmd" : "electron",
-  );
+  const electronBinary = resolveElectronBinary(root);
   const child = spawn(electronBinary, [outfile], {
     cwd: root,
     stdio: "inherit",
@@ -44,8 +44,9 @@ try {
       console.error(error);
       resolve(1);
     });
-    child.once("exit", (code) => {
+    child.once("exit", (code, signal) => {
       clearTimeout(timer);
+      if (signal) console.error(`Browser Electron harness terminated by signal ${signal}`);
       resolve(code ?? 1);
     });
   });
