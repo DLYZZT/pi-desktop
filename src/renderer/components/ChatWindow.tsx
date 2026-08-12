@@ -22,6 +22,7 @@ import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAg
 import { useAudio } from "@/hooks/useAudio";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useObservedElementHeight } from "@/hooks/useObservedElementHeight";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { MessageRenderKeyRegistry, type MessageRenderRole } from "@/lib/message-render-key";
 import { buildToolMessageIndex } from "@/lib/tool-message-index";
@@ -446,6 +447,7 @@ export function ChatWindow({
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !agentRunning;
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
+  const chatViewportHeight = useObservedElementHeight(scrollContainerRef);
 
   const availableThinkingLevels = displayModelValue
     ? (modelThinkingLevels[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
@@ -935,11 +937,7 @@ export function ChatWindow({
 
                   <div ref={liveContentEndRef} />
 
-                  {agentRunning && (
-                    <div
-                      style={{ height: scrollContainerRef.current ? scrollContainerRef.current.clientHeight : "80vh" }}
-                    />
-                  )}
+                  {agentRunning && <div style={{ height: chatViewportHeight }} />}
 
                   <div ref={messagesEndRef} />
                 </div>
