@@ -19,6 +19,29 @@ test("status colors in planned component owners use semantic theme tokens", () =
   }
 });
 
+test("ModelsConfig connection-test badge and button use theme semantic colors", () => {
+  const source = readFileSync(new URL("components/ModelsConfig.tsx", import.meta.url), "utf8");
+  const modelDetail = source.slice(
+    source.indexOf("function ModelDetail("),
+    source.indexOf("function ManagedModelsControl("),
+  );
+  const testUi = modelDetail.slice(modelDetail.indexOf("{testSummary &&"), modelDetail.indexOf("onClick={onDelete}"));
+
+  assert.ok(testUi.length > 0, "connection-test UI source");
+  for (const token of [
+    "var(--danger-border)",
+    "var(--success-border)",
+    "var(--danger-soft)",
+    "var(--success-soft)",
+    "var(--danger)",
+    "var(--success)",
+    "var(--on-accent)",
+  ]) {
+    assert.match(testUi, new RegExp(token.replace(/[()]/g, "\\$&")), token);
+  }
+  assert.doesNotMatch(testUi, /#(?:fecaca|bbf7d0|fee2e2|dcfce7|e5e7eb|111827|16a34a|fff)\b/i);
+});
+
 test("light and dark themes define the complete semantic color contract", () => {
   const css = readFileSync(new URL("./globals.css", import.meta.url), "utf8");
   const roots = [css.slice(css.indexOf(":root {"), css.indexOf("html.dark")), css.slice(css.indexOf("html.dark"))];

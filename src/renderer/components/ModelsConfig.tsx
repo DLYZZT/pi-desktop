@@ -548,11 +548,20 @@ function ModelDetail({
                 maxWidth: 260,
                 height: 24,
                 padding: "0 8px",
-                border: `1px solid ${testState.phase === "error" ? "#fecaca" : testState.phase === "success" ? "#bbf7d0" : "var(--border)"}`,
+                border: `1px solid ${testState.phase === "error" ? "var(--danger-border)" : testState.phase === "success" ? "var(--success-border)" : "var(--border)"}`,
                 borderRadius: 4,
                 background:
-                  testState.phase === "error" ? "#fee2e2" : testState.phase === "success" ? "#dcfce7" : "#e5e7eb",
-                color: "#111827",
+                  testState.phase === "error"
+                    ? "var(--danger-soft)"
+                    : testState.phase === "success"
+                      ? "var(--success-soft)"
+                      : "var(--bg-hover)",
+                color:
+                  testState.phase === "error"
+                    ? "var(--danger)"
+                    : testState.phase === "success"
+                      ? "var(--success)"
+                      : "var(--text-muted)",
                 fontSize: 11,
                 display: "inline-flex",
                 alignItems: "center",
@@ -573,12 +582,12 @@ function ModelDetail({
             style={{
               height: 32,
               padding: "0 10px",
-              background: testState.phase === "success" ? "#16a34a" : "none",
-              border: `1px solid ${testState.phase === "success" ? "#16a34a" : "var(--border)"}`,
+              background: testState.phase === "success" ? "var(--success)" : "none",
+              border: `1px solid ${testState.phase === "success" ? "var(--success)" : "var(--border)"}`,
               borderRadius: 4,
               color:
                 testState.phase === "success"
-                  ? "#fff"
+                  ? "var(--on-accent)"
                   : !model.id.trim() || testState.phase === "testing"
                     ? "var(--text-dim)"
                     : "var(--text-muted)",
