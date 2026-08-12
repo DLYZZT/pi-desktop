@@ -530,10 +530,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           throw e;
         }
         const d = result;
-        if (sessionIdRef.current !== sid || loadGeneration !== historyGenerationRef.current) return null;
+        if (sessionIdRef.current !== sid || loadGeneration !== historyGenerationRef.current) {
+          failSessionLoadTrace(trace);
+          traceFailed = true;
+          return null;
+        }
 
         setData(d);
         setActiveLeafId(d.leafId);
+        const replacedCommitTrace = pendingSessionLoadTraceRef.current;
+        if (replacedCommitTrace && replacedCommitTrace !== trace) failSessionLoadTrace(replacedCommitTrace);
         pendingSessionLoadTraceRef.current = trace;
         const mergedHistory = mergeHistoryTail(
           {
@@ -588,6 +594,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       requestAnimationFrame(() => finishSessionLoadTrace(trace));
     });
   }, [messages]);
+
+  useEffect(
+    () => () => {
+      const trace = pendingSessionLoadTraceRef.current;
+      pendingSessionLoadTraceRef.current = null;
+      if (trace) failSessionLoadTrace(trace);
+    },
+    [],
+  );
 
   const contextGenRef = useRef(0);
 
