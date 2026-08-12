@@ -15,7 +15,7 @@ await build({
   platform: "node",
   logLevel: "silent",
 });
-const { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelPromptText } = await import(
+const { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelAttachmentCopyText, channelPromptText } = await import(
   `${pathToFileURL(output).href}?v=${Date.now()}`
 );
 
@@ -29,4 +29,24 @@ test("attachment-only prompts use a non-empty metadata-free text block", () => {
 test("actual user text is passed through byte-for-byte", () => {
   assert.equal(channelPromptText("  hello\n", true), "  hello\n");
   assert.equal(channelPromptText("", false), "");
+});
+
+test("attachment copy text preserves useful filenames and media types", () => {
+  assert.equal(
+    channelAttachmentCopyText([
+      { kind: "file", name: "quarterly-report.pdf", mime: "application/pdf" },
+      { kind: "voice", mime: "audio/ogg" },
+    ]),
+    "Attachment: quarterly-report.pdf (application/pdf)\nAttachment: Voice message (audio/ogg)",
+  );
+});
+
+test("legacy image messages derive copy text from their image blocks", () => {
+  assert.equal(
+    channelAttachmentCopyText(undefined, [
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } },
+    ]),
+    "Attachment: Image (image/png)",
+  );
+  assert.equal(channelAttachmentCopyText(undefined, []), "");
 });

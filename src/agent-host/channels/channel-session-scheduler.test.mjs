@@ -106,6 +106,7 @@ test("UI prompts and messaging-channel turns share one serial session scheduler"
     message: "im",
     channel: "telegram",
     images: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+    channelAttachments: [{ kind: "image", name: "photo.png", mime: "image/png" }],
     attachmentContext: "Attachment 1 is available at /tmp/file.txt",
     onProgress: (event) => progress.push(event),
   });
@@ -120,7 +121,14 @@ test("UI prompts and messaging-channel turns share one serial session scheduler"
   assert.deepEqual(externalPromptOptions.images, [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }]);
   assert.equal(externalPromptOptions.expandPromptTemplates, false);
   assert.deepEqual(customEntries, [
-    { customType: "pi-desktop-channel-source", data: { runId: "run-one", channel: "telegram" } },
+    {
+      customType: "pi-desktop-channel-source",
+      data: {
+        runId: "run-one",
+        channel: "telegram",
+        attachments: [{ kind: "image", name: "photo.png", mime: "image/png" }],
+      },
+    },
   ]);
   assert.deepEqual(customMessages, [
     {
@@ -133,6 +141,7 @@ test("UI prompts and messaging-channel turns share one serial session scheduler"
     },
   ]);
   assert.equal(progress[0].message.channelSource, "telegram");
+  assert.deepEqual(progress[0].message.channelAttachments, [{ kind: "image", name: "photo.png", mime: "image/png" }]);
   assert.deepEqual(
     progress.map((event) => event.type),
     ["message_end", "message_update"],

@@ -12,7 +12,12 @@ import { cacheSessionPath } from "./session-reader";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "../shared/pi-types";
 import type { ChannelId } from "../shared/channel-types";
-import type { ExtensionUiRequest, ExtensionUiResponse, ExtensionWidgetItem } from "../shared/types";
+import type {
+  ChannelMessageAttachment,
+  ExtensionUiRequest,
+  ExtensionUiResponse,
+  ExtensionWidgetItem,
+} from "../shared/types";
 import { toolchainRuntime } from "./toolchain-runtime";
 import { createToolchainBashOptions } from "./toolchain-bash";
 import { createDesktopSearchToolDefinitions } from "./toolchain-search";
@@ -147,6 +152,7 @@ export class AgentSessionWrapper {
   private turnTail: Promise<void> = Promise.resolve();
   private externalTurnActive = false;
   private externalTurnChannel: ChannelId | null = null;
+  private externalTurnAttachments: ChannelMessageAttachment[] | null = null;
   private externalTurnProgress: ((event: AgentEvent) => void) | null = null;
   private extensionsBound = false;
   private extensionBindingPromise: Promise<void> | null = null;
@@ -220,7 +226,11 @@ export class AgentSessionWrapper {
     if (!message || typeof message !== "object" || (message as { role?: unknown }).role !== "user") return event;
     return {
       ...event,
-      message: { ...(message as Record<string, unknown>), channelSource: this.externalTurnChannel },
+      message: {
+        ...(message as Record<string, unknown>),
+        channelSource: this.externalTurnChannel,
+        ...(this.externalTurnAttachments?.length ? { channelAttachments: this.externalTurnAttachments } : {}),
+      },
     };
   }
 
@@ -390,6 +400,7 @@ export class AgentSessionWrapper {
     message: string;
     channel: ChannelId;
     images?: Array<{ type: "image"; data: string; mimeType: string }>;
+    channelAttachments?: ChannelMessageAttachment[];
     attachmentContext?: string;
     onProgress?: (event: AgentEvent) => void;
   }): Promise<{ runId: string; finalText: string }> {
@@ -397,6 +408,7 @@ export class AgentSessionWrapper {
       this.emit({ type: "channel_turn_start", runId: params.runId });
       this.externalTurnActive = true;
       this.externalTurnChannel = params.channel;
+      this.externalTurnAttachments = params.channelAttachments ?? null;
       setBrowserSessionSource(this.inner.sessionManager, "channel");
       browserAgentRuntime.beginTurn(this.sessionId, "channel");
       this.externalTurnProgress = params.onProgress ?? null;
@@ -404,6 +416,7 @@ export class AgentSessionWrapper {
         this.inner.sessionManager.appendCustomEntry("pi-desktop-channel-source", {
           runId: params.runId,
           channel: params.channel,
+          ...(params.channelAttachments?.length ? { attachments: params.channelAttachments } : {}),
         });
         if (params.attachmentContext) {
           await this.inner.sendCustomMessage(
@@ -439,6 +452,7 @@ export class AgentSessionWrapper {
         this.externalTurnProgress = null;
         this.externalTurnActive = false;
         this.externalTurnChannel = null;
+        this.externalTurnAttachments = null;
         setBrowserSessionSource(this.inner.sessionManager, "local");
       }
     });

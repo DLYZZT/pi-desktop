@@ -33,7 +33,11 @@ test("hidden channel markers annotate UI user messages without entering displaye
       parentId: null,
       timestamp,
       customType: "pi-desktop-channel-source",
-      data: { channel: "telegram", runId: "run-one" },
+      data: {
+        channel: "telegram",
+        runId: "run-one",
+        attachments: [{ kind: "file", name: "report.pdf", mime: "application/pdf" }],
+      },
     },
     {
       type: "message",
@@ -48,6 +52,9 @@ test("hidden channel markers annotate UI user messages without entering displaye
   assert.equal(context.messages.length, 1);
   assert.equal(context.messages[0].role, "user");
   assert.equal(context.messages[0].channelSource, "telegram");
+  assert.deepEqual(context.messages[0].channelAttachments, [
+    { kind: "file", name: "report.pdf", mime: "application/pdf" },
+  ]);
   assert.deepEqual(context.messages[0].content, [{ type: "text", text: "hello" }]);
   assert.deepEqual(context.entryIds, ["user"]);
 });

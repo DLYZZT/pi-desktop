@@ -57,6 +57,33 @@ test("keeps the user copy action without timestamp or branch actions", () => {
   assert.match(html, /title="Copy message"/);
 });
 
+test("channel attachment placeholders expose meaningful copy text", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: {
+        role: "user",
+        channelSource: "telegram",
+        channelAttachments: [{ kind: "file", name: "report.pdf", mime: "application/pdf" }],
+        content: [{ type: "text", text: "\uFFFC" }],
+      },
+    }),
+  );
+
+  assert.match(html, /Attachment: report\.pdf \(application\/pdf\)/);
+  assert.match(html, /title="Copy message"/);
+});
+
+test("legacy attachment placeholders without metadata disable copy", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: { role: "user", channelSource: "weixin", content: "\uFFFC" },
+    }),
+  );
+
+  assert.match(html, /title="Nothing to copy"/);
+  assert.match(html, /disabled=""/);
+});
+
 function assistant(overrides = {}) {
   return {
     role: "assistant",

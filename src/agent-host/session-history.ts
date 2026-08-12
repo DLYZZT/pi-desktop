@@ -9,7 +9,6 @@ import type {
   TextContent,
   ThinkingContent,
   ToolCallContent,
-  UserMessage,
 } from "../shared/types";
 import {
   buildSessionContext,
@@ -110,7 +109,7 @@ function deriveContextSettings(path: SessionEntry[]): Pick<PagedContextInfo, "th
 
 function projectDisplayMessages(path: SessionEntry[]): ProjectedMessage[] {
   const projected: ProjectedMessage[] = [];
-  let pendingChannelSource: { channel: NonNullable<UserMessage["channelSource"]>; runId?: string } | null = null;
+  let pendingChannelSource: ReturnType<typeof parseChannelSourceMarker> = null;
   path.forEach((entry, pathIndex) => {
     if (entry.type === "custom" && entry.customType === "pi-desktop-channel-source") {
       const marker = parseChannelSourceMarker(entry.data);
@@ -125,7 +124,7 @@ function projectDisplayMessages(path: SessionEntry[]): ProjectedMessage[] {
     let message = entryToUiMessage(entry);
     if (!message) return;
     if (message.role === "user") {
-      message = withUserMessageSource(message, pendingChannelSource?.channel);
+      message = withUserMessageSource(message, pendingChannelSource?.channel, pendingChannelSource?.attachments);
       pendingChannelSource = null;
     }
     projected.push({ message, entryId: entry.id, pathIndex });

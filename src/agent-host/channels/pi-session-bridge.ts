@@ -131,6 +131,15 @@ export class PiSessionBridge {
       message: channelPromptText(envelope.text, stagedAttachments.length > 0),
       channel: envelope.channel,
       ...(images.length ? { images } : {}),
+      ...(stagedAttachments.length
+        ? {
+            channelAttachments: stagedAttachments.map(({ kind, name, mime }) => ({
+              kind,
+              ...(name ? { name } : {}),
+              ...(mime ? { mime } : {}),
+            })),
+          }
+        : {}),
       attachmentContext,
       ...(onProgress
         ? {

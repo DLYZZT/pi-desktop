@@ -9,7 +9,7 @@ import {
   isEmptyThinkingBlock,
 } from "@/lib/message-display";
 import { getUserBubbleColor } from "@/lib/channel-message-style";
-import { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER } from "@shared/channel-message";
+import { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelAttachmentCopyText } from "@shared/channel-message";
 import { useI18n } from "@/i18n";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import type {
@@ -233,19 +233,23 @@ function UserMessageView({
       ? []
       : message.content.filter((b): b is ImageContent => b.type === "image" && !b.deferredContent);
 
-  const visibleContent =
-    message.channelSource && content === CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER
-      ? imageBlocks.length > 0
-        ? ""
-        : t("channelAttachment", "Attachment")
-      : content;
+  const isChannelAttachmentPlaceholder = !!message.channelSource && content === CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER;
+  const attachmentCopyContent = isChannelAttachmentPlaceholder
+    ? channelAttachmentCopyText(message.channelAttachments, imageBlocks)
+    : "";
+  const visibleContent = isChannelAttachmentPlaceholder
+    ? imageBlocks.length > 0
+      ? ""
+      : attachmentCopyContent || t("channelAttachment", "Attachment")
+    : content;
+  const copyableContent = isChannelAttachmentPlaceholder ? attachmentCopyContent : visibleContent;
 
   const time = formatTime(message.timestamp);
   const messageSource = message.channelSource ?? "local";
   const canFork = !!entryId && !!onFork;
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
 
-  const copyContent = () => void copy(visibleContent);
+  const copyContent = () => void copy(copyableContent);
 
   return (
     <div
@@ -340,7 +344,8 @@ function UserMessageView({
           <button
             type="button"
             onClick={copyContent}
-            title="Copy message"
+            disabled={!copyableContent}
+            title={copyableContent ? "Copy message" : "Nothing to copy"}
             style={{
               display: "flex",
               alignItems: "center",
@@ -351,7 +356,8 @@ function UserMessageView({
               border: "none",
               borderRadius: 5,
               color: copied ? "var(--accent)" : "var(--text-dim)",
-              cursor: "pointer",
+              cursor: copyableContent ? "pointer" : "not-allowed",
+              opacity: copyableContent ? 1 : 0.55,
               fontSize: 12,
               fontWeight: 400,
               whiteSpace: "nowrap",
