@@ -31,6 +31,7 @@ export interface BrowserProfileManagerOptions {
   now?: () => Date;
   createId?: () => string;
   launchId?: string;
+  removePartitionDirectory?: (directory: string) => Promise<void>;
 }
 
 export class BrowserProfileManager {
@@ -42,14 +43,18 @@ export class BrowserProfileManager {
   private readonly now: () => Date;
   private readonly createId: () => string;
   private readonly launchId: string;
+  private readonly userDataDir: string;
+  private readonly removePartitionDirectory: (directory: string) => Promise<void>;
 
   constructor(options: BrowserProfileManagerOptions) {
+    this.userDataDir = path.resolve(options.userDataDir);
     this.filePath = path.join(options.userDataDir, "browser-profiles.json");
     this.fromPartition = options.fromPartition;
     this.configureSession = options.configureSession;
     this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? randomUUID;
     this.launchId = sanitizeId(options.launchId ?? randomUUID());
+    this.removePartitionDirectory = options.removePartitionDirectory ?? removePersistentPartitionDirectory;
     const now = this.now().toISOString();
     this.profiles.set(DEFAULT_BROWSER_PROFILE_ID, {
       id: DEFAULT_BROWSER_PROFILE_ID,
@@ -123,11 +128,23 @@ export class BrowserProfileManager {
   async delete(profileId: string): Promise<void> {
     const profile = this.requireMutableProfile(profileId);
     const session = this.sessions.get(profile.id);
-    if (session) {
-      await session.clearStorageData();
-      await session.clearCache();
-      await session.closeAllConnections();
-      this.sessions.delete(profile.id);
+    try {
+      if (session) {
+        await session.clearStorageData();
+        await session.clearCache();
+        await session.closeAllConnections();
+        this.sessions.delete(profile.id);
+      }
+      if (profile.persistent) {
+        await this.removePartitionDirectory(persistentPartitionDirectory(this.userDataDir, profile));
+      }
+    } catch (error) {
+      throw new BrowserError("PROFILE_DELETE_RETRY_REQUIRED", "Browser profile data is still in use; retry deletion", {
+        retryable: true,
+        recovery: { retryAfterMs: 250 },
+        details: { profileId: profile.id },
+        cause: error,
+      });
     }
     this.profiles.delete(profile.id);
     this.persistProfiles();
@@ -278,6 +295,34 @@ export function partitionForProfile(profile: BrowserProfileInfo, launchId: strin
   if (profile.mode === "persistent") return `persist:pi-browser-${id}`;
   if (profile.mode === "unsafe") return `pi-browser-unsafe-${sanitizeId(launchId)}-${id}`;
   return `pi-browser-${sanitizeId(launchId)}-${id}`;
+}
+
+export function persistentPartitionDirectory(userDataDir: string, profile: BrowserProfileInfo): string {
+  if (profile.mode !== "persistent") {
+    throw new BrowserError("INVALID_BROWSER_REQUEST", "Only persistent Browser profiles have disk partitions");
+  }
+  const partition = partitionForProfile(profile, "unused");
+  const partitionName = partition.slice("persist:".length);
+  const partitionsRoot = path.resolve(userDataDir, "Partitions");
+  const target = path.resolve(partitionsRoot, partitionName);
+  if (path.dirname(target) !== partitionsRoot || path.basename(target) !== partitionName) {
+    throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser profile partition path is invalid");
+  }
+  return target;
+}
+
+async function removePersistentPartitionDirectory(directory: string): Promise<void> {
+  let stats: fs.Stats;
+  try {
+    stats = await fs.promises.lstat(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new Error("Persistent Browser partition is not a regular directory");
+  }
+  await fs.promises.rm(directory, { recursive: true, force: true, maxRetries: 0 });
 }
 
 function storageType(

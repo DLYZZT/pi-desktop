@@ -3,7 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { BrowserProfileManager, DEFAULT_BROWSER_PROFILE_ID, partitionForProfile } from "./browser-profile-manager.ts";
+import {
+  BrowserProfileManager,
+  DEFAULT_BROWSER_PROFILE_ID,
+  partitionForProfile,
+  persistentPartitionDirectory,
+} from "./browser-profile-manager.ts";
 
 function fakeSession() {
   const calls = [];
@@ -31,6 +36,7 @@ function managerAt(root, sessions, options = {}) {
     configureSession(profile, session) {
       session.calls.push(["configure", profile.id]);
     },
+    removePartitionDirectory: options.removePartitionDirectory,
   });
 }
 
@@ -118,6 +124,58 @@ test("profile data clearing, proxy changes, and disposal respect profile lifetim
       true,
     );
     await assert.rejects(manager.delete(DEFAULT_BROWSER_PROFILE_ID), /cannot be changed/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("deleting a persistent profile clears its session and verified partition directory", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-browser-profile-"));
+  try {
+    const sessions = [];
+    const manager = managerAt(root, sessions);
+    const profile = manager.create({ name: "Delete me", mode: "persistent" });
+    manager.getSession(profile.id);
+    const directory = persistentPartitionDirectory(root, profile);
+    fs.mkdirSync(path.join(directory, "Code Cache"), { recursive: true });
+    fs.writeFileSync(path.join(directory, "Code Cache", "entry"), "cached");
+
+    await manager.delete(profile.id);
+
+    assert.deepEqual(
+      sessions[0].session.calls.slice(-3).map(([name]) => name),
+      ["clearStorageData", "clearCache", "closeAllConnections"],
+    );
+    assert.equal(fs.existsSync(directory), false);
+    assert.throws(() => manager.get(profile.id), /not found/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("locked persistent partitions keep profile metadata and return a retryable error", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-browser-profile-"));
+  let locked = true;
+  try {
+    const manager = managerAt(root, [], {
+      removePartitionDirectory: async () => {
+        if (locked) throw Object.assign(new Error("locked"), { code: "EPERM" });
+      },
+    });
+    const profile = manager.create({ name: "Locked", mode: "persistent" });
+    manager.getSession(profile.id);
+
+    await assert.rejects(manager.delete(profile.id), (error) => {
+      assert.equal(error.code, "PROFILE_DELETE_RETRY_REQUIRED");
+      assert.equal(error.retryable, true);
+      assert.equal(error.recovery.remediation, "wait-and-retry-once");
+      return true;
+    });
+    assert.equal(manager.get(profile.id).name, "Locked");
+
+    locked = false;
+    await manager.delete(profile.id);
+    assert.throws(() => manager.get(profile.id), /not found/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

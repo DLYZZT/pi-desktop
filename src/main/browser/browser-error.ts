@@ -61,6 +61,7 @@ function browserRecoveryForCode(
       break;
     case "NAVIGATION_FAILED":
     case "ACTION_TIMEOUT":
+    case "PROFILE_DELETE_RETRY_REQUIRED":
       recovery = {
         retryable: true,
         reason: "transient-network",
