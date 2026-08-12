@@ -249,13 +249,14 @@ function useScramble(target: string, running: boolean): string {
       if (iterRef.current < totalFrames) {
         frameRef.current = requestAnimationFrame(step);
       } else {
+        frameRef.current = null;
         setDisplay(target);
       }
     };
 
     frameRef.current = requestAnimationFrame(step);
     return () => {
-      if (frameRef.current) cancelAnimationFrame(frameRef.current);
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     };
   }, [target, running]);
 
@@ -265,15 +266,23 @@ function useScramble(target: string, running: boolean): string {
 function PiAgentTitle() {
   const [showVersion, setShowVersion] = useState(false);
   const [scrambling, setScrambling] = useState(false);
+  const scrambleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const target = showVersion ? `${APP_VERSION}p${PI_VERSION}` : "Pi Agent Desktop";
   const display = useScramble(target, scrambling);
 
   const triggerScramble = useCallback((toVersion: boolean) => {
+    if (scrambleTimerRef.current) clearTimeout(scrambleTimerRef.current);
     setShowVersion(toVersion);
     setScrambling(true);
-    setTimeout(() => setScrambling(false), (toVersion ? 6 : 8) * 4 * (1000 / 60) + 100);
+    scrambleTimerRef.current = setTimeout(
+      () => {
+        scrambleTimerRef.current = null;
+        setScrambling(false);
+      },
+      (toVersion ? 6 : 8) * 4 * (1000 / 60) + 100,
+    );
   }, []);
 
   const handleClick = useCallback(() => {
@@ -283,12 +292,16 @@ function PiAgentTitle() {
     triggerScramble(next);
 
     if (next) {
-      revertTimerRef.current = setTimeout(() => triggerScramble(false), 3000);
+      revertTimerRef.current = setTimeout(() => {
+        revertTimerRef.current = null;
+        triggerScramble(false);
+      }, 3000);
     }
   }, [showVersion, triggerScramble]);
 
   useEffect(
     () => () => {
+      if (scrambleTimerRef.current) clearTimeout(scrambleTimerRef.current);
       if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
     },
     [],
@@ -389,6 +402,26 @@ export function SessionSidebar({
   // running state; late session responses must not overwrite it.
   const streamAuthoritativeRef = useRef(false);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deferredFocusTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const sidebarMountedRef = useRef(false);
+  const deferFocus = useCallback((focus: () => void) => {
+    const timer = setTimeout(() => {
+      deferredFocusTimersRef.current.delete(timer);
+      focus();
+    }, 0);
+    deferredFocusTimersRef.current.add(timer);
+  }, []);
+
+  useEffect(() => {
+    const deferredFocusTimers = deferredFocusTimersRef.current;
+    sidebarMountedRef.current = true;
+    return () => {
+      sidebarMountedRef.current = false;
+      if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
+      for (const timer of deferredFocusTimers) clearTimeout(timer);
+      deferredFocusTimers.clear();
+    };
+  }, []);
 
   const loadSessions = useCallback(async (showLoading = false) => {
     try {
@@ -419,9 +452,13 @@ export function SessionSidebar({
       });
       setError(null);
       if (!showLoading) {
+        if (!sidebarMountedRef.current) return;
         setSessionRefreshDone(true);
         if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
-        sessionRefreshTimerRef.current = setTimeout(() => setSessionRefreshDone(false), 2000);
+        sessionRefreshTimerRef.current = setTimeout(() => {
+          sessionRefreshTimerRef.current = null;
+          setSessionRefreshDone(false);
+        }, 2000);
       }
     } catch (e) {
       setError(String(e));
@@ -1212,7 +1249,7 @@ export function SessionSidebar({
                   e.stopPropagation();
                   setCustomPathOpen(true);
                   setCustomPathError(null);
-                  setTimeout(() => customPathInputRef.current?.focus(), 0);
+                  deferFocus(() => customPathInputRef.current?.focus());
                 }}
                 style={{
                   display: "flex",
@@ -1605,7 +1642,7 @@ export function SessionSidebar({
                         e.stopPropagation();
                         setWtNewOpen(true);
                         setWtError(null);
-                        setTimeout(() => wtNewInputRef.current?.focus(), 0);
+                        deferFocus(() => wtNewInputRef.current?.focus());
                       }}
                       title="Create a worktree checkout for a branch"
                       style={{
@@ -1740,7 +1777,10 @@ export function SessionSidebar({
                 // No action is available here; clicking reveals the reason
                 setWtGuideHintOpen(true);
                 if (wtGuideHintTimerRef.current) clearTimeout(wtGuideHintTimerRef.current);
-                wtGuideHintTimerRef.current = setTimeout(() => setWtGuideHintOpen(false), 4000);
+                wtGuideHintTimerRef.current = setTimeout(() => {
+                  wtGuideHintTimerRef.current = null;
+                  setWtGuideHintOpen(false);
+                }, 4000);
               }}
               style={{
                 width: "100%",
@@ -2127,13 +2167,27 @@ function SessionItem({
   const inputRef = useRef<HTMLInputElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const actionsSummaryRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusFrameRef = useRef<number | null>(null);
+  const selectInputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const closeActionsMenu = useCallback((restoreFocus = false) => {
     setActionsOpen(false);
     if (restoreFocus) {
-      window.requestAnimationFrame(() => actionsSummaryRef.current?.focus());
+      if (restoreFocusFrameRef.current !== null) window.cancelAnimationFrame(restoreFocusFrameRef.current);
+      restoreFocusFrameRef.current = window.requestAnimationFrame(() => {
+        restoreFocusFrameRef.current = null;
+        actionsSummaryRef.current?.focus();
+      });
     }
   }, []);
+
+  useEffect(
+    () => () => {
+      if (restoreFocusFrameRef.current !== null) window.cancelAnimationFrame(restoreFocusFrameRef.current);
+      if (selectInputTimerRef.current) clearTimeout(selectInputTimerRef.current);
+    },
+    [],
+  );
 
   const title = getSessionDisplayTitle(session);
 
@@ -2143,7 +2197,11 @@ function SessionItem({
       closeActionsMenu();
       setRenameValue(session.name ?? "");
       setRenaming(true);
-      setTimeout(() => inputRef.current?.select(), 0);
+      if (selectInputTimerRef.current) clearTimeout(selectInputTimerRef.current);
+      selectInputTimerRef.current = setTimeout(() => {
+        selectInputTimerRef.current = null;
+        inputRef.current?.select();
+      }, 0);
     },
     [closeActionsMenu, session.name],
   );
