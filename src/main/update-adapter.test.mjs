@@ -53,7 +53,7 @@ test("production adapter applies the stable, consent-first updater policy", asyn
     const adapter = wrapElectronUpdater(updater);
 
     assert.equal(updater.autoDownload, false);
-    assert.equal(updater.autoInstallOnAppQuit, true);
+    assert.equal(updater.autoInstallOnAppQuit, false);
     assert.equal(updater.allowPrerelease, false);
     assert.equal(updater.allowDowngrade, false);
     assert.equal(updater.disableWebInstaller, true);

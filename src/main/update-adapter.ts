@@ -87,7 +87,9 @@ class ProductionUpdateAdapter implements UpdateAdapter {
 /** @internal Exported to verify the production policy without loading Electron. */
 export function wrapElectronUpdater(updater: AppUpdater, options: ProductionUpdateAdapterOptions = {}): UpdateAdapter {
   updater.autoDownload = false;
-  updater.autoInstallOnAppQuit = true;
+  // Installation must pass through UpdateManager.installUpdate(), which gates
+  // active Agent sessions. App quit must never bypass that explicit check.
+  updater.autoInstallOnAppQuit = false;
   updater.allowPrerelease = false;
   updater.allowDowngrade = false;
   updater.disableWebInstaller = true;
