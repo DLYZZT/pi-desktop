@@ -205,6 +205,34 @@ test("postMessage failure rejects and removes a pending call", async () => {
   assert.equal(listeners.size, 0);
 });
 
+test("subscribe throws without retaining a local subscription when postMessage fails", () => {
+  const listeners = new Set();
+  const port = {
+    addEventListener(_type, listener) {
+      listeners.add(listener);
+    },
+    removeEventListener(_type, listener) {
+      listeners.delete(listener);
+    },
+    start() {},
+    postMessage() {
+      throw new Error("closed subscription transport");
+    },
+    close() {},
+  };
+  const client = createRpcClient(port);
+  let calls = 0;
+
+  assert.throws(() => client.subscribe("files.changed", "/project", () => calls++), /closed subscription transport/);
+  for (const listener of listeners) {
+    listener({
+      data: { kind: "event", topic: "files.changed", key: "/project", data: { event: "change", path: "a" } },
+    });
+  }
+  assert.equal(calls, 0);
+  client.close();
+});
+
 test("server attach/detach is idempotent and removes message and close listeners", () => {
   const listeners = new Map();
   let closeCalls = 0;

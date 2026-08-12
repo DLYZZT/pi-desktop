@@ -174,22 +174,18 @@ export function createRpcClient(port: MessagePort, options: RpcClientOptions = {
 
     subscribe(topic, key, on) {
       const id = makeId();
-      subs.set(id, {
-        topic: topic as string,
-        key,
-        handler: on as (ev: unknown) => void,
-      });
       const msg: WireSubscribe = {
         kind: "subscribe",
         id,
         topic: topic as string,
         key,
       };
-      try {
-        port.postMessage(msg);
-      } catch {
-        /* port may already be closed */
-      }
+      port.postMessage(msg);
+      subs.set(id, {
+        topic: topic as string,
+        key,
+        handler: on as (ev: unknown) => void,
+      });
       return () => {
         subs.delete(id);
         const unsub: WireUnsubscribe = {
