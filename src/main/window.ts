@@ -1,6 +1,7 @@
 import { BrowserWindow, shell } from "electron";
 import { appendMainLog } from "./logger";
 import { resolvePreloadPath, resolveRendererEntry } from "./host-manager";
+import { createLoadFailurePage } from "./window-load-failure";
 import { isAllowedMainNavigation } from "./window-navigation-policy";
 import { applyWindowBounds, loadUiState, shouldMaximize, trackWindowState } from "./window-state";
 
@@ -100,12 +101,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
   win.webContents.on("did-fail-load", (_event, code, description, validatedURL, isMainFrame) => {
     if (!isMainFrame || code === -3) return;
     appendMainLog(`did-fail-load code=${code} desc=${description} url=${validatedURL}`);
-    const help =
-      `<!DOCTYPE html><html><body style="font-family:system-ui;background:#f7f6f3;padding:40px;color:#1c1a17">` +
-      `<h1 style="font-family:ui-monospace,monospace;font-size:18px">Cannot load UI</h1>` +
-      `<p style="color:#57534a;font-size:13.5px;line-height:1.55">Failed to load <code>${validatedURL}</code><br/>Error ${code}: ${description}</p>` +
-      `<p style="color:#57534a;font-size:13.5px">Try: <code>npm run build && npm start</code> or <code>npm run dev</code></p>` +
-      `</body></html>`;
+    const help = createLoadFailurePage(code, description, validatedURL);
     void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(help)}`);
   });
 
