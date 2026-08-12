@@ -115,8 +115,8 @@ export function App() {
     return (
       <div style={centerStyle}>
         <div style={{ ...cardStyle, textAlign: "center" }}>
-          <div style={{ fontSize: 13, color: "#57534a", marginBottom: 8 }}>{status}</div>
-          <div style={{ fontSize: 12, color: "#a19d92" }}>Pi Agent Desktop</div>
+          <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 8 }}>{status}</div>
+          <div style={{ fontSize: 12, color: "var(--text-dim)" }}>Pi Agent Desktop</div>
         </div>
       </div>
     );
@@ -135,14 +135,15 @@ const centerStyle: CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
   padding: 32,
-  background: "#f7f6f3",
-  fontFamily: "Inter, system-ui, sans-serif",
+  background: "var(--bg)",
+  color: "var(--text)",
+  fontFamily: "var(--font-sans)",
 };
 
 const cardStyle: CSSProperties = {
   maxWidth: 520,
-  background: "#fcfbf9",
-  border: "1px solid #e4e1da",
+  background: "var(--bg-panel)",
+  border: "1px solid var(--border)",
   borderRadius: 12,
   padding: "28px 32px",
 };
@@ -150,13 +151,13 @@ const cardStyle: CSSProperties = {
 const titleStyle: CSSProperties = {
   fontSize: 18,
   margin: "0 0 12px",
-  fontFamily: "ui-monospace, monospace",
+  fontFamily: "var(--font-mono)",
 };
 
 const bodyStyle: CSSProperties = {
   fontSize: 13.5,
   lineHeight: 1.55,
-  color: "#57534a",
+  color: "var(--text-muted)",
   margin: "0 0 8px",
 };
 
@@ -164,8 +165,10 @@ const preStyle: CSSProperties = {
   fontSize: 11,
   overflow: "auto",
   maxHeight: 200,
-  background: "#1c1a17",
-  color: "#faf9f7",
+  background: "var(--tool-bg)",
+  color: "var(--tool-fg)",
+  border: "1px solid var(--tool-border)",
+  fontFamily: "var(--font-mono)",
   padding: 12,
   borderRadius: 8,
 };
@@ -174,15 +177,15 @@ const btnPrimary: CSSProperties = {
   marginTop: 16,
   padding: "8px 14px",
   borderRadius: 8,
-  border: "1px solid #e4e1da",
-  background: "#1c1a17",
-  color: "#faf9f7",
+  border: "1px solid var(--border)",
+  background: "var(--user-bg)",
+  color: "var(--user-fg)",
   cursor: "pointer",
 };
 
 const btnSecondary: CSSProperties = {
   ...btnPrimary,
   marginLeft: 8,
-  background: "#fcfbf9",
-  color: "#1c1a17",
+  background: "var(--bg-panel)",
+  color: "var(--text)",
 };
