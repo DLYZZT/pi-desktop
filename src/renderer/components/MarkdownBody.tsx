@@ -16,6 +16,7 @@ import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { markdownRehypePlugins, markdownRemarkPlugins } from "@/lib/markdown";
 import { shouldHighlightCode } from "@/lib/code-highlight-policy";
+import { mermaidCacheKey, renderMermaidSvg } from "@/lib/mermaid-renderer";
 import { SessionProfiler } from "./SessionProfiler";
 
 interface MarkdownBodyProps {
@@ -255,7 +256,7 @@ function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boole
   const [svg, setSvg] = useState<string | null>(null);
   const [renderedKey, setRenderedKey] = useState("");
   const [failedKey, setFailedKey] = useState<string | null>(null);
-  const currentKey = `${isDark ? "dark" : "light"}\n${code}`;
+  const currentKey = mermaidCacheKey(code, isDark);
 
   useEffect(() => {
     if (!showPreview || isStreaming) return;
@@ -264,24 +265,9 @@ function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boole
     setFailedKey(null);
 
     const render = async () => {
-      const { default: mermaid } = await import("mermaid");
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        suppressErrorRendering: true,
-        theme: isDark ? "dark" : "default",
-      });
-
-      const parsed = await mermaid.parse(code, { suppressErrors: true });
-      if (!parsed) throw new Error("Invalid Mermaid diagram");
-
-      const id =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? `mermaid-${crypto.randomUUID()}`
-          : `mermaid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const result = await mermaid.render(id, code);
+      const rendered = await renderMermaidSvg(code, isDark);
       if (!cancelled) {
-        setSvg(result.svg);
+        setSvg(rendered);
         setRenderedKey(currentKey);
       }
     };
