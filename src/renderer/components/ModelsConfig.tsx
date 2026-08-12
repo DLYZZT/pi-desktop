@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Check, Field, NumInput, SecretTextInput, Select, SectionTitle, TextInput } from "./form-controls";
+import { applyStrictOptionalPositiveInteger } from "@/lib/strict-integer";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import {
@@ -696,14 +697,14 @@ function ModelDetail({
         <Field label={t("modelContextWindow", "Context window (tokens)")}>
           <NumInput
             value={model.contextWindow !== undefined ? String(model.contextWindow) : ""}
-            onChange={(v) => set("contextWindow", v ? parseInt(v) : undefined)}
+            onChange={(value) => set("contextWindow", applyStrictOptionalPositiveInteger(model.contextWindow, value))}
             placeholder="128000"
           />
         </Field>
         <Field label={t("modelMaxOutputTokens", "Max output tokens")}>
           <NumInput
             value={model.maxTokens !== undefined ? String(model.maxTokens) : ""}
-            onChange={(v) => set("maxTokens", v ? parseInt(v) : undefined)}
+            onChange={(value) => set("maxTokens", applyStrictOptionalPositiveInteger(model.maxTokens, value))}
             placeholder="16384"
           />
         </Field>
