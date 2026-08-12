@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import type { SkillSearchResult } from "@/lib/api-types";
+import { LatestAbortableRequest } from "@/lib/latest-abortable-request";
 import { CapabilityRequired, parseCapabilityIssue, type CapabilityIssue } from "@/components/CapabilityRequired";
 
 interface Skill {
@@ -595,28 +596,39 @@ export function SkillsConfig({
   const [toggling, setToggling] = useState<Set<string>>(new Set());
   const [saveError, setSaveError] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
+  const skillsRequestRef = useRef(new LatestAbortableRequest());
 
-  const loadSkills = useCallback(() => {
+  const loadSkills = useCallback(async () => {
+    const request = skillsRequestRef.current.begin();
     setLoading(true);
     setError(null);
-    fetch(`/api/skills?cwd=${encodeURIComponent(cwd)}`)
-      .then((r) => r.json())
-      .then((d: { skills?: Skill[]; error?: string }) => {
-        if (d.error) {
-          setError(d.error);
-          return;
-        }
-        const list = d.skills ?? [];
-        setSkills(list);
-        if (list.length > 0 && !selected) setSelected(list[0].filePath);
-      })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, [cwd, selected]);
+    try {
+      const response = await fetch(`/api/skills?cwd=${encodeURIComponent(cwd)}`, { signal: request.signal });
+      const result = (await response.json()) as { skills?: Skill[]; error?: string };
+      if (!skillsRequestRef.current.isCurrent(request.generation)) return;
+      if (!response.ok || result.error) throw new Error(result.error ?? `HTTP ${response.status}`);
+      const list = result.skills ?? [];
+      setSkills(list);
+      setSelected((current) =>
+        current && list.some((skill) => skill.filePath === current) ? current : (list[0]?.filePath ?? null),
+      );
+    } catch (loadError) {
+      if (request.signal.aborted || !skillsRequestRef.current.isCurrent(request.generation)) return;
+      setError(loadError instanceof Error ? loadError.message : String(loadError));
+    } finally {
+      if (skillsRequestRef.current.finish(request.generation)) setLoading(false);
+    }
+  }, [cwd]);
 
   useEffect(() => {
-    loadSkills();
-  }, [cwd]); // eslint-disable-line react-hooks/exhaustive-deps -- only project changes should reload skills.
+    const requests = skillsRequestRef.current;
+    setSkills([]);
+    setSelected(null);
+    void loadSkills();
+    return () => {
+      requests.cancel();
+    };
+  }, [loadSkills]);
 
   const toggle = useCallback(
     async (skill: Skill) => {
@@ -919,7 +931,7 @@ export function SkillsConfig({
               <AddSkillPanel
                 cwd={cwd}
                 onInstalled={() => {
-                  loadSkills();
+                  void loadSkills();
                 }}
               />
             ) : loading ? null : selectedSkill ? (
@@ -930,7 +942,7 @@ export function SkillsConfig({
                 onToggle={toggle}
                 toggling={toggling.has(selectedSkill.filePath)}
                 saveError={saveError}
-                onSaved={loadSkills}
+                onSaved={() => void loadSkills()}
               />
             ) : (
               <div
