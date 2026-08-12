@@ -1,13 +1,14 @@
 {
   "name": "@dlyzzt/pi-desktop",
   "version": "0.1.7",
+  "private": true,
   "description": "Pi Agent Desktop — pure Electron desktop app for the pi coding agent",
   "homepage": "https://github.com/DLYZZT/pi-desktop#readme",
   "license": "Apache-2.0",
   "productName": "Pi Agent Desktop",
   "author": "DLYZZT",
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.19.0 <23"
   },
   "main": "out/main/main.js",
   "scripts": {
@@ -32,6 +33,7 @@
     "check:desktop-security": "node scripts/check-desktop-security.mjs",
     "check:browser-i18n": "node scripts/check-browser-i18n.mjs",
     "check:production-artifacts": "node scripts/check-production-artifacts.mjs",
+    "check:dependencies": "node scripts/check-dependency-contract.mjs",
     "check:packaged-toolchains": "node scripts/verify-packaged-toolchains.mjs",
     "smoke": "node scripts/smoke-electron.mjs",
     "test:browser-electron": "node scripts/test-browser-electron.mjs",
@@ -79,7 +81,7 @@
     "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
     "@eslint/js": "^10.0.1",
     "@tailwindcss/postcss": "^4.2.2",
-    "@types/node": "^25",
+    "@types/node": "22.19.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/react-syntax-highlighter": "^15.5.13",
@@ -88,7 +90,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "43.1.1",
     "electron-builder": "26.0.12",
-    "esbuild": "^0.27.7",
+    "esbuild": "0.27.7",
     "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.1.1",

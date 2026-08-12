@@ -87,7 +87,17 @@ export type RpcClientOptions = {
 
 const DEFAULT_CALL_TIMEOUT_MS = 120_000;
 
-export function createRpcClient(port: MessagePort, options: RpcClientOptions = {}): PiRpc {
+type RpcClientPort = {
+  addEventListener(type: "message", listener: (event: MessageEvent) => void): void;
+  addEventListener(type: "close", listener: () => void): void;
+  removeEventListener(type: "message", listener: (event: MessageEvent) => void): void;
+  removeEventListener(type: "close", listener: () => void): void;
+  postMessage(message: unknown): void;
+  start(): void;
+  close(): void;
+};
+
+export function createRpcClient(port: RpcClientPort, options: RpcClientOptions = {}): PiRpc {
   const pending = new Map<string, Pending>();
   const subs = new Map<string, SubEntry>();
   const configuredTimeout = options.callTimeoutMs;

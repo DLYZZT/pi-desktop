@@ -43,6 +43,7 @@ test("Windows runs pure quality checks and Electron smoke without an Xvfb depend
     "format:check",
     "lint",
     "typecheck",
+    "check:dependencies",
     "check:contract",
     "check:pi-compat",
     "check:toolchain-contract",

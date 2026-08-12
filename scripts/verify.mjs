@@ -22,6 +22,7 @@ run("format check", "npm", ["run", "format:check"]);
 run("lint", "npm", ["run", "lint"]);
 run("typecheck (main/host)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.json"]);
 run("typecheck (renderer)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.renderer.json"]);
+run("dependency contract", "node", ["scripts/check-dependency-contract.mjs"]);
 run("unit tests", "npm", ["test"]);
 run("contract coverage", "node", ["scripts/check-contract-coverage.mjs"]);
 run("Pi 0.84 compatibility", "node", ["scripts/check-pi-084-compatibility.mjs"]);

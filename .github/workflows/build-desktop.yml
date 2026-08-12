@@ -57,6 +57,7 @@ jobs:
           npm run format:check
           npm run lint
           npm run typecheck
+          npm run check:dependencies
           npm run check:contract
           npm run check:pi-compat
           npm run check:toolchain-contract
