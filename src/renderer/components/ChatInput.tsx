@@ -28,6 +28,7 @@ import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import type { ModelCatalogStatus } from "@contract/types";
+import { processImageFileBatch } from "@/lib/image-file-processing";
 
 export interface AttachedImage {
   data: string; // base64, no prefix
@@ -276,6 +277,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     query: string;
     matches: FileIndexEntry[];
   } | null>(null);
+  const [imageAttachNotice, setImageAttachNotice] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -297,6 +299,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const draftKeyRef = useRef(draftKey);
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
+  const imageBatchGenerationRef = useRef(0);
+  const imageProcessingActiveRef = useRef(true);
+  const pendingImagePreviewsRef = useRef(new Set<string>());
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
 
@@ -364,23 +369,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       if (isStreaming) return;
       const imageFiles = files.filter((f) => f.type.startsWith("image/"));
       if (!imageFiles.length) return;
-      const newImages = await Promise.all(
-        imageFiles.map(
-          (file) =>
-            new Promise<AttachedImage>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => {
-                const result = reader.result as string;
-                // result is "data:<mime>;base64,<data>"
-                const base64 = result.split(",")[1];
-                resolve({ data: base64, mimeType: file.type, previewUrl: URL.createObjectURL(file) });
-              };
-              reader.onerror = reject;
-              reader.readAsDataURL(file);
-            }),
-        ),
-      );
-      setAttachedImages((prev) => [...prev, ...newImages]);
+      const generation = ++imageBatchGenerationRef.current;
+      const { images, failures } = await processImageFileBatch(imageFiles);
+      if (!imageProcessingActiveRef.current) {
+        images.forEach(revokeImagePreview);
+        return;
+      }
+      if (images.length > 0) {
+        images.forEach((image) => pendingImagePreviewsRef.current.add(image.previewUrl));
+        setAttachedImages((prev) => [...prev, ...images]);
+      }
+      if (generation === imageBatchGenerationRef.current) {
+        setImageAttachNotice(
+          failures.length === 0
+            ? null
+            : images.length > 0
+              ? `${failures.length} of ${imageFiles.length} images could not be attached.`
+              : "The selected images could not be attached.",
+        );
+      }
     },
     [isStreaming],
   );
@@ -449,7 +456,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   }, [value]);
 
   useEffect(() => {
+    for (const image of attachedImages) pendingImagePreviewsRef.current.delete(image.previewUrl);
+  }, [attachedImages]);
+
+  useEffect(() => {
+    const pendingPreviews = pendingImagePreviewsRef.current;
+    imageProcessingActiveRef.current = true;
     return () => {
+      imageProcessingActiveRef.current = false;
+      for (const previewUrl of pendingPreviews) URL.revokeObjectURL(previewUrl);
+      pendingPreviews.clear();
       attachedImagesRef.current.forEach(revokeImagePreview);
     };
   }, []);
@@ -1215,6 +1231,41 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             </svg>
             {t("retrying", "Retrying")} ({retryInfo.attempt}/{retryInfo.maxAttempts})…
             {retryInfo.errorMessage && <span style={{ opacity: 0.7, marginLeft: 4 }}>— {retryInfo.errorMessage}</span>}
+          </div>
+        )}
+        {imageAttachNotice && (
+          <div
+            role="alert"
+            style={{
+              marginBottom: 8,
+              padding: "5px 10px",
+              background: "color-mix(in srgb, var(--danger) 8%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--danger) 28%, var(--border))",
+              borderRadius: 6,
+              fontSize: 12,
+              color: "var(--danger)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <span>{imageAttachNotice}</span>
+            <button
+              type="button"
+              onClick={() => setImageAttachNotice(null)}
+              aria-label="Dismiss image attachment error"
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "inherit",
+                cursor: "pointer",
+                padding: 2,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
           </div>
         )}
         {compactResultText && (
