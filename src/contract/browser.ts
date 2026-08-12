@@ -627,6 +627,8 @@ export interface BrowserHeaderRule {
   operation: "set" | "remove" | "append";
   value?: string;
   secretRef?: string;
+  source?: "local" | "agent";
+  ownerSessionId?: string;
 }
 
 export interface BrowserProxyCredentialsInput {

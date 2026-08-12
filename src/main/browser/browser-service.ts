@@ -37,6 +37,7 @@ import { BrowserDownloadManager } from "./browser-download-manager.ts";
 import { BrowserError, asBrowserError } from "./browser-error.ts";
 import { BrowserHeaderRuleStore } from "./browser-header-rule-store.ts";
 import { validateHeaderRules } from "./browser-header-rules.ts";
+import { BrowserAgentHeaderRuleRegistry } from "./browser-agent-header-rule-registry.ts";
 import { BrowserNetworkInterceptor } from "./browser-network-interceptor.ts";
 import { BrowserPolicyEngine, createDisabledAdvancedRuntimePolicy } from "./browser-policy.ts";
 import { BrowserPersistentGrantStore } from "./browser-persistent-grant-store.ts";
@@ -80,6 +81,7 @@ export class BrowserService {
   private readonly tabs: BrowserTabManager;
   private readonly restoreStore: BrowserTabRestoreStore;
   private readonly headerStore: BrowserHeaderRuleStore;
+  private readonly agentHeaderRules = new BrowserAgentHeaderRuleRegistry();
   private readonly snippetStore: BrowserSnippetStore;
   private readonly interceptors = new Map<string, BrowserNetworkInterceptor>();
   private readonly downloads = new Map<string, BrowserDownloadManager>();
@@ -342,6 +344,7 @@ export class BrowserService {
   }
 
   revokeSession(sessionId: string): void {
+    this.clearAgentHeaderRules(sessionId);
     this.policy.revokeSession(sessionId);
     this.runtimeGrants.delete(sessionId);
     this.authorization.cancelSession(sessionId);
@@ -349,6 +352,7 @@ export class BrowserService {
   }
 
   setPersistentSessionPermission(sessionId: string, permission: BrowserPersistentSessionPermission): void {
+    this.clearAgentHeaderRules(sessionId);
     this.persistentGrants.set(sessionId, permission);
     this.policy.revokeSession(sessionId);
     this.runtimeGrants.delete(sessionId);
@@ -389,13 +393,14 @@ export class BrowserService {
     this.downloads.get(profileId)?.dispose();
     this.interceptors.delete(profileId);
     this.downloads.delete(profileId);
-    for (const rule of [
+    const removedAgentRules = this.agentHeaderRules.clearProfile(profileId).rules;
+    const removedRules = [
       ...this.headerStore.get(profileId, "request"),
       ...this.headerStore.get(profileId, "response"),
-    ]) {
-      if (rule.secretRef) this.secrets.remove(rule.secretRef);
-    }
+      ...removedAgentRules,
+    ];
     this.headerStore.clearProfile(profileId);
+    this.removeUnusedHeaderSecrets(removedRules);
     await this.profiles.delete(profileId);
     if (this.policy.getSettings().panel.defaultProfileId === profileId) {
       this.updateSettings({ panel: { defaultProfileId: DEFAULT_BROWSER_PROFILE_ID } });
@@ -429,7 +434,7 @@ export class BrowserService {
   setLocalHeaderRules(profileId: string, direction: BrowserHeaderRuleDirection, rules: BrowserHeaderRule[]): void {
     assertHeaderDirection(direction);
     this.assertAdvancedMode();
-    this.setHeaderRules(profileId, direction, rules);
+    this.setLocalRules(profileId, direction, rules);
   }
 
   storeHeaderSecret(value: string, existingRef?: string): string {
@@ -505,6 +510,7 @@ export class BrowserService {
     const settings = this.settingsStore.reset().settings;
     this.policy.updateSettings(settings);
     this.confirmations.clear();
+    this.agentHeaderRules.clear();
     this.headerStore.clear();
     this.secrets.clear();
     this.restoreStore.clear();
@@ -563,6 +569,7 @@ export class BrowserService {
   }
 
   onHostStopped(): void {
+    this.clearAgentHeaderRules();
     this.authorization.cancelAll();
     this.policy.revokeAll();
     this.runtimeGrants.clear();
@@ -584,6 +591,7 @@ export class BrowserService {
     if (this.restoreTimer) clearTimeout(this.restoreTimer);
     this.persistRestoreTabs();
     this.confirmations.clear();
+    this.clearAgentHeaderRules(undefined, false);
     this.authorization.cancelAll();
     this.policy.revokeAll();
     this.runtimeGrants.clear();
@@ -650,8 +658,8 @@ export class BrowserService {
 
   private applyStoredHeaderRules(profileId: string, interceptor: BrowserNetworkInterceptor): void {
     if (!this.policy.isAdvancedEnabled()) return;
-    interceptor.setRequestRules(this.headerStore.get(profileId, "request"));
-    interceptor.setResponseRules(this.headerStore.get(profileId, "response"));
+    interceptor.setRequestRules(this.combinedHeaderRules(profileId, "request"));
+    interceptor.setResponseRules(this.combinedHeaderRules(profileId, "response"));
   }
 
   private applySettingsSideEffects(before: ReturnType<BrowserPolicyEngine["getSettings"]>, after: typeof before): void {
@@ -664,6 +672,7 @@ export class BrowserService {
     if (!after.enabled) this.tabs.closeAll();
     if (!after.automation.enabled) this.tabs.revokeAgentActions();
     if (!this.policy.isAdvancedEnabled()) {
+      this.clearAgentHeaderRules();
       void this.tabs.clearAdvancedState();
       this.tabs.closeAll({ unsafeOnly: true });
       for (const interceptor of this.interceptors.values()) interceptor.clearAdvancedRules();
@@ -910,13 +919,13 @@ export class BrowserService {
       case "browser.setRequestHeaderRules": {
         const body = params as BrowserHostParams<"browser.setRequestHeaderRules">;
         this.assertAdvancedMode();
-        this.setHeaderRules(body.profileId, "request", body.rules);
+        this.setAgentRules(body.profileId, "request", body.sessionId, body.rules);
         return { ok: true } as BrowserHostResult<M>;
       }
       case "browser.setResponseHeaderRules": {
         const body = params as BrowserHostParams<"browser.setResponseHeaderRules">;
         this.assertAdvancedMode();
-        this.setHeaderRules(body.profileId, "response", body.rules);
+        this.setAgentRules(body.profileId, "response", body.sessionId, body.rules);
         return { ok: true } as BrowserHostResult<M>;
       }
       case "browser.sendCdpCommand": {
@@ -1025,23 +1034,74 @@ export class BrowserService {
     );
   }
 
-  private setHeaderRules(profileId: string, direction: "request" | "response", rules: BrowserHeaderRule[]): void {
+  private validateHeaderRuleInput(
+    profileId: string,
+    direction: BrowserHeaderRuleDirection,
+    rules: BrowserHeaderRule[],
+  ): BrowserHeaderRule[] {
     this.profiles.get(profileId);
     const advanced = this.policy.getAdvancedRuntimePolicy();
     const profile = this.profiles.get(profileId);
-    const validated = validateHeaderRules(
+    return validateHeaderRules(
       profileId,
       rules,
       direction,
       profile.mode === "unsafe" && advanced.enabled && advanced.removeSiteSecurityHeaders,
     );
+  }
+
+  private setLocalRules(profileId: string, direction: BrowserHeaderRuleDirection, rules: BrowserHeaderRule[]): void {
+    const previous = this.headerStore.get(profileId, direction);
+    const validated = this.validateHeaderRuleInput(profileId, direction, rules)
+      .filter((rule) => !rule.secretRef || this.secrets.has(rule.secretRef))
+      .map((rule) => ({ ...rule, source: "local" as const, ownerSessionId: undefined }));
+    this.headerStore.set(profileId, direction, validated);
+    this.applyHeaderRuleScope(profileId, direction);
+    this.removeUnusedHeaderSecrets(previous);
+  }
+
+  private setAgentRules(
+    profileId: string,
+    direction: BrowserHeaderRuleDirection,
+    sessionId: string,
+    rules: BrowserHeaderRule[],
+  ): void {
+    const validated = this.validateHeaderRuleInput(profileId, direction, rules).filter(
+      (rule) => !rule.secretRef || this.secrets.has(rule.secretRef),
+    );
+    const previous = this.agentHeaderRules.set(profileId, direction, sessionId, validated);
+    this.applyHeaderRuleScope(profileId, direction);
+    this.removeUnusedHeaderSecrets(previous);
+  }
+
+  private combinedHeaderRules(profileId: string, direction: BrowserHeaderRuleDirection): BrowserHeaderRule[] {
+    return [...this.headerStore.get(profileId, direction), ...this.agentHeaderRules.get(profileId, direction)];
+  }
+
+  private applyHeaderRuleScope(profileId: string, direction: BrowserHeaderRuleDirection): void {
     const interceptor =
       this.interceptors.get(profileId) ?? (this.profiles.getSession(profileId), this.interceptors.get(profileId));
     if (!interceptor) throw new BrowserError("CAPABILITY_DISABLED", "Browser Profile session is unavailable");
-    if (direction === "request") interceptor.setRequestRules(validated);
-    else interceptor.setResponseRules(validated);
-    const persistable = validated.filter((rule) => !rule.secretRef || this.secrets.has(rule.secretRef));
-    this.headerStore.set(profileId, direction, persistable);
+    const combined = this.combinedHeaderRules(profileId, direction);
+    if (direction === "request") interceptor.setRequestRules(combined);
+    else interceptor.setResponseRules(combined);
+  }
+
+  private clearAgentHeaderRules(sessionId?: string, refreshInterceptors = true): void {
+    const removed = sessionId ? this.agentHeaderRules.clearSession(sessionId) : this.agentHeaderRules.clear();
+    if (refreshInterceptors && this.policy.isAdvancedEnabled()) {
+      for (const scope of removed.scopes) {
+        if (this.interceptors.has(scope.profileId)) this.applyHeaderRuleScope(scope.profileId, scope.direction);
+      }
+    }
+    this.removeUnusedHeaderSecrets(removed.rules);
+  }
+
+  private removeUnusedHeaderSecrets(rules: readonly BrowserHeaderRule[]): void {
+    const refs = new Set(rules.flatMap((rule) => (rule.secretRef ? [rule.secretRef] : [])));
+    for (const ref of refs) {
+      if (!this.headerStore.hasSecretRef(ref) && !this.agentHeaderRules.hasSecretRef(ref)) this.secrets.remove(ref);
+    }
   }
 
   private assertAdvancedMode(): void {
