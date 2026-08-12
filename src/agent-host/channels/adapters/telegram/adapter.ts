@@ -418,6 +418,10 @@ export class TelegramAdapter implements ChannelAdapter {
                 this.pendingMedia.set(envelope.id, update);
                 try {
                   await onInbound(envelope);
+                } catch (error) {
+                  context.log(
+                    `Telegram 入站消息处理失败（event ${eventId.slice(0, 128)}）：${safeChannelError(error)}`,
+                  );
                 } finally {
                   this.pendingMedia.delete(envelope.id);
                 }

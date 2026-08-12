@@ -131,6 +131,8 @@ export class WeixinAdapter implements ChannelAdapter {
             this.pendingMedia.set(envelope.id, message);
             try {
               await onInbound(envelope);
+            } catch (error) {
+              log(`微信入站消息处理失败（event ${eventId.slice(0, 128)}）：${safeChannelError(error)}`);
             } finally {
               this.pendingMedia.delete(envelope.id);
             }

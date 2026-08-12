@@ -208,6 +208,54 @@ test("runtime checkpoints update offset and suppresses replay after Host restart
   assert.deepEqual(offsets, [undefined, 101, 101]);
 });
 
+test("runtime isolates a failed inbound turn and advances past the poison update", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const controller = new globalThis.AbortController();
+  let updateCalls = 0;
+  globalThis.fetch = async (url) => {
+    const endpoint = String(url);
+    if (endpoint.endsWith("/getMe")) return jsonResponse(botResult());
+    if (endpoint.endsWith("/getUpdates")) {
+      updateCalls += 1;
+      if (updateCalls === 1) {
+        return jsonResponse({ ok: true, result: [dmUpdate(401, "poison"), dmUpdate(402, "still delivered")] });
+      }
+      controller.abort();
+      return jsonResponse({ ok: true, result: [] });
+    }
+    throw new Error(`Unexpected Telegram endpoint: ${endpoint}`);
+  };
+
+  const state = new ChannelStateStore(createStatePath());
+  const inbound = [];
+  const logs = [];
+  await new TelegramAdapter(async () => controller.abort()).start({
+    account: account(),
+    secret: { token: "token", providerAccountId: "42", baseUrl: "https://telegram.example" },
+    signal: controller.signal,
+    state,
+    onInbound: async (envelope) => {
+      inbound.push(envelope.id);
+      if (envelope.id === "401") throw new Error("model rejected Bearer sensitive-token");
+      controller.abort();
+    },
+    onStatus: () => undefined,
+    log: (message) => logs.push(message),
+  });
+
+  assert.deepEqual(inbound, ["401", "402"]);
+  assert.equal(state.isProcessed("telegram-runtime", "401"), true);
+  assert.equal(state.isProcessed("telegram-runtime", "402"), true);
+  assert.equal(state.getCursor("telegram-runtime"), "403");
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /Telegram 入站消息处理失败.*401.*Bearer \[REDACTED\]/);
+  assert.doesNotMatch(logs[0], /sensitive-token/);
+});
+
 test("runtime keeps provider media references private while allowing policy-approved download", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => {

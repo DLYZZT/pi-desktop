@@ -108,6 +108,58 @@ test("runtime checkpoints cursor and suppresses duplicate inbound events", async
   assert.equal(state.isProcessed("wx-runtime", "101"), true);
 });
 
+test("runtime isolates a failed inbound turn and checkpoints the following message", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const messages = [
+    {
+      message_id: 401,
+      message_type: 1,
+      from_user_id: "user-poison",
+      item_list: [{ type: 1, text_item: { text: "poison" } }],
+    },
+    {
+      message_id: 402,
+      message_type: 1,
+      from_user_id: "user-next",
+      item_list: [{ type: 1, text_item: { text: "still delivered" } }],
+    },
+  ];
+  globalThis.fetch = async (url) =>
+    String(url).includes("getupdates")
+      ? jsonResponse({ ret: 0, msgs: messages, get_updates_buf: "cursor-after-poison" })
+      : jsonResponse();
+
+  const controller = new globalThis.AbortController();
+  const state = stateStore();
+  const inbound = [];
+  const logs = [];
+  await new WeixinAdapter(async () => controller.abort()).start({
+    account: account(),
+    secret: { token: "secret", providerAccountId: "provider", baseUrl: "https://example.test" },
+    signal: controller.signal,
+    state,
+    onInbound: async (envelope) => {
+      inbound.push(envelope.id);
+      if (envelope.id === "401") throw new Error("model rejected?token=sensitive-token");
+      controller.abort();
+    },
+    onStatus: () => undefined,
+    log: (message) => logs.push(message),
+  });
+
+  assert.deepEqual(inbound, ["401", "402"]);
+  assert.equal(state.isProcessed("wx-runtime", "401"), true);
+  assert.equal(state.isProcessed("wx-runtime", "402"), true);
+  assert.equal(state.getCursor("wx-runtime"), "cursor-after-poison");
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /微信入站消息处理失败.*401.*token=\[REDACTED\]/);
+  assert.doesNotMatch(logs[0], /sensitive-token/);
+});
+
 test("runtime downloads Weixin media only through the private adapter capability", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => {
