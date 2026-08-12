@@ -1,13 +1,17 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 
-const output = path.join(import.meta.dirname, "../../.artifacts/test-modules", `main-protocol-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const {
+  HTML_PREVIEW_MAX_ENTRIES,
+  HTML_PREVIEW_TTL_MS,
+  createHtmlPreviewUrl,
+  getProtocolHandler,
+  handleAppProtocol,
+  pruneHtmlPreviews,
+  releaseHtmlPreviewsForOwner,
+} = await importTestBundle("src/main/protocol", {
   stdin: {
     contents: [
       'export { HTML_PREVIEW_MAX_ENTRIES, HTML_PREVIEW_TTL_MS, createHtmlPreviewUrl, handleAppProtocol, pruneHtmlPreviews, releaseHtmlPreviewsForOwner } from "./protocol.ts";',
@@ -17,11 +21,6 @@ await build({
     sourcefile: "main-protocol-test-entry.ts",
     loader: "ts",
   },
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  logLevel: "silent",
   plugins: [
     {
       name: "electron-protocol-mock",
@@ -43,16 +42,6 @@ await build({
     },
   ],
 });
-
-const {
-  HTML_PREVIEW_MAX_ENTRIES,
-  HTML_PREVIEW_TTL_MS,
-  createHtmlPreviewUrl,
-  getProtocolHandler,
-  handleAppProtocol,
-  pruneHtmlPreviews,
-  releaseHtmlPreviewsForOwner,
-} = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 test("HTML preview assets stay inside the source document directory", async () => {
   const loaded = [];

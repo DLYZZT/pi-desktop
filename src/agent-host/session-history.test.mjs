@@ -1,24 +1,12 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
-
-const output = path.join(import.meta.dirname, "../../.artifacts/test-modules", `session-history-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  entryPoints: [path.join(import.meta.dirname, "session-history.ts")],
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
-});
-const { buildSessionHistoryPage, decodeHistoryCursor, readSessionEntryContent, StaleHistoryCursorError } = await import(
-  `${pathToFileURL(output).href}?v=${Date.now()}`
-);
+const { buildSessionHistoryPage, decodeHistoryCursor, readSessionEntryContent, StaleHistoryCursorError } =
+  await importTestBundle("src/agent-host/session-history", {
+    packages: "external",
+    entryPoints: [path.join(import.meta.dirname, "session-history.ts")],
+  });
 
 const timestamp = "2026-08-06T00:00:00.000Z";
 

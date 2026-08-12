@@ -1,32 +1,22 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { build } from "esbuild";
 
-const output = path.join(import.meta.dirname, "../../../.artifacts/test-modules", `form-controls-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  stdin: {
-    contents: 'export { Check, Field, NumInput, SecretTextInput, Select, TextInput } from "./form-controls.tsx";',
-    resolveDir: import.meta.dirname,
-    sourcefile: "form-controls-test-entry.tsx",
-    loader: "tsx",
+const { Check, Field, NumInput, SecretTextInput, Select, TextInput } = await importTestBundle(
+  "src/renderer/components/form-controls",
+  {
+    stdin: {
+      contents: 'export { Check, Field, NumInput, SecretTextInput, Select, TextInput } from "./form-controls.tsx";',
+      resolveDir: import.meta.dirname,
+      sourcefile: "form-controls-test-entry.tsx",
+      loader: "tsx",
+    },
+    tsconfig: path.join(import.meta.dirname, "../../../tsconfig.renderer.json"),
+    external: ["react", "react-dom", "react-dom/*"],
   },
-  outfile: output,
-  tsconfig: path.join(import.meta.dirname, "../../../tsconfig.renderer.json"),
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  external: ["react", "react-dom", "react-dom/*"],
-  logLevel: "silent",
-});
-
-const { Check, Field, NumInput, SecretTextInput, Select, TextInput } = await import(
-  `${pathToFileURL(output).href}?v=${Date.now()}`
 );
 
 function assertFieldAssociation(Control, props, tagName) {

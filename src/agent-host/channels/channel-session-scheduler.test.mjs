@@ -1,27 +1,15 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
-import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
-
-const output = path.join(import.meta.dirname, "../../../.artifacts/test-modules", `channel-session-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const { AgentSessionWrapper } = await importTestBundle("src/agent-host/channels/channel-session-scheduler", {
+  packages: "external",
   stdin: {
     contents: 'export { AgentSessionWrapper } from "../rpc-manager.ts";',
     resolveDir: import.meta.dirname,
     sourcefile: "channel-session-test-entry.ts",
     loader: "ts",
   },
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
 });
-const { AgentSessionWrapper } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 test("UI prompts and messaging-channel turns share one serial session scheduler", async (t) => {
   const order = [];

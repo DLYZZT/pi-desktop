@@ -1,26 +1,11 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 
-const output = path.join(
-  import.meta.dirname,
-  "../../../.artifacts/test-modules",
-  `active-session-live-sync-${process.pid}.mjs`,
-);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const { subscribeActiveSessionLiveSync } = await importTestBundle("src/renderer/hooks/active-session-live-sync", {
   entryPoints: [path.join(import.meta.dirname, "active-session-live-sync.ts")],
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  logLevel: "silent",
 });
-
-const { subscribeActiveSessionLiveSync } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 test("an idle active session subscribes before local prompts and refreshes only for its external changes", async () => {
   const calls = [];

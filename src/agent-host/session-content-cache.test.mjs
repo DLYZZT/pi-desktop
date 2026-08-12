@@ -1,25 +1,16 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 
-const root = path.resolve(import.meta.dirname, "..", "..");
-const output = path.join(root, ".artifacts", "test-modules", `session-content-cache-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  entryPoints: [path.join(import.meta.dirname, "session-content-cache.ts")],
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
-});
-const { getSessionContentSnapshot, invalidateSessionContent } = await import(
-  `${pathToFileURL(output).href}?v=${Date.now()}`
+const { getSessionContentSnapshot, invalidateSessionContent } = await importTestBundle(
+  "src/agent-host/session-content-cache",
+  {
+    packages: "external",
+    entryPoints: [path.join(import.meta.dirname, "session-content-cache.ts")],
+  },
 );
 
 test("content snapshots reuse stable files and invalidate on append or explicit removal", () => {

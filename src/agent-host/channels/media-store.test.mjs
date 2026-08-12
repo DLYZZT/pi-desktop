@@ -1,32 +1,22 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { readFile, stat, symlink, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
 import { createDeferred, createManualScheduler } from "#test-timing";
-import { build } from "esbuild";
-
-const output = path.join(import.meta.dirname, "../../../.artifacts/test-modules", `channel-media-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  stdin: {
-    contents:
-      'export { ChannelMediaStore, CHANNEL_MEDIA_MAX_ATTACHMENTS, CHANNEL_MEDIA_MAX_BYTES, CHANNEL_MEDIA_TTL_MS } from "./media-store.ts";',
-    resolveDir: import.meta.dirname,
-    sourcefile: "channel-media-test-entry.ts",
-    loader: "ts",
-  },
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
-});
 const { ChannelMediaStore, CHANNEL_MEDIA_MAX_ATTACHMENTS, CHANNEL_MEDIA_MAX_BYTES, CHANNEL_MEDIA_TTL_MS } =
-  await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
+  await importTestBundle("src/agent-host/channels/media-store", {
+    packages: "external",
+    stdin: {
+      contents:
+        'export { ChannelMediaStore, CHANNEL_MEDIA_MAX_ATTACHMENTS, CHANNEL_MEDIA_MAX_BYTES, CHANNEL_MEDIA_TTL_MS } from "./media-store.ts";',
+      resolveDir: import.meta.dirname,
+      sourcefile: "channel-media-test-entry.ts",
+      loader: "ts",
+    },
+  });
 
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
 

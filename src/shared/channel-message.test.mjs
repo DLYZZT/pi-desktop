@@ -1,22 +1,12 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
-
-const output = path.join(import.meta.dirname, "../../.artifacts/test-modules", `channel-message-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  entryPoints: [path.join(import.meta.dirname, "channel-message.ts")],
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  logLevel: "silent",
-});
-const { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelAttachmentCopyText, channelPromptText } = await import(
-  `${pathToFileURL(output).href}?v=${Date.now()}`
+const { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelAttachmentCopyText, channelPromptText } = await importTestBundle(
+  "src/shared/channel-message",
+  {
+    entryPoints: [path.join(import.meta.dirname, "channel-message.ts")],
+  },
 );
 
 test("attachment-only prompts use a non-empty metadata-free text block", () => {

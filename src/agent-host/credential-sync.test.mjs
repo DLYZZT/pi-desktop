@@ -1,9 +1,7 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
 let modulePromise;
@@ -11,21 +9,11 @@ let modulePromise;
 async function loadCredentialSyncModule() {
   if (modulePromise) return modulePromise;
   modulePromise = (async () => {
-    const outputDirectory = path.join(root, ".artifacts", "test-modules");
-    mkdirSync(outputDirectory, { recursive: true });
-    const outputFile = path.join(outputDirectory, `credential-sync-${process.pid}.mjs`);
-    await build({
+    return importTestBundle("src/agent-host/credential-sync", {
+      packages: "external",
       absWorkingDir: root,
       entryPoints: ["src/agent-host/credential-sync.ts"],
-      outfile: outputFile,
-      bundle: true,
-      format: "esm",
-      platform: "node",
-      packages: "external",
-      sourcemap: false,
-      logLevel: "silent",
     });
-    return import(`${pathToFileURL(outputFile).href}?v=${Date.now()}`);
   })();
   return modulePromise;
 }

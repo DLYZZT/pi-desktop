@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { assertNoLegacyTestBundleUsage } from "./test-bundle.mjs";
 
 const defaultTimeoutMs = 120_000;
 
@@ -41,6 +42,7 @@ export function runTests(root, options = {}) {
   const spawn = options.spawnSync ?? spawnSync;
   const fileSystem = options.fileSystem ?? fs;
   const command = createTestCommand({ timeoutMs: parseTestTimeout(options.timeout ?? process.env.PI_TEST_TIMEOUT_MS) });
+  assertNoLegacyTestBundleUsage(root);
   cleanLegacyTestModules(root, fileSystem);
   try {
     const result = spawn(command.command, command.args, {

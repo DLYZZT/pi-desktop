@@ -1,35 +1,20 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { build } from "esbuild";
 
-const output = path.join(
-  import.meta.dirname,
-  "../../../.artifacts/test-modules",
-  `toolchains-config-${process.pid}.mjs`,
-);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const { ToolchainStateView } = await importTestBundle("src/renderer/components/toolchains-config", {
   stdin: {
     contents: 'export { ToolchainStateView } from "./ToolchainsConfig.tsx";',
     resolveDir: import.meta.dirname,
     sourcefile: "toolchains-config-test-entry.tsx",
     loader: "tsx",
   },
-  outfile: output,
   tsconfig: path.join(import.meta.dirname, "../../../tsconfig.renderer.json"),
-  bundle: true,
-  format: "esm",
-  platform: "node",
   external: ["react", "react-dom", "react-dom/*"],
-  logLevel: "silent",
 });
-
-const { ToolchainStateView } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 function capability(capability, overrides = {}) {
   return {

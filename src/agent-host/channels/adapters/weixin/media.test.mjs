@@ -1,36 +1,23 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import { createCipheriv } from "node:crypto";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 import { encode, isSilk } from "silk-wasm";
-
-const output = path.join(
-  import.meta.dirname,
-  "../../../../../.artifacts/test-modules",
-  `weixin-media-${process.pid}.mjs`,
-);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  stdin: {
-    contents: 'export { downloadWeixinAttachments, sendWeixinAttachment } from "./media.ts";',
-    resolveDir: import.meta.dirname,
-    sourcefile: "weixin-media-test-entry.ts",
-    loader: "ts",
+const { downloadWeixinAttachments, sendWeixinAttachment } = await importTestBundle(
+  "src/agent-host/channels/adapters/weixin/media",
+  {
+    packages: "external",
+    stdin: {
+      contents: 'export { downloadWeixinAttachments, sendWeixinAttachment } from "./media.ts";',
+      resolveDir: import.meta.dirname,
+      sourcefile: "weixin-media-test-entry.ts",
+      loader: "ts",
+    },
   },
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
-});
-const { downloadWeixinAttachments, sendWeixinAttachment } = await import(
-  `${pathToFileURL(output).href}?v=${Date.now()}`
 );
 
 function encrypt(data, key) {

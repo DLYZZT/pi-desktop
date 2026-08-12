@@ -1,16 +1,13 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
-
-const output = path.join(import.meta.dirname, "../../../.artifacts/test-modules", `channel-manager-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const { AdapterRegistry, ChannelManager } = await importTestBundle("src/agent-host/channels/channel-manager", {
+  packages: "external",
   stdin: {
     contents: [
       'export { AdapterRegistry } from "./adapter-registry.ts";',
@@ -20,14 +17,7 @@ await build({
     sourcefile: "channel-manager-test-entry.ts",
     loader: "ts",
   },
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
 });
-const { AdapterRegistry, ChannelManager } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 function createFakeAdapter(id = "weixin") {
   let inbound;

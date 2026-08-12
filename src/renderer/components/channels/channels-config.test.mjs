@@ -1,37 +1,22 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { build } from "esbuild";
-
-const output = path.join(
-  import.meta.dirname,
-  "../../../../.artifacts/test-modules",
-  `channels-config-${process.pid}.mjs`,
-);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  stdin: {
-    contents:
-      'export { AccountCard, FEISHU_PERMISSION_IMPORT_JSON, FeishuCredentialDialog, LoginDialog, TelegramTokenDialog } from "./ChannelsConfig.tsx";',
-    resolveDir: import.meta.dirname,
-    sourcefile: "channels-config-test-entry.tsx",
-    loader: "tsx",
-  },
-  outfile: output,
-  tsconfig: path.join(import.meta.dirname, "../../../../tsconfig.renderer.json"),
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  external: ["react", "react-dom", "react-dom/*", "@rc-component/qrcode"],
-  logLevel: "silent",
-});
 
 const { AccountCard, FEISHU_PERMISSION_IMPORT_JSON, FeishuCredentialDialog, LoginDialog, TelegramTokenDialog } =
-  await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
+  await importTestBundle("src/renderer/components/channels/channels-config", {
+    stdin: {
+      contents:
+        'export { AccountCard, FEISHU_PERMISSION_IMPORT_JSON, FeishuCredentialDialog, LoginDialog, TelegramTokenDialog } from "./ChannelsConfig.tsx";',
+      resolveDir: import.meta.dirname,
+      sourcefile: "channels-config-test-entry.tsx",
+      loader: "tsx",
+    },
+    tsconfig: path.join(import.meta.dirname, "../../../../tsconfig.renderer.json"),
+    external: ["react", "react-dom", "react-dom/*", "@rc-component/qrcode"],
+  });
 
 test("Telegram token dialog renders connection failures without closing", () => {
   const html = renderToStaticMarkup(

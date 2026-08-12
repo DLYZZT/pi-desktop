@@ -1,36 +1,25 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 
-const output = path.join(
-  import.meta.dirname,
-  "../../../../../.artifacts/test-modules",
-  `weixin-adapter-runtime-${process.pid}.mjs`,
-);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  stdin: {
-    contents: [
-      'export { WeixinAdapter, delay } from "./adapter.ts";',
-      'export { ChannelStateStore } from "../../state-store.ts";',
-    ].join("\n"),
-    resolveDir: import.meta.dirname,
-    sourcefile: "weixin-adapter-runtime-test-entry.ts",
-    loader: "ts",
+const { ChannelStateStore, WeixinAdapter, delay } = await importTestBundle(
+  "src/agent-host/channels/adapters/weixin/adapter-runtime",
+  {
+    packages: "external",
+    stdin: {
+      contents: [
+        'export { WeixinAdapter, delay } from "./adapter.ts";',
+        'export { ChannelStateStore } from "../../state-store.ts";',
+      ].join("\n"),
+      resolveDir: import.meta.dirname,
+      sourcefile: "weixin-adapter-runtime-test-entry.ts",
+      loader: "ts",
+    },
   },
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
-});
-
-const { ChannelStateStore, WeixinAdapter, delay } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
+);
 
 class TrackedAbortSignal {
   aborted = false;

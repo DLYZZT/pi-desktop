@@ -1,26 +1,18 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { build } from "esbuild";
 
-const output = path.join(import.meta.dirname, "../../../.artifacts/test-modules", `message-view-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const { MessageView } = await importTestBundle("src/renderer/components/message-view", {
   stdin: {
     contents: 'export { MessageView } from "./MessageView.tsx";',
     resolveDir: import.meta.dirname,
     sourcefile: "message-view-test-entry.tsx",
     loader: "tsx",
   },
-  outfile: output,
   tsconfig: path.join(import.meta.dirname, "../../../tsconfig.renderer.json"),
-  bundle: true,
-  format: "esm",
-  platform: "node",
   external: ["react", "react-dom", "react-dom/*"],
   plugins: [
     {
@@ -38,10 +30,7 @@ await build({
       },
     },
   ],
-  logLevel: "silent",
 });
-
-const { MessageView } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 test("MessageView is memoized to preserve unchanged historical messages", () => {
   assert.equal(MessageView.$$typeof, Symbol.for("react.memo"));

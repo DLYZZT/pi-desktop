@@ -1,9 +1,7 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 import { CredentialSynchronizationError } from "@earendil-works/pi-coding-agent";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
@@ -12,21 +10,11 @@ let modulePromise;
 async function loadAuthLoginModule() {
   if (modulePromise) return modulePromise;
   modulePromise = (async () => {
-    const outputDirectory = path.join(root, ".artifacts", "test-modules");
-    mkdirSync(outputDirectory, { recursive: true });
-    const outputFile = path.join(outputDirectory, `auth-login-${process.pid}.mjs`);
-    await build({
+    return importTestBundle("src/agent-host/auth-login", {
+      packages: "external",
       absWorkingDir: root,
       entryPoints: ["src/agent-host/auth-login.ts"],
-      outfile: outputFile,
-      bundle: true,
-      format: "esm",
-      platform: "node",
-      packages: "external",
-      sourcemap: false,
-      logLevel: "silent",
     });
-    return import(`${pathToFileURL(outputFile).href}?v=${Date.now()}`);
   })();
   return modulePromise;
 }

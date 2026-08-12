@@ -1,28 +1,17 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL, URLSearchParams } from "node:url";
+import { URLSearchParams } from "node:url";
 import { defaultHttpInstance } from "@larksuiteoapi/node-sdk";
-import { build } from "esbuild";
 
-const output = path.join(
-  import.meta.dirname,
-  "../../../../../.artifacts/test-modules",
-  `feishu-app-registration-${process.pid}.mjs`,
+const { FeishuAppRegistration, feishuScanAccountId } = await importTestBundle(
+  "src/agent-host/channels/adapters/feishu/app-registration",
+  {
+    packages: "external",
+    entryPoints: [path.join(import.meta.dirname, "app-registration.ts")],
+  },
 );
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  entryPoints: [path.join(import.meta.dirname, "app-registration.ts")],
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
-});
-
-const { FeishuAppRegistration, feishuScanAccountId } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 function deferred() {
   let resolve;

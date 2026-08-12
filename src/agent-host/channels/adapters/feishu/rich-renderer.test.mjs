@@ -1,35 +1,19 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdirSync } from "node:fs";
-import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
-
-const output = path.join(
-  import.meta.dirname,
-  "../../../../../.artifacts/test-modules",
-  `feishu-rich-renderer-${process.pid}.mjs`,
-);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  stdin: {
-    contents:
-      'export { buildFeishuStreamingCard, FEISHU_STREAM_ELEMENT_ID, FeishuRichMessageBuilder, sanitizeFeishuMarkdown } from "./rich-renderer.ts";',
-    resolveDir: import.meta.dirname,
-    sourcefile: "feishu-rich-renderer-test-entry.ts",
-    loader: "ts",
-  },
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
-});
 
 const { buildFeishuStreamingCard, FEISHU_STREAM_ELEMENT_ID, FeishuRichMessageBuilder, sanitizeFeishuMarkdown } =
-  await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
+  await importTestBundle("src/agent-host/channels/adapters/feishu/rich-renderer", {
+    packages: "external",
+    stdin: {
+      contents:
+        'export { buildFeishuStreamingCard, FEISHU_STREAM_ELEMENT_ID, FeishuRichMessageBuilder, sanitizeFeishuMarkdown } from "./rich-renderer.ts";',
+      resolveDir: import.meta.dirname,
+      sourcefile: "feishu-rich-renderer-test-entry.ts",
+      loader: "ts",
+    },
+  });
 
 test("builds a JSON 2.0 streaming card with a stable Markdown element", () => {
   const card = buildFeishuStreamingCard();

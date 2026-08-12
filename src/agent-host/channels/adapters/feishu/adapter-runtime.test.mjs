@@ -1,19 +1,21 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
 import { createManualScheduler } from "#test-timing";
-import { build } from "esbuild";
 
-const output = path.join(
-  import.meta.dirname,
-  "../../../../../.artifacts/test-modules",
-  `feishu-adapter-runtime-${process.pid}.mjs`,
-);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const {
+  ChannelStateStore,
+  FeishuAdapter,
+  FeishuApiError,
+  feishuReconnectDelay,
+  isFatalFeishuConnectionError,
+  normalizeFeishuEvent,
+  normalizeFeishuMenuEvent,
+} = await importTestBundle("src/agent-host/channels/adapters/feishu/adapter-runtime", {
+  packages: "external",
   stdin: {
     contents: [
       'export { FeishuAdapter, feishuReconnectDelay, isFatalFeishuConnectionError, normalizeFeishuEvent, normalizeFeishuMenuEvent } from "./adapter.ts";',
@@ -24,23 +26,7 @@ await build({
     sourcefile: "feishu-adapter-runtime-test-entry.ts",
     loader: "ts",
   },
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
 });
-
-const {
-  ChannelStateStore,
-  FeishuAdapter,
-  FeishuApiError,
-  feishuReconnectDelay,
-  isFatalFeishuConnectionError,
-  normalizeFeishuEvent,
-  normalizeFeishuMenuEvent,
-} = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 function account(overrides = {}) {
   const now = new Date().toISOString();

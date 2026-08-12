@@ -1,12 +1,6 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
-import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
-
-const output = path.join(import.meta.dirname, "../../.artifacts/test-modules", `file-access-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
 
 const sessionReaderMock = `
 let calls = 0;
@@ -31,7 +25,14 @@ export function releaseFirstSessionScan(sessions) {
 }
 `;
 
-await build({
+const {
+  getAllowedFileRoots,
+  getAllowedRootsCache,
+  getSessionScanCount,
+  invalidateAllowedRootsCache,
+  releaseFirstSessionScan,
+  setAllowedRootsWatcherHealthy,
+} = await importTestBundle("src/agent-host/file-access-cache", {
   stdin: {
     contents: `
       export { getAllowedFileRoots } from "./file-access.ts";
@@ -46,11 +47,6 @@ await build({
     sourcefile: "file-access-cache-test-entry.ts",
     loader: "ts",
   },
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  logLevel: "silent",
   plugins: [
     {
       name: "session-reader-mock",
@@ -71,15 +67,6 @@ await build({
     },
   ],
 });
-
-const {
-  getAllowedFileRoots,
-  getAllowedRootsCache,
-  getSessionScanCount,
-  invalidateAllowedRootsCache,
-  releaseFirstSessionScan,
-  setAllowedRootsWatcherHealthy,
-} = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 test("an invalidation during a roots scan retries and never caches the stale snapshot", async () => {
   setAllowedRootsWatcherHealthy(true);

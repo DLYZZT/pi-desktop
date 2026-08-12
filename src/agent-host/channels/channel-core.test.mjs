@@ -1,14 +1,20 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
-
-const output = path.join(import.meta.dirname, "../../../.artifacts/test-modules", `channel-core-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const {
+  ChannelConfigStore,
+  ChannelStateStore,
+  LaneScheduler,
+  splitChannelText,
+  evaluateInboundPolicy,
+  parseChannelCommand,
+  redactChannelValue,
+  safeChannelError,
+} = await importTestBundle("src/agent-host/channels/channel-core", {
+  packages: "external",
   stdin: {
     contents: [
       'export { ChannelConfigStore } from "./config-store.ts";',
@@ -23,23 +29,7 @@ await build({
     sourcefile: "channel-core-test-entry.ts",
     loader: "ts",
   },
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
 });
-const {
-  ChannelConfigStore,
-  ChannelStateStore,
-  LaneScheduler,
-  splitChannelText,
-  evaluateInboundPolicy,
-  parseChannelCommand,
-  redactChannelValue,
-  safeChannelError,
-} = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 function account(overrides = {}) {
   const now = new Date().toISOString();

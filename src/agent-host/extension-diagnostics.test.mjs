@@ -1,26 +1,14 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
-const outputDirectory = path.join(root, ".artifacts", "test-modules");
-mkdirSync(outputDirectory, { recursive: true });
-const outputFile = path.join(outputDirectory, `extension-diagnostics-${process.pid}.mjs`);
-await build({
+const { projectExtensionDiagnostics } = await importTestBundle("src/agent-host/extension-diagnostics", {
+  packages: "external",
   absWorkingDir: root,
   entryPoints: ["src/agent-host/extension-diagnostics.ts"],
-  outfile: outputFile,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  sourcemap: false,
-  logLevel: "silent",
 });
-const { projectExtensionDiagnostics } = await import(`${pathToFileURL(outputFile).href}?v=${Date.now()}`);
 
 test("Pi runtime extension diagnostics remain non-fatal and safe for the status UI", () => {
   const statuses = projectExtensionDiagnostics([

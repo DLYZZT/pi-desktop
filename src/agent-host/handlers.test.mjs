@@ -1,12 +1,11 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { CredentialSynchronizationError } from "@earendil-works/pi-coding-agent";
-import { build } from "esbuild";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
 const isolatedAgentDirectory = mkdtempSync(path.join(tmpdir(), "pi-handler-agent-"));
@@ -19,21 +18,11 @@ let modulePromise;
 async function loadHandlersModule() {
   if (modulePromise) return modulePromise;
   modulePromise = (async () => {
-    const outputDirectory = path.join(root, ".artifacts", "test-modules");
-    mkdirSync(outputDirectory, { recursive: true });
-    const outputFile = path.join(outputDirectory, `handlers-${process.pid}.mjs`);
-    await build({
+    return importTestBundle("src/agent-host/handlers", {
+      packages: "external",
       absWorkingDir: root,
       entryPoints: ["src/agent-host/handlers.ts"],
-      outfile: outputFile,
-      bundle: true,
-      format: "esm",
-      platform: "node",
-      packages: "external",
-      sourcemap: false,
-      logLevel: "silent",
     });
-    return import(`${pathToFileURL(outputFile).href}?v=${Date.now()}`);
   })();
   return modulePromise;
 }

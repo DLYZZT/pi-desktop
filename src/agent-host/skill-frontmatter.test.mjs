@@ -1,24 +1,13 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 
-const output = path.join(import.meta.dirname, "../../.artifacts/test-modules", `skill-frontmatter-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const { updateSkillModelInvocation } = await importTestBundle("src/agent-host/skill-frontmatter", {
+  packages: "external",
   absWorkingDir: path.resolve(import.meta.dirname, "../.."),
   entryPoints: ["src/agent-host/skill-frontmatter.ts"],
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
 });
-
-const { updateSkillModelInvocation } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 test("removes only the frontmatter invocation key and preserves the same line in the body", () => {
   const content = [

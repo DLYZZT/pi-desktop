@@ -1,35 +1,20 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { build } from "esbuild";
 
-const output = path.join(
-  import.meta.dirname,
-  "../../../../.artifacts/test-modules",
-  `quick-channel-binding-${process.pid}.mjs`,
-);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const { QuickChannelBinding } = await importTestBundle("src/renderer/components/channels/quick-channel-binding", {
   stdin: {
     contents: 'export { QuickChannelBinding } from "./QuickChannelBinding.tsx";',
     resolveDir: import.meta.dirname,
     sourcefile: "quick-channel-binding-test-entry.tsx",
     loader: "tsx",
   },
-  outfile: output,
   tsconfig: path.join(import.meta.dirname, "../../../../tsconfig.renderer.json"),
-  bundle: true,
-  format: "esm",
-  platform: "node",
   external: ["react", "react-dom", "react-dom/*"],
-  logLevel: "silent",
 });
-
-const { QuickChannelBinding } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 function snapshot(sessionId, connected, channel = "weixin") {
   const now = new Date().toISOString();

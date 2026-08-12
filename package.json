@@ -11,6 +11,7 @@
     "node": ">=22.19.0 <23"
   },
   "imports": {
+    "#test-bundle": "./scripts/test-bundle.mjs",
     "#test-timing": "./scripts/test-timing.mjs"
   },
   "main": "out/main/main.js",

@@ -1,29 +1,19 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { realpath, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
-
-const output = path.join(import.meta.dirname, "../../../.artifacts/test-modules", `outbound-files-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const { collectOutboundFiles } = await importTestBundle("src/agent-host/channels/outbound-files", {
+  packages: "external",
   stdin: {
     contents: 'export { collectOutboundFiles } from "./outbound-files.ts";',
     resolveDir: import.meta.dirname,
     sourcefile: "outbound-files-test-entry.ts",
     loader: "ts",
   },
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  packages: "external",
-  logLevel: "silent",
 });
-const { collectOutboundFiles } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 test("explicitly linked existing and newly created workspace files are authorized for IM delivery", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "pi-outbound-files-"));

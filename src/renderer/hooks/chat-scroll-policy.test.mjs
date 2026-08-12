@@ -1,27 +1,13 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 
-const output = path.join(
-  import.meta.dirname,
-  "../../../.artifacts/test-modules",
-  `chat-scroll-policy-${process.pid}.mjs`,
-);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  entryPoints: [path.join(import.meta.dirname, "chat-scroll-policy.ts")],
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  logLevel: "silent",
-});
-
-const { didUserScrollUp, isNearChatBottom, shouldStopChatAutoFollow } = await import(
-  `${pathToFileURL(output).href}?v=${Date.now()}`
+const { didUserScrollUp, isNearChatBottom, shouldStopChatAutoFollow } = await importTestBundle(
+  "src/renderer/hooks/chat-scroll-policy",
+  {
+    entryPoints: [path.join(import.meta.dirname, "chat-scroll-policy.ts")],
+  },
 );
 
 test("external-turn follow starts near the bottom and stops only for a meaningful upward scroll", () => {

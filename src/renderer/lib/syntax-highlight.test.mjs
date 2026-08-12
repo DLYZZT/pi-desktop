@@ -1,29 +1,14 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { build } from "esbuild";
 
-const output = path.join(
-  import.meta.dirname,
-  "../../../.artifacts/test-modules",
-  `syntax-highlight-${process.pid}.mjs`,
-);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const { SyntaxHighlighter, preloadSyntaxHighlighter } = await importTestBundle("src/renderer/lib/syntax-highlight", {
   entryPoints: [path.join(import.meta.dirname, "syntax-highlight.ts")],
-  outfile: output,
   tsconfig: path.join(import.meta.dirname, "../../../tsconfig.renderer.json"),
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  logLevel: "silent",
 });
-
-const { SyntaxHighlighter, preloadSyntaxHighlighter } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 await preloadSyntaxHighlighter();
 
 function render(language, code) {

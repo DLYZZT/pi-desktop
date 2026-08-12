@@ -1,21 +1,10 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
-
-const output = path.join(import.meta.dirname, "../../../.artifacts/test-modules", `display-path-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
+const { abbreviateHomePath } = await importTestBundle("src/renderer/lib/display-path", {
   entryPoints: [path.join(import.meta.dirname, "display-path.ts")],
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  logLevel: "silent",
 });
-const { abbreviateHomePath } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 test("POSIX home abbreviation requires an exact path-segment boundary", () => {
   assert.equal(abbreviateHomePath("/Users/foo", "/Users/foo"), "~");

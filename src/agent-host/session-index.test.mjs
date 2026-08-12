@@ -1,12 +1,10 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 
-const root = path.resolve(import.meta.dirname, "..", "..");
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), "pi-session-index-"));
 const sessionsRoot = path.join(fixtureRoot, "sessions");
 const projectRoot = path.join(fixtureRoot, "project");
@@ -16,19 +14,10 @@ process.env.PI_CODING_AGENT_SESSION_DIR = sessionsRoot;
 process.env.PI_CODING_AGENT_DIR = fixtureRoot;
 test.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
 const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-
-const output = path.join(root, ".artifacts", "test-modules", `session-index-${process.pid}.mjs`);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  entryPoints: [path.join(import.meta.dirname, "session-index.ts")],
-  outfile: output,
-  bundle: true,
-  format: "esm",
-  platform: "node",
+const { SessionIndex } = await importTestBundle("src/agent-host/session-index", {
   packages: "external",
-  logLevel: "silent",
+  entryPoints: [path.join(import.meta.dirname, "session-index.ts")],
 });
-const { SessionIndex } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 function writeSession(id, options = {}) {
   const filePath = path.join(sessionsRoot, "project", `${id}.jsonl`);

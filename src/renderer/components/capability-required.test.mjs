@@ -1,33 +1,21 @@
+import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { build } from "esbuild";
 
-const output = path.join(
-  import.meta.dirname,
-  "../../../.artifacts/test-modules",
-  `capability-required-${process.pid}.mjs`,
-);
-mkdirSync(path.dirname(output), { recursive: true });
-await build({
-  stdin: {
-    contents: 'export { installActionForIssue, parseCapabilityIssue } from "./CapabilityRequired.tsx";',
-    resolveDir: import.meta.dirname,
-    sourcefile: "capability-required-test-entry.tsx",
-    loader: "tsx",
+const { installActionForIssue, parseCapabilityIssue } = await importTestBundle(
+  "src/renderer/components/capability-required",
+  {
+    stdin: {
+      contents: 'export { installActionForIssue, parseCapabilityIssue } from "./CapabilityRequired.tsx";',
+      resolveDir: import.meta.dirname,
+      sourcefile: "capability-required-test-entry.tsx",
+      loader: "tsx",
+    },
+    tsconfig: path.join(import.meta.dirname, "../../../tsconfig.renderer.json"),
+    external: ["react", "react-dom", "react-dom/*"],
   },
-  outfile: output,
-  tsconfig: path.join(import.meta.dirname, "../../../tsconfig.renderer.json"),
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  external: ["react", "react-dom", "react-dom/*"],
-  logLevel: "silent",
-});
-
-const { installActionForIssue, parseCapabilityIssue } = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
+);
 
 test("parses structured capability errors and never guesses from raw ENOENT text", () => {
   assert.deepEqual(
