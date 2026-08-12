@@ -6,6 +6,7 @@ import { createLoadFailurePage, createRendererCrashPage, RENDERER_CRASH_RETRY_UR
 import { isAllowedMainNavigation } from "./window-navigation-policy";
 import { applyWindowBounds, loadUiState, shouldMaximize, trackWindowState } from "./window-state";
 import { RendererCrashRecovery } from "./renderer-crash-recovery";
+import { installWindowShowFallback } from "./window-show-fallback";
 
 const BACKGROUND = "#f7f6f3";
 
@@ -64,8 +65,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
       }
     }
   };
-  win.once("ready-to-show", showWin);
-  setTimeout(showWin, 3_000);
+  installWindowShowFallback(win, showWin);
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url) || /^mailto:/i.test(url)) void shell.openExternal(url);
