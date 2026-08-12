@@ -39,8 +39,8 @@
     "verify": "node scripts/verify.mjs",
     "prepare": "husky",
     "start": "electron .",
-    "pack": "npm run verify && npm run prepare:bundled-tools && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
-    "dist": "npm run verify && npm run prepare:bundled-tools -- --release && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --publish never",
+    "pack": "node scripts/package-desktop.mjs --dir",
+    "dist": "node scripts/package-desktop.mjs --release",
     "dist:mac:signed": "node scripts/build-mac-release.mjs",
     "dist:mac:notarized": "node scripts/build-mac-release.mjs --notarize"
   },
