@@ -119,7 +119,7 @@ async function finish(exitCode: number, error?: unknown): Promise<void> {
   if (finishing) return;
   finishing = true;
   if (error) console.error(error instanceof Error ? (error.stack ?? error.message) : error);
-  hostManager?.stop();
+  void hostManager?.stop();
   hostManager = null;
   await browserService?.dispose().catch(() => undefined);
   browserService = null;
@@ -386,4 +386,4 @@ void app.whenReady().then(
   (error) => finish(1, error),
 );
 
-app.on("before-quit", () => hostManager?.stop());
+app.on("before-quit", () => void hostManager?.stop());

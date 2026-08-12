@@ -1,5 +1,26 @@
 export type HostSpawnResult<T> = { ok: true; child: T } | { ok: false; error: string };
 
+export interface HostExitSignal {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
+export function createHostExitSignal(): HostExitSignal {
+  let settled = false;
+  let resolvePromise: () => void = () => undefined;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve: () => {
+      if (settled) return;
+      settled = true;
+      resolvePromise();
+    },
+  };
+}
+
 export function trySpawnHost<T>(spawn: () => T): HostSpawnResult<T> {
   try {
     return { ok: true, child: spawn() };

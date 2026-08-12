@@ -31,7 +31,7 @@ function finish(exitCode: number, error?: unknown): void {
   if (error) {
     appendMainLog(`smoke: checks failed — ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
   }
-  hostManager?.stop();
+  void hostManager?.stop();
   hostManager = null;
   updateManager?.dispose();
   updateManager = null;
@@ -148,4 +148,4 @@ void app.whenReady().then(async () => {
   hostManager.start();
 });
 
-app.on("before-quit", () => hostManager?.stop());
+app.on("before-quit", () => void hostManager?.stop());

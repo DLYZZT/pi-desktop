@@ -1,6 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { reserveHostRestart, trySpawnHost } from "./host-restart-core.ts";
+import { createHostExitSignal, reserveHostRestart, trySpawnHost } from "./host-restart-core.ts";
+
+test("resolves a Host exit signal exactly once", async () => {
+  const signal = createHostExitSignal();
+  let resolutions = 0;
+  void signal.promise.then(() => {
+    resolutions += 1;
+  });
+
+  await Promise.resolve();
+  assert.equal(resolutions, 0);
+  signal.resolve();
+  signal.resolve();
+  await signal.promise;
+  assert.equal(resolutions, 1);
+});
 
 test("converts synchronous Host spawn exceptions into a result", () => {
   const expectedChild = { pid: 42 };

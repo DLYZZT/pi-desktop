@@ -8,6 +8,7 @@ class FakeUpdateAdapter {
     this.listeners = new Map();
     this.checkCalls = 0;
     this.downloadCalls = 0;
+    this.cancelDownloadCalls = 0;
     this.quitCalls = [];
     this.checkImplementation = async () => undefined;
     this.downloadImplementation = async () => undefined;
@@ -32,6 +33,10 @@ class FakeUpdateAdapter {
   downloadUpdate() {
     this.downloadCalls++;
     return this.downloadImplementation();
+  }
+
+  cancelDownload() {
+    this.cancelDownloadCalls++;
   }
 
   quitAndInstall(...args) {
@@ -234,6 +239,50 @@ test("download progress, installation guards, and preparation are enforced", asy
   assert.equal(manager.getState().phase, "installing");
 });
 
+test("a stalled download is cancelled and releases the active operation for retry", async () => {
+  const adapter = new FakeUpdateAdapter();
+  const timers = [];
+  const logs = [];
+  const manager = packagedManager(adapter, {
+    downloadWatchdogMs: 100,
+    setTimer: (callback, delay) => {
+      const timer = { callback, delay, cleared: false, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      timer.cleared = true;
+    },
+    log: (level, message) => logs.push(`${level}:${message}`),
+  });
+  adapter.checkImplementation = async () => adapter.emit("update-available", updateInfo());
+  adapter.downloadImplementation = () => new Promise(() => undefined);
+
+  await manager.checkForUpdates();
+  const stalled = manager.downloadUpdate();
+  await Promise.resolve();
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 100);
+
+  adapter.emit("download-progress", { percent: 1, transferred: 1, total: 100 });
+  assert.equal(timers[0].cleared, true);
+  assert.equal(timers.length, 2);
+  timers[0].callback();
+  assert.equal(manager.getState().phase, "downloading");
+  assert.equal(adapter.cancelDownloadCalls, 0);
+  timers[1].callback();
+
+  const timedOut = await stalled;
+  assert.equal(timedOut.phase, "error");
+  assert.equal(timedOut.error?.code, "UPDATE_DOWNLOAD_FAILED");
+  assert.equal(timedOut.canRetry, true);
+  assert.equal(adapter.cancelDownloadCalls, 1);
+  assert.ok(logs.some((line) => line.includes("no progress")));
+
+  await manager.checkForUpdates();
+  assert.equal(adapter.checkCalls, 2);
+});
+
 test("invalid state operations fail with stable errors without mutating state", async () => {
   const manager = packagedManager(new FakeUpdateAdapter());
   await assert.rejects(manager.downloadUpdate(), { code: "UPDATE_INVALID_STATE" });
@@ -397,15 +446,16 @@ test("automatic checks honor delay, interval, preference, jitter, and disposal",
   timers[2].callback();
   assert.equal(adapter.checkCalls, checksBeforeDownloadedTimer);
   assert.equal(manager.getState().phase, "downloaded");
-  assert.equal(timers.length, 4);
+  assert.equal(timers.length, 5);
+  assert.equal(timers[3].cleared, true);
 
   manager.setAutomaticChecksEnabled(false);
-  assert.equal(timers[3].cleared, true);
+  assert.equal(timers[4].cleared, true);
   manager.setAutomaticChecksEnabled(true);
-  assert.equal(timers.length, 5);
-  assert.equal(timers[4].delay, 60);
+  assert.equal(timers.length, 6);
+  assert.equal(timers[5].delay, 60);
 
   manager.dispose();
-  assert.equal(timers[4].cleared, true);
+  assert.equal(timers[5].cleared, true);
   assert.equal(adapter.listenerCount(), 0);
 });

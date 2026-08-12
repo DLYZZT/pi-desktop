@@ -1,4 +1,4 @@
-import type { AppUpdater, ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from "electron-updater";
+import type { AppUpdater, CancellationToken, ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from "electron-updater";
 
 export type UpdateAdapterEventMap = {
   error: (error: Error, message?: string) => void;
@@ -17,6 +17,7 @@ export interface UpdateAdapter {
   on<Event extends keyof UpdateAdapterEventMap>(event: Event, listener: UpdateAdapterEventMap[Event]): () => void;
   checkForUpdates(): Promise<unknown>;
   downloadUpdate(): Promise<unknown>;
+  cancelDownload?(): void;
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
 }
 
@@ -26,6 +27,8 @@ type ElectronUpdaterModule = typeof import("electron-updater") & {
 
 export interface ProductionUpdateAdapterOptions {
   useDevelopmentConfig?: boolean;
+  /** @internal Injectable so Node tests do not load electron-updater. */
+  createCancellationToken?: () => CancellationToken;
 }
 
 export function isProductionUpdatePlatformEnabled(platform: NodeJS.Platform): boolean {
@@ -38,9 +41,12 @@ export function isProductionUpdatePlatformEnabled(platform: NodeJS.Platform): bo
 
 class ProductionUpdateAdapter implements UpdateAdapter {
   private readonly updater: AppUpdater;
+  private readonly createCancellationToken: (() => CancellationToken) | undefined;
+  private activeDownloadToken: CancellationToken | null = null;
 
-  constructor(updater: AppUpdater) {
+  constructor(updater: AppUpdater, createCancellationToken?: () => CancellationToken) {
     this.updater = updater;
+    this.createCancellationToken = createCancellationToken;
   }
 
   on<Event extends keyof UpdateAdapterEventMap>(event: Event, listener: UpdateAdapterEventMap[Event]): () => void {
@@ -59,8 +65,18 @@ class ProductionUpdateAdapter implements UpdateAdapter {
     return this.updater.checkForUpdates();
   }
 
-  downloadUpdate(): Promise<unknown> {
-    return this.updater.downloadUpdate();
+  async downloadUpdate(): Promise<unknown> {
+    const token = this.createCancellationToken?.() ?? null;
+    this.activeDownloadToken = token;
+    try {
+      return await this.updater.downloadUpdate(token ?? undefined);
+    } finally {
+      if (this.activeDownloadToken === token) this.activeDownloadToken = null;
+    }
+  }
+
+  cancelDownload(): void {
+    this.activeDownloadToken?.cancel();
   }
 
   quitAndInstall(isSilent = false, isForceRunAfter = true): void {
@@ -81,7 +97,7 @@ export function wrapElectronUpdater(updater: AppUpdater, options: ProductionUpda
   // default console logger. UpdateManager emits its own redacted messages.
   updater.logger = null;
 
-  return new ProductionUpdateAdapter(updater);
+  return new ProductionUpdateAdapter(updater, options.createCancellationToken);
 }
 
 /**
@@ -96,5 +112,8 @@ export async function createProductionUpdateAdapter(
   if (!updater) {
     throw new Error("electron-updater did not expose autoUpdater");
   }
-  return wrapElectronUpdater(updater, options);
+  return wrapElectronUpdater(updater, {
+    ...options,
+    createCancellationToken: () => new imported.CancellationToken(),
+  });
 }

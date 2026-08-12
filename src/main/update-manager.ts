@@ -3,6 +3,7 @@ import type { UpdateAdapter, UpdateAdapterEventMap } from "./update-adapter";
 
 const DEFAULT_INITIAL_CHECK_DELAY_MS = 60_000;
 const DEFAULT_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
+const DEFAULT_DOWNLOAD_WATCHDOG_MS = 15 * 60 * 1_000;
 const DEFAULT_JITTER_RATIO = 0.08;
 const MAX_RELEASE_NOTES_LENGTH = 12_000;
 const MAX_ERROR_DETAIL_LENGTH = 800;
@@ -18,6 +19,7 @@ export interface UpdateManagerOptions {
   automaticChecksEnabled?: boolean;
   initialCheckDelayMs?: number;
   checkIntervalMs?: number;
+  downloadWatchdogMs?: number;
   jitterRatio?: number;
   random?: () => number;
   now?: () => Date;
@@ -204,6 +206,7 @@ export class UpdateManager {
   private readonly currentVersion: string;
   private readonly initialCheckDelayMs: number;
   private readonly checkIntervalMs: number;
+  private readonly downloadWatchdogMs: number;
   private readonly jitterRatio: number;
   private readonly random: () => number;
   private readonly now: () => Date;
@@ -224,6 +227,9 @@ export class UpdateManager {
   private runningSessionCount = 0;
   private downloadEventReceived = false;
   private downloadPromiseSettled = false;
+  private downloadWatchdogTimer: unknown = null;
+  private downloadWatchdogGeneration = 0;
+  private rejectWatchedDownload: ((error: unknown) => void) | null = null;
   private installLifecyclePrepared = false;
   private installRecoveryPromise: Promise<void> | null = null;
 
@@ -239,6 +245,7 @@ export class UpdateManager {
     this.currentVersion = options.currentVersion;
     this.initialCheckDelayMs = Math.max(0, options.initialCheckDelayMs ?? DEFAULT_INITIAL_CHECK_DELAY_MS);
     this.checkIntervalMs = Math.max(1, options.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL_MS);
+    this.downloadWatchdogMs = Math.max(1, options.downloadWatchdogMs ?? DEFAULT_DOWNLOAD_WATCHDOG_MS);
     this.jitterRatio = Math.min(0.5, Math.max(0, options.jitterRatio ?? DEFAULT_JITTER_RATIO));
     this.random = options.random ?? Math.random;
     this.now = options.now ?? (() => new Date());
@@ -323,7 +330,7 @@ export class UpdateManager {
 
     return this.trackOperation("download", async () => {
       try {
-        await this.adapter!.downloadUpdate();
+        await this.downloadWithWatchdog();
         this.downloadPromiseSettled = true;
         if (this.downloadEventReceived && this.state.phase === "downloading") {
           this.finishDownloadedUpdate();
@@ -397,6 +404,8 @@ export class UpdateManager {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.clearDownloadWatchdog();
+    if (this.activeOperation?.kind === "download") this.cancelAdapterDownload();
     this.stopAutomaticChecks();
     for (const remove of this.removeAdapterListeners.splice(0)) remove();
     this.listeners.clear();
@@ -429,6 +438,7 @@ export class UpdateManager {
       }),
       adapter.on("download-progress", (progress) => {
         if (this.disposed || this.state.phase !== "downloading") return;
+        this.armDownloadWatchdog();
         const percent = finiteNonNegative(progress.percent);
         this.transition("downloading", {
           percent: percent === undefined ? undefined : Math.min(100, percent),
@@ -458,6 +468,10 @@ export class UpdateManager {
           this.activeOperation?.kind ??
           (this.state.phase === "installing" && this.installLifecyclePrepared ? "install" : undefined);
         this.recordAdapterError(detail, operation);
+        if (operation === "download") {
+          this.cancelAdapterDownload();
+          this.rejectWatchedDownload?.(detail);
+        }
         if (operation === "install") void this.recoverInstallLifecycle();
       }),
     );
@@ -497,6 +511,68 @@ export class UpdateManager {
     if (this.disposed || !this.isPhase("available", "downloading")) return;
     this.transition("downloaded", { percent: 100 });
     this.log("info", `update downloaded: ${this.details.availableVersion ?? "unknown"}`);
+  }
+
+  private downloadWithWatchdog(): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (callback: (value: unknown) => void, value: unknown) => {
+        if (settled) return;
+        settled = true;
+        this.clearDownloadWatchdog();
+        this.rejectWatchedDownload = null;
+        callback(value);
+      };
+      this.rejectWatchedDownload = (error) => settle(reject, error);
+      this.armDownloadWatchdog();
+      let download: Promise<unknown>;
+      try {
+        download = this.adapter!.downloadUpdate();
+      } catch (error) {
+        settle(reject, error);
+        return;
+      }
+      void download.then(
+        (value) => settle(resolve, value),
+        (error) => settle(reject, error),
+      );
+    });
+  }
+
+  private armDownloadWatchdog(): void {
+    if (!this.rejectWatchedDownload) return;
+    this.clearDownloadWatchdog();
+    const generation = ++this.downloadWatchdogGeneration;
+    this.downloadWatchdogTimer = this.setTimer(() => {
+      if (generation !== this.downloadWatchdogGeneration) return;
+      this.downloadWatchdogTimer = null;
+      const reject = this.rejectWatchedDownload;
+      if (!reject) return;
+      this.log("warn", `update download made no progress for ${this.downloadWatchdogMs}ms; cancelling`);
+      this.cancelAdapterDownload();
+      reject(
+        new UpdateManagerError(
+          "UPDATE_DOWNLOAD_FAILED",
+          `Update download timed out after ${this.downloadWatchdogMs}ms without progress.`,
+        ),
+      );
+    }, this.downloadWatchdogMs);
+    unrefTimer(this.downloadWatchdogTimer);
+  }
+
+  private clearDownloadWatchdog(): void {
+    this.downloadWatchdogGeneration += 1;
+    if (this.downloadWatchdogTimer === null) return;
+    this.clearTimer(this.downloadWatchdogTimer);
+    this.downloadWatchdogTimer = null;
+  }
+
+  private cancelAdapterDownload(): void {
+    try {
+      this.adapter?.cancelDownload?.();
+    } catch (error) {
+      this.log("warn", `update download cancellation failed: ${redactUpdateError(error)}`);
+    }
   }
 
   private recoverInstallLifecycle(): Promise<void> {

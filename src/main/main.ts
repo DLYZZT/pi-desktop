@@ -26,6 +26,7 @@ import { readLegacyNpmCommand } from "./toolchains/legacy-npm-command";
 import { createElectronRuntimeFetch } from "./toolchains/electron-runtime-fetch";
 import { BrowserService } from "./browser/browser-service";
 import { findDesktopDeepLink, parseDesktopDeepLink } from "./deep-link";
+import { restartHostAfterExit } from "./host-install-recovery";
 
 // Must run before app ready
 registerAppProtocol();
@@ -99,7 +100,7 @@ function finishPackagedStartupValidation(error?: string): void {
   }
   isQuitting = true;
   updateManager?.stopAutomaticChecks();
-  hostManager?.stop();
+  void hostManager?.stop();
   for (const win of BrowserWindow.getAllWindows()) win.destroy();
   app.exit(error ? 1 : 0);
 }
@@ -264,27 +265,16 @@ function startMainProcess(): void {
       currentVersion: app.getVersion(),
       isPackaged: app.isPackaged,
       automaticChecksEnabled: ui.automaticUpdateChecks !== false,
-      prepareToInstall: () => {
+      prepareToInstall: async () => {
         isQuitting = true;
         destroyTray();
-        hostManager?.stop();
+        await hostManager?.stop();
       },
-      recoverFromInstallFailure: () => {
+      recoverFromInstallFailure: async () => {
         isQuitting = false;
         createTray(getMainWindow);
         const manager = hostManager;
-        if (manager) {
-          let remainingAttempts = 12;
-          const restartHost = () => {
-            if (isQuitting) return;
-            manager.start();
-            if (manager.getStatus() === "stopped" && remainingAttempts-- > 0) {
-              const restartTimer = setTimeout(restartHost, 250);
-              restartTimer.unref();
-            }
-          };
-          restartHost();
-        }
+        if (manager) await restartHostAfterExit(manager, () => !isQuitting);
       },
       log: (level, message) => appendMainLog(`updater[${level}] ${message}`),
     });
@@ -485,7 +475,7 @@ function startMainProcess(): void {
     isQuitting = true;
     updateManager?.stopAutomaticChecks();
     destroyTray();
-    hostManager?.stop();
+    void hostManager?.stop();
     void browserService?.dispose();
   });
 
