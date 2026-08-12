@@ -2,9 +2,10 @@ import { BrowserWindow, screen, shell } from "electron";
 import { appendMainLog } from "./logger";
 import { resolvePreloadPath, resolveRendererEntry } from "./host-manager";
 import { releaseHtmlPreviewsForOwner } from "./protocol";
-import { createLoadFailurePage } from "./window-load-failure";
+import { createLoadFailurePage, createRendererCrashPage, RENDERER_CRASH_RETRY_URL } from "./window-load-failure";
 import { isAllowedMainNavigation } from "./window-navigation-policy";
 import { applyWindowBounds, loadUiState, shouldMaximize, trackWindowState } from "./window-state";
+import { RendererCrashRecovery } from "./renderer-crash-recovery";
 
 const BACKGROUND = "#f7f6f3";
 
@@ -46,6 +47,10 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     },
   });
   const previewOwnerId = win.webContents.id;
+  const rendererUrl = resolveRendererEntry(options.isDev, options.runtimeMainDirectory);
+  const crashRecovery = new RendererCrashRecovery();
+  let rendererReloadTimer: ReturnType<typeof setTimeout> | undefined;
+  let showingCrashPage = false;
 
   trackWindowState(win);
   if (shouldMaximize(ui) && !win.isDestroyed()) win.maximize();
@@ -68,6 +73,15 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
   });
 
   win.webContents.on("will-navigate", (event, url) => {
+    if (url === RENDERER_CRASH_RETRY_URL) {
+      event.preventDefault();
+      crashRecovery.reset();
+      showingCrashPage = false;
+      if (rendererReloadTimer) clearTimeout(rendererReloadTimer);
+      rendererReloadTimer = undefined;
+      if (!win.isDestroyed()) void win.loadURL(rendererUrl);
+      return;
+    }
     if (!isAllowedMainNavigation(url, options.isDev)) {
       event.preventDefault();
       if (/^https?:/i.test(url)) void shell.openExternal(url);
@@ -82,6 +96,8 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
   });
 
   win.on("closed", () => {
+    if (rendererReloadTimer) clearTimeout(rendererReloadTimer);
+    rendererReloadTimer = undefined;
     releaseHtmlPreviewsForOwner(previewOwnerId);
     options.onClosed?.(win);
   });
@@ -90,7 +106,22 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     releaseHtmlPreviewsForOwner(previewOwnerId);
     options.onRendererUnavailable?.(`render-process-gone:${details.reason}`);
     appendMainLog(`render-process-gone: ${details.reason}`);
-    if (!win.isDestroyed()) win.reload();
+    if (win.isDestroyed() || showingCrashPage) return;
+    const action = crashRecovery.record(details.reason);
+    if (action.kind === "ignore") return;
+    if (action.kind === "halt") {
+      showingCrashPage = true;
+      const page = createRendererCrashPage(action.reason);
+      void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(page)}`);
+      return;
+    }
+    appendMainLog(`renderer reload attempt=${action.attempt} delayMs=${action.delayMs}`);
+    if (rendererReloadTimer) clearTimeout(rendererReloadTimer);
+    rendererReloadTimer = setTimeout(() => {
+      rendererReloadTimer = undefined;
+      if (!win.isDestroyed()) void win.loadURL(rendererUrl);
+    }, action.delayMs);
+    rendererReloadTimer.unref?.();
   });
 
   // Main-owned child Views outlive the page Renderer. Hide them before the
@@ -124,9 +155,8 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     if (level >= 2) options.onConsoleError?.(message);
   });
 
-  const url = resolveRendererEntry(options.isDev, options.runtimeMainDirectory);
-  appendMainLog(`loadURL ${url}`);
-  void win.loadURL(url);
+  appendMainLog(`loadURL ${rendererUrl}`);
+  void win.loadURL(rendererUrl);
 
   return win;
 }
