@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { getFileIcon, FolderIcon } from "./FileIcons";
 import { encodeFilePathForApi, getRelativeFilePath, joinFilePath } from "@/lib/file-paths";
+import { directoryRefreshAction, shouldLoadDirectoryOnExpand } from "@/lib/directory-refresh";
 import type { GitStatusResult } from "@shared/api-types";
 
 interface FileEntry {
@@ -72,6 +73,7 @@ function TreeNode({
   const open = expandedPaths.has(node.fullPath);
   const [children, setChildren] = useState<FileNode[]>(node.children ?? []);
   const [loaded, setLoaded] = useState(node.loaded ?? false);
+  const [stale, setStale] = useState(false);
   const [loading, setLoading] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [focusedWithin, setFocusedWithin] = useState(false);
@@ -79,31 +81,31 @@ function TreeNode({
 
   const loadChildren = useCallback(
     async (force = false) => {
-      if (loaded && !force) return;
+      if (loaded && !stale && !force) return;
       setLoading(true);
       try {
         const entries = await fetchEntries(node.fullPath);
         setChildren(entries);
         setLoaded(true);
+        setStale(false);
       } catch {
         // ignore
       } finally {
         setLoading(false);
       }
     },
-    [loaded, node.fullPath],
+    [loaded, node.fullPath, stale],
   );
 
-  // When refreshKey causes a re-render with the same node identity, reload open dirs
-  const prevLoadedRef = useRef(loaded);
+  // Refresh open directories immediately; collapsed directories reload lazily on expansion.
   useEffect(() => {
-    prevLoadedRef.current = loaded;
-  });
-
-  // Re-fetch children when refreshKey changes and the directory is already open/loaded
-  useEffect(() => {
-    if (open && loaded) {
+    if (!node.isDir) return;
+    const refreshAction = directoryRefreshAction(open, loaded);
+    if (refreshAction === "reload") {
       void loadChildren(true);
+    } else if (refreshAction === "mark-stale") {
+      setLoaded(false);
+      setStale(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshKey intentionally owns this refresh effect.
   }, [refreshKey]);
@@ -112,11 +114,11 @@ function TreeNode({
     if (node.isDir) {
       const next = !open;
       onToggleExpanded(node.fullPath, next);
-      if (next && !loaded) void loadChildren();
+      if (next && shouldLoadDirectoryOnExpand(loaded, stale)) void loadChildren();
     } else {
       onOpenFile(node.fullPath, node.name);
     }
-  }, [node.isDir, node.fullPath, node.name, loaded, open, loadChildren, onOpenFile, onToggleExpanded]);
+  }, [node.isDir, node.fullPath, node.name, loaded, stale, open, loadChildren, onOpenFile, onToggleExpanded]);
 
   return (
     <div>
