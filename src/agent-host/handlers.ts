@@ -376,6 +376,18 @@ function validateExistingDirectory(candidate: unknown): DirectoryValidation {
   }
 }
 
+function canonicalPathForComparison(candidate: string): string {
+  const resolved = path.resolve(candidate);
+  let canonical = resolved;
+  try {
+    const realpath = realpathSync.native ?? realpathSync;
+    canonical = realpath(resolved);
+  } catch {
+    // Historical session cwd values can refer to directories that no longer exist.
+  }
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
 type AvailableModel = Awaited<ReturnType<ModelRuntime["getAvailable"]>>[number];
 
 async function resolveAvailableModels(
@@ -517,11 +529,19 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       };
     },
 
-    "sessions.list": async () => {
+    "sessions.list": async (params) => {
       const traceId = resolveSessionTraceId();
       const startedAt = performance.now();
       try {
-        const sessions = await listAllSessions();
+        const requestedCwd = (params as { cwd?: unknown } | undefined)?.cwd;
+        if (requestedCwd !== undefined && (typeof requestedCwd !== "string" || !path.isAbsolute(requestedCwd))) {
+          throw new RpcError({ code: "BAD_REQUEST", message: "absolute cwd required" });
+        }
+        const canonicalCwd = typeof requestedCwd === "string" ? canonicalPathForComparison(requestedCwd) : undefined;
+        const allSessions = await listAllSessions();
+        const sessions = canonicalCwd
+          ? allSessions.filter((session) => canonicalPathForComparison(session.cwd) === canonicalCwd)
+          : allSessions;
         const indexMetrics = getSessionIndexMetrics();
         logSessionPerformance("sessions.list", {
           traceId,

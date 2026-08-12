@@ -446,6 +446,17 @@ test("sessions.get returns the contract shape without rescanning known session p
     listed.sessions.some((session) => session.id === sessionId),
     true,
   );
+  const filtered = await handlers["sessions.list"]({ cwd: path.join(root, ".") });
+  assert.equal(
+    filtered.sessions.some((session) => session.id === sessionId),
+    true,
+  );
+  const excluded = await handlers["sessions.list"]({ cwd: isolatedAgentDirectory });
+  assert.equal(
+    excluded.sessions.some((session) => session.id === sessionId),
+    false,
+  );
+  await assert.rejects(handlers["sessions.list"]({ cwd: "relative/project" }), (error) => error.code === "BAD_REQUEST");
 
   const originalListAll = SessionManager.listAll;
   SessionManager.listAll = async () => {
