@@ -40,7 +40,10 @@ function getBaseName(filePath: string): string {
 }
 
 export function getFileExt(filePath: string): string {
-  return getBaseName(filePath).toLowerCase().split(".").pop() ?? "";
+  const baseName = getBaseName(filePath).toLowerCase();
+  const dotIndex = baseName.lastIndexOf(".");
+  if (dotIndex <= 0 || dotIndex === baseName.length - 1) return "";
+  return baseName.slice(dotIndex + 1);
 }
 
 export function getImageMime(filePath: string): string | null {

@@ -26,6 +26,20 @@ test("extracts extensions from mixed path styles", async () => {
 
   assert.equal(getFileExt("/tmp/archive.tar.gz"), "gz");
   assert.equal(getFileExt("C:\\Users\\me\\photo.AVIF"), "avif");
+  assert.equal(getFileExt("\\\\server\\share\\nested.name\\manual.DOCX"), "docx");
+  assert.equal(getFileExt(".env.local"), "local");
   assert.equal(documentPreviewKind("/tmp/manual.PDF"), "pdf");
   assert.equal(documentPreviewKind("/tmp/manual.md"), null);
+});
+
+test("does not invent extensions for bare names, dotfiles, trailing dots, or directories", async () => {
+  const { getFileExt, getImageMime, isImagePath } = await loadSubject();
+
+  for (const filePath of ["png", "/tmp/png", ".png", "/tmp/.env", "file.", "C:\\tmp\\photo.", "/tmp/"]) {
+    assert.equal(getFileExt(filePath), "", filePath);
+  }
+  assert.equal(getImageMime("png"), null);
+  assert.equal(isImagePath("png"), false);
+  assert.equal(getImageMime(".png"), null);
+  assert.equal(isImagePath("/tmp/actual.png"), true);
 });
