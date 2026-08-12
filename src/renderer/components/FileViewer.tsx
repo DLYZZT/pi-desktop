@@ -1,10 +1,11 @@
-import { useEffect, useState, useRef, useCallback, useReducer } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, useReducer } from "react";
 import { SyntaxHighlighter, vs, vscDarkPlus } from "@/lib/syntax-highlight";
 import { useTheme } from "@/hooks/useTheme";
 import { MarkdownBody } from "./MarkdownBody";
 import { DOCX_PREVIEW_MAX_BYTES, getFileExt, isAudioPath, isDocumentPreviewPath, isImagePath } from "@/lib/file-types";
 import { encodeFilePathForApi, getFileName, getParentFilePath, getRelativeFilePath } from "@/lib/file-paths";
 import { INITIAL_TEXT_FILE_LOAD_STATE, textFileLoadReducer, type TextFileData } from "@/lib/file-viewer-load-state";
+import { createBoundedTextDiff, type DiffLine } from "@/lib/text-diff";
 
 interface Props {
   filePath: string;
@@ -147,91 +148,23 @@ function HtmlPreview({
   );
 }
 
-type DiffLine =
-  | { type: "unchanged"; text: string; lineNo: number }
-  | { type: "removed"; text: string; lineNo: number }
-  | { type: "added"; text: string; lineNo: number };
-
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Myers diff — returns line-level unified diff
-function diffLines(oldLines: string[], newLines: string[]): DiffLine[] {
-  const m = oldLines.length;
-  const n = newLines.length;
-  const max = m + n;
-  const v: number[] = new Array(2 * max + 1).fill(0);
-  const trace: number[][] = [];
-
-  for (let d = 0; d <= max; d++) {
-    trace.push([...v]);
-    for (let k = -d; k <= d; k += 2) {
-      let x: number;
-      if (k === -d || (k !== d && v[k - 1 + max] < v[k + 1 + max])) {
-        x = v[k + 1 + max];
-      } else {
-        x = v[k - 1 + max] + 1;
-      }
-      let y = x - k;
-      while (x < m && y < n && oldLines[x] === newLines[y]) {
-        x++;
-        y++;
-      }
-      v[k + max] = x;
-      if (x >= m && y >= n) {
-        // backtrack
-        const result: DiffLine[] = [];
-        let cx = m,
-          cy = n;
-        for (let dd = d; dd > 0; dd--) {
-          const pv = trace[dd - 1];
-          const pk = cx - cy;
-          let prevK: number;
-          if (pk === -dd || (pk !== dd && pv[pk - 1 + max] < pv[pk + 1 + max])) {
-            prevK = pk + 1;
-          } else {
-            prevK = pk - 1;
-          }
-          const prevX = pv[prevK + max];
-          const prevY = prevX - prevK;
-          while (cx > prevX && cy > prevY) {
-            cx--;
-            cy--;
-            result.unshift({ type: "unchanged", text: oldLines[cx], lineNo: cx + 1 });
-          }
-          if (dd > 0) {
-            if (cx > prevX) {
-              cx--;
-              result.unshift({ type: "removed", text: oldLines[cx], lineNo: cx + 1 });
-            } else {
-              cy--;
-              result.unshift({ type: "added", text: newLines[cy], lineNo: cy + 1 });
-            }
-          }
-        }
-        while (cx > 0 && cy > 0) {
-          cx--;
-          cy--;
-          result.unshift({ type: "unchanged", text: oldLines[cx], lineNo: cx + 1 });
-        }
-        return result;
-      }
-    }
+function DiffView({ oldContent, newContent }: { oldContent: string; newContent: string }) {
+  const result = useMemo(() => createBoundedTextDiff(oldContent, newContent), [oldContent, newContent]);
+  if (result.kind === "fallback") {
+    return (
+      <div role="status" style={{ padding: 16, color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6 }}>
+        Diff is too large to render safely. The file changed from {result.oldLines} to {result.newLines} lines; showing
+        the current source avoids freezing the app.
+      </div>
+    );
   }
-  // Fallback: treat all as replaced
-  return [
-    ...oldLines.map((t, i) => ({ type: "removed" as const, text: t, lineNo: i + 1 })),
-    ...newLines.map((t, i) => ({ type: "added" as const, text: t, lineNo: i + 1 })),
-  ];
-}
-
-function DiffView({ oldContent, newContent }: { oldContent: string; newContent: string; language: string }) {
-  const oldLines = oldContent.split("\n");
-  const newLines = newContent.split("\n");
-  const diff = diffLines(oldLines, newLines);
+  const diff = result.lines;
 
   const hasChanges = diff.some((l) => l.type !== "unchanged");
   if (!hasChanges) {
@@ -1159,7 +1092,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
       {/* Content area */}
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", background: "var(--bg)" }}>
         {viewMode === "diff" && hasDiff ? (
-          <DiffView oldContent={prevContent!} newContent={data.content} language={data.language} />
+          <DiffView oldContent={prevContent!} newContent={data.content} />
         ) : isHtml && previewMode ? (
           <HtmlPreview content={data.content} filePath={filePath} sourceSessionId={sourceSessionId} />
         ) : isMarkdown && previewMode ? (
