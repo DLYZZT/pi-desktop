@@ -154,376 +154,381 @@ function handleDeepLink(url: string): void {
   }
 }
 
-if (
-  !acquireSingleInstanceLock(getMainWindow, (argv) => {
-    const url = argv.find((a) => a.startsWith("pi-agent-desktop://"));
-    if (url) handleDeepLink(url);
-  })
-) {
-  app.quit();
-}
-
-app.on("open-url", (event, url) => {
-  event.preventDefault();
-  handleDeepLink(url);
-});
-
-app.on("login", (event, webContents, _details, authInfo, callback) => {
-  const credentials = browserService?.getProxyCredentialsForWebContents(webContents.id, authInfo.isProxy);
-  if (!credentials) return;
-  event.preventDefault();
-  callback(credentials.username, credentials.password);
-});
-
-function createWindow(): BrowserWindow {
-  const win = createMainWindow({
-    isDev,
-    consumePendingDeepLink: () => {
-      const sessionId = pendingDeepLink;
-      pendingDeepLink = null;
-      return sessionId;
-    },
-    shouldHideOnClose: () => !isQuitting && loadUiState().backgroundMode !== false,
-    onClosed: (closedWindow) => {
-      if (mainWindow === closedWindow) {
-        mainWindow = null;
-        browserService?.handleWindowClosed();
-      }
-    },
-    onRendererUnavailable: () => browserService?.handleRendererUnavailable(),
-  });
-  mainWindow = win;
-  win.on("hide", () => browserService?.handleWindowVisibility(false));
-  win.on("minimize", () => browserService?.handleWindowVisibility(false));
-  win.on("show", () => browserService?.handleWindowVisibility(true));
-  win.on("restore", () => browserService?.handleWindowVisibility(true));
-  win.on("focus", () => {
-    const manager = toolchainManager;
-    const now = Date.now();
-    if (!manager || now - lastToolchainFocusScanAt < TOOLCHAIN_FOCUS_RESCAN_TTL_MS) return;
-    lastToolchainFocusScanAt = now;
-    void manager.rescan().catch((error) => {
-      appendMainLog(`toolchain focus rescan failed: ${error instanceof Error ? error.message : String(error)}`);
-    });
-  });
-  if (packagedStartupValidation) {
-    win.webContents.once("did-finish-load", () => {
-      startupRendererReady = true;
-      finishPackagedStartupValidation();
-    });
-    win.webContents.once("did-fail-load", (_event, code, description) => {
-      finishPackagedStartupValidation(`Renderer failed to load (${code}): ${description}`);
-    });
-  }
-  if (unreadBadge > 0) applyBadgeCount(unreadBadge);
-  void browserService?.restoreTabs();
-  return win;
-}
-
-function openUpdateSettings(checkForUpdates: boolean): void {
-  const win = getMainWindow() ?? createWindow();
-  win.show();
-  win.focus();
-  const send = () => {
-    if (!win.isDestroyed()) {
-      win.webContents.send(checkForUpdates ? "menu:check-for-updates" : "menu:show-update");
-    }
-  };
-  if (win.webContents.isLoadingMainFrame()) {
-    win.webContents.once("did-finish-load", send);
-  } else {
-    send();
-  }
-}
-
-void app.whenReady().then(async () => {
-  appendMainLog(`app ready packaged=${app.isPackaged}`);
-  if (packagedStartupValidation) {
-    startupCheckTimer = setTimeout(
-      () => finishPackagedStartupValidation("Packaged startup validation timed out"),
-      45_000,
-    );
+function startMainProcess(): void {
+  if (
+    !acquireSingleInstanceLock(getMainWindow, (argv) => {
+      const url = argv.find((a) => a.startsWith("pi-agent-desktop://"));
+      if (url) handleDeepLink(url);
+    })
+  ) {
+    app.quit();
+    return;
   }
 
-  const credentialVault = new CredentialVault(getUserDataPath("channels.secrets.json"));
-  browserService = new BrowserService({
-    userDataDir: app.getPath("userData"),
-    getWindow: getMainWindow,
-    emit: (event) => {
-      const win = getMainWindow();
-      if (win && !win.isDestroyed()) win.webContents.send("browser:event", event);
-    },
-    onCapabilitySnapshot: (snapshot) => hostManager?.setBrowserCapabilitySnapshot(snapshot),
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    handleDeepLink(url);
   });
-  const ui = loadUiState();
-  const updaterTestMode = !app.isPackaged && process.env.PI_DESKTOP_TEST_UPDATER === "1";
-  const updaterSupported =
-    isProductionUpdatePlatformEnabled(process.platform) ||
-    (updaterTestMode && (process.platform === "darwin" || process.platform === "win32"));
-  const updaterRequested = app.isPackaged || updaterTestMode;
-  let updateAdapter = null;
-  if (updaterSupported && updaterRequested) {
-    try {
-      updateAdapter = await createProductionUpdateAdapter({
-        useDevelopmentConfig: updaterTestMode,
+
+  app.on("login", (event, webContents, _details, authInfo, callback) => {
+    const credentials = browserService?.getProxyCredentialsForWebContents(webContents.id, authInfo.isProxy);
+    if (!credentials) return;
+    event.preventDefault();
+    callback(credentials.username, credentials.password);
+  });
+
+  function createWindow(): BrowserWindow {
+    const win = createMainWindow({
+      isDev,
+      consumePendingDeepLink: () => {
+        const sessionId = pendingDeepLink;
+        pendingDeepLink = null;
+        return sessionId;
+      },
+      shouldHideOnClose: () => !isQuitting && loadUiState().backgroundMode !== false,
+      onClosed: (closedWindow) => {
+        if (mainWindow === closedWindow) {
+          mainWindow = null;
+          browserService?.handleWindowClosed();
+        }
+      },
+      onRendererUnavailable: () => browserService?.handleRendererUnavailable(),
+    });
+    mainWindow = win;
+    win.on("hide", () => browserService?.handleWindowVisibility(false));
+    win.on("minimize", () => browserService?.handleWindowVisibility(false));
+    win.on("show", () => browserService?.handleWindowVisibility(true));
+    win.on("restore", () => browserService?.handleWindowVisibility(true));
+    win.on("focus", () => {
+      const manager = toolchainManager;
+      const now = Date.now();
+      if (!manager || now - lastToolchainFocusScanAt < TOOLCHAIN_FOCUS_RESCAN_TTL_MS) return;
+      lastToolchainFocusScanAt = now;
+      void manager.rescan().catch((error) => {
+        appendMainLog(`toolchain focus rescan failed: ${error instanceof Error ? error.message : String(error)}`);
       });
-    } catch (error) {
-      appendMainLog(`updater unavailable: ${redactUpdateError(error)}`);
+    });
+    if (packagedStartupValidation) {
+      win.webContents.once("did-finish-load", () => {
+        startupRendererReady = true;
+        finishPackagedStartupValidation();
+      });
+      win.webContents.once("did-fail-load", (_event, code, description) => {
+        finishPackagedStartupValidation(`Renderer failed to load (${code}): ${description}`);
+      });
+    }
+    if (unreadBadge > 0) applyBadgeCount(unreadBadge);
+    void browserService?.restoreTabs();
+    return win;
+  }
+
+  function openUpdateSettings(checkForUpdates: boolean): void {
+    const win = getMainWindow() ?? createWindow();
+    win.show();
+    win.focus();
+    const send = () => {
+      if (!win.isDestroyed()) {
+        win.webContents.send(checkForUpdates ? "menu:check-for-updates" : "menu:show-update");
+      }
+    };
+    if (win.webContents.isLoadingMainFrame()) {
+      win.webContents.once("did-finish-load", send);
+    } else {
+      send();
     }
   }
-  updateManager = createUpdateManager({
-    adapter: updateAdapter,
-    currentVersion: app.getVersion(),
-    isPackaged: app.isPackaged,
-    automaticChecksEnabled: ui.automaticUpdateChecks !== false,
-    prepareToInstall: () => {
-      isQuitting = true;
-      destroyTray();
-      hostManager?.stop();
-    },
-    recoverFromInstallFailure: () => {
-      isQuitting = false;
-      createTray(getMainWindow);
-      const manager = hostManager;
-      if (manager) {
-        let remainingAttempts = 12;
-        const restartHost = () => {
-          if (isQuitting) return;
-          manager.start();
-          if (manager.getStatus() === "stopped" && remainingAttempts-- > 0) {
-            const restartTimer = setTimeout(restartHost, 250);
-            restartTimer.unref();
-          }
-        };
-        restartHost();
+
+  void app.whenReady().then(async () => {
+    appendMainLog(`app ready packaged=${app.isPackaged}`);
+    if (packagedStartupValidation) {
+      startupCheckTimer = setTimeout(
+        () => finishPackagedStartupValidation("Packaged startup validation timed out"),
+        45_000,
+      );
+    }
+
+    const credentialVault = new CredentialVault(getUserDataPath("channels.secrets.json"));
+    browserService = new BrowserService({
+      userDataDir: app.getPath("userData"),
+      getWindow: getMainWindow,
+      emit: (event) => {
+        const win = getMainWindow();
+        if (win && !win.isDestroyed()) win.webContents.send("browser:event", event);
+      },
+      onCapabilitySnapshot: (snapshot) => hostManager?.setBrowserCapabilitySnapshot(snapshot),
+    });
+    const ui = loadUiState();
+    const updaterTestMode = !app.isPackaged && process.env.PI_DESKTOP_TEST_UPDATER === "1";
+    const updaterSupported =
+      isProductionUpdatePlatformEnabled(process.platform) ||
+      (updaterTestMode && (process.platform === "darwin" || process.platform === "win32"));
+    const updaterRequested = app.isPackaged || updaterTestMode;
+    let updateAdapter = null;
+    if (updaterSupported && updaterRequested) {
+      try {
+        updateAdapter = await createProductionUpdateAdapter({
+          useDevelopmentConfig: updaterTestMode,
+        });
+      } catch (error) {
+        appendMainLog(`updater unavailable: ${redactUpdateError(error)}`);
       }
-    },
-    log: (level, message) => appendMainLog(`updater[${level}] ${message}`),
-  });
-  const bundledCorePaths = resolveBundledCorePaths({
-    isPackaged: app.isPackaged,
-    resourcesRoot: process.resourcesPath,
-  });
-  const toolchainHome = app.getPath("home");
-  toolchainManager = new ToolchainManager({
-    platform: process.platform,
-    arch: process.arch,
-    env: process.env,
-    homeDir: toolchainHome,
-    tempRoot: app.getPath("temp"),
-    userDataRoot: app.getPath("userData"),
-    resourcesRoot: process.resourcesPath,
-    catalogPath: resolveRuntimeCatalogPath({
+    }
+    updateManager = createUpdateManager({
+      adapter: updateAdapter,
+      currentVersion: app.getVersion(),
+      isPackaged: app.isPackaged,
+      automaticChecksEnabled: ui.automaticUpdateChecks !== false,
+      prepareToInstall: () => {
+        isQuitting = true;
+        destroyTray();
+        hostManager?.stop();
+      },
+      recoverFromInstallFailure: () => {
+        isQuitting = false;
+        createTray(getMainWindow);
+        const manager = hostManager;
+        if (manager) {
+          let remainingAttempts = 12;
+          const restartHost = () => {
+            if (isQuitting) return;
+            manager.start();
+            if (manager.getStatus() === "stopped" && remainingAttempts-- > 0) {
+              const restartTimer = setTimeout(restartHost, 250);
+              restartTimer.unref();
+            }
+          };
+          restartHost();
+        }
+      },
+      log: (level, message) => appendMainLog(`updater[${level}] ${message}`),
+    });
+    const bundledCorePaths = resolveBundledCorePaths({
       isPackaged: app.isPackaged,
       resourcesRoot: process.resourcesPath,
-    }),
-    coreCatalogPath: bundledCorePaths.catalogPath,
-    bundledCoreRoot: bundledCorePaths.coreRoot,
-    // Chromium networking follows the user's system proxy/PAC and OS trust
-    // configuration. Redirects are synchronously allowlisted before following.
-    fetchImpl: createElectronRuntimeFetch((options) => net.request(options)),
-    legacyNpmCommand: readLegacyNpmCommand({ homeDir: toolchainHome, env: process.env }),
-    isRuntimeInUse: () => runningAgentSessionCount > 0,
-  });
-  toolchainManager.subscribe((snapshot) => {
-    if (packagedStartupValidation) startupToolchainSnapshot = snapshot;
-    appendMainLog(
-      `toolchain scan revision=${snapshot.revision} candidates=${snapshot.candidates.length} ready=${snapshot.publicState.coreReady}`,
-    );
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send("toolchains:state", snapshot.publicState);
-    }
-    hostManager?.setToolchainSnapshot(snapshot);
-    finishPackagedStartupValidation();
-  });
-  updateManager.subscribe((state) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send("update:state", state);
-    }
-    if (state.phase === "available") {
-      const notificationKey = state.availableVersion ?? "unknown";
-      if (lastNotifiedUpdateVersion !== notificationKey) {
-        lastNotifiedUpdateVersion = notificationKey;
-        const win = getMainWindow();
-        const shouldNotify = !win || !win.isVisible() || !win.isFocused();
-        if (shouldNotify && Notification.isSupported()) {
-          const notification = new Notification({
-            title: "Pi Agent Desktop update available",
-            body: state.availableVersion
-              ? `Version ${state.availableVersion} is ready to download.`
-              : "A new version is ready to download.",
-          });
-          notification.on("click", () => {
-            openUpdateSettings(false);
-          });
-          notification.show();
+    });
+    const toolchainHome = app.getPath("home");
+    toolchainManager = new ToolchainManager({
+      platform: process.platform,
+      arch: process.arch,
+      env: process.env,
+      homeDir: toolchainHome,
+      tempRoot: app.getPath("temp"),
+      userDataRoot: app.getPath("userData"),
+      resourcesRoot: process.resourcesPath,
+      catalogPath: resolveRuntimeCatalogPath({
+        isPackaged: app.isPackaged,
+        resourcesRoot: process.resourcesPath,
+      }),
+      coreCatalogPath: bundledCorePaths.catalogPath,
+      bundledCoreRoot: bundledCorePaths.coreRoot,
+      // Chromium networking follows the user's system proxy/PAC and OS trust
+      // configuration. Redirects are synchronously allowlisted before following.
+      fetchImpl: createElectronRuntimeFetch((options) => net.request(options)),
+      legacyNpmCommand: readLegacyNpmCommand({ homeDir: toolchainHome, env: process.env }),
+      isRuntimeInUse: () => runningAgentSessionCount > 0,
+    });
+    toolchainManager.subscribe((snapshot) => {
+      if (packagedStartupValidation) startupToolchainSnapshot = snapshot;
+      appendMainLog(
+        `toolchain scan revision=${snapshot.revision} candidates=${snapshot.candidates.length} ready=${snapshot.publicState.coreReady}`,
+      );
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send("toolchains:state", snapshot.publicState);
+      }
+      hostManager?.setToolchainSnapshot(snapshot);
+      finishPackagedStartupValidation();
+    });
+    updateManager.subscribe((state) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send("update:state", state);
+      }
+      if (state.phase === "available") {
+        const notificationKey = state.availableVersion ?? "unknown";
+        if (lastNotifiedUpdateVersion !== notificationKey) {
+          lastNotifiedUpdateVersion = notificationKey;
+          const win = getMainWindow();
+          const shouldNotify = !win || !win.isVisible() || !win.isFocused();
+          if (shouldNotify && Notification.isSupported()) {
+            const notification = new Notification({
+              title: "Pi Agent Desktop update available",
+              body: state.availableVersion
+                ? `Version ${state.availableVersion} is ready to download.`
+                : "A new version is ready to download.",
+            });
+            notification.on("click", () => {
+              openUpdateSettings(false);
+            });
+            notification.show();
+          }
         }
       }
+    });
+
+    // Always register app:// so we can load the built renderer without Vite
+    // (npm start after build, or dev fallback when VITE_DEV_SERVER_URL is unset).
+    handleAppProtocol(rendererRootPath());
+
+    installDesktopIpc({
+      getHostManager: () => hostManager,
+      getMainWindow,
+      getUnreadBadge: () => unreadBadge,
+      applyBadgeCount,
+      getToolchainState: (cwd) =>
+        cwd ? toolchainManager!.getPublicStateForProject(cwd) : toolchainManager!.getPublicState(),
+      rescanToolchains: async (cwd) => {
+        await toolchainManager!.rescan({ cwd });
+        return cwd ? toolchainManager!.getPublicStateForProject(cwd) : toolchainManager!.getPublicState();
+      },
+      performToolchainAction: (request) => toolchainManager!.performAction(request),
+      chooseCustomTool: (capability, executable) => toolchainManager!.registerCustomTool(capability, executable),
+      setChannelCredential: (payload) =>
+        credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
+      getBrowserService: () => browserService,
+      updateManager,
+    });
+    installAppMenu(getMainWindow, () => openUpdateSettings(true));
+
+    createTray(getMainWindow);
+
+    // Apply persisted theme preference
+    if (ui.theme === "light" || ui.theme === "dark" || ui.theme === "system") {
+      nativeTheme.themeSource = ui.theme;
     }
-  });
 
-  // Always register app:// so we can load the built renderer without Vite
-  // (npm start after build, or dev fallback when VITE_DEV_SERVER_URL is unset).
-  handleAppProtocol(rendererRootPath());
-
-  installDesktopIpc({
-    getHostManager: () => hostManager,
-    getMainWindow,
-    getUnreadBadge: () => unreadBadge,
-    applyBadgeCount,
-    getToolchainState: (cwd) =>
-      cwd ? toolchainManager!.getPublicStateForProject(cwd) : toolchainManager!.getPublicState(),
-    rescanToolchains: async (cwd) => {
-      await toolchainManager!.rescan({ cwd });
-      return cwd ? toolchainManager!.getPublicStateForProject(cwd) : toolchainManager!.getPublicState();
-    },
-    performToolchainAction: (request) => toolchainManager!.performAction(request),
-    chooseCustomTool: (capability, executable) => toolchainManager!.registerCustomTool(capability, executable),
-    setChannelCredential: (payload) =>
-      credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
-    getBrowserService: () => browserService,
-    updateManager,
-  });
-  installAppMenu(getMainWindow, () => openUpdateSettings(true));
-
-  createTray(getMainWindow);
-
-  // Apply persisted theme preference
-  if (ui.theme === "light" || ui.theme === "dark" || ui.theme === "system") {
-    nativeTheme.themeSource = ui.theme;
-  }
-
-  hostManager = new HostManager(resolveHostEntry());
-  hostManager.setToolchainSnapshot(toolchainManager.getSnapshot());
-  hostManager.setBrowserCapabilitySnapshot(browserService.getCapabilitySnapshot());
-  const credentialRequestHandler = createCredentialRequestHandler(credentialVault);
-  hostManager.setRequestHandler(async (method, params) => {
-    if (method.startsWith("channelSecrets.")) return credentialRequestHandler(method, params);
-    if (method === "toolchain.getSnapshot") return toolchainManager!.getSnapshot();
-    if (method === "toolchain.resolve") {
-      const body = (params ?? {}) as { cwd?: unknown; intent?: unknown; trusted?: unknown };
-      if (
-        typeof body.cwd !== "string" ||
-        !path.isAbsolute(body.cwd) ||
-        body.cwd.length > 4_096 ||
-        /[\0\r\n]/.test(body.cwd) ||
-        !isExecutionIntent(body.intent) ||
-        typeof body.trusted !== "boolean"
-      ) {
-        throw new Error("Invalid Host toolchain resolution request");
+    hostManager = new HostManager(resolveHostEntry());
+    hostManager.setToolchainSnapshot(toolchainManager.getSnapshot());
+    hostManager.setBrowserCapabilitySnapshot(browserService.getCapabilitySnapshot());
+    const credentialRequestHandler = createCredentialRequestHandler(credentialVault);
+    hostManager.setRequestHandler(async (method, params) => {
+      if (method.startsWith("channelSecrets.")) return credentialRequestHandler(method, params);
+      if (method === "toolchain.getSnapshot") return toolchainManager!.getSnapshot();
+      if (method === "toolchain.resolve") {
+        const body = (params ?? {}) as { cwd?: unknown; intent?: unknown; trusted?: unknown };
+        if (
+          typeof body.cwd !== "string" ||
+          !path.isAbsolute(body.cwd) ||
+          body.cwd.length > 4_096 ||
+          /[\0\r\n]/.test(body.cwd) ||
+          !isExecutionIntent(body.intent) ||
+          typeof body.trusted !== "boolean"
+        ) {
+          throw new Error("Invalid Host toolchain resolution request");
+        }
+        return toolchainManager!.resolveForProject(body.cwd, { intent: body.intent, trusted: body.trusted });
       }
-      return toolchainManager!.resolveForProject(body.cwd, { intent: body.intent, trusted: body.trusted });
-    }
-    if (method.startsWith("browser.")) {
-      return browserService!.handleHostRequest(method, params);
-    }
-    throw new Error(`Unsupported Host request: ${method}`);
-  });
-  hostManager.setStatusListener((status, detail) => {
-    appendMainLog(`host status=${status} ${detail ?? ""}`);
-    if (packagedStartupValidation) {
-      startupHostReady = status === "ready";
-      if (status === "crashed") finishPackagedStartupValidation(detail ?? "Agent Host crashed");
-      else finishPackagedStartupValidation();
-    }
-    if (status !== "ready") {
-      runningAgentSessionCount = 0;
-      setTrayRunningCount(0, getMainWindow);
-      updateManager?.setRunningSessionCount(0);
-      browserService?.onHostStopped();
-    }
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send("host:status", { status, detail });
-      if (status === "ready" && detail?.includes("restart")) {
-        win.webContents.send("host:restarted", { reason: detail });
+      if (method.startsWith("browser.")) {
+        return browserService!.handleHostRequest(method, params);
       }
-      if (status === "crashed") {
-        win.webContents.send("host:crashed", { detail });
+      throw new Error(`Unsupported Host request: ${method}`);
+    });
+    hostManager.setStatusListener((status, detail) => {
+      appendMainLog(`host status=${status} ${detail ?? ""}`);
+      if (packagedStartupValidation) {
+        startupHostReady = status === "ready";
+        if (status === "crashed") finishPackagedStartupValidation(detail ?? "Agent Host crashed");
+        else finishPackagedStartupValidation();
       }
-    }
-  });
-
-  hostManager.setMessageListener((msg) => {
-    if (packagedStartupValidation && msg.type === "toolchain:ack") finishPackagedStartupValidation();
-    if (msg.type === "running-sessions") {
-      const ids = (msg.sessionIds as string[]) ?? [];
-      runningAgentSessionCount = ids.length;
-      setTrayRunningCount(ids.length, getMainWindow);
-      updateManager?.setRunningSessionCount(ids.length);
-    } else if (msg.type === "agent-end") {
-      const sessionId = String(msg.sessionId ?? "");
-      // Notify if no focused window or window is hidden (desktop value-add)
-      const win = getMainWindow();
-      const shouldNotify = !win || !win.isVisible() || !win.isFocused();
-      if (shouldNotify && Notification.isSupported() && sessionId) {
-        const n = new Notification({
-          title: "Agent finished",
-          body: "A session completed in the background",
-        });
-        n.on("click", () => {
-          const w = getMainWindow();
-          if (w) {
-            w.show();
-            w.focus();
-            w.webContents.send("deep-link:session", sessionId);
-          }
-        });
-        n.show();
-        applyBadgeCount(unreadBadge + 1);
+      if (status !== "ready") {
+        runningAgentSessionCount = 0;
+        setTrayRunningCount(0, getMainWindow);
+        updateManager?.setRunningSessionCount(0);
+        browserService?.onHostStopped();
       }
-    } else if (msg.type === "host-restarted") {
       for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send("host:restarted", { reason: String(msg.reason ?? "restart") });
+        win.webContents.send("host:status", { status, detail });
+        if (status === "ready" && detail?.includes("restart")) {
+          win.webContents.send("host:restarted", { reason: detail });
+        }
+        if (status === "crashed") {
+          win.webContents.send("host:crashed", { detail });
+        }
       }
+    });
+
+    hostManager.setMessageListener((msg) => {
+      if (packagedStartupValidation && msg.type === "toolchain:ack") finishPackagedStartupValidation();
+      if (msg.type === "running-sessions") {
+        const ids = (msg.sessionIds as string[]) ?? [];
+        runningAgentSessionCount = ids.length;
+        setTrayRunningCount(ids.length, getMainWindow);
+        updateManager?.setRunningSessionCount(ids.length);
+      } else if (msg.type === "agent-end") {
+        const sessionId = String(msg.sessionId ?? "");
+        // Notify if no focused window or window is hidden (desktop value-add)
+        const win = getMainWindow();
+        const shouldNotify = !win || !win.isVisible() || !win.isFocused();
+        if (shouldNotify && Notification.isSupported() && sessionId) {
+          const n = new Notification({
+            title: "Agent finished",
+            body: "A session completed in the background",
+          });
+          n.on("click", () => {
+            const w = getMainWindow();
+            if (w) {
+              w.show();
+              w.focus();
+              w.webContents.send("deep-link:session", sessionId);
+            }
+          });
+          n.show();
+          applyBadgeCount(unreadBadge + 1);
+        }
+      } else if (msg.type === "host-restarted") {
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send("host:restarted", { reason: String(msg.reason ?? "restart") });
+        }
+      }
+    });
+
+    hostManager.start();
+
+    createWindow();
+    void toolchainManager.initialize();
+    updateManager.startAutomaticChecks();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      } else {
+        getMainWindow()?.show();
+      }
+    });
+  });
+
+  app.on("before-quit", () => {
+    isQuitting = true;
+    updateManager?.stopAutomaticChecks();
+    destroyTray();
+    hostManager?.stop();
+    void browserService?.dispose();
+  });
+
+  app.on("certificate-error", (event, webContents, url, _error, _certificate, callback) => {
+    try {
+      const hostname = new URL(url).hostname;
+      if (browserService?.handleCertificateError(webContents.id, hostname)) {
+        event.preventDefault();
+        callback(true);
+      }
+    } catch {
+      // Chromium's default certificate policy remains in force.
     }
   });
 
-  hostManager.start();
-
-  createWindow();
-  void toolchainManager.initialize();
-  updateManager.startAutomaticChecks();
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    } else {
-      getMainWindow()?.show();
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
     }
   });
-});
 
-app.on("before-quit", () => {
-  isQuitting = true;
-  updateManager?.stopAutomaticChecks();
-  destroyTray();
-  hostManager?.stop();
-  void browserService?.dispose();
-});
-
-app.on("certificate-error", (event, webContents, url, _error, _certificate, callback) => {
-  try {
-    const hostname = new URL(url).hostname;
-    if (browserService?.handleCertificateError(webContents.id, hostname)) {
-      event.preventDefault();
-      callback(true);
+  // Deep link registration
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient("pi-agent-desktop", process.execPath, [path.resolve(process.argv[1])]);
     }
-  } catch {
-    // Chromium's default certificate policy remains in force.
+  } else {
+    app.setAsDefaultProtocolClient("pi-agent-desktop");
   }
-});
-
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
-
-// Deep link registration
-if (process.defaultApp) {
-  if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient("pi-agent-desktop", process.execPath, [path.resolve(process.argv[1])]);
-  }
-} else {
-  app.setAsDefaultProtocolClient("pi-agent-desktop");
 }
+
+startMainProcess();
