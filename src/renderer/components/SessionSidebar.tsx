@@ -14,6 +14,7 @@ import {
   type SessionDateGroup,
 } from "@/lib/session-list";
 import { applySessionChangedEvent } from "@/lib/session-sidebar-state";
+import { abbreviateHomePath } from "@/lib/display-path";
 
 interface Props {
   selectedSessionId: string | null;
@@ -91,11 +92,6 @@ function getRecentProjects(sessions: SessionInfo[]): string[] {
     }
   }
   return [...latestByRoot.entries()].sort((a, b) => b[1].localeCompare(a[1])).map(([root]) => root);
-}
-
-/** Substitute the home dir prefix with ~ (no path truncation — see PathLabel) */
-function displayCwd(cwd: string, homeDir?: string): string {
-  return homeDir && cwd.startsWith(homeDir) ? "~" + cwd.slice(homeDir.length) : cwd;
 }
 
 /**
@@ -1006,7 +1002,7 @@ export function SessionSidebar({
           >
             {selectedCwd ? (
               <PathLabel
-                text={displayCwd(selectedProject ?? selectedCwd, homeDir)}
+                text={abbreviateHomePath(selectedProject ?? selectedCwd, homeDir)}
                 style={{
                   flex: 1,
                   fontFamily: "var(--font-mono)",
@@ -1122,7 +1118,7 @@ export function SessionSidebar({
                     </svg>
                   )}
                   {project !== selectedProject && <span style={{ width: 10, flexShrink: 0 }} />}
-                  <PathLabel text={displayCwd(project, homeDir)} style={{ flex: 1 }} />
+                  <PathLabel text={abbreviateHomePath(project, homeDir)} style={{ flex: 1 }} />
                 </button>
               ))}
               {visibleProjects.length === 0 && projectFilter.trim() && (
@@ -1394,7 +1390,7 @@ export function SessionSidebar({
                     <path d="M18 9a9 9 0 0 1-9 9" />
                   </svg>
                   <PathLabel
-                    text={currentWt ? (currentWt.branch ?? displayCwd(currentWt.path, homeDir)) : "…"}
+                    text={currentWt ? (currentWt.branch ?? abbreviateHomePath(currentWt.path, homeDir)) : "…"}
                     style={{ flex: 1, fontFamily: "var(--font-mono)", color: "var(--text)" }}
                   />
                   {currentWt?.isMain && (
@@ -1546,7 +1542,7 @@ export function SessionSidebar({
                             ) : (
                               <span style={{ width: 10, flexShrink: 0 }} />
                             )}
-                            <PathLabel text={wt.branch ?? displayCwd(wt.path, homeDir)} style={{ flex: 1 }} />
+                            <PathLabel text={wt.branch ?? abbreviateHomePath(wt.path, homeDir)} style={{ flex: 1 }} />
                             {wt.isMain && (
                               <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>main</span>
                             )}
