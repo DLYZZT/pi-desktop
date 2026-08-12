@@ -4,7 +4,6 @@ import {
   useCallback,
   useRef,
   useEffect,
-  useSyncExternalStore,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -25,6 +24,7 @@ import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
 import { getSessionDisplayTitle } from "@/lib/session-list";
 import { beginSessionLoadTrace } from "@/lib/session-performance";
+import { readSessionIdFromSearch, routerCompat } from "@/lib/router-compat";
 import { SessionProfiler } from "./SessionProfiler";
 import { buildAtMentionText } from "@/lib/file-fuzzy";
 import {
@@ -76,30 +76,8 @@ function loadBrowserPanelPreferredWidth(): number {
   }
 }
 
-function useSearchParamsCompat() {
-  const subscribe = (cb: () => void) => {
-    window.addEventListener("popstate", cb);
-    return () => window.removeEventListener("popstate", cb);
-  };
-  const get = () => window.location.search;
-  const search = useSyncExternalStore(subscribe, get, () => "");
-  return new URLSearchParams(search);
-}
-
-function useRouterCompat() {
-  return {
-    replace: (url: string, _opts?: { scroll?: boolean }) => {
-      const next = url.startsWith("?") || url.startsWith("/") ? url : `?${url}`;
-      const full = next.startsWith("?") ? `${window.location.pathname}${next}` : next;
-      window.history.replaceState(null, "", full === "/" ? "/" : full);
-      window.dispatchEvent(new Event("popstate"));
-    },
-  };
-}
-
 export function AppShell() {
-  const router = useRouterCompat();
-  const searchParams = useSearchParamsCompat();
+  const router = routerCompat;
   const { isDark, toggleTheme } = useTheme();
   const { language, t } = useI18n();
   const isMobile = useIsMobile();
@@ -390,10 +368,10 @@ export function AppShell() {
     chatInputRef.current?.insertText(buildAtMentionText(relativePath, isDir));
   }, []);
 
-  const [initialSessionId] = useState<string | null>(() => searchParams.get("session"));
+  const [initialSessionId] = useState<string | null>(() => readSessionIdFromSearch(window.location.search));
   const [activeCwd, setActiveCwd] = useState<string | null>(null);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
-  const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !searchParams.get("session"));
+  const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
   // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
   const suppressCwdBumpRef = useRef(false);
 
