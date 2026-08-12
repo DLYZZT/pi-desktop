@@ -51,6 +51,18 @@ jobs:
       - name: Run unit and handler tests
         run: npm test
 
+      - name: Run cross-platform quality checks (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm run check:contract
+          npm run check:pi-compat
+          npm run check:toolchain-contract
+          npm run check:toolchain-catalog
+          npm run check:browser-i18n
+
   quality:
     name: Quality gate
     runs-on: ubuntu-24.04
@@ -78,7 +90,7 @@ jobs:
 
   package:
     name: ${{ matrix.name }}
-    if: github.ref_type != 'tag' && github.event_name != 'push'
+    if: github.ref_type != 'tag'
     needs: [quality, test-platforms]
     strategy:
       fail-fast: false
@@ -132,6 +144,10 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: Run Electron smoke on Windows
+        if: runner.os == 'Windows'
+        run: npm run smoke
+
       - name: Prepare verified bundled search tools
         run: npm run prepare:bundled-tools -- --target ${{ matrix.tool_target }}
 
@@ -152,6 +168,31 @@ jobs:
       - name: Verify packaged toolchains and production startup
         if: runner.os != 'Linux'
         run: npm run check:packaged-toolchains -- ${{ matrix.tool_target }}
+
+      - name: Verify update metadata matches the packaged architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          case "${{ matrix.platform }}" in
+            mac)
+              metadata="dist/latest-mac.yml"
+              update_artifact="dist/Pi-Agent-Desktop-${version}-${{ matrix.arch }}.zip"
+              ;;
+            win)
+              metadata="dist/latest.yml"
+              update_artifact="dist/Pi-Agent-Desktop-Setup-${version}.exe"
+              ;;
+            linux)
+              metadata="dist/latest-linux.yml"
+              update_artifact="dist/Pi-Agent-Desktop-${version}-x86_64.AppImage"
+              ;;
+            *)
+              echo "Unsupported package platform: ${{ matrix.platform }}" >&2
+              exit 1
+              ;;
+          esac
+          node scripts/verify-update-metadata.mjs "$metadata" "$version" "$update_artifact"
 
       - name: Upload ${{ matrix.name }} artifacts
         uses: actions/upload-artifact@v7
