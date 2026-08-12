@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type { PublicToolchainState } from "../shared/toolchains/types";
 import type { BrowserDiagnostics } from "../contract/browser.ts";
-import { getMainLogPath } from "./logger";
+import { flushMainLog, getMainLogPath } from "./logger";
 import { buildToolchainDiagnosticSummary, redactDiagnosticText } from "./diagnostics-redaction.ts";
 
 const MAX_LOG_BYTES = 5 * 1024 * 1024;
@@ -58,6 +58,7 @@ export async function exportDiagnostics(
   }
   if (options.browser) writePrivateJson(path.join(outDir, "browser.json"), options.browser);
 
+  await flushMainLog();
   const copiedNames = new Set<string>();
   copyRedactedLog(getMainLogPath(), "main.log", outDir, roots, copiedNames);
   try {

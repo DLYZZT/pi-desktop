@@ -5,11 +5,12 @@
 import { app, utilityProcess, MessageChannelMain, type UtilityProcess, type MessagePortMain } from "electron";
 import fs from "fs";
 import path from "path";
-import { appendMainLog } from "./logger";
+import { appendMainLog, appendMainLogs } from "./logger";
 import type { ToolchainSnapshot } from "../shared/toolchains/types";
 import type { BrowserCapabilitySnapshot } from "../contract/browser";
 import { BrowserError } from "./browser/browser-error";
 import { reserveHostRestart, trySpawnHost } from "./host-restart-core";
+import { HostOutputLineBuffer } from "./logger-core";
 
 const CRASH_WINDOW_MS = 30_000;
 const MAX_RESTARTS = 2;
@@ -219,6 +220,8 @@ export class HostManager {
       return;
     }
     const child = spawnResult.child;
+    const stdoutBuffer = new HostOutputLineBuffer((lines) => appendMainLogs(lines.map((line) => `[host:out] ${line}`)));
+    const stderrBuffer = new HostOutputLineBuffer((lines) => appendMainLogs(lines.map((line) => `[host:err] ${line}`)));
 
     this.child = child;
     this.lastPong = Date.now();
@@ -310,14 +313,10 @@ export class HostManager {
       this.scheduleRestart(`Host exited (code ${code})`);
     });
 
-    child.stdout?.on("data", (buf: Buffer) => {
-      const line = buf.toString().trim();
-      if (line) appendMainLog(`[host:out] ${line}`);
-    });
-    child.stderr?.on("data", (buf: Buffer) => {
-      const line = buf.toString().trim();
-      if (line) appendMainLog(`[host:err] ${line}`);
-    });
+    child.stdout?.on("data", (buf: Buffer) => stdoutBuffer.push(buf.toString()));
+    child.stdout?.on("end", () => stdoutBuffer.flush());
+    child.stderr?.on("data", (buf: Buffer) => stderrBuffer.push(buf.toString()));
+    child.stderr?.on("end", () => stderrBuffer.flush());
   }
 
   private scheduleRestart(reason: string): void {
