@@ -25,7 +25,6 @@ import {
   SessionManager,
   createAgentSessionServices,
   getAgentDir,
-  parseFrontmatter,
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type AuthInteraction } from "@earendil-works/pi-ai";
@@ -85,6 +84,7 @@ import { createAuthLoginService, resolveLoginCode } from "./auth-login";
 import { getSharedModelRuntime, modelCatalogRefreshCoordinator, reloadSharedModelRuntimeConfig } from "./model-runtime";
 import { applyPluginAction, readPlugins } from "./plugins-service";
 import { installSkill, searchSkills } from "./skills-service";
+import { updateSkillModelInvocation } from "./skill-frontmatter";
 import { projectSessionTreeForResponse } from "./project-tree";
 import { ChannelManager } from "./channels/channel-manager";
 import { safeChannelError } from "./channels/redaction";
@@ -1652,16 +1652,10 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       if (content.length > 2 * 1024 * 1024) {
         throw new RpcError({ code: "BAD_REQUEST", message: "Skill file is too large" });
       }
-      const key = "disable-model-invocation";
-      const { frontmatter } = parseFrontmatter<Record<string, unknown>>(content);
-      const alreadySet = Boolean(frontmatter[key]);
-      let updated = content;
-      if (body.disableModelInvocation === true && !alreadySet) {
-        updated = content.replace(/^---\r?\n/, `---\n${key}: true\n`);
-        if (updated === content) updated = `---\n${key}: true\n---\n${content}`;
-      } else if (body.disableModelInvocation === false && alreadySet) {
-        updated = content.replace(new RegExp(`^${key}\\s*:.*\\r?\\n`, "m"), "");
-      }
+      const updated =
+        body.disableModelInvocation === undefined
+          ? content
+          : updateSkillModelInvocation(content, body.disableModelInvocation);
       writeTextAtomically(filePath, updated);
       return { ok: true as const };
     },
