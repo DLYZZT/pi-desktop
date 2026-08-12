@@ -7,6 +7,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopMenuEvent, DesktopUpdateState, HostStatus, PiBridge } from "../contract/desktop";
 import type { BrowserEvent } from "../contract/browser";
+import { EarlyEventReplay } from "./early-event-replay";
 import { isTrustedPreloadLocation } from "./preload-location-policy";
 
 const preloadLocation = (globalThis as unknown as { location?: { href?: unknown } }).location?.href;
@@ -23,9 +24,8 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
     g.postMessage({ channel: "pi-desktop-host-port" }, "*", [port]);
   });
 
-  // ISSUE-016: buffer deep-link until renderer subscribes
-  let pendingDeepLinkSession: string | null = null;
-  const deepLinkListeners = new Set<(sessionId: string) => void>();
+  // Buffer one bounded generation per fixed event until Renderer listeners subscribe.
+  const deepLinkEvents = new EarlyEventReplay<string>();
   const menuEvents = [
     "new-session",
     "settings",
@@ -35,21 +35,10 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
     "export-diagnostics",
   ] as const satisfies readonly DesktopMenuEvent[];
   const menuEventSet = new Set<string>(menuEvents);
-  const menuListeners = new Map<DesktopMenuEvent, Set<() => void>>();
-  const pendingMenuEvents = new Set<DesktopMenuEvent>();
+  const menuEventReplays = new Map(menuEvents.map((event) => [event, new EarlyEventReplay<void>()]));
 
   ipcRenderer.on("deep-link:session", (_e, sessionId: string) => {
-    if (deepLinkListeners.size === 0) {
-      pendingDeepLinkSession = sessionId;
-      return;
-    }
-    for (const cb of deepLinkListeners) {
-      try {
-        cb(sessionId);
-      } catch {
-        /* ignore */
-      }
-    }
+    deepLinkEvents.emit(sessionId);
   });
 
   // Main can send a menu command as soon as a newly created page finishes
@@ -57,18 +46,7 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
   // fixed event so notification/menu navigation is not lost during startup.
   for (const event of menuEvents) {
     ipcRenderer.on(`menu:${event}`, () => {
-      const listeners = menuListeners.get(event);
-      if (!listeners || listeners.size === 0) {
-        pendingMenuEvents.add(event);
-        return;
-      }
-      for (const listener of [...listeners]) {
-        try {
-          listener();
-        } catch {
-          /* ignore renderer listener failures */
-        }
-      }
+      menuEventReplays.get(event)?.emit(undefined);
     });
   }
 
@@ -186,19 +164,7 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
       return () => ipcRenderer.removeListener("toolchains:state", handler);
     },
     onDeepLinkSession: (cb) => {
-      deepLinkListeners.add(cb);
-      if (pendingDeepLinkSession) {
-        const id = pendingDeepLinkSession;
-        pendingDeepLinkSession = null;
-        try {
-          cb(id);
-        } catch {
-          /* ignore */
-        }
-      }
-      return () => {
-        deepLinkListeners.delete(cb);
-      };
+      return deepLinkEvents.subscribe(cb);
     },
     onBrowserEvent: (cb) => {
       const handler = (_: Electron.IpcRendererEvent, event: BrowserEvent) => cb(event);
@@ -208,20 +174,7 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
     onMenu: (event, cb) => {
       if (!menuEventSet.has(event)) return () => undefined;
       const fixedEvent = event as DesktopMenuEvent;
-      const listeners = menuListeners.get(fixedEvent) ?? new Set<() => void>();
-      listeners.add(cb);
-      menuListeners.set(fixedEvent, listeners);
-      if (pendingMenuEvents.delete(fixedEvent)) {
-        try {
-          cb();
-        } catch {
-          /* ignore renderer listener failures */
-        }
-      }
-      return () => {
-        listeners.delete(cb);
-        if (listeners.size === 0) menuListeners.delete(fixedEvent);
-      };
+      return menuEventReplays.get(fixedEvent)?.subscribe(cb) ?? (() => undefined);
     },
   };
 
