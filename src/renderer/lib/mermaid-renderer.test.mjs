@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { APP_SANS_FONT_FAMILY } from "../../shared/font-stack.ts";
 import { MermaidRenderCache } from "./mermaid-renderer.ts";
 
 test("Mermaid SVGs are cached by code, theme, and renderer version", async () => {
@@ -10,7 +11,7 @@ test("Mermaid SVGs are cached by code, theme, and renderer version", async () =>
     async () => ({
       default: {
         initialize(config) {
-          calls.push(["initialize", config.theme]);
+          calls.push(["initialize", config.theme, config.fontFamily]);
         },
         async parse(code) {
           calls.push(["parse", code]);
@@ -27,17 +28,21 @@ test("Mermaid SVGs are cached by code, theme, and renderer version", async () =>
 
   const first = await cache.render("graph TD; A-->B", false);
   const previewAgain = await cache.render("graph TD; A-->B", false);
+  const secondLight = await cache.render("graph TD; B-->C", false);
   const dark = await cache.render("graph TD; A-->B", true);
 
   assert.equal(previewAgain, first);
+  assert.equal(secondLight, "<svg>graph TD; B-->C</svg>");
   assert.equal(dark, first);
   assert.deepEqual(calls, [
-    ["initialize", "default"],
+    ["initialize", "default", APP_SANS_FONT_FAMILY],
     ["parse", "graph TD; A-->B"],
     ["render", "id-1", "graph TD; A-->B"],
-    ["initialize", "dark"],
+    ["parse", "graph TD; B-->C"],
+    ["render", "id-2", "graph TD; B-->C"],
+    ["initialize", "dark", APP_SANS_FONT_FAMILY],
     ["parse", "graph TD; A-->B"],
-    ["render", "id-2", "graph TD; A-->B"],
+    ["render", "id-3", "graph TD; A-->B"],
   ]);
 });
 

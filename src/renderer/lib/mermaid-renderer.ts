@@ -1,4 +1,6 @@
-const MERMAID_RENDER_VERSION = 1;
+import { APP_SANS_FONT_FAMILY } from "../../shared/font-stack.ts";
+
+const MERMAID_RENDER_VERSION = 2;
 const MAX_MERMAID_CACHE_ENTRIES = 64;
 
 interface MermaidApi {
@@ -18,6 +20,8 @@ export class MermaidRenderCache {
   private queue: Promise<void> = Promise.resolve();
   private readonly load: MermaidLoader;
   private readonly createId: () => string;
+  private mermaidPromise: Promise<MermaidApi> | null = null;
+  private initializedTheme: "dark" | "default" | null = null;
 
   constructor(load: MermaidLoader, createId: () => string = createMermaidId) {
     this.load = load;
@@ -34,13 +38,18 @@ export class MermaidRenderCache {
     }
 
     const task = this.queue.then(async () => {
-      const { default: mermaid } = await this.load();
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        suppressErrorRendering: true,
-        theme: isDark ? "dark" : "default",
-      });
+      const mermaid = await this.getMermaid();
+      const theme = isDark ? "dark" : "default";
+      if (this.initializedTheme !== theme) {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          suppressErrorRendering: true,
+          theme,
+          fontFamily: APP_SANS_FONT_FAMILY,
+        });
+        this.initializedTheme = theme;
+      }
       const parsed = await mermaid.parse(code, { suppressErrors: true });
       if (!parsed) throw new Error("Invalid Mermaid diagram");
       return (await mermaid.render(this.createId(), code)).svg;
@@ -57,6 +66,11 @@ export class MermaidRenderCache {
       this.cache.delete(this.cache.keys().next().value!);
     }
     return task;
+  }
+
+  private getMermaid(): Promise<MermaidApi> {
+    this.mermaidPromise ??= this.load().then(({ default: mermaid }) => mermaid);
+    return this.mermaidPromise;
   }
 }
 

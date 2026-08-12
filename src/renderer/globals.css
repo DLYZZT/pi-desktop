@@ -24,8 +24,6 @@
 
 /* Warm paper + orange accent design system (from design.html) */
 :root {
-  --font-inter: "Inter";
-  --font-noto-mono: "Noto Sans Mono";
   --bg: #f7f6f3;
   --bg-panel: #fcfbf9;
   --bg-hover: #f0eeea;
@@ -221,11 +219,11 @@ html.dark ::-webkit-scrollbar-thumb {
 
 :root {
   --font-sans:
-    var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
-    "Noto Sans SC", sans-serif;
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei",
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", Arial, sans-serif;
   --font-mono:
-    var(--font-noto-mono), "JetBrains Mono", "Fira Code", "Consolas", ui-monospace, "PingFang SC", "Microsoft YaHei",
-    monospace;
+    ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Microsoft YaHei UI", "Microsoft YaHei",
+    "PingFang SC", "Noto Sans Mono CJK SC", "Noto Sans Mono", monospace;
 }
 
 /* Streaming caret (design.html) */
