@@ -62,8 +62,24 @@ test("package metadata is cross-checked against each platform artifact", () => {
   const verification = stepByName("package", "Verify update metadata matches the packaged architecture").run;
   for (const metadata of ["latest-mac.yml", "latest.yml", "latest-linux.yml"])
     assert.match(verification, new RegExp(metadata));
-  for (const artifact of ["${{ matrix.arch }}.zip", "Setup-${version}.exe", "x86_64.AppImage"]) {
+  for (const artifact of ["${{ matrix.arch }}.zip", "Unsigned-Beta-Setup-${version}.exe", "x86_64.AppImage"]) {
     assert.ok(verification.includes(artifact), artifact);
   }
   assert.match(verification, /verify-update-metadata\.mjs "\$metadata" "\$version" "\$update_artifact"/);
+});
+
+test("unsigned Windows releases remain explicitly Beta until Authenticode provenance exists", () => {
+  const windowsRelease = workflow.jobs["release-windows"];
+  assert.match(windowsRelease.name, /Unsigned Beta/);
+  assert.equal(windowsRelease.env.CSC_IDENTITY_AUTO_DISCOVERY, "false");
+
+  const trustGate = stepByName("release-windows", "Enforce unsigned Windows Beta trust status");
+  assert.equal(trustGate.shell, "pwsh");
+  assert.match(trustGate.run, /Get-AuthenticodeSignature/);
+  assert.match(trustGate.run, /NotSigned/);
+  assert.match(trustGate.run, /Unknown Publisher/);
+  assert.match(trustGate.run, /certificate-backed signing and provenance verification/);
+
+  const builderConfig = fs.readFileSync(path.join(root, "electron-builder.yml"), "utf8");
+  assert.match(builderConfig, /artifactName: Pi-Agent-Desktop-Unsigned-Beta-Setup-\$\{version\}\.\$\{ext\}/);
 });

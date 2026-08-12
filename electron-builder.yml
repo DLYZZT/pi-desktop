@@ -131,7 +131,10 @@ win:
     - target: nsis
       arch:
         - x64
-  artifactName: Pi-Agent-Desktop-Setup-${version}.${ext}
+  # Authenticode is not provisioned yet. Keep the trust limitation visible in
+  # every downloaded filename until the release workflow is replaced by a
+  # certificate-backed signing and provenance gate.
+  artifactName: Pi-Agent-Desktop-Unsigned-Beta-Setup-${version}.${ext}
 
 nsis:
   oneClick: false

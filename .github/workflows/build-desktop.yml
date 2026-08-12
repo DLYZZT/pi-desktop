@@ -181,7 +181,7 @@ jobs:
               ;;
             win)
               metadata="dist/latest.yml"
-              update_artifact="dist/Pi-Agent-Desktop-Setup-${version}.exe"
+              update_artifact="dist/Pi-Agent-Desktop-Unsigned-Beta-Setup-${version}.exe"
               ;;
             linux)
               metadata="dist/latest-linux.yml"
@@ -558,7 +558,7 @@ jobs:
         run: npm run check:packaged-toolchains -- darwin-x64
 
   release-windows:
-    name: Package Windows x64
+    name: Package Windows x64 (Unsigned Beta)
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     needs: [release-contract]
     runs-on: windows-2025
@@ -703,11 +703,27 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
-          installer="dist/Pi-Agent-Desktop-Setup-${version}.exe"
+          installer="dist/Pi-Agent-Desktop-Unsigned-Beta-Setup-${version}.exe"
           test -s "$installer"
           test "$(find dist -maxdepth 1 -type f -name '*.exe' | wc -l | tr -d ' ')" -eq 1
           test -s dist/latest.yml
           node scripts/verify-update-metadata.mjs dist/latest.yml "$version" "$installer"
+
+      - name: Enforce unsigned Windows Beta trust status
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $installer = "dist/Pi-Agent-Desktop-Unsigned-Beta-Setup-$version.exe"
+          $signature = Get-AuthenticodeSignature $installer
+          if ($signature.Status -ne "NotSigned") {
+            throw "Unsigned Beta gate expected NotSigned, received $($signature.Status). Replace this gate with certificate and provenance verification before publishing a signed build."
+          }
+          @"
+          ### Windows release trust: Unsigned Beta
+
+          This artifact has no Authenticode publisher identity. Windows will display **Unknown Publisher**.
+          Do not relabel it as a stable trusted Windows build until certificate-backed signing and provenance verification are enabled.
+          "@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
       - name: Run packaged toolchain E2E for Windows x64
         run: npm run check:packaged-toolchains -- win32-x64
