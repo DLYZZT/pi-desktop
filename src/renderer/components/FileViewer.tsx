@@ -1,20 +1,15 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useReducer } from "react";
 import { SyntaxHighlighter, vs, vscDarkPlus } from "@/lib/syntax-highlight";
 import { useTheme } from "@/hooks/useTheme";
 import { MarkdownBody } from "./MarkdownBody";
 import { DOCX_PREVIEW_MAX_BYTES, getFileExt, isAudioPath, isDocumentPreviewPath, isImagePath } from "@/lib/file-types";
 import { encodeFilePathForApi, getFileName, getParentFilePath, getRelativeFilePath } from "@/lib/file-paths";
+import { INITIAL_TEXT_FILE_LOAD_STATE, textFileLoadReducer, type TextFileData } from "@/lib/file-viewer-load-state";
 
 interface Props {
   filePath: string;
   cwd?: string;
   sourceSessionId?: string | null;
-}
-
-interface FileData {
-  content: string;
-  language: string;
-  size: number;
 }
 
 function getFileApiUrl(
@@ -847,15 +842,11 @@ export function FileViewer({ filePath, cwd, sourceSessionId }: Props) {
 
 function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
   const { isDark } = useTheme();
-  const [data, setData] = useState<FileData | null>(null);
-  const [prevContent, setPrevContent] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loadState, dispatchLoad] = useReducer(textFileLoadReducer, INITIAL_TEXT_FILE_LOAD_STATE);
   const [previewMode, setPreviewMode] = useState(false);
   const [viewMode, setViewMode] = useState<"source" | "diff">("source");
   const [wrapLines, setWrapLines] = useState(false);
   const [watching, setWatching] = useState(false);
-  const [changeCount, setChangeCount] = useState(0);
   const esRef = useRef<EventSource | null>(null);
 
   const loadGen = useRef(0);
@@ -868,36 +859,28 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
         .then((d) => {
           if (gen !== loadGen.current) return null; // ISSUE-019: stale response
           if (d.error) {
-            setError(d.error);
+            dispatchLoad({ type: "failed", error: d.error });
             return null;
           }
           if (d.encoding === "too_large") {
-            setError("File too large for preview");
+            dispatchLoad({ type: "failed", error: "File too large for preview" });
             return null;
           }
           if (d.encoding === "base64") {
-            setError("Binary file cannot be shown as text");
+            dispatchLoad({ type: "failed", error: "Binary file cannot be shown as text" });
             return null;
           }
-          const payload: FileData = {
+          const payload: TextFileData = {
             content: d.content,
             language: d.language ?? "text",
             size: d.size ?? d.content.length,
           };
-          if (isRefresh) {
-            setData((prev) => {
-              if (prev) setPrevContent(prev.content);
-              return payload;
-            });
-            setChangeCount((c) => c + 1);
-          } else {
-            setData(payload);
-          }
+          dispatchLoad({ type: "succeeded", data: payload, refresh: isRefresh });
           return payload;
         })
         .catch((e) => {
           if (gen !== loadGen.current) return null;
-          setError(String(e));
+          dispatchLoad({ type: "failed", error: String(e) });
           return null;
         });
     },
@@ -906,14 +889,10 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
 
   // Initial load + watch setup
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-    setData(null);
-    setPrevContent(null);
+    dispatchLoad({ type: "reset" });
     setPreviewMode(false);
     setViewMode("source");
     setWrapLines(false);
-    setChangeCount(0);
     setWatching(false);
 
     if (esRef.current) {
@@ -921,11 +900,9 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
       esRef.current = null;
     }
 
-    void fetchContent(filePath)
-      .then((data) => {
-        if (data?.language === "markdown") setPreviewMode(true);
-      })
-      .finally(() => setLoading(false));
+    void fetchContent(filePath).then((data) => {
+      if (data?.language === "markdown") setPreviewMode(true);
+    });
 
     const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
     esRef.current = es;
@@ -953,7 +930,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
     };
   }, [filePath, fetchContent, sourceSessionId]);
 
-  if (loading) {
+  if (loadState.status === "loading") {
     return (
       <div
         style={{
@@ -970,7 +947,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
     );
   }
 
-  if (error) {
+  if (loadState.status === "error") {
     return (
       <div
         style={{
@@ -982,12 +959,12 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
           fontSize: 13,
         }}
       >
-        {error}
+        {loadState.error}
       </div>
     );
   }
 
-  if (!data) return null;
+  const { data, prevContent, changeCount } = loadState;
 
   const isHtml = data.language === "html";
   const isMarkdown = data.language === "markdown";
