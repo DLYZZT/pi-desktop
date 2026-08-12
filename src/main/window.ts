@@ -1,6 +1,7 @@
 import { BrowserWindow, shell } from "electron";
 import { appendMainLog } from "./logger";
 import { resolvePreloadPath, resolveRendererEntry } from "./host-manager";
+import { releaseHtmlPreviewsForOwner } from "./protocol";
 import { createLoadFailurePage } from "./window-load-failure";
 import { isAllowedMainNavigation } from "./window-navigation-policy";
 import { applyWindowBounds, loadUiState, shouldMaximize, trackWindowState } from "./window-state";
@@ -43,6 +44,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
       webSecurity: true,
     },
   });
+  const previewOwnerId = win.webContents.id;
 
   trackWindowState(win);
   if (shouldMaximize(ui) && !win.isDestroyed()) win.maximize();
@@ -78,9 +80,13 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     }
   });
 
-  win.on("closed", () => options.onClosed?.(win));
+  win.on("closed", () => {
+    releaseHtmlPreviewsForOwner(previewOwnerId);
+    options.onClosed?.(win);
+  });
 
   win.webContents.on("render-process-gone", (_event, details) => {
+    releaseHtmlPreviewsForOwner(previewOwnerId);
     options.onRendererUnavailable?.(`render-process-gone:${details.reason}`);
     appendMainLog(`render-process-gone: ${details.reason}`);
     if (!win.isDestroyed()) win.reload();
@@ -91,6 +97,10 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
   // surface above the replacement React UI.
   win.webContents.on("did-start-loading", () => {
     options.onRendererUnavailable?.("did-start-loading");
+  });
+
+  win.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) releaseHtmlPreviewsForOwner(previewOwnerId);
   });
 
   win.webContents.on("did-finish-load", () => {

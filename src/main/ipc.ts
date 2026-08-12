@@ -230,20 +230,25 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
 
   trustedHandle(
     "desktop:create-html-preview",
-    (_event, content: string, filePath: string, sourceSessionId?: string | null) =>
-      createHtmlPreviewUrl(content, filePath, async (assetPath) => {
-        const manager = getHostManager();
-        if (!manager) throw new Error("Agent Host is unavailable");
-        const meta = await manager.call<{ size: number }>("files.meta", {
-          path: assetPath,
-          sourceSessionId: sourceSessionId ?? undefined,
-        });
-        if (meta.size > 20 * 1024 * 1024) throw new Error("HTML preview asset is too large");
-        return manager.call<{ base64: string; size: number; mime?: string }>("files.download", {
-          path: assetPath,
-          sourceSessionId: sourceSessionId ?? undefined,
-        });
-      }),
+    (event, content: string, filePath: string, sourceSessionId?: string | null) =>
+      createHtmlPreviewUrl(
+        content,
+        filePath,
+        async (assetPath) => {
+          const manager = getHostManager();
+          if (!manager) throw new Error("Agent Host is unavailable");
+          const meta = await manager.call<{ size: number }>("files.meta", {
+            path: assetPath,
+            sourceSessionId: sourceSessionId ?? undefined,
+          });
+          if (meta.size > 20 * 1024 * 1024) throw new Error("HTML preview asset is too large");
+          return manager.call<{ base64: string; size: number; mime?: string }>("files.download", {
+            path: assetPath,
+            sourceSessionId: sourceSessionId ?? undefined,
+          });
+        },
+        event.sender.id,
+      ),
   );
   trustedHandle("desktop:release-html-preview", (_event, previewUrl: string) => {
     releaseHtmlPreviewUrl(previewUrl);

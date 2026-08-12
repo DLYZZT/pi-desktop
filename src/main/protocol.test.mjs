@@ -10,7 +10,7 @@ mkdirSync(path.dirname(output), { recursive: true });
 await build({
   stdin: {
     contents: [
-      'export { createHtmlPreviewUrl, handleAppProtocol } from "./protocol.ts";',
+      'export { HTML_PREVIEW_MAX_ENTRIES, HTML_PREVIEW_TTL_MS, createHtmlPreviewUrl, handleAppProtocol, pruneHtmlPreviews, releaseHtmlPreviewsForOwner } from "./protocol.ts";',
       'export { getProtocolHandler } from "electron";',
     ].join("\n"),
     resolveDir: import.meta.dirname,
@@ -44,9 +44,15 @@ await build({
   ],
 });
 
-const { createHtmlPreviewUrl, getProtocolHandler, handleAppProtocol } = await import(
-  `${pathToFileURL(output).href}?v=${Date.now()}`
-);
+const {
+  HTML_PREVIEW_MAX_ENTRIES,
+  HTML_PREVIEW_TTL_MS,
+  createHtmlPreviewUrl,
+  getProtocolHandler,
+  handleAppProtocol,
+  pruneHtmlPreviews,
+  releaseHtmlPreviewsForOwner,
+} = await import(`${pathToFileURL(output).href}?v=${Date.now()}`);
 
 test("HTML preview assets stay inside the source document directory", async () => {
   const loaded = [];
@@ -72,4 +78,35 @@ test("HTML preview assets stay inside the source document directory", async () =
     assert.equal(response.status, 403, malicious);
   }
   assert.equal(loaded.length, 1, "rejected paths must not reach the Host asset loader");
+});
+
+test("HTML preview registry expires, caps, and releases owned entries", async () => {
+  const loader = async () => ({ base64: "", size: 0 });
+  const createdAt = Date.now();
+  const expiredUrl = createHtmlPreviewUrl("expired", "/workspace/expired.html", loader, 10);
+  const ownedUrl = createHtmlPreviewUrl("owned", "/workspace/owned.html", loader, 20);
+  const retainedUrl = createHtmlPreviewUrl("retained", "/workspace/retained.html", loader, 30);
+
+  pruneHtmlPreviews(createdAt + HTML_PREVIEW_TTL_MS + 1);
+  assert.equal((await getProtocolHandler()({ url: expiredUrl })).status, 404);
+
+  const freshOwnedUrl = createHtmlPreviewUrl("owned", "/workspace/owned.html", loader, 20);
+  const freshRetainedUrl = createHtmlPreviewUrl("retained", "/workspace/retained.html", loader, 30);
+  releaseHtmlPreviewsForOwner(20);
+  assert.equal((await getProtocolHandler()({ url: freshOwnedUrl })).status, 404);
+  assert.equal((await getProtocolHandler()({ url: freshRetainedUrl })).status, 200);
+
+  const capacityUrls = [];
+  for (let index = 0; index <= HTML_PREVIEW_MAX_ENTRIES; index += 1) {
+    capacityUrls.push(createHtmlPreviewUrl(String(index), `/workspace/${index}.html`, loader, 40));
+  }
+  assert.equal((await getProtocolHandler()({ url: capacityUrls[0] })).status, 404);
+  assert.equal((await getProtocolHandler()({ url: capacityUrls.at(-1) })).status, 200);
+
+  releaseHtmlPreviewsForOwner(10);
+  releaseHtmlPreviewsForOwner(20);
+  releaseHtmlPreviewsForOwner(30);
+  releaseHtmlPreviewsForOwner(40);
+  void ownedUrl;
+  void retainedUrl;
 });
