@@ -9,6 +9,7 @@ import {
 import {
   filterSessionsForQuery,
   getSessionDisplayTitle,
+  resolveInitialSessionRestore,
   sessionDateGroup,
   type SessionDateGroup,
 } from "@/lib/session-list";
@@ -614,25 +615,30 @@ export function SessionSidebar({
 
   // Auto-select cwd and restore session from URL on first load
   useEffect(() => {
-    if (allSessions.length === 0) return;
+    const restore = resolveInitialSessionRestore(
+      allSessions,
+      initialSessionId,
+      loading,
+      error !== null,
+      restoredRef.current,
+    );
+    if (restore.status === "wait") return;
+    if (restore.status === "restore") {
+      restoredRef.current = true;
+      setSelectedCwd(restore.session.cwd);
+      onSelectSession(restore.session, true);
+      return;
+    }
+    if (restore.status === "not-found") {
+      restoredRef.current = true;
+      onInitialRestoreDone?.();
+    }
 
     if (selectedCwd === null) {
-      // If restoring a session, set cwd to match that session
-      if (initialSessionId && !restoredRef.current) {
-        restoredRef.current = true;
-        const target = allSessions.find((s) => s.id === initialSessionId);
-        if (target) {
-          setSelectedCwd(target.cwd);
-          onSelectSession(target, true);
-          return;
-        }
-        // Session not found — notify parent so it can show the placeholder
-        onInitialRestoreDone?.();
-      }
       const projects = getRecentProjects(allSessions);
       if (projects.length > 0) setSelectedCwd(projects[0]);
     }
-  }, [allSessions, selectedCwd, initialSessionId, onSelectSession, onInitialRestoreDone]);
+  }, [allSessions, error, initialSessionId, loading, onInitialRestoreDone, onSelectSession, selectedCwd]);
 
   const commitCustomPath = useCallback(async () => {
     const path = customPathValue.trim();

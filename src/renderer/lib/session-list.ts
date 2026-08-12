@@ -2,6 +2,22 @@ import type { SessionInfo } from "./types";
 
 export type SessionDateGroup = "today" | "recent" | "older";
 
+export type InitialSessionRestoreDecision =
+  { status: "wait" | "none" | "not-found" } | { status: "restore"; session: SessionInfo };
+
+export function resolveInitialSessionRestore(
+  sessions: SessionInfo[],
+  initialSessionId: string | null | undefined,
+  loading: boolean,
+  hasLoadError: boolean,
+  alreadyRestored: boolean,
+): InitialSessionRestoreDecision {
+  if (loading || hasLoadError) return { status: "wait" };
+  if (!initialSessionId || alreadyRestored) return { status: "none" };
+  const session = sessions.find((item) => item.id === initialSessionId);
+  return session ? { status: "restore", session } : { status: "not-found" };
+}
+
 export function getSessionDisplayTitle(session: SessionInfo, maxLength = 72): string {
   const source = session.name?.trim() || session.firstMessage?.trim() || session.id;
   const normalized = source.replace(/\s+/g, " ");

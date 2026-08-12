@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { filterSessionsForQuery, getSessionDisplayTitle, sessionDateGroup } from "./session-list.ts";
+import {
+  filterSessionsForQuery,
+  getSessionDisplayTitle,
+  resolveInitialSessionRestore,
+  sessionDateGroup,
+} from "./session-list.ts";
 
 function session(id, overrides = {}) {
   return {
@@ -57,4 +62,22 @@ test("builds stable compact titles from names, prompts, and ids", () => {
     getSessionDisplayTitle(session("id", { firstMessage: "A long title for truncation" }), 12),
     "A long titl…",
   );
+});
+
+test("initial session restore waits for a successful list result", () => {
+  assert.deepEqual(resolveInitialSessionRestore([], "missing", true, false, false), { status: "wait" });
+  assert.deepEqual(resolveInitialSessionRestore([], "missing", false, true, false), { status: "wait" });
+});
+
+test("a successfully loaded empty list completes the not-found restore path", () => {
+  assert.deepEqual(resolveInitialSessionRestore([], "missing", false, false, false), { status: "not-found" });
+  assert.deepEqual(resolveInitialSessionRestore([], "missing", false, false, true), { status: "none" });
+});
+
+test("initial session restore returns the matching session", () => {
+  const target = session("target");
+  assert.deepEqual(resolveInitialSessionRestore([session("other"), target], "target", false, false, false), {
+    status: "restore",
+    session: target,
+  });
 });
