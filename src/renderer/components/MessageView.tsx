@@ -1,6 +1,6 @@
 import { memo, useState, useRef, useEffect, useMemo } from "react";
 import { MarkdownBody } from "./MarkdownBody";
-import { copyText } from "@/lib/clipboard";
+import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import {
   getAssistantFailureDetail,
@@ -218,7 +218,7 @@ function UserMessageView({
 }) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback();
 
   const content =
     typeof message.content === "string"
@@ -245,12 +245,7 @@ function UserMessageView({
   const canFork = !!entryId && !!onFork;
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
 
-  const copyContent = () => {
-    void copyText(visibleContent).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
+  const copyContent = () => void copy(visibleContent);
 
   return (
     <div
@@ -547,7 +542,7 @@ function AssistantMessageView({
     .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming }));
   const blocks = blockItems.map(({ block }) => block);
   const [hovered, setHovered] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback();
   const streamStartRef = useRef<number | null>(null);
   const [tps, setTps] = useState<number | null>(null);
   const blockItemsRef = useRef(blockItems);
@@ -577,12 +572,7 @@ function AssistantMessageView({
     .map((b) => b.text)
     .join("\n");
 
-  const copyContent = () => {
-    void copyText(textContent).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
+  const copyContent = () => void copy(textContent);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -1640,7 +1630,7 @@ function CustomMessageView({
   const isHiddenDisplay = message.display === false;
   const [contentExpanded, setContentExpanded] = useState(!isHiddenDisplay);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyFeedback();
   const text = getMessageText(message.content);
   const images = getMessageImages(message.content);
   const hasDetails = message.details !== undefined;
@@ -1648,12 +1638,7 @@ function CustomMessageView({
   const title = formatCustomType(message.customType);
   const time = formatTime(message.timestamp);
 
-  const copyContent = () => {
-    void copyText(text || detailsText).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
+  const copyContent = () => void copy(text || detailsText);
 
   return (
     <div style={{ marginBottom: 16 }}>

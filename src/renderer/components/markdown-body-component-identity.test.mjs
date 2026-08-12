@@ -35,8 +35,8 @@ await esbuild.build({
                   ? "export const markdownRehypePlugins = []; export const markdownRemarkPlugins = [];"
                   : args.path === "@/lib/code-highlight-policy"
                     ? "export const shouldHighlightCode = () => false;"
-                    : args.path === "@/lib/clipboard"
-                      ? "export const copyText = async () => {};"
+                    : args.path === "@/hooks/useCopyFeedback"
+                      ? "export const useCopyFeedback = () => ({ copied: false, copy: async () => true });"
                       : args.path === "@/lib/syntax-highlight"
                         ? "export const SyntaxHighlighter = 'pre'; export const vs = {}; export const vscDarkPlus = {};"
                         : "export const SessionProfiler = ({ children }) => children;",

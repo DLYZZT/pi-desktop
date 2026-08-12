@@ -12,7 +12,7 @@ import {
 import ReactMarkdown, { type Components } from "react-markdown";
 import { SyntaxHighlighter, vs, vscDarkPlus } from "@/lib/syntax-highlight";
 import { useTheme } from "@/hooks/useTheme";
-import { copyText } from "@/lib/clipboard";
+import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { markdownRehypePlugins, markdownRemarkPlugins } from "@/lib/markdown";
 import { shouldHighlightCode } from "@/lib/code-highlight-policy";
@@ -338,14 +338,7 @@ function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boole
 
 function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; headerAction?: ReactNode }) {
   const { isDark } = useTheme();
-  const [copied, setCopied] = useState(false);
-
-  const copy = () => {
-    void copyText(code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
+  const { copied, copy } = useCopyFeedback();
 
   return (
     <div className="markdown-code-block">
@@ -353,7 +346,7 @@ function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; h
         <span className="markdown-code-lang">{lang || "text"}</span>
         <div className="markdown-code-actions">
           {headerAction}
-          <button onClick={copy} className="markdown-code-action">
+          <button onClick={() => void copy(code)} className="markdown-code-action">
             {copied ? "copied" : "copy"}
           </button>
         </div>
