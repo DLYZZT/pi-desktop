@@ -3,7 +3,12 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertSuccessfulSpawn, resolveElectronBinary, resolvePackageFile } from "./process-utils.mjs";
+import {
+  assertSuccessfulSpawn,
+  resolveElectronBinary,
+  resolvePackageFile,
+  terminateProcessTree,
+} from "./process-utils.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Keep the ESM Host bundle under the project root so its external production
@@ -51,11 +56,12 @@ try {
       ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
       PI_BROWSER_AGENT_E2E_HOST_ENTRY: hostOutfile,
     },
+    detached: process.platform !== "win32",
   });
   const status = await new Promise((resolve) => {
     const timer = setTimeout(() => {
       console.error("Browser Agent E2E harness timed out");
-      child.kill();
+      terminateProcessTree(child);
       resolve(1);
     }, 90_000);
     child.once("error", (error) => {

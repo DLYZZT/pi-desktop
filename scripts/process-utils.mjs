@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 export function createProjectRequire(root) {
@@ -24,4 +25,33 @@ export function assertSuccessfulSpawn(result, label) {
   if (!Number.isInteger(result.status)) throw new Error(`${label} returned no exit status`);
   if (result.status !== 0) throw new Error(`${label} exited with status ${result.status}`);
   return result;
+}
+
+export function terminateProcessTree(child, options = {}) {
+  const pid = child?.pid;
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const platform = options.platform ?? process.platform;
+  if (platform === "win32") {
+    const result = (options.spawnSync ?? spawnSync)("taskkill", ["/pid", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    if (result.error && result.error.code !== "ESRCH") {
+      console.error(`taskkill failed for pid ${pid}: ${result.error.message}`);
+    }
+    return !result.error && (result.status === 0 || result.status === 128);
+  }
+
+  const signal = options.signal ?? "SIGTERM";
+  try {
+    (options.kill ?? process.kill)(-pid, signal);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return true;
+    try {
+      return child.kill(signal);
+    } catch {
+      return false;
+    }
+  }
 }

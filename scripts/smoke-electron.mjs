@@ -9,7 +9,12 @@ import { spawn, spawnSync } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
-import { assertSuccessfulSpawn, resolveElectronBinary, resolvePackageFile } from "./process-utils.mjs";
+import {
+  assertSuccessfulSpawn,
+  resolveElectronBinary,
+  resolvePackageFile,
+  terminateProcessTree,
+} from "./process-utils.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const main = path.join(root, ".artifacts", "smoke", "main.js");
@@ -34,11 +39,12 @@ const child = spawn(electronBin, [main], {
     ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
   },
   stdio: "inherit",
+  detached: process.platform !== "win32",
 });
 
 const timer = setTimeout(() => {
   console.error("smoke timeout");
-  child.kill();
+  terminateProcessTree(child);
   process.exit(1);
 }, 45_000);
 

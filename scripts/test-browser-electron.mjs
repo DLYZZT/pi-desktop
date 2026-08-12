@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { assertSuccessfulSpawn, resolveElectronBinary, resolvePackageFile } from "./process-utils.mjs";
+import {
+  assertSuccessfulSpawn,
+  resolveElectronBinary,
+  resolvePackageFile,
+  terminateProcessTree,
+} from "./process-utils.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-browser-harness-build-"));
@@ -31,12 +36,13 @@ try {
   const child = spawn(electronBinary, [outfile], {
     cwd: root,
     stdio: "inherit",
+    detached: process.platform !== "win32",
     env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: "true" },
   });
   const status = await new Promise((resolve) => {
     const timer = setTimeout(() => {
       console.error("Browser Electron harness timed out");
-      child.kill();
+      terminateProcessTree(child);
       resolve(1);
     }, 60_000);
     child.once("error", (error) => {
