@@ -9,13 +9,14 @@ import type { DesktopMenuEvent, DesktopUpdateState, HostStatus, PiBridge } from 
 import type { BrowserEvent } from "../contract/browser";
 import { EarlyEventReplay } from "./early-event-replay";
 import { isTrustedPreloadLocation } from "./preload-location-policy";
+import { isValidDeepLinkSessionMessage, selectTransferredHostPort } from "./preload-message-policy";
 
 const preloadLocation = (globalThis as unknown as { location?: { href?: unknown } }).location?.href;
 
 if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocation)) {
   // Deliver MessagePort to the page via window.postMessage (transferable).
   ipcRenderer.on("desktop:host-port", (event) => {
-    const port = event.ports[0];
+    const port = selectTransferredHostPort(event.ports);
     if (!port) return;
     // preload: MessagePort transfer to the page
     const g = globalThis as unknown as {
@@ -37,7 +38,8 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
   const menuEventSet = new Set<string>(menuEvents);
   const menuEventReplays = new Map(menuEvents.map((event) => [event, new EarlyEventReplay<void>()]));
 
-  ipcRenderer.on("deep-link:session", (_e, sessionId: string) => {
+  ipcRenderer.on("deep-link:session", (_e, sessionId: unknown) => {
+    if (!isValidDeepLinkSessionMessage(sessionId)) return;
     deepLinkEvents.emit(sessionId);
   });
 

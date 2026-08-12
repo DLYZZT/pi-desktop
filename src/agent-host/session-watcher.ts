@@ -7,6 +7,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { RpcServer } from "../contract/rpc";
 import { invalidateAllowedRootsCache, setAllowedRootsWatcherHealthy } from "./file-access";
 import { sessionIndex } from "./session-index";
+import { classifySessionWatchChange } from "./session-watch-policy";
 
 export function startSessionWatcher(server: RpcServer): () => void {
   let agentDir: string;
@@ -72,17 +73,9 @@ export function startSessionWatcher(server: RpcServer): () => void {
   let watcher: fs.FSWatcher | null = null;
   try {
     watcher = fs.watch(agentDir, { recursive: true }, (_event, filename) => {
-      if (!filename) {
-        debounce();
-        return;
-      }
-      const name = filename.toString();
-      const candidate = path.resolve(agentDir, name);
-      const insideAgentDirectory =
-        candidate === path.resolve(agentDir) || candidate.startsWith(`${path.resolve(agentDir)}${path.sep}`);
-      if (!insideAgentDirectory) return;
-      if (candidate.endsWith(".jsonl") && candidate.startsWith(`${sessionsRoot}${path.sep}`)) debounce(candidate);
-      else if (name.endsWith(".json") || name.includes("session")) debounce();
+      const change = classifySessionWatchChange(agentDir, sessionsRoot, filename);
+      if (change.kind === "refresh-path") debounce(change.path);
+      else if (change.kind === "refresh-all") debounce();
     });
     watcher.on("error", (err) => {
       console.error("[agent-host] session watcher error:", err);

@@ -2,7 +2,7 @@
  * Plugin package management for the desktop Agent Host.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
-import { basename, dirname, extname, join, relative } from "path";
+import { dirname, join, relative } from "path";
 import {
   DefaultPackageManager,
   getAgentDir,
@@ -16,7 +16,6 @@ import type {
   PluginPackageInfo,
   PluginResourceCounts,
   PluginResourceInfo,
-  PluginResourceKind,
   PluginScope,
   PluginsResponse,
 } from "../shared/api-types";
@@ -24,6 +23,7 @@ import { RpcError } from "../contract/types";
 import { toolchainRuntime } from "./toolchain-runtime";
 import { runPluginWorker } from "./plugin-worker-client";
 import type { PluginActionBody } from "./plugin-worker-protocol";
+import { classifyPluginSource, getConfiguredPluginVersion, getPluginResourceName } from "./plugins-policy";
 
 function emptyCounts(): PluginResourceCounts {
   return { extensions: 0, skills: 0, prompts: 0, themes: 0 };
@@ -96,14 +96,6 @@ function configuredSources(settingsManager: SettingsManager): string[] {
   ].map(getPackageSource);
 }
 
-function isNpmSource(source: string): boolean {
-  return source.startsWith("npm:");
-}
-
-function isGitSource(source: string): boolean {
-  return source.startsWith("git:") || /^(?:https?|ssh|git):\/\//i.test(source) || /^[^@\s]+@[^:\s]+:.+/.test(source);
-}
-
 function isDisabledPackage(entry: PackageSource): boolean {
   if (typeof entry === "string") return false;
   return (
@@ -170,39 +162,11 @@ function addCount(counts: PluginResourceCounts, kind: keyof PluginResourceCounts
   counts[kind] += 1;
 }
 
-function getResourceName(path: string, kind: PluginResourceKind): string {
-  const file = basename(path);
-  const ext = extname(file);
-  if (kind === "skill" && file.toLowerCase() === "skill.md") return basename(dirname(path));
-  if ((kind === "extension" || kind === "theme" || kind === "prompt") && ext) {
-    if (kind === "extension" && /^index\.(ts|js)$/.test(file)) return basename(dirname(path));
-    return file.slice(0, -ext.length);
-  }
-  return file;
-}
-
 function getRelativePath(resource: ResolvedResource): string {
   const baseDir = resource.metadata.baseDir;
   if (!baseDir) return resource.path;
   const rel = relative(baseDir, resource.path);
   return rel && !rel.startsWith("..") ? rel : resource.path;
-}
-
-function getConfiguredVersion(source: string): string | undefined {
-  const npmSpec = source.startsWith("npm:") ? source.slice(4) : undefined;
-  if (npmSpec) {
-    const lastAt = npmSpec.lastIndexOf("@");
-    const packageNameEnd = npmSpec.startsWith("@") ? npmSpec.indexOf("/", 1) : 0;
-    if (lastAt > packageNameEnd) return npmSpec.slice(lastAt + 1) || undefined;
-    return undefined;
-  }
-  if (source.startsWith("git:") || /^[a-z]+:\/\//.test(source)) {
-    const lastAt = source.lastIndexOf("@");
-    const lastSlash = source.lastIndexOf("/");
-    const lastColon = source.lastIndexOf(":");
-    if (lastAt > Math.max(lastSlash, lastColon)) return source.slice(lastAt + 1) || undefined;
-  }
-  return undefined;
 }
 
 function readPackageMetadata(installedPath?: string): { packageName?: string; version?: string } {
@@ -246,7 +210,7 @@ function collectResource(
     kind === "extensions" ? "extension" : kind === "skills" ? "skill" : kind === "prompts" ? "prompt" : "theme";
   resources.push({
     kind: resourceKind,
-    name: getResourceName(resource.path, resourceKind),
+    name: getPluginResourceName(resource.path, resourceKind),
     path: resource.path,
     relativePath: getRelativePath(resource),
   });
@@ -319,7 +283,7 @@ export async function readPlugins(cwd: string, npmCommand?: string[]): Promise<P
       installedPath: pkg.installedPath,
       packageName: packageMetadata.packageName,
       version: packageMetadata.version,
-      configuredVersion: getConfiguredVersion(pkg.source),
+      configuredVersion: getConfiguredPluginVersion(pkg.source),
       counts,
       resources,
       status: disabled ? "disabled" : resourceCount > 0 ? "loaded" : pkg.installedPath ? "installed" : "missing",
@@ -338,8 +302,11 @@ export async function applyPluginAction(body: PluginActionBody): Promise<Plugins
   const context = await toolchainRuntime.createExecutionContext({ cwd: body.cwd, intent: "plugin-install" });
   const settingsManager = SettingsManager.create(body.cwd, getAgentDir());
   const sources = body.source ? [body.source] : configuredSources(settingsManager);
-  const needsNpm = (body.action === "install" || body.action === "update") && sources.some(isNpmSource);
-  const needsGit = (body.action === "install" || body.action === "update") && sources.some(isGitSource);
+  const classifications = sources.map(classifyPluginSource);
+  const needsNpm =
+    (body.action === "install" || body.action === "update") && classifications.some(({ needsNpm }) => needsNpm);
+  const needsGit =
+    (body.action === "install" || body.action === "update") && classifications.some(({ needsGit }) => needsGit);
   if (needsNpm) toolchainRuntime.requireFromContext("js.npm", context);
   if (needsGit) toolchainRuntime.requireFromContext("vcs.git", context);
   const npm = context.commands["js.npm"];
