@@ -729,6 +729,7 @@ jobs:
           test -s "$appimage"
           test "$(find dist -maxdepth 1 -type f -name '*.AppImage' | wc -l | tr -d ' ')" -eq 1
           test -s dist/latest-linux.yml
+          node scripts/verify-update-metadata.mjs dist/latest-linux.yml "$version" "$appimage"
 
       - name: Upload Linux release artifacts
         uses: actions/upload-artifact@v7
