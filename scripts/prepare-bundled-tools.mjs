@@ -9,12 +9,12 @@ import { findComponentEntrypoint } from "../src/main/toolchains/component-entryp
 import { downloadRuntimeArtifact, hashFile, verifyDownloadedArtifact } from "../src/main/toolchains/downloader.ts";
 import { extractRuntimeArchive } from "../src/main/toolchains/secure-extractor.ts";
 import { darwinCodeDigest } from "../src/main/toolchains/darwin-binary-integrity.ts";
+import { parseBundledToolTargets } from "./bundled-tools-targets.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const catalogPath = path.join(root, "build", "toolchains", "core-catalog.json");
 const outputRoot = path.join(root, "build", "toolchains", "core");
 const cacheRoot = path.join(root, "build", "toolchains", ".core-cache");
-const releasedTargets = new Set(["darwin-arm64", "darwin-x64", "win32-x64", "linux-x64"]);
 const licenseFiles = {
   ripgrep: [
     {
@@ -48,31 +48,6 @@ const licenseFiles = {
 
 function fail(message) {
   throw new Error(`[bundled-tools] ${message}`);
-}
-
-function parseTargets(argv) {
-  const targets = [];
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (argument === "--target") {
-      const target = argv[index + 1];
-      if (!target) fail("--target requires platform-arch");
-      targets.push(target);
-      index += 1;
-    } else if (argument === "--all") {
-      targets.push(...releasedTargets);
-    } else if (argument === "--release") {
-      targets.push(...(process.platform === "darwin" ? ["darwin-arm64", "darwin-x64"] : [`${process.platform}-x64`]));
-    } else {
-      fail(`unknown argument: ${argument}`);
-    }
-  }
-  if (targets.length === 0) targets.push(`${process.platform}-${process.arch}`);
-  const unique = [...new Set(targets)];
-  for (const target of unique) {
-    if (!releasedTargets.has(target)) fail(`unsupported release target: ${target}`);
-  }
-  return unique;
 }
 
 async function downloadFixedFile(definition, destination) {
@@ -201,4 +176,4 @@ async function prepareTarget(catalog, target) {
 }
 
 const catalog = parseRuntimeCatalog(JSON.parse(fs.readFileSync(catalogPath, "utf8")));
-for (const target of parseTargets(process.argv.slice(2))) await prepareTarget(catalog, target);
+for (const target of parseBundledToolTargets(process.argv.slice(2))) await prepareTarget(catalog, target);
