@@ -41,7 +41,7 @@ import {
   type SessionRuntimeState,
 } from "../contract/types";
 import type { SessionTreeNode } from "../shared/types";
-import { allowFileRoot, getAllowedFileRoots, invalidateAllowedRootsCache, isFilePathAllowed } from "./file-access";
+import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed } from "./file-access";
 import { getRpcSession, getRunningRpcSessionIds, startRpcSession, subscribeRunningSessions } from "./rpc-manager";
 import {
   buildSessionContext,
@@ -1634,7 +1634,6 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       const validation = validateExistingDirectory(dir);
       if (!validation.ok) return validation;
       allowFileRoot(validation.canonicalPath);
-      invalidateAllowedRootsCache();
       return { ok: true as const, path: validation.path };
     },
 
@@ -1643,7 +1642,6 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       const dir = path.join(homedir(), `pi-cwd-${date}`);
       mkdirSync(dir, { recursive: true });
       allowFileRoot(dir);
-      invalidateAllowedRootsCache();
       return { cwd: dir };
     },
 
@@ -1652,7 +1650,6 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       const validation = validateExistingDirectory(dir);
       if (!validation.ok) throw new RpcError({ code: "BAD_REQUEST", message: validation.error });
       allowFileRoot(validation.canonicalPath);
-      invalidateAllowedRootsCache();
       return { ok: true as const };
     },
 

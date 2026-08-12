@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { allowFileRoot, invalidateAllowedRootsCache } from "../file-access";
+import { allowFileRoot } from "../file-access";
 import type { DownloadedInboundAttachment, StagedInboundAttachment } from "./types";
 
 export const CHANNEL_MEDIA_MAX_ATTACHMENTS = 4;
@@ -77,7 +77,6 @@ export class ChannelMediaStore {
   async initialize(): Promise<void> {
     await this.ensureDirectory(this.root);
     allowFileRoot(this.root);
-    invalidateAllowedRootsCache();
     await this.cleanupExpired();
   }
 

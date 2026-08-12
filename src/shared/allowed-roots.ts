@@ -40,8 +40,11 @@ export function setAllowedRootsCacheIfCurrent(cache: AllowedRootsCache, generati
 export function allowFileRoot(root: string): void {
   if (!root) return;
   const normalizedRoot = normalizeSlashes(root);
-  getAdditionalAllowedRoots().add(normalizedRoot);
+  const additionalRoots = getAdditionalAllowedRoots();
+  const added = !additionalRoots.has(normalizedRoot);
+  additionalRoots.add(normalizedRoot);
   allowedRootsCache?.roots.add(normalizedRoot);
+  if (added) allowedRootsGeneration++;
 }
 
 /** Drop TTL cache so next getAllowedFileRoots() re-scans sessions (watcher-driven). */

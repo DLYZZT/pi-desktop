@@ -26,11 +26,18 @@ test("TTL is short without a healthy watcher and long with one", () => {
   assert.equal(allowedRootsCacheTtlMs(), fallback);
 });
 
-test("allowFileRoot updates the live cache and invalidate drops it", () => {
+test("allowFileRoot updates the live cache and invalidates an in-flight scan generation", () => {
   setAllowedRootsCache({ roots: new Set(["/a"]), expiresAt: Date.now() + 60_000 });
+  const scanGeneration = getAllowedRootsGeneration();
 
   allowFileRoot("C:\\work\\repo");
   assert.ok(getAllowedRootsCache().roots.has("C:/work/repo"), "new root is visible without waiting for a re-scan");
+  assert.ok(getAllowedRootsGeneration() > scanGeneration);
+  assert.equal(
+    setAllowedRootsCacheIfCurrent({ roots: new Set(["/stale"]), expiresAt: Date.now() + 60_000 }, scanGeneration),
+    false,
+  );
+  assert.ok(getAllowedRootsCache().roots.has("C:/work/repo"), "a stale scan cannot overwrite the new root");
 
   invalidateAllowedRootsCache();
   assert.equal(getAllowedRootsCache(), undefined);

@@ -7,7 +7,7 @@ import type { ChannelBinding, InboundEnvelope } from "../../shared/channel-types
 import { channelPromptText } from "../../shared/channel-message";
 import type { AgentMessage } from "../../shared/types";
 import { normalizeToolCalls } from "../../shared/normalize";
-import { allowFileRoot, invalidateAllowedRootsCache } from "../file-access";
+import { allowFileRoot } from "../file-access";
 import {
   getRpcSession,
   startRpcSession,
@@ -44,7 +44,6 @@ export class PiSessionBridge {
   private prepareWorkspace(binding: ChannelBinding): void {
     mkdirSync(binding.cwd, { recursive: true });
     allowFileRoot(binding.cwd);
-    invalidateAllowedRootsCache();
   }
 
   private async create(binding: ChannelBinding): Promise<OpenedSession> {
@@ -105,7 +104,6 @@ export class PiSessionBridge {
     const runId = randomUUID();
     allowFileRoot(cwd);
     for (const attachment of stagedAttachments) allowFileRoot(path.dirname(attachment.path));
-    invalidateAllowedRootsCache();
     const nonImageAttachments = stagedAttachments.filter((attachment) => attachment.kind !== "image");
     const attachmentContext = [
       ...(nonImageAttachments.length
