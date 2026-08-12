@@ -125,7 +125,7 @@ function HtmlPreview({
           display: "grid",
           placeItems: "center",
           padding: 20,
-          color: "#f87171",
+          color: "var(--danger)",
           fontSize: 13,
           textAlign: "center",
         }}
@@ -252,7 +252,7 @@ function DiffView({ oldContent, newContent }: { oldContent: string; newContent: 
                 : "transparent";
           const prefix = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
           const prefixColor =
-            line.type === "added" ? "#4ade80" : line.type === "removed" ? "#f87171" : "var(--text-dim)";
+            line.type === "added" ? "var(--success)" : line.type === "removed" ? "var(--danger)" : "var(--text-dim)";
 
           return (
             <div
@@ -262,9 +262,9 @@ function DiffView({ oldContent, newContent }: { oldContent: string; newContent: 
                 background: bg,
                 borderLeft:
                   line.type === "added"
-                    ? "3px solid #4ade80"
+                    ? "3px solid var(--success)"
                     : line.type === "removed"
-                      ? "3px solid #f87171"
+                      ? "3px solid var(--danger)"
                       : "3px solid transparent",
               }}
             >
@@ -423,16 +423,21 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
         {formatSizeStr && <span>{formatSizeStr}</span>}
         <span
           title={watching ? "Live sync active" : "Not watching"}
-          style={{ display: "flex", alignItems: "center", gap: 4, color: watching ? "#4ade80" : "var(--text-dim)" }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            color: watching ? "var(--success)" : "var(--text-dim)",
+          }}
         >
           <span
             style={{
               width: 7,
               height: 7,
               borderRadius: "50%",
-              background: watching ? "#4ade80" : "var(--border)",
+              background: watching ? "var(--success)" : "var(--border)",
               display: "inline-block",
-              boxShadow: watching ? "0 0 4px #4ade80" : "none",
+              boxShadow: watching ? "0 0 4px var(--success)" : "none",
             }}
           />
           {watching ? "live" : "static"}
@@ -455,7 +460,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
         }}
       >
         {error ? (
-          <div style={{ color: "#f87171", fontSize: 13 }}>{error}</div>
+          <div style={{ color: "var(--danger)", fontSize: 13 }}>{error}</div>
         ) : !src ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
         ) : (
@@ -531,16 +536,21 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
         {size != null && <span>{formatSize(size)}</span>}
         <span
           title={watching ? "Live sync active" : "Not watching"}
-          style={{ display: "flex", alignItems: "center", gap: 4, color: watching ? "#4ade80" : "var(--text-dim)" }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            color: watching ? "var(--success)" : "var(--text-dim)",
+          }}
         >
           <span
             style={{
               width: 7,
               height: 7,
               borderRadius: "50%",
-              background: watching ? "#4ade80" : "var(--border)",
+              background: watching ? "var(--success)" : "var(--border)",
               display: "inline-block",
-              boxShadow: watching ? "0 0 4px #4ade80" : "none",
+              boxShadow: watching ? "0 0 4px var(--success)" : "none",
             }}
           />
           {watching ? "live" : "static"}
@@ -559,7 +569,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
       >
         <div style={{ width: "min(680px, 100%)" }}>
           {error && (
-            <div style={{ color: "#f87171", fontSize: 13, marginBottom: 12, textAlign: "center" }}>{error}</div>
+            <div style={{ color: "var(--danger)", fontSize: 13, marginBottom: 12, textAlign: "center" }}>{error}</div>
           )}
           {src && (
             <audio
@@ -699,7 +709,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
             display: "flex",
             alignItems: "center",
             gap: 4,
-            color: watching ? "#4ade80" : "var(--text-dim)",
+            color: watching ? "var(--success)" : "var(--text-dim)",
             flexShrink: 0,
           }}
         >
@@ -708,9 +718,9 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
               width: 7,
               height: 7,
               borderRadius: "50%",
-              background: watching ? "#4ade80" : "var(--border)",
+              background: watching ? "var(--success)" : "var(--border)",
               display: "inline-block",
-              boxShadow: watching ? "0 0 4px #4ade80" : "none",
+              boxShadow: watching ? "0 0 4px var(--success)" : "none",
             }}
           />
           {watching ? "live" : "static"}
@@ -725,7 +735,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
               alignItems: "center",
               justifyContent: "center",
               padding: 24,
-              color: "#f87171",
+              color: "var(--danger)",
               fontSize: 13,
               textAlign: "center",
             }}
@@ -887,7 +897,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          color: "#f87171",
+          color: "var(--danger)",
           fontSize: 13,
         }}
       >
@@ -932,16 +942,21 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
         {/* Live watch indicator */}
         <span
           title={watching ? "Live sync active" : "Not watching"}
-          style={{ display: "flex", alignItems: "center", gap: 4, color: watching ? "#4ade80" : "var(--text-dim)" }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            color: watching ? "var(--success)" : "var(--text-dim)",
+          }}
         >
           <span
             style={{
               width: 7,
               height: 7,
               borderRadius: "50%",
-              background: watching ? "#4ade80" : "var(--border)",
+              background: watching ? "var(--success)" : "var(--border)",
               display: "inline-block",
-              boxShadow: watching ? "0 0 4px #4ade80" : "none",
+              boxShadow: watching ? "0 0 4px var(--success)" : "none",
             }}
           />
           {watching ? "live" : "static"}
@@ -981,7 +996,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
                 fontWeight: viewMode === "diff" ? 600 : 400,
               }}
             >
-              Diff {changeCount > 0 && <span style={{ color: "#4ade80", marginLeft: 2 }}>+{changeCount}</span>}
+              Diff {changeCount > 0 && <span style={{ color: "var(--success)", marginLeft: 2 }}>+{changeCount}</span>}
             </button>
           </div>
         )}

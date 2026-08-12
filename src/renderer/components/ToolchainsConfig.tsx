@@ -327,7 +327,7 @@ export function ToolchainStateView({
                 width: 7,
                 height: 7,
                 borderRadius: "50%",
-                background: !state ? "#f59e0b" : state.coreReady ? "#22c55e" : "#f59e0b",
+                background: !state ? "var(--warning)" : state.coreReady ? "var(--success)" : "var(--warning)",
                 flexShrink: 0,
               }}
             />
@@ -494,13 +494,13 @@ function ToolDetail({
       </div>
 
       {(failed || actionError) && (
-        <div role="alert" style={{ color: "#f87171", fontSize: 12 }}>
+        <div role="alert" style={{ color: "var(--danger)", fontSize: 12 }}>
           {actionError ??
             t("toolDiscoveryFailed", "Tool discovery failed. Existing selections were not changed; try rescanning.")}
         </div>
       )}
       {stateReadOnly && (
-        <div role="alert" style={{ color: "#f59e0b", fontSize: 12 }}>
+        <div role="alert" style={{ color: "var(--warning)", fontSize: 12 }}>
           {t(
             "toolStateReadOnly",
             "These tool settings were written by a newer Pi Desktop. This version will not modify or delete them.",
@@ -684,7 +684,7 @@ function ToolDetail({
           </div>
           {operationVisible && operation && (
             <div style={{ marginTop: 4 }}>
-              <div style={{ fontSize: 11, color: operation.error ? "#f87171" : "var(--text-muted)" }}>
+              <div style={{ fontSize: 11, color: operation.error ? "var(--danger)" : "var(--text-muted)" }}>
                 {operationPhase(operation.phase, t)}
               </div>
               <OperationProgress operation={operation} t={t} />
@@ -866,7 +866,7 @@ function OperationProgress({ operation, t }: { operation: PublicToolchainOperati
         </div>
       )}
       {operation.error && (
-        <div role="alert" style={{ marginTop: 5, fontSize: 10, color: "#f87171" }}>
+        <div role="alert" style={{ marginTop: 5, fontSize: 10, color: "var(--danger)" }}>
           {friendlyErrorCode(operation.error.code, t)}
         </div>
       )}
@@ -906,7 +906,7 @@ function ActionButton({
         border: `1px solid ${primary ? "var(--accent)" : "var(--border)"}`,
         borderRadius: 6,
         background: primary ? "var(--accent)" : "var(--bg)",
-        color: primary ? "white" : "var(--text)",
+        color: primary ? "var(--on-accent)" : "var(--text)",
         fontSize: 11,
         fontWeight: 600,
         cursor: disabled ? "not-allowed" : busy ? "wait" : "pointer",
@@ -1068,8 +1068,8 @@ function healthLabel(health: ToolHealth, t: Translate): string {
 }
 
 function healthColor(health: ToolHealth): string {
-  if (health === "healthy") return "#22c55e";
+  if (health === "healthy") return "var(--success)";
   if (health === "missing") return "var(--text-dim)";
-  if (health === "unverified" || health === "incomplete") return "#f59e0b";
-  return "#f87171";
+  if (health === "unverified" || health === "incomplete") return "var(--warning)";
+  return "var(--danger)";
 }

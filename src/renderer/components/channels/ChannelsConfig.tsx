@@ -43,7 +43,7 @@ function buttonStyle(primary = false): React.CSSProperties {
     border: `1px solid ${primary ? "var(--accent)" : "var(--border)"}`,
     borderRadius: 6,
     background: primary ? "var(--accent)" : "var(--bg)",
-    color: primary ? "white" : "var(--text-muted)",
+    color: primary ? "var(--on-accent)" : "var(--text-muted)",
     minHeight: 36,
     fontSize: 13,
     padding: "0 12px",
@@ -67,9 +67,9 @@ function statusFor(snapshot: ChannelsSnapshot, accountId: string): ChannelStatus
 }
 
 function statusColor(status?: ChannelStatus): string {
-  if (status?.state === "running") return "#22c55e";
-  if (status?.state === "starting" || status?.state === "reconnecting") return "#f59e0b";
-  if (status?.state === "error") return "#ef4444";
+  if (status?.state === "running") return "var(--success)";
+  if (status?.state === "starting" || status?.state === "reconnecting") return "var(--warning)";
+  if (status?.state === "error") return "var(--danger)";
   return "var(--text-dim)";
 }
 
@@ -349,9 +349,9 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
           <div
             style={{
               marginTop: 14,
-              border: "1px solid #ef444466",
-              background: "#ef444414",
-              color: "#ef4444",
+              border: "1px solid var(--danger-border)",
+              background: "var(--danger-soft)",
+              color: "var(--danger)",
               borderRadius: 7,
               padding: 10,
               fontSize: 12,
@@ -708,7 +708,9 @@ export function AccountCard({
         </label>
       </div>
 
-      {status?.lastError && <div style={{ color: "#ef4444", fontSize: 11, marginTop: 10 }}>{status.lastError}</div>}
+      {status?.lastError && (
+        <div style={{ color: "var(--danger)", fontSize: 11, marginTop: 10 }}>{status.lastError}</div>
+      )}
 
       <div
         style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 10, marginTop: 14 }}
@@ -995,7 +997,7 @@ export function AccountCard({
         >
           {probing ? t("testingConnection", "Testing…") : t("testConnection", "Test connection")}
         </button>
-        <button type="button" disabled={busy} style={{ ...buttonStyle(), color: "#ef4444" }} onClick={onDelete}>
+        <button type="button" disabled={busy} style={{ ...buttonStyle(), color: "var(--danger)" }} onClick={onDelete}>
           {t("delete", "Delete")}
         </button>
       </div>
@@ -1007,10 +1009,10 @@ export function AccountCard({
           style={{
             marginTop: 9,
             padding: "7px 9px",
-            border: `1px solid ${probeFeedback.ok ? "#22c55e55" : "#ef444455"}`,
+            border: `1px solid ${probeFeedback.ok ? "var(--success-border)" : "var(--danger-border)"}`,
             borderRadius: 6,
-            background: probeFeedback.ok ? "#22c55e12" : "#ef444412",
-            color: probeFeedback.ok ? "#16a34a" : "#ef4444",
+            background: probeFeedback.ok ? "var(--success-soft)" : "var(--danger-soft)",
+            color: probeFeedback.ok ? "var(--success)" : "var(--danger)",
             fontSize: 11,
           }}
         >
@@ -1197,7 +1199,7 @@ function BindingRow({
         </button>
         <button
           disabled={busy}
-          style={{ ...buttonStyle(), color: "#ef4444" }}
+          style={{ ...buttonStyle(), color: "var(--danger)" }}
           onClick={() => void run(() => call("channels.bindingDelete", { bindingId: binding.id }))}
           title={t("deleteBinding", "Delete binding")}
           aria-label={t("deleteBinding", "Delete binding")}
@@ -1282,7 +1284,7 @@ function ActivitySection({ snapshot }: { snapshot: ChannelsSnapshot }) {
                   fontSize: 11,
                 }}
               >
-                <span style={{ color: activity.outcome === "failed" ? "#ef4444" : "var(--text-muted)" }}>
+                <span style={{ color: activity.outcome === "failed" ? "var(--danger)" : "var(--text-muted)" }}>
                   {channelLabel(activity.channel, t)} ·{" "}
                   {t(`activityDirection_${activity.direction}`, activity.direction)} ·{" "}
                   {t(`activityOutcome_${activity.outcome}`, activity.outcome)}
@@ -1367,7 +1369,7 @@ export function TelegramTokenDialog({
           <div
             role="alert"
             data-testid="telegram-connect-error"
-            style={{ marginTop: 10, color: "#ef4444", fontSize: 11, lineHeight: 1.5, overflowWrap: "anywhere" }}
+            style={{ marginTop: 10, color: "var(--danger)", fontSize: 11, lineHeight: 1.5, overflowWrap: "anywhere" }}
           >
             {error}
           </div>
@@ -1550,7 +1552,7 @@ function FeishuDialogError({ error }: { error: string }) {
     <div
       role="alert"
       data-testid="feishu-connect-error"
-      style={{ marginTop: 10, color: "#ef4444", fontSize: 11, lineHeight: 1.5, overflowWrap: "anywhere" }}
+      style={{ marginTop: 10, color: "var(--danger)", fontSize: 11, lineHeight: 1.5, overflowWrap: "anywhere" }}
     >
       {error}
     </div>
@@ -1670,7 +1672,7 @@ function FeishuManualForm({
           {FEISHU_PERMISSION_IMPORT_JSON}
         </pre>
         {permissionCopyState === "error" && (
-          <div role="alert" style={{ marginTop: 6, color: "#ef4444" }}>
+          <div role="alert" style={{ marginTop: 6, color: "var(--danger)" }}>
             {t("feishuPermissionCopyFailed", "Copy failed. Select and copy the JSON above manually.")}
           </div>
         )}
@@ -1796,7 +1798,13 @@ export function LoginDialog({
             {t("qrCodeExpiresIn", "QR code expires in")} {remainingSeconds}s
           </div>
         )}
-        <p style={{ color: event.phase === "error" ? "#ef4444" : "var(--text-muted)", fontSize: 12, lineHeight: 1.6 }}>
+        <p
+          style={{
+            color: event.phase === "error" ? "var(--danger)" : "var(--text-muted)",
+            fontSize: 12,
+            lineHeight: 1.6,
+          }}
+        >
           {event.message}
         </p>
         {event.phase === "verification_required" && (

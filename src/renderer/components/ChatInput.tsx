@@ -1901,7 +1901,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                   background: value.trim() || attachedImages.length ? "var(--accent)" : "var(--bg-hover)",
                   border: "none",
                   borderRadius: 9,
-                  color: value.trim() || attachedImages.length ? "#fff" : "var(--text-dim)",
+                  color: value.trim() || attachedImages.length ? "var(--on-accent)" : "var(--text-dim)",
                   cursor: value.trim() || attachedImages.length ? "pointer" : "not-allowed",
                   fontSize: 12.5,
                   fontWeight: 700,
@@ -2119,7 +2119,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 <div
                                   key={`${warning.provider}:${warning.code}`}
                                   role="alert"
-                                  style={{ marginTop: 6, color: "#d97706", fontSize: 11, whiteSpace: "normal" }}
+                                  style={{ marginTop: 6, color: "var(--warning)", fontSize: 11, whiteSpace: "normal" }}
                                 >
                                   {warning.message}
                                 </div>
@@ -2241,7 +2241,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                   background: "rgba(239,68,68,0.08)",
                   border: "1px solid rgba(239,68,68,0.3)",
                   borderRadius: 9,
-                  color: "#ef4444",
+                  color: "var(--danger)",
                   cursor: "pointer",
                   fontSize: 12,
                   fontWeight: 600,
@@ -2577,8 +2577,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         position: "absolute",
                         bottom: "calc(100% + 6px)",
                         right: 0,
-                        background: "#1f2937",
-                        color: "#f87171",
+                        background: "var(--danger-soft)",
+                        color: "var(--danger)",
                         fontSize: 11,
                         padding: "4px 8px",
                         borderRadius: 5,
@@ -2610,7 +2610,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                       background: isCompacting ? "rgba(239,68,68,0.08)" : "var(--bg-panel)",
                       border: `1px solid ${isCompacting ? "rgba(239,68,68,0.3)" : "var(--border)"}`,
                       borderRadius: 9,
-                      color: isCompacting ? "#ef4444" : "var(--text-muted)",
+                      color: isCompacting ? "var(--danger)" : "var(--text-muted)",
                       cursor: isStreaming && !isCompacting ? "not-allowed" : "pointer",
                       fontSize: 12,
                       opacity: isStreaming && !isCompacting ? 0.5 : 1,
@@ -2619,11 +2619,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     onMouseEnter={(e) => {
                       if (isStreaming && !isCompacting) return;
                       e.currentTarget.style.background = isCompacting ? "rgba(239,68,68,0.16)" : "var(--bg-hover)";
-                      e.currentTarget.style.color = isCompacting ? "#ef4444" : "var(--text)";
+                      e.currentTarget.style.color = isCompacting ? "var(--danger)" : "var(--text)";
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.background = isCompacting ? "rgba(239,68,68,0.08)" : "var(--bg-panel)";
-                      e.currentTarget.style.color = isCompacting ? "#ef4444" : "var(--text-muted)";
+                      e.currentTarget.style.color = isCompacting ? "var(--danger)" : "var(--text-muted)";
                     }}
                     title={isCompacting ? t("stopCompaction", "Stop compaction") : t("compact", "Compact context")}
                     aria-label={isCompacting ? t("stopCompaction", "Stop compaction") : t("compact", "Compact context")}

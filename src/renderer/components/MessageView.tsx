@@ -1313,7 +1313,8 @@ function SplitDiffCellView({ cell, side }: { cell: SplitDiffCell; side: "left" |
           ? "var(--bg-subtle)"
           : "transparent";
   const marker = cell.type === "added" ? "+" : cell.type === "removed" ? "-" : " ";
-  const markerColor = cell.type === "added" ? "#22c55e" : cell.type === "removed" ? "#f87171" : "var(--text-dim)";
+  const markerColor =
+    cell.type === "added" ? "var(--success)" : cell.type === "removed" ? "var(--danger)" : "var(--text-dim)";
 
   return (
     <div
@@ -1399,9 +1400,9 @@ function PatchTextView({ text }: { text: string }) {
                 : "transparent";
         const color =
           kind === "added"
-            ? "#22c55e"
+            ? "var(--success)"
             : kind === "removed"
-              ? "#f87171"
+              ? "var(--danger)"
               : kind === "hunk"
                 ? "var(--accent)"
                 : "var(--text)";
@@ -1414,9 +1415,9 @@ function PatchTextView({ text }: { text: string }) {
               background: bg,
               borderLeft:
                 kind === "added"
-                  ? "3px solid #22c55e"
+                  ? "3px solid var(--success)"
                   : kind === "removed"
-                    ? "3px solid #f87171"
+                    ? "3px solid var(--danger)"
                     : kind === "hunk"
                       ? "3px solid var(--accent)"
                       : "3px solid transparent",
