@@ -3,6 +3,7 @@ import { SyntaxHighlighter, vs, vscDarkPlus } from "@/lib/syntax-highlight";
 import { useTheme } from "@/hooks/useTheme";
 import { MarkdownBody } from "./MarkdownBody";
 import { DOCX_PREVIEW_MAX_BYTES, getFileExt, isAudioPath, isDocumentPreviewPath, isImagePath } from "@/lib/file-types";
+import { createDocxPreviewHtml } from "@/lib/docx-preview-html";
 import { encodeFilePathForApi, getFileName, getParentFilePath, getRelativeFilePath } from "@/lib/file-paths";
 import { INITIAL_TEXT_FILE_LOAD_STATE, textFileLoadReducer, type TextFileData } from "@/lib/file-viewer-load-state";
 import { createBoundedTextDiff, type DiffLine } from "@/lib/text-diff";
@@ -578,6 +579,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
 }
 
 function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
+  const { isDark } = useTheme();
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -628,10 +630,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
             { convertImage: mammoth.images.dataUri },
           );
           if (cancelled) return;
-          const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>
-            body{font-family:system-ui,sans-serif;padding:24px;line-height:1.5;color:#1c1a17;background:#fff}
-            img{max-width:100%}
-          </style></head><body>${result.value}</body></html>`;
+          const html = createDocxPreviewHtml(result.value, isDark ? "dark" : "light");
           const blob = new Blob([html], { type: "text/html;charset=utf-8" });
           const url = URL.createObjectURL(blob);
           revokeRef.current = () => URL.revokeObjectURL(url);
@@ -649,7 +648,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
       revokeRef.current?.();
       revokeRef.current = null;
     };
-  }, [filePath, isPdf, sourceSessionId, bust]);
+  }, [filePath, isDark, isPdf, sourceSessionId, bust]);
 
   const onChange = useCallback(
     (s?: number) => {
@@ -752,7 +751,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
             src={previewUrl}
             sandbox={isPdf ? undefined : ""}
             title={`Preview ${getFileName(filePath)}`}
-            style={{ width: "100%", height: "100%", border: "none", background: isPdf ? "var(--bg)" : "#eef1f5" }}
+            style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
           />
         )}
       </div>
