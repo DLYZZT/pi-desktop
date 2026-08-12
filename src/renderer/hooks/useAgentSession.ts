@@ -53,6 +53,7 @@ import {
   replaceLastHistoryMessage,
   type SessionHistoryValue,
 } from "@/lib/session-history-update";
+import { NOTICE_VISIBLE_MS, noticeExpiryDelay, noticeReducer, type NoticeType } from "@/lib/notice-queue";
 
 export type SessionData = SessionDetail;
 type AgentStateResponse = SessionRuntimeState;
@@ -104,22 +105,7 @@ function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] 
 
 type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
-export type NoticeType = "info" | "success" | "warning" | "error";
-
-export type NoticeItem = {
-  id: string;
-  message: string;
-  type: NoticeType;
-  exiting?: boolean;
-};
-
-type NoticeState = {
-  visible: NoticeItem[];
-  pending: NoticeItem[];
-};
-
-type NoticeAction =
-  { type: "add"; notice: NoticeItem } | { type: "mark_oldest_exiting" } | { type: "remove"; id: string };
+export type { NoticeItem } from "@/lib/notice-queue";
 
 export type AgentPhase =
   | { kind: "waiting_model" }
@@ -179,8 +165,6 @@ const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
 const INITIAL_HISTORY_TURNS = 20;
 const HISTORY_PAGE_MAX_BYTES = 1024 * 1024;
 const DEFERRED_CONTENT_CACHE_SIZE = 12;
-const MAX_NOTICES = 5;
-const NOTICE_VISIBLE_MS = 5000;
 const NOTICE_EXIT_ANIMATION_MS = 180;
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Space", "Spacebar"]);
 
@@ -204,50 +188,6 @@ function createNoticeId(): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function markOldestNoticeExiting(notices: NoticeItem[]): NoticeItem[] {
-  const index = notices.findIndex((notice) => !notice.exiting);
-  if (index === -1) return notices;
-  return notices.map((notice, i) => (i === index ? { ...notice, exiting: true } : notice));
-}
-
-function fillPendingNotices(visible: NoticeItem[], pending: NoticeItem[]): NoticeState {
-  let nextVisible = visible;
-  let nextPending = pending;
-  while (nextPending.length > 0 && nextVisible.length < MAX_NOTICES) {
-    const [next, ...rest] = nextPending;
-    nextVisible = [...nextVisible, next];
-    nextPending = rest;
-  }
-  if (nextPending.length > 0 && !nextVisible.some((notice) => notice.exiting)) {
-    nextVisible = markOldestNoticeExiting(nextVisible);
-  }
-  return { visible: nextVisible, pending: nextPending };
-}
-
-function noticeReducer(state: NoticeState, action: NoticeAction): NoticeState {
-  switch (action.type) {
-    case "add": {
-      if (state.visible.some((notice) => notice.exiting) || state.visible.length >= MAX_NOTICES) {
-        return {
-          visible: state.visible.some((notice) => notice.exiting)
-            ? state.visible
-            : markOldestNoticeExiting(state.visible),
-          pending: [...state.pending, action.notice],
-        };
-      }
-      return { ...state, visible: [...state.visible, action.notice] };
-    }
-    case "mark_oldest_exiting":
-      return { ...state, visible: markOldestNoticeExiting(state.visible) };
-    case "remove": {
-      const visible = state.visible.filter((notice) => notice.id !== action.id);
-      return fillPendingNotices(visible, state.pending);
-    }
-    default:
-      return state;
-  }
 }
 
 function extractMessageText(message: Partial<AgentMessage>): string {
@@ -884,6 +824,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         id: notice.id ?? createNoticeId(),
         message,
         type: notice.type ?? "info",
+        expiresAt: Date.now() + NOTICE_VISIBLE_MS,
       },
     });
   }, []);
@@ -1960,15 +1901,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const exiting = noticeState.visible.find((notice) => notice.exiting);
     if (exiting) {
       const t = setTimeout(() => {
-        dispatchNotice({ type: "remove", id: exiting.id });
+        dispatchNotice({ type: "remove", id: exiting.id, now: Date.now() });
       }, NOTICE_EXIT_ANIMATION_MS);
       return () => clearTimeout(t);
     }
     const oldest = noticeState.visible[0];
     if (!oldest) return;
-    const t = setTimeout(() => {
-      dispatchNotice({ type: "mark_oldest_exiting" });
-    }, NOTICE_VISIBLE_MS);
+    const t = setTimeout(
+      () => {
+        dispatchNotice({ type: "mark_oldest_exiting" });
+      },
+      noticeExpiryDelay(oldest, Date.now()),
+    );
     return () => clearTimeout(t);
   }, [noticeState.visible]);
 
