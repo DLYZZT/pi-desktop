@@ -10,6 +10,7 @@ import {
   type PluginWorkerRequest,
   type PluginWorkerResponse,
 } from "./plugin-worker-protocol.ts";
+import { terminateProcessTree } from "./process-tree.ts";
 
 const PLUGIN_WORKER_TIMEOUT_MS = 3 * 60_000;
 const OUTPUT_TAIL_LIMIT = 2 * 1024 * 1024;
@@ -18,6 +19,7 @@ export interface PluginWorkerClientOptions {
   entryPath?: string;
   execPath?: string;
   timeoutMs?: number;
+  terminationGraceMs?: number;
   spawnProcess?: typeof spawn;
 }
 
@@ -82,6 +84,7 @@ export async function runPluginWorker(
   const executable = options.execPath ?? process.execPath;
   const spawnProcess = options.spawnProcess ?? spawn;
   const timeoutMs = options.timeoutMs ?? PLUGIN_WORKER_TIMEOUT_MS;
+  const terminationGraceMs = options.terminationGraceMs ?? 1_000;
   const input = JSON.stringify(request);
   if (Buffer.byteLength(input) > 64 * 1024) {
     throw new ToolchainError({ code: "TOOLCHAIN_INTERNAL", message: "Plugin worker request is too large" });
@@ -93,6 +96,7 @@ export async function runPluginWorker(
       child = spawnProcess(executable, [entryPath], {
         env: spawnEnvironment(context),
         shell: false,
+        detached: true,
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -110,6 +114,7 @@ export async function runPluginWorker(
     let stdoutTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let stderrTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let settled = false;
+    let timingOut = false;
     const finish = (operation: () => void): void => {
       if (settled) return;
       settled = true;
@@ -123,6 +128,7 @@ export async function runPluginWorker(
       stderrTail = appendTail(stderrTail, Buffer.isBuffer(value) ? value : Buffer.from(value));
     });
     child.once("error", (error) => {
+      if (timingOut) return;
       finish(() =>
         reject(
           new ToolchainError({
@@ -134,6 +140,7 @@ export async function runPluginWorker(
       );
     });
     child.once("close", (exitCode) => {
+      if (timingOut) return;
       finish(() => {
         const response = extractPluginWorkerResponse(stdoutTail.toString("utf8"));
         if (response?.ok) {
@@ -156,12 +163,11 @@ export async function runPluginWorker(
       });
     });
     const timer = setTimeout(() => {
-      try {
-        child.kill();
-      } catch {
-        /* worker already exited */
-      }
-      finish(() => reject(new ToolchainError({ code: "TOOLCHAIN_INTERNAL", message: "Plugin worker timed out" })));
+      if (settled || timingOut) return;
+      timingOut = true;
+      void terminateProcessTree(child, terminationGraceMs).finally(() => {
+        finish(() => reject(new ToolchainError({ code: "TOOLCHAIN_INTERNAL", message: "Plugin worker timed out" })));
+      });
     }, timeoutMs);
     timer.unref();
     child.stdin?.end(input);
