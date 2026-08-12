@@ -162,3 +162,32 @@ test("session destroy notifies every teardown owner once and isolates failures",
   wrapper.onDestroy(() => calls.push("late-owner"));
   assert.deepEqual(calls, ["registry", "failing-owner", "event-binding", "late-owner"]);
 });
+
+test("a transient extension binding failure is retried by the next prompt", async (t) => {
+  let bindCalls = 0;
+  const prompts = [];
+  const inner = {
+    sessionId: "extension-retry-session",
+    sessionManager: { getHeader: () => ({ cwd: "/tmp" }) },
+    agent: { state: { messages: [] } },
+    extensionRunner: {},
+    async bindExtensions() {
+      bindCalls += 1;
+      if (bindCalls === 1) throw new Error("temporary extension failure");
+    },
+    async prompt(message) {
+      prompts.push(message);
+    },
+  };
+  const wrapper = new AgentSessionWrapper(inner);
+  t.after(() => wrapper.destroy());
+
+  await assert.rejects(wrapper.ensureExtensionsBound(), /temporary extension failure/);
+  assert.equal(wrapper.extensionBindingPromise, null);
+  await wrapper.send({ type: "prompt", message: "retry succeeds" });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(bindCalls, 2);
+  assert.deepEqual(prompts, ["retry succeeds"]);
+  assert.equal(wrapper.extensionBindingError, null);
+});

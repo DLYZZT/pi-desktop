@@ -151,6 +151,7 @@ export class AgentSessionWrapper {
   private extensionsBound = false;
   private extensionBindingPromise: Promise<void> | null = null;
   private extensionBindingError: unknown = null;
+  private extensionBindingAttempt = 0;
   private forceEmptySystemPrompt = false;
   private toolchainPrompt = "";
   private unsubscribe: (() => void) | null = null;
@@ -260,7 +261,9 @@ export class AgentSessionWrapper {
     if (this.extensionBindingPromise) return this.extensionBindingPromise;
 
     this.extensionBindingError = null;
-    this.extensionBindingPromise = (async () => {
+    const attempt = ++this.extensionBindingAttempt;
+    const startedAt = Date.now();
+    const bindingPromise: Promise<void> = (async () => {
       if (!this._alive) return;
       const uiContext = this.createExtensionUiContext();
       if (typeof this.inner.bindExtensions === "function") {
@@ -297,17 +300,25 @@ export class AgentSessionWrapper {
       this.extensionsBound = true;
       this.applyForcedEmptySystemPrompt();
       console.log(`[pi-desktop] session_start dispatched to extensions for session ${this.inner.sessionId}`);
-    })().catch((err) => {
-      this.extensionBindingError = err;
-      throw err;
-    });
+    })()
+      .catch((err) => {
+        this.extensionBindingError = err;
+        console.warn(
+          `[pi-desktop] extension binding attempt ${attempt} failed after ${Date.now() - startedAt}ms for session ${this.inner.sessionId}`,
+        );
+        throw err;
+      })
+      .finally(() => {
+        if (this.extensionBindingPromise === bindingPromise) this.extensionBindingPromise = null;
+      });
+    this.extensionBindingPromise = bindingPromise;
 
-    return this.extensionBindingPromise;
+    return bindingPromise;
   }
 
   private async waitForExtensionsBound(): Promise<void> {
     try {
-      if (this.extensionBindingPromise) await this.extensionBindingPromise;
+      if (!this.extensionsBound) await this.ensureExtensionsBound();
     } catch (err) {
       throw err instanceof Error ? err : new Error(String(err));
     }
@@ -433,13 +444,20 @@ export class AgentSessionWrapper {
   }
 
   private async reloadSessionResources(): Promise<void> {
-    await this.waitForExtensionsBound();
+    if (this.extensionBindingPromise) {
+      try {
+        await this.extensionBindingPromise;
+      } catch {
+        // Reload is the explicit recovery path for a failed extension bind.
+      }
+    }
+    this.extensionsBound = false;
+    this.extensionBindingPromise = null;
+    this.extensionBindingError = null;
     this.extensionStatuses.clear();
     this.extensionWidgets.clear();
     await this.inner.reload();
-    if (typeof this.inner.bindExtensions !== "function") {
-      this.inner.extensionRunner.setUIContext?.(this.createExtensionUiContext(), "rpc");
-    }
+    await this.ensureExtensionsBound();
     this.applyForcedEmptySystemPrompt();
     this.applyToolchainSummary();
   }
