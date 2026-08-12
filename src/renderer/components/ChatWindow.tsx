@@ -24,6 +24,7 @@ import { useAudio } from "@/hooks/useAudio";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
+import { MessageRenderKeyRegistry, type MessageRenderRole } from "@/lib/message-render-key";
 import { useI18n } from "@/i18n";
 
 interface Props {
@@ -228,6 +229,7 @@ export function ChatWindow({
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
   const { t } = useI18n();
+  const messageRenderKeys = useRef(new MessageRenderKeyRegistry()).current;
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
   // wrapping handleAgentEventRef because useAgentSession overwrites that ref
@@ -709,7 +711,7 @@ export function ChatWindow({
                       idx: number,
                       options: {
                         attachRef?: boolean;
-                        keyPrefix?: string;
+                        renderRole?: MessageRenderRole;
                         messageOverride?: AgentMessage;
                         showTimestamp?: boolean;
                       } = {},
@@ -721,7 +723,8 @@ export function ChatWindow({
                           : undefined;
                       const isVisible = msg.role === "user" || msg.role === "assistant";
                       const currentRefIdx = visibleRefIndexByMessage.get(idx);
-                      const keyPrefix = options.keyPrefix ?? "message";
+                      const renderRole = options.renderRole ?? "message";
+                      const renderKey = messageRenderKeys.keyFor(messages[idx], entryIds[idx], renderRole);
                       let showTimestamp = false;
                       if (msg.role === "assistant") {
                         showTimestamp = timestampAssistantIndices.has(idx);
@@ -732,7 +735,7 @@ export function ChatWindow({
                       }
                       if (options.showTimestamp !== undefined) showTimestamp = options.showTimestamp;
                       const view = (
-                        <SessionProfiler key={`${keyPrefix}-view-${idx}`} id="MessageView">
+                        <SessionProfiler key={renderKey} id="MessageView">
                           <MessageView
                             message={msg}
                             toolResults={toolResultsMap}
@@ -759,7 +762,7 @@ export function ChatWindow({
                       );
                       if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
                       return (
-                        <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
+                        <div key={renderKey} ref={attachVisibleRef(idx, currentRefIdx)}>
                           {view}
                         </div>
                       );
@@ -841,12 +844,12 @@ export function ChatWindow({
                             }
                           >
                             {visibleProcessIndices.map((processIdx) =>
-                              renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }),
+                              renderMessage(processIdx, { attachRef: false, renderRole: "process" }),
                             )}
                             {finalProcessMessage &&
                               renderMessage(finalAssistantIdx, {
                                 attachRef: false,
-                                keyPrefix: "process-final",
+                                renderRole: "process-final",
                                 messageOverride: finalProcessMessage,
                                 showTimestamp: false,
                               })}
@@ -854,7 +857,15 @@ export function ChatWindow({
                         );
                         rendered.push(
                           <div
-                            key={`process-group-${userIdx}-${finalAssistantIdx}`}
+                            key={`process-group:${messageRenderKeys.keyFor(
+                              messages[userIdx],
+                              entryIds[userIdx],
+                              "message",
+                            )}:${messageRenderKeys.keyFor(
+                              messages[finalAssistantIdx],
+                              entryIds[finalAssistantIdx],
+                              "final",
+                            )}`}
                             ref={
                               processRefIdx === undefined
                                 ? undefined
@@ -869,7 +880,12 @@ export function ChatWindow({
                       }
 
                       if (finalAnswerMessage) {
-                        rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage }));
+                        rendered.push(
+                          renderMessage(finalAssistantIdx, {
+                            renderRole: "final",
+                            messageOverride: finalAnswerMessage,
+                          }),
+                        );
                       }
                       for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
                         rendered.push(renderMessage(renderIdx));
