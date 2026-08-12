@@ -397,6 +397,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [eventConnectionManager] = useState(() => new EventStreamConnectionManager(eventUnsubRef));
   const modelRefreshRequestRef = useRef<string | null>(null);
   const modelListRequestGateRef = useRef(new LatestRequestGate());
+  const modelListSizeRef = useRef(0);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const agentRunningRef = useRef(false);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
@@ -1464,6 +1465,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       );
       setModelThinkingLevels(d.thinkingLevels ?? {});
       setModelThinkingLevelMaps(d.thinkingLevelMaps ?? {});
+      modelListSizeRef.current = nextList.length;
       setModelList(nextList);
       setModelCatalog(d.catalog);
       if (isNew) {
@@ -1925,10 +1927,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   useEffect(() => {
     const controller = new AbortController();
     loadModels(controller.signal).catch((e) => {
-      if (e instanceof DOMException && e.name === "AbortError") return;
+      if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) return;
+      console.error("Failed to load model directory:", e);
+      addNotice({
+        type: "warning",
+        message:
+          modelListSizeRef.current > 0
+            ? "Unable to load the model directory. Cached models remain available; retry from the model picker."
+            : "Unable to load the model directory. Retry from the model picker or check the Agent Host connection.",
+      });
     });
     return () => controller.abort();
-  }, [loadModels, modelsRefreshKey]);
+  }, [addNotice, loadModels, modelsRefreshKey]);
 
   useEffect(() => cancelModelRefresh, [cancelModelRefresh, newSessionCwd, session?.cwd]);
 
