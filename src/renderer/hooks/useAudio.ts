@@ -1,5 +1,26 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 
+const SOUND_ENABLED_STORAGE_KEY = "pi-sound-enabled";
+
+type SoundPreferenceStorage = Pick<Storage, "getItem" | "setItem">;
+
+export function readSoundEnabled(storage?: Pick<SoundPreferenceStorage, "getItem">): boolean {
+  try {
+    const stored = (storage ?? window.localStorage).getItem(SOUND_ENABLED_STORAGE_KEY);
+    return stored === null ? true : stored === "true";
+  } catch {
+    return true;
+  }
+}
+
+export function persistSoundEnabled(enabled: boolean, storage?: Pick<SoundPreferenceStorage, "setItem">): void {
+  try {
+    (storage ?? window.localStorage).setItem(SOUND_ENABLED_STORAGE_KEY, String(enabled));
+  } catch {
+    // Keep the in-memory preference when storage is unavailable or full.
+  }
+}
+
 function playTone(ctx: AudioContext) {
   const now = ctx.currentTime;
   const freqs = [523.25, 659.25];
@@ -22,8 +43,7 @@ function playTone(ctx: AudioContext) {
 export function useAudio() {
   const [enabled, setEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
-    const stored = localStorage.getItem("pi-sound-enabled");
-    return stored === null ? true : stored === "true";
+    return readSoundEnabled();
   });
 
   const enabledRef = useRef(enabled);
@@ -59,7 +79,7 @@ export function useAudio() {
     const next = !enabledRef.current;
     if (next) unlockAudio(true);
     enabledRef.current = next;
-    localStorage.setItem("pi-sound-enabled", String(next));
+    persistSoundEnabled(next);
     setEnabled(next);
   }, [unlockAudio]);
 
