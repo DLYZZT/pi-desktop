@@ -15,7 +15,7 @@ import type {
   QueuedMessages,
   SlashCommandInfo,
 } from "@/hooks/useAgentSession";
-import { clearDraft, getDraft, setDraft, type ChatDraftImage } from "@/lib/draft-store";
+import { DraftPersistenceController, getDraft, type ChatDraftImage } from "@/lib/draft-store";
 import {
   buildEntriesFromFiles,
   buildAtInsertText,
@@ -310,13 +310,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const imageProcessingActiveRef = useRef(true);
   const pendingImagePreviewsRef = useRef(new Set<string>());
   const inputRevisionRef = useRef(0);
+  const draftPersistenceRef = useRef<DraftPersistenceController | null>(null);
+  if (!draftPersistenceRef.current) draftPersistenceRef.current = new DraftPersistenceController();
   const setValue = useCallback((next: React.SetStateAction<string>) => {
+    const resolved = typeof next === "function" ? next(valueRef.current) : next;
     inputRevisionRef.current += 1;
-    setValueState(next);
+    valueRef.current = resolved;
+    setValueState(resolved);
   }, []);
   const setAttachedImages = useCallback((next: React.SetStateAction<AttachedImage[]>) => {
+    const resolved = typeof next === "function" ? next(attachedImagesRef.current) : next;
     inputRevisionRef.current += 1;
-    setAttachedImagesState(next);
+    attachedImagesRef.current = resolved;
+    setAttachedImagesState(resolved);
   }, []);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
@@ -430,8 +436,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const clearInput = useCallback(() => {
     setValue("");
     setAtQuery(null);
-    if (draftKey) clearDraft(draftKey);
-    if (draftKeyRef.current && draftKeyRef.current !== draftKey) clearDraft(draftKeyRef.current);
+    if (draftKey) draftPersistenceRef.current?.clear(draftKey);
+    if (draftKeyRef.current && draftKeyRef.current !== draftKey) {
+      draftPersistenceRef.current?.clear(draftKeyRef.current);
+    }
     clearImages();
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -460,9 +468,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     [setAttachedImages, setValue],
   );
 
+  const commitCurrentDraft = useCallback(() => {
+    const currentDraftKey = draftKeyRef.current;
+    if (!currentDraftKey) return;
+    draftPersistenceRef.current?.commit(currentDraftKey, {
+      value: valueRef.current,
+      images: attachedImagesRef.current.map(imageToDraftImage),
+    });
+  }, []);
+
   useEffect(() => {
     if (!draftKey || draftKeyRef.current !== draftKey) return;
-    setDraft(draftKey, {
+    draftPersistenceRef.current?.schedule(draftKey, {
       value,
       images: attachedImages.map(imageToDraftImage),
     });
@@ -473,7 +490,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     if (previousDraftKey === draftKey) return;
 
     if (previousDraftKey) {
-      setDraft(previousDraftKey, {
+      draftPersistenceRef.current?.commit(previousDraftKey, {
         value: valueRef.current,
         images: attachedImagesRef.current.map(imageToDraftImage),
       });
@@ -505,11 +522,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     imageProcessingActiveRef.current = true;
     return () => {
       imageProcessingActiveRef.current = false;
+      commitCurrentDraft();
+      draftPersistenceRef.current?.dispose();
       for (const previewUrl of pendingPreviews) URL.revokeObjectURL(previewUrl);
       pendingPreviews.clear();
       attachedImagesRef.current.forEach(revokeImagePreview);
     };
-  }, []);
+  }, [commitCurrentDraft]);
 
   const handleSend = useCallback(async () => {
     const msg = value.trim();
@@ -518,6 +537,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     onAudioUnlock?.();
     const snapshot = captureComposerSubmission(value, attachedImages);
     setSubmissionNotice(null);
+    commitCurrentDraft();
     clearInput();
     const clearedAtRevision = inputRevisionRef.current;
     try {
@@ -541,6 +561,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   }, [
     attachedImages,
     clearInput,
+    commitCurrentDraft,
     isStreaming,
     onAudioUnlock,
     onBuiltinCommand,
@@ -762,6 +783,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       const snapshot = captureComposerSubmission(value, attachedImages);
       const streamingBehavior = mode === "steer" ? "steer" : "followUp";
       setSubmissionNotice(null);
+      commitCurrentDraft();
       clearInput();
       const clearedAtRevision = inputRevisionRef.current;
       try {
@@ -781,6 +803,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     [
       attachedImages,
       clearInput,
+      commitCurrentDraft,
       onAudioUnlock,
       onFollowUp,
       onPromptWithStreamingBehavior,
