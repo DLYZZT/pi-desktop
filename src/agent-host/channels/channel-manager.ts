@@ -31,6 +31,7 @@ import { resolveSessionPath } from "../session-reader";
 import { sessionIndex } from "../session-index";
 
 type RuntimeEntry = { controller: AbortController; task: Promise<void> };
+type StartingEntry = { controller: AbortController; task: Promise<void> };
 type SecretAccess = {
   get: (channel: ChannelId, accountId: string) => Promise<ChannelSecret | null>;
   set: (channel: ChannelId, accountId: string, secret: ChannelSecret) => Promise<void>;
@@ -129,6 +130,7 @@ export class ChannelManager {
   private readonly bridge: Pick<PiSessionBridge, "getSessionStatus" | "newSession" | "runCommand" | "runTurn">;
   private readonly secretAccess: SecretAccess;
   private readonly runtimes = new Map<string, RuntimeEntry>();
+  private readonly starting = new Map<string, StartingEntry>();
   private readonly statuses = new Map<string, ChannelStatus>();
   private readonly loginWaits = new Map<string, Promise<ChannelLoginEvent>>();
   private readonly loginWaitCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -307,13 +309,27 @@ export class ChannelManager {
     if (!account) throw new Error("Channel account not found");
     if (!account.enabled) throw new Error("Channel account is disabled");
     if (this.runtimes.has(accountId)) return;
+    const pending = this.starting.get(accountId);
+    if (pending) return pending.task;
+    const controller = new AbortController();
+    const task = this.startAccountRuntime(account, controller);
+    const entry = { controller, task };
+    this.starting.set(accountId, entry);
+    try {
+      await task;
+    } finally {
+      if (this.starting.get(accountId) === entry) this.starting.delete(accountId);
+    }
+  }
+
+  private async startAccountRuntime(account: ChannelAccountConfig, controller: AbortController): Promise<void> {
     const secret = await this.getSecret(account);
+    if (controller.signal.aborted) return;
     if (!secret) {
       const message = "消息渠道账号尚未配置凭证";
       this.emitStatus(account, { state: "error", connected: false, lastError: message });
       throw new Error(message);
     }
-    const controller = new AbortController();
     const adapter = this.registry.get(account.channel);
     this.emitStatus(account, { state: "starting", connected: false, lastError: undefined });
     const task = adapter
@@ -340,12 +356,18 @@ export class ChannelManager {
         }
       })
       .finally(() => {
-        if (this.runtimes.get(accountId)?.controller === controller) this.runtimes.delete(accountId);
+        if (this.runtimes.get(account.id)?.controller === controller) this.runtimes.delete(account.id);
       });
-    this.runtimes.set(accountId, { controller, task });
+    this.runtimes.set(account.id, { controller, task });
   }
 
   async stopAccount(accountId: string): Promise<void> {
+    const starting = this.starting.get(accountId);
+    if (starting) {
+      starting.controller.abort();
+      await starting.task.catch(() => undefined);
+      if (this.starting.get(accountId) === starting) this.starting.delete(accountId);
+    }
     const runtime = this.runtimes.get(accountId);
     if (runtime) {
       runtime.controller.abort();

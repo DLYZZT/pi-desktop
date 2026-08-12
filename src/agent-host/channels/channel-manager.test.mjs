@@ -31,14 +31,24 @@ const { AdapterRegistry, ChannelManager } = await import(`${pathToFileURL(output
 
 function createFakeAdapter(id = "weixin") {
   let inbound;
+  let startCount = 0;
+  let activeCount = 0;
+  let maxActiveCount = 0;
   const sent = [];
   return {
     adapter: {
       id,
       async start(context) {
+        startCount += 1;
+        activeCount += 1;
+        maxActiveCount = Math.max(maxActiveCount, activeCount);
         inbound = context.onInbound;
         context.onStatus({ state: "running", connected: true });
-        await new Promise((resolve) => context.signal.addEventListener("abort", resolve, { once: true }));
+        try {
+          await new Promise((resolve) => context.signal.addEventListener("abort", resolve, { once: true }));
+        } finally {
+          activeCount -= 1;
+        }
       },
       async send(context) {
         sent.push(context);
@@ -65,12 +75,92 @@ function createFakeAdapter(id = "weixin") {
     },
     emit: async (envelope) => inbound(envelope),
     sent,
+    get startCount() {
+      return startCount;
+    },
+    get activeCount() {
+      return activeCount;
+    },
+    get maxActiveCount() {
+      return maxActiveCount;
+    },
   };
 }
 
 function scanAccountId(domain, appId) {
   return `feishu-${createHash("sha256").update(`${domain}\0${appId}`).digest("hex").slice(0, 24)}`;
 }
+
+test("concurrent starts create only one adapter runtime per account", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-manager-concurrent-start-"));
+  const fake = createFakeAdapter();
+  const registry = new AdapterRegistry();
+  registry.register(fake.adapter);
+  let blockSecretReads = false;
+  let blockedSecretReads = 0;
+  let releaseSecretReads;
+  let secretGate = Promise.resolve();
+  const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
+    dataDirectory: dir,
+    registry,
+    secretAccess: {
+      get: async () => {
+        if (blockSecretReads) {
+          blockedSecretReads += 1;
+          await secretGate;
+        }
+        return { token: "token", providerAccountId: "raw", baseUrl: "https://example.test" };
+      },
+      set: async () => {},
+      delete: async () => {},
+    },
+    bridge: { async runTurn() {} },
+  });
+  const now = new Date().toISOString();
+  await manager.upsertAccount({
+    id: "wx-concurrent",
+    channel: "weixin",
+    name: "Concurrent Weixin",
+    enabled: true,
+    dmPolicy: "open",
+    allowFrom: [],
+    groupPolicy: "disabled",
+    groupIds: [],
+    groupAllowFrom: [],
+    requireMention: true,
+    toolNames: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  await manager.stopAccount("wx-concurrent");
+
+  blockSecretReads = true;
+  secretGate = new Promise((resolve) => {
+    releaseSecretReads = resolve;
+  });
+  const starts = Array.from({ length: 20 }, () => manager.startAccount("wx-concurrent"));
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseSecretReads();
+  await Promise.all(starts);
+
+  assert.equal(blockedSecretReads, 1);
+  assert.equal(fake.startCount, 2, "setup and concurrent calls should create two runtimes in total");
+  assert.equal(fake.activeCount, 1);
+  assert.equal(fake.maxActiveCount, 1);
+
+  await manager.stopAccount("wx-concurrent");
+  secretGate = new Promise((resolve) => {
+    releaseSecretReads = resolve;
+  });
+  const pendingStart = manager.startAccount("wx-concurrent");
+  await new Promise((resolve) => setImmediate(resolve));
+  const pendingStop = manager.stopAccount("wx-concurrent");
+  releaseSecretReads();
+  await Promise.all([pendingStart, pendingStop]);
+  assert.equal(fake.startCount, 2, "a stop during credential lookup must cancel the pending adapter launch");
+  assert.equal(fake.activeCount, 0);
+  await manager.shutdown();
+});
 
 test("fake adapter runs inbound message through binding, Pi bridge, and delivery", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-manager-"));
