@@ -16,6 +16,7 @@ import type {
   SlashCommandInfo,
 } from "@/hooks/useAgentSession";
 import { DraftPersistenceController, getDraft, type ChatDraftImage } from "@/lib/draft-store";
+import { LatestAbortableRequest } from "@/lib/latest-abortable-request";
 import {
   buildEntriesFromFiles,
   buildAtInsertText,
@@ -302,7 +303,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const atItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const fileIndexMetaRef = useRef<{ cwd: string; fetchedAt: number } | null>(null);
-  const fileIndexFetchingRef = useRef<string | null>(null);
+  const fileIndexRequestRef = useRef(new LatestAbortableRequest());
+  const fileSearchRequestRef = useRef(new LatestAbortableRequest());
   const draftKeyRef = useRef(draftKey);
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
@@ -647,18 +649,31 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     if (!needsServerSearch || !cwd || !atQueryText) return;
     const fetchCwd = cwd;
     const query = atQueryText;
+    const fileSearchRequests = fileSearchRequestRef.current;
+    let generation: number | null = null;
     const timer = setTimeout(() => {
-      fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}&q=${encodeURIComponent(query)}`)
+      const request = fileSearchRequests.begin();
+      generation = request.generation;
+      fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}&q=${encodeURIComponent(query)}`, {
+        signal: request.signal,
+      })
         .then((res) => {
           if (!res.ok) throw new Error(`file search failed: ${res.status}`);
           return res.json() as Promise<{ matches?: FileIndexEntry[] }>;
         })
-        .then((data) => setAtServerResult({ cwd: fetchCwd, query, matches: data.matches ?? [] }))
+        .then((data) => {
+          if (!fileSearchRequests.isCurrent(request.generation)) return;
+          setAtServerResult({ cwd: fetchCwd, query, matches: data.matches ?? [] });
+        })
         .catch(() => {
           // Keep showing local matches; the next keystroke retries.
-        });
+        })
+        .finally(() => fileSearchRequests.finish(request.generation));
     }, 150);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      if (generation !== null) fileSearchRequests.cancel(generation);
+    };
   }, [needsServerSearch, atQueryText, cwd]);
 
   const serverResultInUse =
@@ -685,27 +700,31 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     if (!atTokenActive || !cwd) return;
     const meta = fileIndexMetaRef.current;
     if (meta && meta.cwd === cwd && Date.now() - meta.fetchedAt < 10_000) return;
-    if (fileIndexFetchingRef.current === cwd) return;
-    fileIndexFetchingRef.current = cwd;
     const fetchCwd = cwd;
+    const fileIndexRequests = fileIndexRequestRef.current;
+    const { generation, signal } = fileIndexRequests.begin();
     setFileIndexLoading(true);
-    fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}`)
+    fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}`, { signal })
       .then((res) => {
         if (!res.ok) throw new Error(`file index failed: ${res.status}`);
         return res.json() as Promise<{ files?: string[]; truncated?: boolean }>;
       })
       .then((data) => {
+        if (!fileIndexRequests.isCurrent(generation)) return;
         setFileIndex({ cwd: fetchCwd, entries: buildEntriesFromFiles(data.files ?? []), truncated: !!data.truncated });
         fileIndexMetaRef.current = { cwd: fetchCwd, fetchedAt: Date.now() };
       })
       .catch(() => {
+        if (!fileIndexRequests.isCurrent(generation)) return;
         // Leave any previous index in place; next open retries.
         fileIndexMetaRef.current = null;
       })
       .finally(() => {
-        fileIndexFetchingRef.current = null;
-        setFileIndexLoading(false);
+        if (fileIndexRequests.finish(generation)) setFileIndexLoading(false);
       });
+    return () => {
+      if (fileIndexRequests.cancel(generation)) setFileIndexLoading(false);
+    };
   }, [atTokenActive, cwd]);
 
   const applyAtCompletion = useCallback(
