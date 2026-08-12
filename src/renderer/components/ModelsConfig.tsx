@@ -981,22 +981,20 @@ function OAuthDetail({
     }
   }, [loginState.phase]);
 
-  // Reset state when provider changes and invalidate any in-flight startup.
+  // Reset state on entry/provider changes. The outgoing effect owns cancellation
+  // for its captured provider, so a replacement provider is never cancelled.
   useEffect(() => {
+    const providerId = provider.id;
     loginAttemptRef.current += 1;
     setLoginState({ phase: "idle" });
     setInputValue("");
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
-    void call("auth.loginCancel", { provider: provider.id }).catch(() => {});
-  }, [provider.id]);
-
-  useEffect(() => {
     return () => {
       loginAttemptRef.current += 1;
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
-      void call("auth.loginCancel", { provider: provider.id }).catch(() => {});
+      void call("auth.loginCancel", { provider: providerId }).catch(() => {});
     };
   }, [provider.id]);
 
