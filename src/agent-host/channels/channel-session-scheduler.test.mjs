@@ -191,3 +191,35 @@ test("a transient extension binding failure is retried by the next prompt", asyn
   assert.deepEqual(prompts, ["retry succeeds"]);
   assert.equal(wrapper.extensionBindingError, null);
 });
+
+test("concurrent session disposal aborts and releases the inner agent exactly once", async () => {
+  const calls = [];
+  const wrapper = new AgentSessionWrapper({
+    sessionId: "dispose-session",
+    sessionManager: { getHeader: () => ({ cwd: "/tmp" }) },
+    agent: {
+      state: { messages: [] },
+      async waitForIdle() {
+        calls.push("waitForIdle");
+      },
+      async dispose() {
+        calls.push("dispose");
+      },
+    },
+    async abort() {
+      calls.push("abort");
+    },
+  });
+  let destroyed = 0;
+  wrapper.onDestroy(() => destroyed++);
+
+  await Promise.all([
+    wrapper.dispose({ abort: true, reason: "test" }),
+    wrapper.dispose({ abort: true, reason: "duplicate" }),
+    wrapper.abortAndDispose(),
+  ]);
+
+  assert.deepEqual(calls, ["abort", "waitForIdle", "dispose"]);
+  assert.equal(destroyed, 1);
+  assert.equal(wrapper.isAlive(), false);
+});

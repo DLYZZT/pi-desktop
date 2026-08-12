@@ -157,6 +157,7 @@ export class AgentSessionWrapper {
   private unsubscribe: (() => void) | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyCallbacks = new Set<() => void>();
+  private disposePromise: Promise<void> | null = null;
   private _alive = true;
 
   constructor(inner: AgentSessionLike) {
@@ -481,7 +482,7 @@ export class AgentSessionWrapper {
           this.resetIdleTimer();
           return;
         }
-        this.destroy();
+        void this.dispose({ abort: true, reason: "idle-eviction" });
       },
       10 * 60 * 1000,
     );
@@ -606,7 +607,7 @@ export class AgentSessionWrapper {
 
         const newSessionId = SessionManager.open(newSessionFile, sessionDir).getSessionId();
         cacheSessionPath(newSessionId, newSessionFile);
-        this.destroy();
+        await this.dispose({ abort: true, reason: "fork" });
         return { cancelled: false, newSessionId };
       }
 
@@ -760,24 +761,64 @@ export class AgentSessionWrapper {
   }
 
   /**
-   * Stop the underlying agent and release resources (ISSUE-001).
-   * Prefer dispose() for full teardown after abort.
+   * Stop the underlying agent and release resources. Calls are idempotent and
+   * concurrent owners share one teardown attempt.
    */
-  async abortAndDispose(): Promise<void> {
-    if (!this._alive) return;
-    try {
-      await this.inner.abort();
-    } catch {
-      /* already stopped */
-    }
-    try {
-      const agent = this.inner.agent as { waitForIdle?: () => Promise<void>; dispose?: () => void | Promise<void> };
-      await agent.waitForIdle?.();
-      await agent.dispose?.();
-    } catch {
-      /* best-effort */
-    }
+  dispose(options: { abort?: boolean; reason?: string; timeoutMs?: number } = {}): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    const abort = options.abort !== false;
+    const reason = options.reason ?? "explicit";
+    const timeoutMs = options.timeoutMs ?? 5_000;
     this.destroy();
+
+    this.disposePromise = (async () => {
+      const teardown = async () => {
+        if (abort) {
+          try {
+            await this.inner.abort();
+          } catch (error) {
+            console.warn(
+              `[pi-desktop] session abort failed during ${reason} for ${this.sessionId}: ${error instanceof Error ? error.name : "UnknownError"}`,
+            );
+          }
+        }
+        const agent = this.inner.agent as { waitForIdle?: () => Promise<void>; dispose?: () => void | Promise<void> };
+        try {
+          await agent.waitForIdle?.();
+        } catch (error) {
+          console.warn(
+            `[pi-desktop] session waitForIdle failed during ${reason} for ${this.sessionId}: ${error instanceof Error ? error.name : "UnknownError"}`,
+          );
+        }
+        try {
+          await agent.dispose?.();
+        } catch (error) {
+          console.warn(
+            `[pi-desktop] session dispose failed during ${reason} for ${this.sessionId}: ${error instanceof Error ? error.name : "UnknownError"}`,
+          );
+        }
+      };
+
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          teardown(),
+          new Promise<void>((resolve) => {
+            timeout = setTimeout(() => {
+              console.warn(`[pi-desktop] session teardown timed out after ${timeoutMs}ms during ${reason}`);
+              resolve();
+            }, timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    })();
+    return this.disposePromise;
+  }
+
+  async abortAndDispose(): Promise<void> {
+    await this.dispose({ abort: true, reason: "explicit" });
   }
 
   destroy(): void {
@@ -1233,6 +1274,10 @@ function getLocks(): Map<string, Promise<{ session: AgentSessionWrapper; realSes
 
 export function getRpcSession(sessionId: string): AgentSessionWrapper | undefined {
   return getRegistry().get(sessionId);
+}
+
+export async function disposeAllRpcSessions(reason = "host-shutdown"): Promise<void> {
+  await Promise.all([...getRegistry().values()].map((session) => session.dispose({ abort: true, reason })));
 }
 
 export function syncBrowserToolsForAllSessions(): void {

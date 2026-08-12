@@ -43,7 +43,13 @@ import {
 } from "../contract/types";
 import type { SessionTreeNode } from "../shared/types";
 import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed } from "./file-access";
-import { getRpcSession, getRunningRpcSessionIds, startRpcSession, subscribeRunningSessions } from "./rpc-manager";
+import {
+  disposeAllRpcSessions,
+  getRpcSession,
+  getRunningRpcSessionIds,
+  startRpcSession,
+  subscribeRunningSessions,
+} from "./rpc-manager";
 import {
   buildSessionContext,
   buildSessionInfoFromManager,
@@ -1722,6 +1728,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
   return async () => {
     modelCatalogRefreshCoordinator.cancelAll();
     await channelManager.shutdown();
+    await disposeAllRpcSessions();
   };
 }
 
