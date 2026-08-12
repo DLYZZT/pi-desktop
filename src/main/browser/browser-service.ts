@@ -44,6 +44,7 @@ import { BrowserPersistentGrantStore } from "./browser-persistent-grant-store.ts
 import { BrowserProfileManager, DEFAULT_BROWSER_PROFILE_ID } from "./browser-profile-manager.ts";
 import { BrowserSecretVault, type BrowserSecretCodec } from "./browser-secret-vault.ts";
 import { BrowserSettingsStore } from "./browser-settings-store.ts";
+import { authorizeBrowserSettingsUpdate, prepareBrowserSettingsUpdate } from "./browser-settings-confirmation.ts";
 import { BrowserSnippetStore } from "./browser-snippet-store.ts";
 import { BrowserTabManager } from "./browser-tab-manager.ts";
 import { BrowserTabRestoreStore } from "./browser-tab-restore-store.ts";
@@ -216,17 +217,22 @@ export class BrowserService {
     if (kind !== "advanced-browser-mode" && kind !== "sensitive-cookies") {
       throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser confirmation kind is invalid");
     }
+    const confirmationPayload =
+      kind === "advanced-browser-mode" && payload
+        ? prepareBrowserSettingsUpdate(this.policy.getSettings(), payload).canonicalPatch
+        : (payload ?? null);
     const normalizedLanguage = language === "zh-CN" ? "zh-CN" : "en-US";
     const accepted = await (this.options.confirm?.(kind, normalizedLanguage) ??
       this.defaultConfirmation(kind, normalizedLanguage));
-    return accepted ? this.confirmations.issue(kind, payload ?? null) : null;
+    return accepted ? this.confirmations.issue(kind, confirmationPayload) : null;
   }
 
   updateSettings(patch: BrowserSettingsPatch, proof?: BrowserConfirmationProof): BrowserSettingsPublic {
     const before = this.policy.getSettings();
-    const requiresConfirmation = patchEnablesAdvanced(before, patch);
-    if (requiresConfirmation) this.confirmations.consume(proof, "advanced-browser-mode", patch);
-    const effectivePatch = normalizeSettingsPatch(patch);
+    const canonicalPatch = authorizeBrowserSettingsUpdate(before, patch, (payload) =>
+      this.confirmations.consume(proof, "advanced-browser-mode", payload),
+    );
+    const effectivePatch = normalizeSettingsPatch(canonicalPatch);
     const parsed = this.settingsStore.update(effectivePatch);
     const persistentDefaultChanged =
       before.automation.defaultPermission !== parsed.settings.automation.defaultPermission;
@@ -1379,10 +1385,6 @@ function requiredPermission(method: BrowserHostMethod): "read" | "interact" | "a
     return "advanced";
   }
   return "read";
-}
-
-function patchEnablesAdvanced(current: BrowserSettingsPublic["settings"], patch: BrowserSettingsPatch): boolean {
-  return patch.advancedBrowserMode?.enabled === true && !current.advancedBrowserMode.enabled;
 }
 
 function normalizeSettingsPatch(patch: BrowserSettingsPatch): BrowserSettingsPatch {
