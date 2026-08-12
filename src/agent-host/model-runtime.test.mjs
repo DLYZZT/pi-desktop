@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { createDeferred, createManualScheduler } from "#test-timing";
 import { build } from "esbuild";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
@@ -80,14 +81,20 @@ test("provider failures are stable warnings while successful catalogs remain ref
 
 test("catalog refresh times out and reports an aborted cache-preserving result", async () => {
   const { ModelCatalogRefreshCoordinator } = await loadModelRuntimeModule();
-  const coordinator = new ModelCatalogRefreshCoordinator(5, () => false);
-  const result = await coordinator.refresh("/project", "timeout", async () => ({
+  const scheduler = createManualScheduler();
+  const refreshStarted = createDeferred();
+  const coordinator = new ModelCatalogRefreshCoordinator(5, () => false, scheduler);
+  const pending = coordinator.refresh("/project", "timeout", async () => ({
     modelRuntime: {
       refresh(options) {
+        refreshStarted.resolve();
         return abortableResult(options.signal, { aborted: true, errors: new Map() });
       },
     },
   }));
+  await refreshStarted.promise;
+  await scheduler.runNext();
+  const result = await pending;
   assert.equal(result.catalog.aborted, true);
   assert.equal(result.catalog.refreshed, false);
   assert.equal(result.catalog.warnings[0].code, "MODEL_REFRESH_TIMEOUT");
@@ -95,20 +102,23 @@ test("catalog refresh times out and reports an aborted cache-preserving result",
 
 test("the timeout bounds service creation even when an extension ignores cancellation", async () => {
   const { ModelCatalogRefreshAbortedError, ModelCatalogRefreshCoordinator } = await loadModelRuntimeModule();
-  const coordinator = new ModelCatalogRefreshCoordinator(5, () => false);
-  const started = Date.now();
-  await assert.rejects(
-    coordinator.refresh("/project", "hung-services", async () => new Promise(() => {})),
+  const scheduler = createManualScheduler();
+  const coordinator = new ModelCatalogRefreshCoordinator(5, () => false, scheduler);
+  const pending = coordinator.refresh("/project", "hung-services", async () => new Promise(() => {}));
+  const rejected = assert.rejects(
+    pending,
     (error) => error instanceof ModelCatalogRefreshAbortedError && error.kind === "timeout",
   );
-  assert.ok(Date.now() - started < 100, "hung service creation must not escape the refresh deadline");
+  await scheduler.runNext();
+  await rejected;
 });
 
 test("the timeout also bounds final model-list projection", async () => {
   const { ModelCatalogRefreshCoordinator } = await loadModelRuntimeModule();
-  const coordinator = new ModelCatalogRefreshCoordinator(5, () => false);
-  const started = Date.now();
-  const result = await coordinator.refresh(
+  const scheduler = createManualScheduler();
+  const projectionStarted = createDeferred();
+  const coordinator = new ModelCatalogRefreshCoordinator(5, () => false, scheduler);
+  const pending = coordinator.refresh(
     "/project",
     "hung-projection",
     async () => ({
@@ -118,13 +128,19 @@ test("the timeout also bounds final model-list projection", async () => {
         },
       },
     }),
-    ({ catalog }) => (catalog.aborted ? { catalog, source: "cached-snapshot" } : new Promise(() => {})),
+    ({ catalog }) => {
+      if (catalog.aborted) return { catalog, source: "cached-snapshot" };
+      projectionStarted.resolve();
+      return new Promise(() => {});
+    },
   );
+  await projectionStarted.promise;
+  await scheduler.runNext();
+  const result = await pending;
 
   assert.equal(result.source, "cached-snapshot");
   assert.equal(result.catalog.aborted, true);
   assert.equal(result.catalog.warnings[0].code, "MODEL_REFRESH_TIMEOUT");
-  assert.ok(Date.now() - started < 100, "final projection must not escape the refresh deadline");
 });
 
 test("a replacement refresh cancels the older cwd generation", async () => {

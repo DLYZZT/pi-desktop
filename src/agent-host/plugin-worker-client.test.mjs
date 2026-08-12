@@ -95,18 +95,6 @@ function processExists(pid) {
   }
 }
 
-async function waitForFile(filePath, timeoutMs = 2_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      return readFileSync(filePath, "utf8");
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  throw new Error(`Timed out waiting for ${filePath}`);
-}
-
 test("timeout terminates the Plugin worker process tree before rejecting", async () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "pi-plugin-worker-tree-"));
   const pidFile = path.join(directory, "grandchild.pid");
@@ -132,8 +120,8 @@ test("timeout terminates the Plugin worker process tree before rejecting", async
       timeoutMs: 250,
       terminationGraceMs: 100,
     });
-    grandchildPid = Number(await waitForFile(pidFile));
     await assert.rejects(pending, (error) => error.code === "TOOLCHAIN_INTERNAL" && /timed out/.test(error.message));
+    grandchildPid = Number(readFileSync(pidFile, "utf8"));
     assert.equal(processExists(grandchildPid), false);
   } finally {
     if (grandchildPid && processExists(grandchildPid)) {

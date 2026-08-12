@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { createManualScheduler } from "#test-timing";
 import { build } from "esbuild";
 
 const output = path.join(
@@ -581,6 +582,7 @@ test("progressive turns stream process and Markdown then fold details in the fin
   const finishes = [];
   const reactions = [];
   const removedReactions = [];
+  const scheduler = createManualScheduler();
   const adapter = new FeishuAdapter(
     dependencies({
       async startRichCard(_credentials, request) {
@@ -605,6 +607,8 @@ test("progressive turns stream process and Markdown then fold details in the fin
       },
     }),
     0,
+    undefined,
+    { turnTimers: scheduler },
   );
   const output = adapter.beginTurn({
     account: account(),
@@ -629,7 +633,7 @@ test("progressive turns stream process and Markdown then fold details in the fin
     },
   });
   output.update({ type: "tool_start", toolCallId: "tool-1", toolName: "read", args: { path: "README.md" } });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await scheduler.runNext();
   const result = await output.finish("## 最终答案\n\n- 支持 Markdown");
   await new Promise((resolve) => setImmediate(resolve));
 
@@ -677,6 +681,7 @@ test("Feishu reaction failures never prevent a durable final reply", async () =>
 test("missing CardKit permission falls back to one durable Markdown card without losing the answer", async () => {
   const cards = [];
   const plain = [];
+  const scheduler = createManualScheduler();
   const adapter = new FeishuAdapter(
     dependencies({
       async startRichCard() {
@@ -692,6 +697,8 @@ test("missing CardKit permission falls back to one durable Markdown card without
       },
     }),
     0,
+    undefined,
+    { turnTimers: scheduler },
   );
   const output = adapter.beginTurn({
     account: account(),
@@ -701,7 +708,7 @@ test("missing CardKit permission falls back to one durable Markdown card without
     replyToMessageId: "om_source",
     runId: "om_source",
   });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await scheduler.runNext();
   const result = await output.finish("**即使没有 CardKit 权限也保留 Markdown**");
 
   assert.equal(cards.length, 1);
@@ -712,6 +719,7 @@ test("missing CardKit permission falls back to one durable Markdown card without
 
 test("a streaming update failure is isolated and the existing card still receives the final answer", async () => {
   const finishes = [];
+  const scheduler = createManualScheduler();
   const adapter = new FeishuAdapter(
     dependencies({
       async startRichCard() {
@@ -728,6 +736,8 @@ test("a streaming update failure is isolated and the existing card still receive
       },
     }),
     0,
+    undefined,
+    { turnTimers: scheduler },
   );
   const output = adapter.beginTurn({
     account: account(),
@@ -737,7 +747,7 @@ test("a streaming update failure is isolated and the existing card still receive
     replyToMessageId: "om_source",
     runId: "om_source",
   });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await scheduler.runNext();
   const result = await output.finish("**最终答案仍然可见**");
   assert.equal(finishes.length, 1);
   assert.match(finishes[0].body.elements.at(-1).content, /最终答案仍然可见/);
@@ -747,6 +757,7 @@ test("a streaming update failure is isolated and the existing card still receive
 test("an ambiguous streaming-card send failure never creates a duplicate fallback message", async () => {
   let cardSends = 0;
   let plainSends = 0;
+  const scheduler = createManualScheduler();
   const adapter = new FeishuAdapter(
     dependencies({
       async startRichCard() {
@@ -762,6 +773,8 @@ test("an ambiguous streaming-card send failure never creates a duplicate fallbac
       },
     }),
     0,
+    undefined,
+    { turnTimers: scheduler },
   );
   const output = adapter.beginTurn({
     account: account(),
@@ -771,7 +784,7 @@ test("an ambiguous streaming-card send failure never creates a duplicate fallbac
     replyToMessageId: "om_source",
     runId: "om_source",
   });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await scheduler.runNext();
   await assert.rejects(output.finish("不要重复发送"), /network timeout/);
   assert.equal(cardSends, 0);
   assert.equal(plainSends, 0);

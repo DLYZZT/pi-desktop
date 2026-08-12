@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { createManualScheduler } from "#test-timing";
 import { build } from "esbuild";
 
 const output = path.join(
@@ -566,7 +567,8 @@ test("private turns stream Rich drafts and persist folded process details", asyn
       ? jsonResponse({ ok: true, result: { message_id: 81, date: 1, chat: { id: 7, type: "private" } } })
       : jsonResponse({ ok: true, result: true });
   };
-  const adapter = new TelegramAdapter(async () => undefined, 0);
+  const scheduler = createManualScheduler();
+  const adapter = new TelegramAdapter(async () => undefined, 0, scheduler);
   const output = adapter.beginTurn({
     account: account(),
     secret: { token: "token", providerAccountId: "42", baseUrl: "https://telegram.example" },
@@ -593,7 +595,7 @@ test("private turns stream Rich drafts and persist folded process details", asyn
     toolName: "read",
     args: { token: "secret" },
   });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await scheduler.runNext();
   output.update({
     type: "tool_end",
     toolCallId: "tool-one",
@@ -601,7 +603,7 @@ test("private turns stream Rich drafts and persist folded process details", asyn
     result: "读取完成",
     isError: false,
   });
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await scheduler.runNext();
   const receipt = await output.finish("## 完成\n\n**最终答案**");
   await new Promise((resolve) => setImmediate(resolve));
 
@@ -687,7 +689,6 @@ test("group turns skip ephemeral drafts and send only a Rich final message", asy
     phase: "update",
     message: { role: "assistant", content: [{ type: "text", text: "partial" }] },
   });
-  await new Promise((resolve) => setTimeout(resolve, 5));
   await output.finish("## 群聊最终回复");
 
   assert.deepEqual(endpoints, ["sendRichMessage"]);
@@ -721,7 +722,8 @@ test("malformed tool progress cannot escape the Telegram draft timer", async (t)
       },
     },
   );
-  const output = new TelegramAdapter(async () => undefined, 0).beginTurn({
+  const scheduler = createManualScheduler();
+  const output = new TelegramAdapter(async () => undefined, 0, scheduler).beginTurn({
     account: account(),
     secret: { token: "token", providerAccountId: "42", baseUrl: "https://telegram.example" },
     peerId: "7",
@@ -734,7 +736,7 @@ test("malformed tool progress cannot escape the Telegram draft timer", async (t)
     toolName: undefined,
     args: hostileValue,
   });
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await scheduler.runNext();
   const receipt = await output.finish("最终回复");
 
   const draft = requests.find((request) => request.endpoint === "sendRichMessageDraft");

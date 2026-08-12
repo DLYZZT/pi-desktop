@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
+import { createManualScheduler } from "#test-timing";
 
 import * as Lark from "@larksuiteoapi/node-sdk";
 import {
@@ -412,6 +413,7 @@ test("slow initial WebSocket stays alive, reports reconnecting, then reaches rea
   let reconnecting = 0;
   let reconnected = 0;
   let settled = false;
+  const scheduler = createManualScheduler();
   const controller = new globalThis.AbortController();
   const pending = connectFeishuWebSocket(
     credentials({ domain: "lark" }),
@@ -429,12 +431,13 @@ test("slow initial WebSocket stays alive, reports reconnecting, then reaches rea
     },
     controller.signal,
     5,
+    scheduler,
   );
   void pending.then(() => {
     settled = true;
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 15));
+  await scheduler.runNext();
   assert.equal(settled, false, "the startup status timer must not terminate the SDK retry loop");
   assert.equal(reconnecting, 1);
   assert.equal(closeCalls.length, 0);

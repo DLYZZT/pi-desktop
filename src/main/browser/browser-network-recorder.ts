@@ -57,11 +57,13 @@ export interface BrowserNetworkRecorderOptions {
   maxBodyBytes: () => number;
   now?: () => number;
   bodyCaptureIdleMs?: number;
+  timers?: Pick<typeof globalThis, "setTimeout" | "clearTimeout">;
 }
 
 export class BrowserNetworkRecorder {
   private readonly options: BrowserNetworkRecorderOptions;
   private readonly now: () => number;
+  private readonly timers: Pick<typeof globalThis, "setTimeout" | "clearTimeout">;
   private readonly requests = new Map<string, InternalRequest>();
   private readonly cdpToOpaque = new Map<string, string>();
   private readonly sealed = new Map<string, BrowserSealedReplayRecord>();
@@ -84,6 +86,7 @@ export class BrowserNetworkRecorder {
   constructor(options: BrowserNetworkRecorderOptions) {
     this.options = options;
     this.now = options.now ?? Date.now;
+    this.timers = options.timers ?? globalThis;
   }
 
   async start(): Promise<void> {
@@ -112,7 +115,7 @@ export class BrowserNetworkRecorder {
     this.releaseNetwork = undefined;
     if (release) await release();
     for (const waiter of this.waiters) {
-      clearTimeout(waiter.timer);
+      this.timers.clearTimeout(waiter.timer);
       waiter.reject(new BrowserError("CAPABILITY_DISABLED", "Browser network capture was disabled"));
     }
     this.waiters.clear();
@@ -123,8 +126,8 @@ export class BrowserNetworkRecorder {
     if (!this.started) return;
     const idleMs = Math.max(1, Math.round(this.options.bodyCaptureIdleMs ?? DEFAULT_BODY_CAPTURE_IDLE_MS));
     this.bodyCaptureUntil = this.now() + idleMs;
-    if (this.bodyCaptureTimer) clearTimeout(this.bodyCaptureTimer);
-    this.bodyCaptureTimer = setTimeout(() => this.stopBodyCapture(), idleMs);
+    if (this.bodyCaptureTimer) this.timers.clearTimeout(this.bodyCaptureTimer);
+    this.bodyCaptureTimer = this.timers.setTimeout(() => this.stopBodyCapture(), idleMs);
     this.bodyCaptureTimer.unref?.();
   }
 
@@ -216,7 +219,7 @@ export class BrowserNetworkRecorder {
         predicate,
         resolve,
         reject,
-        timer: setTimeout(() => {
+        timer: this.timers.setTimeout(() => {
           this.waiters.delete(waiter);
           reject(new BrowserError("ACTION_TIMEOUT", "Waiting for a Browser network request timed out"));
         }, timeoutMs),
@@ -226,7 +229,7 @@ export class BrowserNetworkRecorder {
         "abort",
         () => {
           if (!this.waiters.delete(waiter)) return;
-          clearTimeout(waiter.timer);
+          this.timers.clearTimeout(waiter.timer);
           reject(new BrowserError("USER_TOOK_CONTROL", "Browser network wait was cancelled"));
         },
         { once: true },
@@ -579,7 +582,7 @@ export class BrowserNetworkRecorder {
   }
 
   private stopBodyCapture(): void {
-    if (this.bodyCaptureTimer) clearTimeout(this.bodyCaptureTimer);
+    if (this.bodyCaptureTimer) this.timers.clearTimeout(this.bodyCaptureTimer);
     this.bodyCaptureTimer = undefined;
     this.bodyCaptureUntil = 0;
     this.bodyCaptureEpoch += 1;
@@ -653,7 +656,7 @@ export class BrowserNetworkRecorder {
     for (const waiter of [...this.waiters]) {
       if (!waiter.predicate(publicValue)) continue;
       this.waiters.delete(waiter);
-      clearTimeout(waiter.timer);
+      this.timers.clearTimeout(waiter.timer);
       waiter.resolve(publicValue);
     }
   }

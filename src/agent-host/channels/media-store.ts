@@ -12,6 +12,7 @@ export const CHANNEL_MEDIA_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
 type ChannelMediaStoreOptions = {
   cleanupIntervalMs?: number;
   now?: () => number;
+  timers?: Pick<typeof globalThis, "setInterval" | "clearInterval">;
 };
 
 const MIME_EXTENSIONS: Record<string, string> = {
@@ -80,6 +81,7 @@ function safeExtension(name: string | undefined, mime: string | undefined): stri
 export class ChannelMediaStore {
   private readonly cleanupIntervalMs: number;
   private readonly now: () => number;
+  private readonly timers: Pick<typeof globalThis, "setInterval" | "clearInterval">;
   private cleanupTimer: ReturnType<typeof setInterval> | undefined;
   private cleanupInFlight: Promise<void> | undefined;
   private lastCleanupAt = 0;
@@ -91,6 +93,7 @@ export class ChannelMediaStore {
   ) {
     this.cleanupIntervalMs = options.cleanupIntervalMs ?? CHANNEL_MEDIA_CLEANUP_INTERVAL_MS;
     this.now = options.now ?? Date.now;
+    this.timers = options.timers ?? globalThis;
   }
 
   async initialize(): Promise<void> {
@@ -98,7 +101,7 @@ export class ChannelMediaStore {
     allowFileRoot(this.root);
     await this.runCleanup();
     if (!this.cleanupTimer && !this.disposed) {
-      this.cleanupTimer = setInterval(() => {
+      this.cleanupTimer = this.timers.setInterval(() => {
         void this.runCleanup().catch(() => undefined);
       }, this.cleanupIntervalMs);
       this.cleanupTimer.unref?.();
@@ -172,7 +175,7 @@ export class ChannelMediaStore {
 
   async dispose(): Promise<void> {
     this.disposed = true;
-    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    if (this.cleanupTimer) this.timers.clearInterval(this.cleanupTimer);
     this.cleanupTimer = undefined;
     await this.cleanupInFlight?.catch(() => undefined);
   }

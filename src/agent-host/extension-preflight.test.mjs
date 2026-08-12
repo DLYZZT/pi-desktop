@@ -14,8 +14,10 @@ test("a broken provider extension reports diagnostics without blocking a base se
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const cwd = path.join(base, "project");
   const agentDir = path.join(base, "agent");
+  const sessionDir = path.join(base, "sessions");
   mkdirSync(cwd);
   mkdirSync(agentDir);
+  mkdirSync(sessionDir);
 
   const services = await createAgentSessionServices({
     cwd,
@@ -43,7 +45,7 @@ test("a broken provider extension reports diagnostics without blocking a base se
 
   const { session } = await createAgentSessionFromServices({
     services,
-    sessionManager: SessionManager.create(cwd, undefined),
+    sessionManager: SessionManager.create(cwd, sessionDir),
     tools: [],
   });
   assert.ok(session);

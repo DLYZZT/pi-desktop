@@ -10,6 +10,9 @@
   "engines": {
     "node": ">=22.19.0 <23"
   },
+  "imports": {
+    "#test-timing": "./scripts/test-timing.mjs"
+  },
   "main": "out/main/main.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",

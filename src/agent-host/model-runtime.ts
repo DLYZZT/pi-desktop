@@ -27,6 +27,8 @@ type ActiveRefresh = {
   abortKind?: "cancelled" | "replaced" | "timeout";
 };
 
+type ModelCatalogTimers = Pick<typeof globalThis, "setTimeout" | "clearTimeout">;
+
 export class ModelCatalogRefreshAbortedError extends Error {
   constructor(readonly kind: "cancelled" | "replaced" | "timeout") {
     super(kind === "timeout" ? "Model catalog refresh timed out" : "Model catalog refresh was cancelled");
@@ -51,6 +53,7 @@ export class ModelCatalogRefreshCoordinator {
   constructor(
     private readonly timeoutMs = MODEL_CATALOG_REFRESH_TIMEOUT_MS,
     private readonly isOffline: () => boolean = () => process.env.PI_OFFLINE !== undefined,
+    private readonly timers: ModelCatalogTimers = globalThis,
   ) {}
 
   async refresh<T extends RuntimeServices>(
@@ -81,7 +84,7 @@ export class ModelCatalogRefreshCoordinator {
     this.byRequestId.set(requestId, active);
     this.byCwd.set(cwd, active);
 
-    const timer = setTimeout(() => this.abort(active, "timeout"), this.timeoutMs);
+    const timer = this.timers.setTimeout(() => this.abort(active, "timeout"), this.timeoutMs);
     let services: T | undefined;
     const abortedMarker = Symbol("model-catalog-refresh-aborted");
     const aborted = new Promise<typeof abortedMarker>((resolve) => {
@@ -139,7 +142,7 @@ export class ModelCatalogRefreshCoordinator {
         },
       });
     } finally {
-      clearTimeout(timer);
+      this.timers.clearTimeout(timer);
       if (this.byRequestId.get(requestId) === active) this.byRequestId.delete(requestId);
       if (this.byCwd.get(cwd) === active) this.byCwd.delete(cwd);
     }

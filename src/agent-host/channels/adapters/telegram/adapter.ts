@@ -40,6 +40,8 @@ const POLL_TIMEOUT_SECONDS = 30;
 const MAX_RETRY_DELAY_MS = 30_000;
 const DEFAULT_DRAFT_INTERVAL_MS = 400;
 
+type TurnTimers = Pick<typeof globalThis, "setTimeout" | "clearTimeout">;
+
 function telegramDraftId(value: string): number {
   let hash = 2_166_136_261;
   for (const character of value) {
@@ -69,6 +71,7 @@ class TelegramTurnOutput implements AdapterTurnOutput {
       fallbackText: string,
     ) => Promise<DeliveryReceipt>,
     private readonly setReaction: (context: AdapterTurnContext, emoji: string) => Promise<void>,
+    private readonly timers: TurnTimers,
   ) {
     const chatId = Number(context.peerId);
     this.mode = context.peerKind === "dm" && Number.isSafeInteger(chatId) ? "rich" : "disabled";
@@ -89,7 +92,7 @@ class TelegramTurnOutput implements AdapterTurnOutput {
 
   private schedule(delayMs: number): void {
     if (this.finished || this.mode === "disabled" || this.timer) return;
-    this.timer = setTimeout(() => {
+    this.timer = this.timers.setTimeout(() => {
       this.timer = null;
       try {
         this.flush();
@@ -130,7 +133,7 @@ class TelegramTurnOutput implements AdapterTurnOutput {
 
   async finish(text: string): Promise<DeliveryReceipt> {
     this.finished = true;
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) this.timers.clearTimeout(this.timer);
     this.timer = null;
     await this.tail;
     let markdown = "";
@@ -151,7 +154,7 @@ class TelegramTurnOutput implements AdapterTurnOutput {
 
   async cancel(): Promise<void> {
     this.finished = true;
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) this.timers.clearTimeout(this.timer);
     this.timer = null;
     await this.tail;
     this.queueReaction("👎");
@@ -346,6 +349,7 @@ export class TelegramAdapter implements ChannelAdapter {
   constructor(
     private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void> = delay,
     private readonly draftIntervalMs = DEFAULT_DRAFT_INTERVAL_MS,
+    private readonly turnTimers: TurnTimers = globalThis,
   ) {}
 
   async start(context: AdapterStartContext): Promise<void> {
@@ -625,6 +629,7 @@ export class TelegramAdapter implements ChannelAdapter {
           emoji,
         });
       },
+      this.turnTimers,
     );
   }
 

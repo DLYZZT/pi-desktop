@@ -324,6 +324,7 @@ test("accepted media is staged privately and passed to the existing Pi turn", as
     groupAllowFrom: [],
     requireMention: true,
     toolNames: [],
+    defaultCwd: path.join(dir, "workspace"),
     createdAt: now,
     updatedAt: now,
   });
@@ -389,6 +390,7 @@ test("Feishu generated files use the shared outbound capability and preserve the
     groupAllowFrom: [],
     requireMention: true,
     toolNames: [],
+    defaultCwd: path.join(dir, "workspace"),
     createdAt: now,
     updatedAt: now,
   });

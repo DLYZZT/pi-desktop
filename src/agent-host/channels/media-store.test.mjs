@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { createDeferred, createManualScheduler } from "#test-timing";
 import { build } from "esbuild";
 
 const output = path.join(import.meta.dirname, "../../../.artifacts/test-modules", `channel-media-${process.pid}.mjs`);
@@ -91,18 +92,20 @@ test("media staging refuses a symlinked root", async () => {
 
 test("periodic and opportunistic cleanup stop when the media store is disposed", async () => {
   const periodicRoot = mkdtempSync(path.join(tmpdir(), "pi-channel-media-periodic-"));
-  const periodic = new ChannelMediaStore(periodicRoot, { cleanupIntervalMs: 5 });
+  const scheduler = createManualScheduler();
+  const periodicCleanupFinished = createDeferred();
+  const periodic = new ChannelMediaStore(periodicRoot, { cleanupIntervalMs: 5, timers: scheduler });
   let periodicCleanups = 0;
   periodic.cleanupExpired = async () => {
     periodicCleanups += 1;
+    if (periodicCleanups === 2) periodicCleanupFinished.resolve();
   };
   await periodic.initialize();
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.ok(periodicCleanups > 1, "the periodic timer should clean after startup");
+  await scheduler.runNext();
+  await periodicCleanupFinished.promise;
+  assert.equal(periodicCleanups, 2, "the periodic timer should clean after startup");
   await periodic.dispose();
-  const cleanupsAtDispose = periodicCleanups;
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(periodicCleanups, cleanupsAtDispose);
+  assert.equal(scheduler.pendingCount(), 0);
 
   let now = 1_000;
   const opportunisticRoot = mkdtempSync(path.join(tmpdir(), "pi-channel-media-opportunistic-"));

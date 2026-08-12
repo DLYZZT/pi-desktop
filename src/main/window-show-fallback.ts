@@ -4,12 +4,19 @@ export type WindowShowEvents = {
   removeListener(event: "ready-to-show" | "hide" | "close" | "closed", listener: () => void): unknown;
 };
 
-export function installWindowShowFallback(window: WindowShowEvents, show: () => void, delayMs = 3_000): () => void {
+type WindowShowTimers = Pick<typeof globalThis, "setTimeout" | "clearTimeout">;
+
+export function installWindowShowFallback(
+  window: WindowShowEvents,
+  show: () => void,
+  delayMs = 3_000,
+  timers: WindowShowTimers = globalThis,
+): () => void {
   let finished = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const cleanup = () => {
-    if (timer) clearTimeout(timer);
+    if (timer) timers.clearTimeout(timer);
     timer = undefined;
     window.removeListener("ready-to-show", onReady);
     window.removeListener("hide", cancel);
@@ -29,7 +36,7 @@ export function installWindowShowFallback(window: WindowShowEvents, show: () => 
   window.on("hide", cancel);
   window.on("close", cancel);
   window.on("closed", cancel);
-  timer = setTimeout(() => finish(true), delayMs);
+  timer = timers.setTimeout(() => finish(true), delayMs);
   timer.unref?.();
   return cancel;
 }

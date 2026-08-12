@@ -510,6 +510,7 @@ export function connectFeishuWebSocket(
   hooks: FeishuWsHooks,
   signal: AbortSignal,
   initialStatusDelayMs = 17_000,
+  timers: Pick<typeof globalThis, "setTimeout" | "clearTimeout"> = globalThis,
 ): Promise<FeishuWsConnection> {
   assertAppId(credentials.appId);
   return new Promise((resolve, reject) => {
@@ -518,7 +519,7 @@ export function connectFeishuWebSocket(
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const cleanupTimer = () => {
-      if (timer) clearTimeout(timer);
+      if (timer) timers.clearTimeout(timer);
       timer = undefined;
     };
     const close = () => {
@@ -585,7 +586,7 @@ export function connectFeishuWebSocket(
     // WSClient owns the retry loop. A slow/offline initial connection must stay
     // alive so it can recover when the network returns; this timer only makes
     // the pending state visible instead of aborting the SDK after one attempt.
-    timer = setTimeout(() => {
+    timer = timers.setTimeout(() => {
       timer = undefined;
       if (!settled && !closed) hooks.onReconnecting();
     }, initialStatusDelayMs);

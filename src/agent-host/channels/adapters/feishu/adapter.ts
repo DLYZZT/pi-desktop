@@ -91,6 +91,7 @@ type FeishuRuntimeOptions = {
   random?: () => number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   now?: () => number;
+  turnTimers?: Pick<typeof globalThis, "setTimeout" | "clearTimeout">;
 };
 
 function parseContent(content: string): Record<string, unknown> | null {
@@ -274,6 +275,7 @@ class FeishuTurnOutput implements AdapterTurnOutput {
     private readonly sendPlain: (context: AdapterTurnContext, text: string) => Promise<DeliveryReceipt>,
     private readonly addReaction: (context: AdapterTurnContext, emojiType: string) => Promise<string>,
     private readonly removeReaction: (context: AdapterTurnContext, reactionId: string) => Promise<void>,
+    private readonly timers: Pick<typeof globalThis, "setTimeout" | "clearTimeout">,
   ) {
     this.queueReaction("THINKING");
     this.schedule(0);
@@ -303,7 +305,7 @@ class FeishuTurnOutput implements AdapterTurnOutput {
 
   private schedule(delayMs: number): void {
     if (this.finished || this.disabled || this.timer) return;
-    this.timer = setTimeout(() => {
+    this.timer = this.timers.setTimeout(() => {
       this.timer = null;
       try {
         this.flush();
@@ -343,7 +345,7 @@ class FeishuTurnOutput implements AdapterTurnOutput {
 
   async finish(text: string): Promise<DeliveryReceipt> {
     this.finished = true;
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) this.timers.clearTimeout(this.timer);
     this.timer = null;
     await this.tail;
 
@@ -380,7 +382,7 @@ class FeishuTurnOutput implements AdapterTurnOutput {
 
   async cancel(): Promise<void> {
     this.finished = true;
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) this.timers.clearTimeout(this.timer);
     this.timer = null;
     await this.tail;
     await this.session?.finish(buildFeishuInterruptedCard()).catch(() => undefined);
@@ -717,6 +719,7 @@ export class FeishuAdapter implements ChannelAdapter {
           reactionId,
         );
       },
+      this.runtimeOptions.turnTimers ?? globalThis,
     );
   }
 
