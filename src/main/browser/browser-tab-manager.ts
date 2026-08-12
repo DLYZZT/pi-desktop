@@ -42,6 +42,7 @@ import type {
 } from "../../contract/browser.ts";
 import { BrowserCdpCoordinator } from "./browser-cdp-coordinator.ts";
 import { BrowserConsoleBuffer } from "./browser-console-buffer.ts";
+import { isBrowserDevToolsShortcut } from "./browser-devtools-shortcut.ts";
 import { BrowserError } from "./browser-error.ts";
 import { BrowserIdentityManager } from "./browser-identity-manager.ts";
 import { BrowserInspectionStore } from "./browser-inspection-store.ts";
@@ -1902,7 +1903,7 @@ export class BrowserTabManager {
       this.emitUpdate(record);
     });
     wc.on("before-input-event", (event, input) => {
-      if (input.key === "F12" || ((input.control || input.meta) && input.shift && input.key.toLowerCase() === "i")) {
+      if (isBrowserDevToolsShortcut(input)) {
         event.preventDefault();
         return;
       }
