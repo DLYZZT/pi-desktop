@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { existsSync, mkdirSync, realpathSync } from "fs";
 import { basename, dirname, join, resolve } from "path";
 import { promisify } from "util";
-import { allowFileRoot } from "./allowed-roots.ts";
+import { allowFileRoot, normalizeSlashes } from "./allowed-roots.ts";
 import type { GitStatusResult } from "./api-types";
 import { parseGitStatusPorcelain } from "./git-status.ts";
 export { parseGitStatusPorcelain } from "./git-status.ts";
@@ -83,6 +83,19 @@ export function invalidateProjectCache(): void {
 
 export function getProjectCacheRevision(): number {
   return projectCacheRevision;
+}
+
+export function normalizeWorktreePathForComparison(
+  filePath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  let normalized = normalizeSlashes(filePath.trim());
+  if (normalized.length > 1 && !/^[A-Za-z]:\/$/.test(normalized)) normalized = normalized.replace(/\/+$/, "");
+  return platform === "win32" ? normalized.toLocaleLowerCase("en-US") : normalized;
+}
+
+export function worktreePathsEqual(left: string, right: string, platform: NodeJS.Platform = process.platform): boolean {
+  return normalizeWorktreePathForComparison(left, platform) === normalizeWorktreePathForComparison(right, platform);
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
@@ -188,8 +201,8 @@ export async function resolveProject(cwd: string): Promise<ProjectInfo> {
     // cwd is a subdirectory of a repo keeps its own project identity —
     // grouping subdirs under the repo root would change where new sessions
     // are created for existing users.
-    const isTopLevel = toplevel === realCwd;
-    const isWorktreeTopLevel = gitDir !== commonDir && isTopLevel;
+    const isTopLevel = worktreePathsEqual(toplevel, realCwd);
+    const isWorktreeTopLevel = !worktreePathsEqual(gitDir, commonDir) && isTopLevel;
     info = {
       projectRoot: isWorktreeTopLevel ? dirname(commonDir) : cwd,
       branch: ref && ref !== "HEAD" ? ref : null,
