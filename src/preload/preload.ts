@@ -226,14 +226,4 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
   };
 
   contextBridge.exposeInMainWorld("piBridge", bridge);
-
-  contextBridge.exposeInMainWorld("piDesktop", {
-    platform: bridge.platform,
-    isDesktop: true as const,
-    getVersion: bridge.getVersion,
-    notifyAgentEnd: bridge.notifyAgentEnd,
-    setBadgeCount: bridge.setBadgeCount,
-    openExternal: bridge.openExternal,
-    showItemInFolder: bridge.showItemInFolder,
-  });
 }
