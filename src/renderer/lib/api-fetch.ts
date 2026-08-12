@@ -150,8 +150,8 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       if (method === "GET") return jsonResponse(await call("modelsConfig.get"));
       if (method === "PUT" || method === "POST") {
         const body = await parseBody(init);
-        await call("modelsConfig.set", body as never);
-        return jsonResponse({ success: true });
+        const result = await call("modelsConfig.set", body as never);
+        return jsonResponse({ success: true, version: result.version });
       }
     }
     if (segs[0] === "models-config" && segs[1] === "test" && method === "POST") {

@@ -17,6 +17,7 @@ import {
 } from "fs";
 import { homedir, tmpdir } from "os";
 import path from "path";
+import { createHash } from "crypto";
 import {
   DefaultResourceLoader,
   CredentialSynchronizationError,
@@ -191,11 +192,24 @@ function getModelsPath(): string {
   return path.join(getAgentDir(), "models.json");
 }
 
-function readModelsJson(): Record<string, unknown> {
+type ModelsFileSnapshot = { raw: string | null; version: string };
+
+function modelsContentVersion(raw: string | null): string {
+  return raw === null ? "missing" : `sha256:${createHash("sha256").update(raw, "utf8").digest("hex")}`;
+}
+
+function readModelsFileSnapshot(): ModelsFileSnapshot {
   const p = getModelsPath();
-  if (!existsSync(p)) return { providers: {} };
+  if (!existsSync(p)) return { raw: null, version: modelsContentVersion(null) };
+  const raw = readFileSync(p, "utf8");
+  return { raw, version: modelsContentVersion(raw) };
+}
+
+function readModelsJsonSnapshot(): { config: Record<string, unknown>; version: string } {
+  const snapshot = readModelsFileSnapshot();
+  if (snapshot.raw === null) return { config: { providers: {} }, version: snapshot.version };
   try {
-    return JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+    return { config: JSON.parse(snapshot.raw) as Record<string, unknown>, version: snapshot.version };
   } catch (e) {
     // ISSUE-009: never silently return empty and allow overwrite of corrupt file
     throw new RpcError({
@@ -205,17 +219,30 @@ function readModelsJson(): Record<string, unknown> {
   }
 }
 
-function writeModelsJson(data: Record<string, unknown>): void {
+function modelsConfigConflict(expectedVersion: string, currentVersion: string): RpcError {
+  return new RpcError({
+    code: "CONFLICT",
+    message: "models.json changed outside this editor; current edits were not saved",
+    detail: { expectedVersion, currentVersion },
+  });
+}
+
+function writeModelsJson(data: Record<string, unknown>, expectedVersion: string): string {
   const p = getModelsPath();
   mkdirSync(path.dirname(p), { recursive: true });
+  const initial = readModelsFileSnapshot();
+  if (initial.version !== expectedVersion) throw modelsConfigConflict(expectedVersion, initial.version);
   // ISSUE-009: atomic write via temp + rename; keep .bak of previous good file
   const tmp = `${p}.${process.pid}.tmp`;
   const bak = `${p}.bak`;
-  writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+  const serialized = JSON.stringify(data, null, 2);
+  writeFileSync(tmp, serialized, "utf8");
   try {
-    if (existsSync(p)) {
+    const beforeCommit = readModelsFileSnapshot();
+    if (beforeCommit.version !== expectedVersion) throw modelsConfigConflict(expectedVersion, beforeCommit.version);
+    if (beforeCommit.raw !== null) {
       try {
-        writeFileSync(bak, readFileSync(p));
+        writeFileSync(bak, beforeCommit.raw, "utf8");
       } catch {
         /* ignore bak failure */
       }
@@ -229,6 +256,7 @@ function writeModelsJson(data: Record<string, unknown>): void {
     }
     throw e;
   }
+  return modelsContentVersion(serialized);
 }
 
 async function resolveLoadedSkill(cwd: string, filePath: string) {
@@ -1302,16 +1330,20 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       return projectModelPreferences(available, enabledModels);
     },
 
-    "modelsConfig.get": () => readModelsJson() as never,
+    "modelsConfig.get": () => readModelsJsonSnapshot(),
     "modelsConfig.set": async (params) => {
-      const body = params as Record<string, unknown>;
+      const body = params as { config?: unknown; expectedVersion?: unknown };
+      const config = body?.config as Record<string, unknown> | undefined;
       // ISSUE-009: refuse to persist empty overwrite without explicit providers key from a real load
-      if (!body || typeof body !== "object" || !("providers" in body)) {
+      if (!config || typeof config !== "object" || !("providers" in config)) {
         throw new RpcError({ code: "BAD_REQUEST", message: "Invalid models config payload" });
       }
-      writeModelsJson(body);
+      if (typeof body.expectedVersion !== "string" || !body.expectedVersion) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "expectedVersion is required" });
+      }
+      const version = writeModelsJson(config, body.expectedVersion);
       await reloadSharedModelRuntimeConfig();
-      return { ok: true as const };
+      return { ok: true as const, version };
     },
     "modelsConfig.test": async (params) => {
       const body = params as unknown as {

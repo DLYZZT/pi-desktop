@@ -154,6 +154,11 @@ export interface ModelsConfig {
   [key: string]: unknown;
 }
 
+export interface ModelsConfigSnapshot {
+  config: ModelsConfig;
+  version: string;
+}
+
 export interface TestResult {
   ok: boolean;
   error?: string;

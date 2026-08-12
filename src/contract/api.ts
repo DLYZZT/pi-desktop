@@ -10,6 +10,7 @@ import type {
   LoginProgressEvent,
   ModelPreferencesResult,
   ModelsConfig,
+  ModelsConfigSnapshot,
   ModelsListResult,
   PagedContextInfo,
   ProviderStatus,
@@ -245,8 +246,11 @@ export interface Api {
     params: { cwd?: string; enabledModels: string[] | null };
     result: ModelPreferencesResult;
   };
-  "modelsConfig.get": { params: void; result: ModelsConfig };
-  "modelsConfig.set": { params: ModelsConfig; result: { ok: true } };
+  "modelsConfig.get": { params: void; result: ModelsConfigSnapshot };
+  "modelsConfig.set": {
+    params: { config: ModelsConfig; expectedVersion: string };
+    result: { ok: true; version: string };
+  };
   "modelsConfig.test": {
     params: {
       providerName?: string;

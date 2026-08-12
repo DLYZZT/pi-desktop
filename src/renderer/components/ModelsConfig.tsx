@@ -2047,9 +2047,11 @@ export function ModelsConfig({
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const [config, setConfig] = useState<ModelsJson>({ providers: {} });
+  const [configVersion, setConfigVersion] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveConflict, setSaveConflict] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
@@ -2116,35 +2118,41 @@ export function ModelsConfig({
   const [loadFailed, setLoadFailed] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
 
-  useEffect(() => {
+  const loadModelsConfig = useCallback(async () => {
+    setLoading(true);
     setLoadFailed(false);
     setConfigLoaded(false);
-    fetch("/api/models-config")
-      .then(async (r) => {
-        // ISSUE-009: only accept successful loads
-        if (!r.ok) {
-          const body = (await r.json().catch(() => ({}))) as { error?: string };
-          throw new Error(body.error ?? `HTTP ${r.status}`);
-        }
-        return r.json() as Promise<ModelsJson & { error?: string }>;
-      })
-      .then((d) => {
-        if (d.error) throw new Error(d.error);
-        const normalized = d.providers ? d : { ...d, providers: {} };
-        setConfig(normalized);
-        setConfigLoaded(true);
-        const keys = Object.keys(normalized.providers ?? {});
-        if (keys.length > 0) setSelection({ type: "provider", name: keys[0] });
-      })
-      .catch((e) => {
-        setLoadFailed(true);
-        setSaveError(e instanceof Error ? e.message : String(e));
-        // Do NOT reset to empty providers — keep prior state / block save
-      })
-      .finally(() => setLoading(false));
+    try {
+      const response = await fetch("/api/models-config");
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${response.status}`);
+      }
+      const snapshot = (await response.json()) as { config?: ModelsJson; version?: string; error?: string };
+      if (snapshot.error) throw new Error(snapshot.error);
+      if (!snapshot.config || typeof snapshot.version !== "string") throw new Error("Invalid models config snapshot");
+      const normalized = snapshot.config.providers ? snapshot.config : { ...snapshot.config, providers: {} };
+      setConfig(normalized);
+      setConfigVersion(snapshot.version);
+      setConfigLoaded(true);
+      setSaveConflict(false);
+      setSaveError(null);
+      const keys = Object.keys(normalized.providers ?? {});
+      setSelection(keys.length > 0 ? { type: "provider", name: keys[0] } : null);
+    } catch (error) {
+      setLoadFailed(true);
+      setSaveError(error instanceof Error ? error.message : String(error));
+      // Do NOT reset to empty providers — keep prior state / block save
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadModelsConfig();
     loadOAuthProviders();
     loadApiKeyProviders();
-  }, [loadOAuthProviders, loadApiKeyProviders]);
+  }, [loadApiKeyProviders, loadModelsConfig, loadOAuthProviders]);
 
   useEffect(() => {
     void loadModelPreferences();
@@ -2231,6 +2239,7 @@ export function ModelsConfig({
   }, []);
 
   const handleSave = useCallback(async () => {
+    if (!configVersion) return;
     setSaving(true);
     setSaveError(null);
     setSavedOk(false);
@@ -2238,11 +2247,25 @@ export function ModelsConfig({
       const res = await fetch("/api/models-config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config),
+        body: JSON.stringify({ config, expectedVersion: configVersion }),
       });
-      const d = (await res.json()) as { success?: boolean; error?: string };
-      if (!res.ok || d.error) setSaveError(d.error ?? `HTTP ${res.status}`);
-      else {
+      const d = (await res.json()) as { success?: boolean; error?: string; code?: string; version?: string };
+      if (!res.ok || d.error) {
+        const conflict = res.status === 409 || d.code === "CONFLICT";
+        setSaveConflict(conflict);
+        setSaveError(
+          conflict
+            ? t(
+                "modelConfigConflict",
+                "models.json changed outside this editor. Your edits are preserved here; copy or compare them before reloading the disk version to merge manually.",
+              )
+            : (d.error ?? `HTTP ${res.status}`),
+        );
+      } else if (typeof d.version !== "string") {
+        setSaveError("Invalid models config save response");
+      } else {
+        setConfigVersion(d.version);
+        setSaveConflict(false);
         setSavedOk(true);
         onChanged?.();
         void loadModelPreferences();
@@ -2253,7 +2276,7 @@ export function ModelsConfig({
     } finally {
       setSaving(false);
     }
-  }, [config, loadModelPreferences, onChanged]);
+  }, [config, configVersion, loadModelPreferences, onChanged, t]);
 
   const providers = Object.entries(config.providers ?? {});
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
@@ -2738,6 +2761,25 @@ export function ModelsConfig({
             }}
           >
             {saveError && <span style={{ fontSize: 12, color: "#f87171", flex: 1 }}>{saveError}</span>}
+            {saveConflict && (
+              <button
+                type="button"
+                onClick={() => void loadModelsConfig()}
+                disabled={loading || saving}
+                title={t("modelReloadDiskVersionHint", "Discard local edits and load the current models.json")}
+                style={{
+                  padding: "6px 12px",
+                  background: "none",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  color: "var(--text)",
+                  cursor: loading || saving ? "default" : "pointer",
+                  fontSize: 12,
+                }}
+              >
+                {t("modelReloadDiskVersion", "Reload disk version")}
+              </button>
+            )}
             {!embedded && (
               <button
                 onClick={onClose}
@@ -2756,7 +2798,7 @@ export function ModelsConfig({
             )}
             <button
               onClick={handleSave}
-              disabled={saving || savedOk || loading || loadFailed || !configLoaded}
+              disabled={saving || savedOk || loading || loadFailed || saveConflict || !configLoaded || !configVersion}
               title={
                 loadFailed ? t("modelCannotSaveBeforeLoad", "Cannot save until config loads successfully") : undefined
               }
@@ -2766,13 +2808,19 @@ export function ModelsConfig({
                 minWidth: 92,
                 background: savedOk
                   ? "#16a34a"
-                  : saving || loadFailed || !configLoaded
+                  : saving || loadFailed || saveConflict || !configLoaded || !configVersion
                     ? "var(--bg-panel)"
                     : "var(--accent)",
                 border: "none",
                 borderRadius: 6,
-                color: savedOk ? "#fff" : saving || loadFailed || !configLoaded ? "var(--text-muted)" : "#fff",
-                cursor: saving || savedOk || loading || loadFailed || !configLoaded ? "default" : "pointer",
+                color:
+                  savedOk || !(saving || loadFailed || saveConflict || !configLoaded || !configVersion)
+                    ? "#fff"
+                    : "var(--text-muted)",
+                cursor:
+                  saving || savedOk || loading || loadFailed || saveConflict || !configLoaded || !configVersion
+                    ? "default"
+                    : "pointer",
                 fontSize: 13,
                 fontWeight: 600,
                 display: "inline-flex",

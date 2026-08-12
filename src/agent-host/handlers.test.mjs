@@ -289,9 +289,20 @@ test("session, model configuration, and auth handlers isolate state and preserve
     ["NOT_FOUND", "BAD_REQUEST"].includes(error.code),
   );
 
-  assert.deepEqual(await handlers["modelsConfig.get"](), { providers: {} });
+  const initialModels = await handlers["modelsConfig.get"]();
+  assert.deepEqual(initialModels.config, { providers: {} });
+  assert.equal(initialModels.version, "missing");
   await assert.rejects(handlers["modelsConfig.set"]({}), (error) => error.code === "BAD_REQUEST");
-  assert.deepEqual(await handlers["modelsConfig.set"]({ providers: {} }), { ok: true });
+  await assert.rejects(
+    handlers["modelsConfig.set"]({ config: { providers: {} } }),
+    (error) => error.code === "BAD_REQUEST",
+  );
+  const firstSave = await handlers["modelsConfig.set"]({
+    config: { providers: {} },
+    expectedVersion: initialModels.version,
+  });
+  assert.equal(firstSave.ok, true);
+  assert.match(firstSave.version, /^sha256:/);
 
   const v084Config = {
     providers: {
@@ -308,8 +319,27 @@ test("session, model configuration, and auth handlers isolate state and preserve
     },
     futureTopLevel: "preserved",
   };
-  assert.deepEqual(await handlers["modelsConfig.set"](v084Config), { ok: true });
-  assert.deepEqual(await handlers["modelsConfig.get"](), v084Config);
+  const editorOne = await handlers["modelsConfig.get"]();
+  const editorTwo = await handlers["modelsConfig.get"]();
+  const winningSave = await handlers["modelsConfig.set"]({
+    config: v084Config,
+    expectedVersion: editorOne.version,
+  });
+  assert.equal(winningSave.ok, true);
+  assert.notEqual(winningSave.version, editorOne.version);
+  await assert.rejects(
+    handlers["modelsConfig.set"]({
+      config: { providers: { stale: { api: "openai-completions" } } },
+      expectedVersion: editorTwo.version,
+    }),
+    (error) =>
+      error.code === "CONFLICT" &&
+      error.detail.expectedVersion === editorTwo.version &&
+      error.detail.currentVersion === winningSave.version,
+  );
+  const winningSnapshot = await handlers["modelsConfig.get"]();
+  assert.deepEqual(winningSnapshot.config, v084Config);
+  assert.equal(winningSnapshot.version, winningSave.version);
 
   const models = await handlers["models.list"]({ cwd: root });
   assert.equal(models.catalog.source, "offline");
