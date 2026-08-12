@@ -1,5 +1,7 @@
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 export function createProjectRequire(root) {
@@ -17,6 +19,28 @@ export function resolveElectronBinary(root) {
   if (typeof value !== "string" || value.length === 0)
     throw new Error("electron package did not resolve an executable");
   return value;
+}
+
+export function createProjectBuildTemp(root, prefix, options = {}) {
+  const fileSystem = options.fileSystem ?? fs;
+  const temporaryRoot = options.temporaryRoot ?? os.tmpdir();
+  const platform = options.platform ?? process.platform;
+  const temporaryDirectory = fileSystem.mkdtempSync(path.join(temporaryRoot, prefix));
+  try {
+    fileSystem.symlinkSync(
+      path.join(root, "node_modules"),
+      path.join(temporaryDirectory, "node_modules"),
+      platform === "win32" ? "junction" : "dir",
+    );
+    return temporaryDirectory;
+  } catch (error) {
+    fileSystem.rmSync(temporaryDirectory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+export function projectNodePath(root, inheritedNodePath = "") {
+  return [path.join(root, "node_modules"), inheritedNodePath].filter(Boolean).join(path.delimiter);
 }
 
 export function assertSuccessfulSpawn(result, label) {

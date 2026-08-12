@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import fs, { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
   assertSuccessfulSpawn,
+  createProjectBuildTemp,
+  projectNodePath,
   resolveElectronBinary,
   resolvePackageFile,
   terminateProcessTree,
@@ -20,6 +23,52 @@ test("script dependencies resolve to real package files and the Electron executa
     assert.equal(existsSync(executable), true, executable);
     assert.equal(executable.endsWith(".cmd"), false, executable);
   }
+});
+
+test("external dependency builds use the OS temp directory with explicit project resolution", () => {
+  const temporaryDirectory = createProjectBuildTemp(root, "pi-process-utils-test-");
+  try {
+    assert.equal(fs.realpathSync(path.dirname(temporaryDirectory)), fs.realpathSync(os.tmpdir()));
+    assert.equal(
+      fs.realpathSync(path.join(temporaryDirectory, "node_modules")),
+      fs.realpathSync(path.join(root, "node_modules")),
+    );
+    assert.equal(
+      projectNodePath(root, path.join("inherited", "modules")),
+      [path.join(root, "node_modules"), path.join("inherited", "modules")].join(path.delimiter),
+    );
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("failed dependency linking removes the partially-created temp directory", () => {
+  let removed;
+  const failure = new Error("link denied");
+  assert.throws(
+    () =>
+      createProjectBuildTemp(root, "browser-agent-", {
+        temporaryRoot: "/system-temp",
+        platform: "win32",
+        fileSystem: {
+          mkdtempSync: (prefix) => `${prefix}123`,
+          symlinkSync: (source, destination, type) => {
+            assert.equal(source, path.join(root, "node_modules"));
+            assert.equal(destination, path.join("/system-temp", "browser-agent-123", "node_modules"));
+            assert.equal(type, "junction");
+            throw failure;
+          },
+          rmSync: (target, options) => {
+            removed = { target, options };
+          },
+        },
+      }),
+    /link denied/,
+  );
+  assert.deepEqual(removed, {
+    target: path.join("/system-temp", "browser-agent-123"),
+    options: { recursive: true, force: true },
+  });
 });
 
 test("spawn result validation reports errors, signals, missing statuses, and exit codes", () => {

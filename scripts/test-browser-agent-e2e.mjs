@@ -5,15 +5,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertSuccessfulSpawn,
+  createProjectBuildTemp,
+  projectNodePath,
   resolveElectronBinary,
   resolvePackageFile,
   terminateProcessTree,
 } from "./process-utils.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-// Keep the ESM Host bundle under the project root so its external production
-// dependencies resolve through this checkout's node_modules directory.
-const temp = fs.mkdtempSync(path.join(root, ".browser-agent-e2e-build-"));
+const temp = createProjectBuildTemp(root, "pi-browser-agent-e2e-build-");
 const hostOutfile = path.join(temp, "browser-agent-host.mjs");
 const mainOutfile = path.join(temp, "browser-agent-e2e-harness.cjs");
 const esbuild = resolvePackageFile(root, "esbuild", "bin/esbuild");
@@ -53,6 +53,7 @@ try {
     stdio: "inherit",
     env: {
       ...process.env,
+      NODE_PATH: projectNodePath(root, process.env.NODE_PATH),
       ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
       PI_BROWSER_AGENT_E2E_HOST_ENTRY: hostOutfile,
     },
