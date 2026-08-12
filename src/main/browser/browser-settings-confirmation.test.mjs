@@ -50,3 +50,17 @@ test("confirmation proof digest is bound to the validated canonical patch", () =
 
   confirmations.consume(proof, "advanced-browser-mode", reordered);
 });
+
+test("prepared settings patches are isolated canonical clones without disable rewriting", () => {
+  const current = createDefaultBrowserSettings();
+  const input = { advancedBrowserMode: { enabled: false, maxPerHost: 25 } };
+  const prepared = prepareBrowserSettingsUpdate(current, input);
+
+  assert.notEqual(prepared.canonicalPatch, input);
+  assert.notEqual(prepared.canonicalPatch.advancedBrowserMode, input.advancedBrowserMode);
+  assert.deepEqual(prepared.canonicalPatch, input);
+  assert.equal(prepared.requiresAdvancedConfirmation, false);
+
+  input.advancedBrowserMode.maxPerHost = 30;
+  assert.equal(prepared.canonicalPatch.advancedBrowserMode.maxPerHost, 25);
+});

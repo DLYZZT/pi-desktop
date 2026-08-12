@@ -232,8 +232,7 @@ export class BrowserService {
     const canonicalPatch = authorizeBrowserSettingsUpdate(before, patch, (payload) =>
       this.confirmations.consume(proof, "advanced-browser-mode", payload),
     );
-    const effectivePatch = normalizeSettingsPatch(canonicalPatch);
-    const parsed = this.settingsStore.update(effectivePatch);
+    const parsed = this.settingsStore.update(canonicalPatch);
     const persistentDefaultChanged =
       before.automation.defaultPermission !== parsed.settings.automation.defaultPermission;
     const capabilityBoundaryChanged =
@@ -1385,17 +1384,6 @@ function requiredPermission(method: BrowserHostMethod): "read" | "interact" | "a
     return "advanced";
   }
   return "read";
-}
-
-function normalizeSettingsPatch(patch: BrowserSettingsPatch): BrowserSettingsPatch {
-  if (patch.advancedBrowserMode?.enabled !== false) return patch;
-  return {
-    ...patch,
-    advancedBrowserMode: {
-      ...patch.advancedBrowserMode,
-      enabled: false,
-    },
-  };
 }
 
 function previewSnippetResult(value: unknown): string | undefined {
