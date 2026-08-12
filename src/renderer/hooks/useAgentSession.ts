@@ -46,6 +46,13 @@ import {
   type EventStreamConnectionResult,
   type EventStreamConnectionStatus,
 } from "@/lib/event-stream-connection";
+import {
+  appendLocalHistoryMessage,
+  normalizeSessionHistory,
+  removeLastHistoryMessage,
+  replaceLastHistoryMessage,
+  type SessionHistoryValue,
+} from "@/lib/session-history-update";
 
 export type SessionData = SessionDetail;
 type AgentStateResponse = SessionRuntimeState;
@@ -465,11 +472,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   })();
 
   const commitHistory = useCallback((nextMessages: AgentMessage[], nextEntryIds: string[]) => {
-    loadedMessagesRef.current = nextMessages;
-    loadedEntryIdsRef.current = nextEntryIds;
-    setMessages(nextMessages);
-    setEntryIds(nextEntryIds);
+    const normalized = normalizeSessionHistory(nextMessages, nextEntryIds);
+    loadedMessagesRef.current = normalized.messages;
+    loadedEntryIdsRef.current = normalized.entryIds;
+    setMessages(normalized.messages);
+    setEntryIds(normalized.entryIds);
   }, []);
+
+  const updateHistory = useCallback(
+    (update: (current: SessionHistoryValue) => SessionHistoryValue) => {
+      const next = update({ messages: loadedMessagesRef.current, entryIds: loadedEntryIdsRef.current });
+      commitHistory(next.messages, next.entryIds);
+    },
+    [commitHistory],
+  );
 
   const updatePagingState = useCallback((revision: string, cursor?: string) => {
     historyRevisionRef.current = revision;
@@ -506,7 +522,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             if (showLoading) {
               setData(null);
               setActiveLeafId(null);
-              setMessages([]);
+              commitHistory([], []);
               setError(null);
             }
             return null;
@@ -1114,15 +1130,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             const deliveredKey = userMessageKey(delivered);
             const optimisticKey = optimisticUserMessageKeyRef.current;
             optimisticUserMessageKeyRef.current = null;
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
+            updateHistory((current) => {
+              const last = current.messages[current.messages.length - 1];
               if (optimisticKey && last?.role === "user" && userMessageKey(last) === optimisticKey) {
-                return optimisticKey === deliveredKey ? prev : [...prev.slice(0, -1), delivered];
+                return optimisticKey === deliveredKey ? current : replaceLastHistoryMessage(current, delivered);
               }
-              return [...prev, delivered];
+              return appendLocalHistoryMessage(current, delivered);
             });
           } else if (completed) {
-            setMessages((prev) => [...prev, normalizeToolCalls(completed)]);
+            updateHistory((current) => appendLocalHistoryMessage(current, normalizeToolCalls(completed)));
           }
           dispatch({ type: "reset" });
           setAgentPhase({ kind: "waiting_model" });
@@ -1186,7 +1202,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           break;
       }
     },
-    [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd],
+    [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd, updateHistory],
   );
   handleAgentEventRef.current = handleAgentEvent;
 
@@ -1209,7 +1225,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           : message,
         timestamp: Date.now(),
       };
-      setMessages((prev) => [...prev, userMsg]);
+      updateHistory((current) => appendLocalHistoryMessage(current, userMsg));
       optimisticUserMessageKeyRef.current = userMessageKey(userMsg);
       promptRunIdRef.current = promptRunId;
       agentRunningRef.current = true;
@@ -1264,9 +1280,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         console.error("Failed to send message:", e);
         const optimisticKey = optimisticUserMessageKeyRef.current;
         if (optimisticKey) {
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            return last?.role === "user" && userMessageKey(last) === optimisticKey ? prev.slice(0, -1) : prev;
+          updateHistory((current) => {
+            const last = current.messages[current.messages.length - 1];
+            return last?.role === "user" && userMessageKey(last) === optimisticKey
+              ? removeLastHistoryMessage(current)
+              : current;
           });
         }
         addNotice({
@@ -1293,6 +1311,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       promoteNewSession,
       waitForPromptSettlement,
       addNotice,
+      updateHistory,
     ],
   );
 
@@ -1760,8 +1779,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     historyGenerationRef.current += 1;
     historyRevisionRef.current = null;
     previousCursorRef.current = null;
-    loadedMessagesRef.current = [];
-    loadedEntryIdsRef.current = [];
+    commitHistory([], []);
     olderRequestRef.current = null;
     deferredContentCacheRef.current.clear();
     deferredContentRequestRef.current.clear();
