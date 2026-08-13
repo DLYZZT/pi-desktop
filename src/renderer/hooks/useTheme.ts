@@ -24,6 +24,11 @@ function systemPrefersDark(): boolean {
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
 }
 
+function applyDocumentTheme(theme: Theme): void {
+  document.documentElement.classList.toggle("dark", theme === "dark");
+  document.documentElement.style.colorScheme = theme;
+}
+
 type ToggleOrigin = { x: number; y: number };
 
 export function useTheme() {
@@ -48,7 +53,7 @@ export function useTheme() {
       const stored = storedTheme();
       if (stored === "light" || stored === "dark") return;
       const dark = systemPrefersDark();
-      document.documentElement.classList.toggle("dark", dark);
+      applyDocumentTheme(dark ? "dark" : "light");
       listeners.forEach((cb) => cb());
       void window.piBridge?.setThemeSource?.("system");
     };
@@ -63,11 +68,7 @@ export function useTheme() {
     const next: Theme = getSnapshot() === "dark" ? "light" : "dark";
 
     const apply = () => {
-      if (next === "dark") {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
+      applyDocumentTheme(next);
       try {
         localStorage.setItem("pi-theme", next);
       } catch {
