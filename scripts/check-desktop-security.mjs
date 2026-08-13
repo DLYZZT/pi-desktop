@@ -51,6 +51,7 @@ const browserAuthorization = read("src/main/browser/browser-authorization-coordi
 const browserGrantStore = read("src/main/browser/browser-persistent-grant-store.ts");
 const browserTools = read("src/agent-host/browser-tools.ts");
 const browserTabs = read("src/main/browser/browser-tab-manager.ts");
+const browserDevToolsShortcut = read("src/main/browser/browser-devtools-shortcut.ts");
 const browserNetwork = read("src/main/browser/browser-network-interceptor.ts");
 const browserIdentity = read("src/main/browser/browser-identity-manager.ts");
 const browserRecorder = read("src/main/browser/browser-network-recorder.ts");
@@ -299,7 +300,7 @@ const checks = [
   ],
   [
     updateAdapter.includes("updater.autoDownload = false") &&
-      updateAdapter.includes("updater.autoInstallOnAppQuit = true") &&
+      updateAdapter.includes("updater.autoInstallOnAppQuit = false") &&
       updateAdapter.includes("updater.allowPrerelease = false") &&
       updateAdapter.includes("updater.allowDowngrade = false") &&
       updateAdapter.includes("updater.disableWebInstaller = true") &&
@@ -383,7 +384,8 @@ const checks = [
       desktopIpc.includes("assertTrustedSender(event)") &&
       desktopIpcTrust.includes("event.sender === window.webContents") &&
       desktopIpcTrust.includes("event.senderFrame === window.webContents.mainFrame") &&
-      browserService.includes('this.confirmations.consume(proof, "advanced-browser-mode", patch)') &&
+      browserService.includes("authorizeBrowserSettingsUpdate(before, patch") &&
+      browserService.includes('this.confirmations.consume(proof, "advanced-browser-mode", payload)') &&
       !browserService.includes('"unsafe-lab"'),
     "Browser settings IPC must validate the main-window sender/frame and consume one-time confirmation proofs",
   ],
@@ -411,7 +413,8 @@ const checks = [
       !main.includes("ignore-certificate-errors") &&
       !browserTabs.includes("ignore-certificate-errors") &&
       !windowFactory.includes("webSecurity: false") &&
-      browserTabs.includes('input.key === "F12"'),
+      browserTabs.includes("isBrowserDevToolsShortcut(input)") &&
+      browserDevToolsShortcut.includes('input.key.toLowerCase() === "f12"'),
     "production Browser code must not expose remote debugging, global certificate bypass, or weaken the main Renderer",
   ],
   [
