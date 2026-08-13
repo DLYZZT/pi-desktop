@@ -15,6 +15,7 @@ import {
 } from "@/lib/session-list";
 import { applySessionChangedEvent } from "@/lib/session-sidebar-state";
 import { abbreviateHomePath } from "@/lib/display-path";
+import { formatNumber, formatRelativeDateTime } from "@/lib/locale-format";
 
 interface Props {
   selectedSessionId: string | null;
@@ -61,20 +62,6 @@ function saveUnreadSessionIds(ids: Set<string>): void {
   } catch {
     // ignore storage quota / privacy-mode errors
   }
-}
-
-function formatRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-  return date.toLocaleDateString();
 }
 
 /**
@@ -423,49 +410,59 @@ export function SessionSidebar({
     };
   }, []);
 
-  const loadSessions = useCallback(async (showLoading = false) => {
-    try {
-      if (showLoading) setLoading(true);
-      const res = await fetch("/api/sessions");
-      if (!res.ok) {
-        const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(
-          res.status === 401
-            ? "Unauthorized (401). Restart Pi Desktop so the renderer can reconnect to the Agent Host."
-            : errBody.error || `Failed to load sessions (${res.status})`,
-        );
+  const loadSessions = useCallback(
+    async (showLoading = false) => {
+      try {
+        if (showLoading) setLoading(true);
+        const res = await fetch("/api/sessions");
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(
+            res.status === 401
+              ? t(
+                  "sessionLoadUnauthorized",
+                  "Unauthorized (401). Restart Pi Desktop so the renderer can reconnect to the Agent Host.",
+                )
+              : errBody.error ||
+                  t("sessionLoadFailedStatus", "Failed to load sessions ({status})").replace(
+                    "{status}",
+                    String(res.status),
+                  ),
+          );
+        }
+        const data = (await res.json()) as { sessions?: SessionInfo[]; runningSessionIds?: string[] };
+        const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+        setAllSessions(sessions);
+        // Treat the fetched running set as an initial fallback only. Once the stream is
+        // live it owns this state, so a slow fetch can't revive a stale snapshot.
+        if (!streamAuthoritativeRef.current) {
+          setRunningSessionIds(new Set(data.runningSessionIds ?? []));
+        }
+        // Drop unread markers for sessions that no longer exist (e.g. deleted).
+        const existingIds = new Set(sessions.map((s) => s.id));
+        setUnreadSessionIds((prev) => {
+          if (prev.size === 0) return prev;
+          const next = new Set([...prev].filter((id) => existingIds.has(id)));
+          return next.size === prev.size ? prev : next;
+        });
+        setError(null);
+        if (!showLoading) {
+          if (!sidebarMountedRef.current) return;
+          setSessionRefreshDone(true);
+          if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
+          sessionRefreshTimerRef.current = setTimeout(() => {
+            sessionRefreshTimerRef.current = null;
+            setSessionRefreshDone(false);
+          }, 2000);
+        }
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        if (showLoading) setLoading(false);
       }
-      const data = (await res.json()) as { sessions?: SessionInfo[]; runningSessionIds?: string[] };
-      const sessions = Array.isArray(data.sessions) ? data.sessions : [];
-      setAllSessions(sessions);
-      // Treat the fetched running set as an initial fallback only. Once the stream is
-      // live it owns this state, so a slow fetch can't revive a stale snapshot.
-      if (!streamAuthoritativeRef.current) {
-        setRunningSessionIds(new Set(data.runningSessionIds ?? []));
-      }
-      // Drop unread markers for sessions that no longer exist (e.g. deleted).
-      const existingIds = new Set(sessions.map((s) => s.id));
-      setUnreadSessionIds((prev) => {
-        if (prev.size === 0) return prev;
-        const next = new Set([...prev].filter((id) => existingIds.has(id)));
-        return next.size === prev.size ? prev : next;
-      });
-      setError(null);
-      if (!showLoading) {
-        if (!sidebarMountedRef.current) return;
-        setSessionRefreshDone(true);
-        if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
-        sessionRefreshTimerRef.current = setTimeout(() => {
-          sessionRefreshTimerRef.current = null;
-          setSessionRefreshDone(false);
-        }, 2000);
-      }
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      if (showLoading) setLoading(false);
-    }
-  }, []);
+    },
+    [t],
+  );
 
   const initialLoadDone = useRef(false);
   useEffect(() => {
@@ -729,7 +726,7 @@ export function SessionSidebar({
       });
       const data = (await res.json().catch(() => ({}))) as { cwd?: string; error?: string };
       if (!res.ok || data.error) {
-        setCustomPathError(data.error ?? "Invalid directory");
+        setCustomPathError(data.error ?? t("invalidDirectory", "Invalid directory"));
         return;
       }
       setSelectedCwd(data.cwd ?? dir);
@@ -740,7 +737,7 @@ export function SessionSidebar({
     } catch (e) {
       setCustomPathError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [t]);
 
   const handleCreateWorktree = useCallback(async () => {
     const branch = wtNewBranch.trim();
@@ -870,12 +867,12 @@ export function SessionSidebar({
     selectedCwd && worktreeState && selectedProject === worktreeState.projectRoot && !showWorktreeSwitcher
       ? worktreeState.isGit
         ? {
-            label: "Open repo root",
-            title: "Open the repository root to manage worktrees.",
+            label: t("worktreeOpenRepoRoot", "Open repo root"),
+            title: t("worktreeOpenRepoRootHint", "Open the repository root to manage worktrees."),
           }
         : {
-            label: "Git repo root only",
-            title: "Worktrees are available in Git repository roots.",
+            label: t("worktreeRepoRootOnly", "Git repo root only"),
+            title: t("worktreeRepoRootOnlyHint", "Worktrees are available in Git repository roots."),
           }
       : null;
   const worktreeLoading = Boolean(selectedCwd && worktreeLoadingCwd === selectedCwd);
@@ -883,8 +880,8 @@ export function SessionSidebar({
     worktreeGuide ??
     (worktreeLoading && !showWorktreeSwitcher
       ? {
-          label: "Worktrees...",
-          title: "Checking worktrees for this directory.",
+          label: t("worktrees", "Worktrees…"),
+          title: t("worktreeChecking", "Checking worktrees for this directory."),
         }
       : null);
 
@@ -1388,7 +1385,11 @@ export function SessionSidebar({
               <div ref={wtDropdownRef} style={{ position: "relative", marginTop: 6 }}>
                 <button
                   onClick={() => setWtDropdownOpen((v) => !v)}
-                  title={currentWt ? `Switch worktree: ${currentWt.path}` : "Switch worktree"}
+                  title={
+                    currentWt
+                      ? t("switchWorktreePath", "Switch worktree: {path}").replace("{path}", currentWt.path)
+                      : t("switchWorktree", "Switch worktree")
+                  }
                   style={{
                     width: "100%",
                     height: 29,
@@ -1431,7 +1432,9 @@ export function SessionSidebar({
                     style={{ flex: 1, fontFamily: "var(--font-mono)", color: "var(--text)" }}
                   />
                   {currentWt?.isMain && (
-                    <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>main</span>
+                    <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>
+                      {t("mainBranch", "main")}
+                    </span>
                   )}
                   {worktreeState.worktrees.length > 1 && (
                     <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>
@@ -1496,7 +1499,7 @@ export function SessionSidebar({
                                 whiteSpace: "nowrap",
                               }}
                             >
-                              Uncommitted changes. Force remove checkout?
+                              {t("worktreeForceRemoveConfirm", "Uncommitted changes. Force remove checkout?")}
                             </span>
                             <button
                               onClick={() => void handleRemoveWorktree(wt.path, true)}
@@ -1513,7 +1516,7 @@ export function SessionSidebar({
                                 flexShrink: 0,
                               }}
                             >
-                              Force
+                              {t("force", "Force")}
                             </button>
                             <button
                               onClick={() => setWtConfirmRemove(null)}
@@ -1528,7 +1531,7 @@ export function SessionSidebar({
                                 flexShrink: 0,
                               }}
                             >
-                              Cancel
+                              {t("cancel", "Cancel")}
                             </button>
                           </div>
                         );
@@ -1581,14 +1584,19 @@ export function SessionSidebar({
                             )}
                             <PathLabel text={wt.branch ?? abbreviateHomePath(wt.path, homeDir)} style={{ flex: 1 }} />
                             {wt.isMain && (
-                              <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>main</span>
+                              <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>
+                                {t("mainBranch", "main")}
+                              </span>
                             )}
                           </button>
                           {!wt.isMain && (
                             <button
                               onClick={() => void handleRemoveWorktree(wt.path, false)}
                               disabled={wtBusy}
-                              title={`Remove worktree checkout ${wt.path}; the branch is kept`}
+                              title={t(
+                                "removeWorktreeHint",
+                                "Remove worktree checkout {path}; the branch is kept",
+                              ).replace("{path}", wt.path)}
                               style={{
                                 display: "flex",
                                 alignItems: "center",
@@ -1644,7 +1652,7 @@ export function SessionSidebar({
                         setWtError(null);
                         deferFocus(() => wtNewInputRef.current?.focus());
                       }}
-                      title="Create a worktree checkout for a branch"
+                      title={t("createWorktreeHint", "Create a worktree checkout for a branch")}
                       style={{
                         display: "flex",
                         alignItems: "center",
@@ -1672,7 +1680,7 @@ export function SessionSidebar({
                         <line x1="5" y1="1" x2="5" y2="9" />
                         <line x1="1" y1="5" x2="9" y2="5" />
                       </svg>
-                      <span>New worktree…</span>
+                      <span>{t("newWorktree", "New worktree…")}</span>
                     </button>
                   ) : (
                     <div style={{ padding: "6px 8px" }}>
@@ -1694,7 +1702,7 @@ export function SessionSidebar({
                             setWtError(null);
                           }
                         }}
-                        placeholder="branch name"
+                        placeholder={t("branchName", "branch name")}
                         style={{
                           width: "100%",
                           fontSize: 11,
@@ -1725,7 +1733,7 @@ export function SessionSidebar({
                             opacity: wtBusy || !wtNewBranch.trim() ? 0.65 : 1,
                           }}
                         >
-                          {wtBusy ? "Creating…" : "Create"}
+                          {wtBusy ? t("creating", "Creating…") : t("create", "Create")}
                         </button>
                         <button
                           onClick={() => {
@@ -1744,7 +1752,7 @@ export function SessionSidebar({
                             cursor: "pointer",
                           }}
                         >
-                          Cancel
+                          {t("cancel", "Cancel")}
                         </button>
                       </div>
                     </div>
@@ -1934,7 +1942,11 @@ export function SessionSidebar({
             )}
           </div>
         </div>
-        {loading && <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>Loading...</div>}
+        {loading && (
+          <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
+            {t("loading", "Loading…")}
+          </div>
+        )}
         {error && <div style={{ padding: "12px 14px", color: "var(--danger)", fontSize: 12 }}>{error}</div>}
         {!loading && !error && filteredSessions.length === 0 && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 13 }}>
@@ -2061,10 +2073,11 @@ function SessionTreeItem({
 }
 
 function RunningSessionIndicator() {
+  const { t } = useI18n();
   return (
     <span
-      title="Agent running…"
-      aria-label="Agent running"
+      title={t("agentRunning", "Agent is running…")}
+      aria-label={t("agentRunningStatus", "Agent running")}
       style={{
         width: 14,
         height: 14,
@@ -2093,10 +2106,11 @@ function RunningSessionIndicator() {
 }
 
 function UnreadSessionIndicator() {
+  const { t } = useI18n();
   return (
     <span
-      title="New activity"
-      aria-label="New session activity"
+      title={t("newSessionActivity", "New activity")}
+      aria-label={t("newSessionActivityLabel", "New session activity")}
       style={{
         width: 14,
         height: 14,
@@ -2159,7 +2173,7 @@ function SessionItem({
   collapsed?: boolean;
   onToggleCollapse?: () => void;
 }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -2235,19 +2249,19 @@ function SessionItem({
       closeActionsMenu();
       // ISSUE-001: block delete while agent is running
       if (isRunning) {
-        window.alert("This session is still running. Stop it before deleting.");
+        window.alert(t("deleteRunningSessionBlocked", "This session is still running. Stop it before deleting."));
         return;
       }
       setConfirmDelete(true);
     },
-    [closeActionsMenu, isRunning],
+    [closeActionsMenu, isRunning, t],
   );
 
   const handleDeleteConfirm = useCallback(
     async (e: React.MouseEvent) => {
       e.stopPropagation();
       if (isRunning) {
-        window.alert("This session is still running. Stop it before deleting.");
+        window.alert(t("deleteRunningSessionBlocked", "This session is still running. Stop it before deleting."));
         setConfirmDelete(false);
         return;
       }
@@ -2259,7 +2273,10 @@ function SessionItem({
         });
         if (!res.ok) {
           const body = (await res.json().catch(() => ({}))) as { error?: string };
-          window.alert(body.error ?? `Delete failed (${res.status})`);
+          window.alert(
+            body.error ??
+              t("deleteSessionFailedStatus", "Delete failed ({status})").replace("{status}", String(res.status)),
+          );
           setDeleting(false);
           return;
         }
@@ -2269,7 +2286,7 @@ function SessionItem({
         setDeleting(false);
       }
     },
-    [session.id, onDeleted, isRunning],
+    [session.id, onDeleted, isRunning, t],
   );
 
   const handleDeleteCancel = useCallback((e: React.MouseEvent) => {
@@ -2330,12 +2347,10 @@ function SessionItem({
               whiteSpace: "nowrap",
             }}
           >
-            Delete{" "}
-            <span style={{ fontWeight: 600 }}>
-              &ldquo;{title.slice(0, 22)}
-              {title.length > 22 ? "…" : ""}&rdquo;
-            </span>
-            ?
+            {t("deleteSessionConfirm", "Delete “{title}”?").replace(
+              "{title}",
+              `${title.slice(0, 22)}${title.length > 22 ? "…" : ""}`,
+            )}
           </div>
           <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
             <button
@@ -2372,7 +2387,7 @@ function SessionItem({
                 <path d="M10 11v6M14 11v6" />
                 <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
               </svg>
-              Delete
+              {t("delete", "Delete")}
             </button>
             <button
               onClick={handleDeleteCancel}
@@ -2392,7 +2407,7 @@ function SessionItem({
                 whiteSpace: "nowrap",
               }}
             >
-              Cancel
+              {t("cancel", "Cancel")}
             </button>
           </div>
         </>
@@ -2485,7 +2500,13 @@ function SessionItem({
                   lineHeight: 1.4,
                   color: "var(--text)",
                 }}
-                title={isRunning ? `${title} · Agent running…` : isUnread ? `${title} · New activity` : title}
+                title={
+                  isRunning
+                    ? `${title} · ${t("agentRunning", "Agent is running…")}`
+                    : isUnread
+                      ? `${title} · ${t("newSessionActivity", "New activity")}`
+                      : title
+                }
               >
                 {isRunning ? (
                   <RunningSessionIndicator />
@@ -2519,7 +2540,7 @@ function SessionItem({
                   paddingLeft: 13,
                 }}
               >
-                <span title={session.modified}>{formatRelativeTime(session.modified)}</span>
+                <span title={session.modified}>{formatRelativeDateTime(session.modified, language)}</span>
                 <span
                   style={{
                     fontFamily: "var(--font-mono)",
@@ -2530,11 +2551,11 @@ function SessionItem({
                     borderRadius: 4,
                   }}
                 >
-                  {session.messageCount} msgs
+                  {t("messageCount", "{count} msgs").replace("{count}", formatNumber(session.messageCount, language))}
                 </span>
                 {session.worktreeBranch && (
                   <span
-                    title={`Worktree: ${session.cwd}`}
+                    title={t("worktreePath", "Worktree: {path}").replace("{path}", session.cwd)}
                     style={{
                       display: "flex",
                       alignItems: "center",
