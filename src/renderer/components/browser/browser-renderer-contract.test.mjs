@@ -17,7 +17,7 @@ const i18n = read(new URL("../../i18n-dictionaries.ts", import.meta.url));
 
 test("Browser remains a fixed right-panel resource and hides its native surface behind Settings", () => {
   assert.match(appShell, /const BROWSER_TAB_ID = "browser"/);
-  assert.match(appShell, />\s*Browser\s*</);
+  assert.match(appShell, /t\("browser", "Browser"\)/);
   assert.match(appShell, /rightPanelOpen && !settingsOpen && !browserAuthorization/);
   assert.match(appShell, /persistRightPanelPreferredWidth\(finalWidth, activeFileTabId === BROWSER_TAB_ID\)/);
 });
