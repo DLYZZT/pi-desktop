@@ -1541,7 +1541,7 @@ const primaryButtonStyle = {
   ...buttonStyle,
   borderColor: "var(--accent)",
   background: "var(--accent)",
-  color: "var(--accent-contrast, #fff)",
+  color: "var(--accent-contrast)",
 };
 const smallButtonStyle = { ...buttonStyle, minHeight: 27, padding: "0 8px" };
 const promptBackdropStyle = {

@@ -34,6 +34,7 @@
   --text-dim: #746f66;
   --accent: #c2410c;
   --accent-hover: #9a3412;
+  --accent-contrast: #ffffff;
   --user-bg: #1c1a17;
   --user-fg: #faf9f7;
   --assistant-bg: #ffffff;
@@ -57,7 +58,7 @@
   --info: #0369a1;
   --info-soft: rgba(3, 105, 161, 0.08);
   --info-border: rgba(3, 105, 161, 0.3);
-  --on-accent: #ffffff;
+  --on-accent: var(--accent-contrast);
   --grid-line: #ece9e2;
   --selection: #fed7aa;
   --thinking-bg: #fbfaf8;
@@ -80,6 +81,7 @@ html.dark {
   --text-dim: #8f8a81;
   --accent: #f97316;
   --accent-hover: #fb923c;
+  --accent-contrast: #1c1a17;
   --user-bg: #2a2620;
   --user-fg: #faf9f7;
   --assistant-bg: #1c1a17;
@@ -103,7 +105,7 @@ html.dark {
   --info: #38bdf8;
   --info-soft: rgba(56, 189, 248, 0.1);
   --info-border: rgba(56, 189, 248, 0.34);
-  --on-accent: #1c1a17;
+  --on-accent: var(--accent-contrast);
   --grid-line: #2a2620;
   --selection: rgba(234, 88, 12, 0.38);
   --thinking-bg: #1a1815;
