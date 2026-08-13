@@ -8,9 +8,10 @@ import {
   isAssistantFailure,
   isEmptyThinkingBlock,
 } from "@/lib/message-display";
-import { getUserBubbleColor } from "@/lib/channel-message-style";
+import { getUserBubbleStyle } from "@/lib/channel-message-style";
 import { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelAttachmentCopyText } from "@shared/channel-message";
 import { useI18n } from "@/i18n";
+import { useTheme } from "@/hooks/useTheme";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import type {
   AgentMessage,
@@ -217,6 +218,7 @@ function UserMessageView({
   onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
 }) {
   const { t } = useI18n();
+  const { isDark } = useTheme();
   const [hovered, setHovered] = useState(false);
   const { copied, copy } = useCopyFeedback();
 
@@ -246,6 +248,7 @@ function UserMessageView({
 
   const time = formatTime(message.timestamp);
   const messageSource = message.channelSource ?? "local";
+  const bubbleStyle = getUserBubbleStyle(message.channelSource, isDark);
   const canFork = !!entryId && !!onFork;
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
 
@@ -272,12 +275,12 @@ function UserMessageView({
           style={{
             minWidth: 0,
             maxWidth: "100%",
-            background: getUserBubbleColor(message.channelSource),
+            background: bubbleStyle.background,
             borderRadius: "10px 10px 2px 10px",
             padding: "9px 13px",
             fontSize: 13.5,
             lineHeight: 1.55,
-            color: "var(--user-fg)",
+            color: bubbleStyle.foreground,
             wordBreak: "break-word",
           }}
         >
