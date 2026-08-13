@@ -8,6 +8,8 @@ import {
   treeHasBranch,
   type BranchTreeRow,
 } from "@/lib/branch-navigator-model";
+import { useI18n } from "@/i18n";
+import { formatNumber } from "@/lib/locale-format";
 
 interface Props {
   tree: SessionTreeNode[];
@@ -27,9 +29,9 @@ interface Props {
   compact?: boolean;
 }
 
-function getLabel(entry: SessionTreeEntry): string {
+function getLabel(entry: SessionTreeEntry, t: (key: string, fallback: string) => string): string {
   if (entry.preview) return entry.preview.length > 40 ? `${entry.preview.slice(0, 40)}…` : entry.preview;
-  if (entry.role === "assistant") return "[assistant]";
+  if (entry.role === "assistant") return t("assistantBranch", "[assistant]");
   return entry.type;
 }
 
@@ -40,10 +42,11 @@ interface BranchTreeRowProps {
 }
 
 function BranchTreeRowView({ row, activePathIds, onSelect }: BranchTreeRowProps) {
+  const { language, t } = useI18n();
   const rep = row.representative;
   const isActive = activePathIds.has(rep.entry.id);
   const isOnPath = activePathIds.has(row.node.entry.id) || activePathIds.has(rep.entry.id);
-  const label = getLabel(rep.entry);
+  const label = getLabel(rep.entry, t);
   const role = rep.entry.role ?? null;
 
   return (
@@ -85,7 +88,7 @@ function BranchTreeRowView({ row, activePathIds, onSelect }: BranchTreeRowProps)
 
       {row.depth > row.guideLines.length && (
         <div
-          title={`Branch depth ${row.depth + 1}`}
+          title={t("branchDepth", "Branch depth {depth}").replace("{depth}", formatNumber(row.depth + 1, language))}
           style={{ width: 16, flexShrink: 0, color: "var(--text-dim)", fontSize: 10, textAlign: "center" }}
         >
           …
@@ -201,6 +204,7 @@ export function BranchNavigator({
   hasSession,
   compact,
 }: Props) {
+  const { t } = useI18n();
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
   const rootRef = useRef<HTMLDivElement>(null);
@@ -266,9 +270,9 @@ export function BranchNavigator({
 
   const { firstNode, rows } = branchModel;
   const noBranchReason = !hasSession
-    ? "No active session"
+    ? t("noActiveSession", "No active session")
     : !branchModel.hasBranch
-      ? "This session has no branches"
+      ? t("sessionHasNoBranches", "This session has no branches")
       : null;
   const hasContent = !noBranchReason && firstNode && firstNode.children.length > 1;
 
@@ -335,12 +339,12 @@ export function BranchNavigator({
           onMouseLeave={(e) => {
             e.currentTarget.style.color = open ? "var(--text)" : "var(--text-muted)";
           }}
-          title="Branches"
-          aria-label="Branches"
+          title={t("branches", "Branches")}
+          aria-label={t("branches", "Branches")}
           aria-pressed={open}
         >
           {branchIcon}
-          {!compact && <span>Branches</span>}
+          {!compact && <span>{t("branches", "Branches")}</span>}
         </button>
         {open && dropdownPos && (
           <div
@@ -391,7 +395,7 @@ export function BranchNavigator({
         }}
       >
         {branchIcon}
-        <span style={{ color: "var(--text-muted)" }}>Branches</span>
+        <span style={{ color: "var(--text-muted)" }}>{t("branches", "Branches")}</span>
         {chevron}
       </button>
 
@@ -415,7 +419,7 @@ export function BranchNavigator({
             </div>
           ) : (
             <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-              {noBranchReason ?? "This session has no branches"}
+              {noBranchReason ?? t("sessionHasNoBranches", "This session has no branches")}
             </div>
           )}
         </div>
