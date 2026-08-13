@@ -5,12 +5,14 @@ import path from "node:path";
 import test from "node:test";
 import { checkRendererI18n } from "./renderer-i18n-checker.mjs";
 
-function fixture(component, dictionaries) {
+function fixture(component, dictionaries, componentPath = "Component.tsx") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-renderer-i18n-"));
   const rendererRoot = path.join(root, "src/renderer");
   const dictionariesPath = path.join(rendererRoot, "i18n-dictionaries.ts");
   fs.mkdirSync(rendererRoot, { recursive: true });
-  fs.writeFileSync(path.join(rendererRoot, "Component.tsx"), component);
+  const target = path.join(rendererRoot, componentPath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, component);
   fs.writeFileSync(dictionariesPath, dictionaries);
   return {
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
@@ -27,6 +29,29 @@ test("accepts static calls with exact bilingual dictionary and placeholder parit
     assert.deepEqual(checkRendererI18n(entry.options), { failures: [], keyCount: 1 });
   } finally {
     entry.cleanup();
+  }
+});
+
+test("rejects visible literals and hardcoded session notification sinks in migrated owners", () => {
+  const component = fixture(
+    'export function AppShell() { return <button aria-label="Open panel">Open panel</button>; }',
+    "export const enUS = {}; export const zhCN = {};",
+    "components/AppShell.tsx",
+  );
+  const hook = fixture(
+    'addNotice({ type: "error", message: "Queue failed" }); complete({ handled: true, error: "No session" });',
+    "export const enUS = {}; export const zhCN = {};",
+    "hooks/useAgentSession.ts",
+  );
+  try {
+    const componentOutput = checkRendererI18n(component.options).failures.join("\n");
+    assert.match(componentOutput, /visible English JSX literal: Open panel/);
+    const hookOutput = checkRendererI18n(hook.options).failures.join("\n");
+    assert.match(hookOutput, /hardcoded session message: Queue failed/);
+    assert.match(hookOutput, /hardcoded session error: No session/);
+  } finally {
+    component.cleanup();
+    hook.cleanup();
   }
 });
 

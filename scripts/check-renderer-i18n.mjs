@@ -14,5 +14,5 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(
-  `[renderer-i18n] ${keyCount} static keys have en-US/zh-CN parity, registered fallbacks, and safe Browser literals`,
+  `[renderer-i18n] ${keyCount} static keys have en-US/zh-CN parity, registered fallbacks, and guarded user-facing literals`,
 );
