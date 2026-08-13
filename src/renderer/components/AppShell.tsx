@@ -24,6 +24,7 @@ import { useI18n } from "@/i18n";
 import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
 import { getSessionDisplayTitle } from "@/lib/session-list";
+import { formatCompactNumber, formatNumber } from "@/lib/locale-format";
 import { beginSessionLoadTrace } from "@/lib/session-performance";
 import { reduceFileTabState } from "@/lib/file-tab-state";
 import { readSessionIdFromSearch, routerCompat } from "@/lib/router-compat";
@@ -1138,12 +1139,6 @@ export function AppShell() {
                           [t("total", "Total"), sessionStats.tokens.total.toLocaleString(language)],
                         ];
                         const ctx = contextUsage ?? sessionStats.contextUsage;
-                        const formatCompact = (n: number) =>
-                          n >= 1_000_000
-                            ? `${(n / 1_000_000).toFixed(1)}M`
-                            : n >= 1000
-                              ? `${(n / 1000).toFixed(0)}k`
-                              : String(n);
                         const extraTokenRows = [
                           ...(sessionStats.cost > 0
                             ? [[t("usageCost", "Cost"), `$${sessionStats.cost.toFixed(4)}`]]
@@ -1152,7 +1147,7 @@ export function AppShell() {
                             ? [
                                 [
                                   t("usageContext", "Context"),
-                                  `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompact(ctx.contextWindow)}`,
+                                  `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompactNumber(ctx.contextWindow, language)}`,
                                 ],
                               ]
                             : []),
@@ -1463,7 +1458,10 @@ export function AppShell() {
             aria-valuemin={rightPanelBounds.minWidth}
             aria-valuemax={rightPanelBounds.maxWidth}
             aria-valuenow={Math.round(rightPanelWidth)}
-            aria-valuetext={`${Math.round(rightPanelWidth)} pixels`}
+            aria-valuetext={t("rightPanelWidthPixels", "{width} pixels").replace(
+              "{width}",
+              formatNumber(Math.round(rightPanelWidth), language),
+            )}
             tabIndex={isMobile ? -1 : 0}
             onPointerDown={handleRightPanelResizeStart}
             onKeyDown={handleRightPanelResizeKeyDown}
@@ -1514,7 +1512,7 @@ export function AppShell() {
               >
                 <path d="M3 5a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
               </svg>
-              Explorer
+              {t("explorer", "Explorer")}
             </button>
             <button
               type="button"
@@ -1550,7 +1548,7 @@ export function AppShell() {
                 <circle cx="12" cy="12" r="9" />
                 <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
               </svg>
-              Browser
+              {t("browser", "Browser")}
             </button>
             <div style={{ flex: 1, overflow: "hidden" }}>
               <TabBar
@@ -1636,7 +1634,7 @@ export function AppShell() {
                     fontSize: 12,
                   }}
                 >
-                  Select a project to browse files
+                  {t("selectProjectToBrowseFiles", "Select a project to browse files")}
                 </div>
               )
             ) : activeFileTab?.filePath ? (
@@ -1657,7 +1655,7 @@ export function AppShell() {
                   fontSize: 12,
                 }}
               >
-                Select Browser, Explorer or open a file
+                {t("selectRightPanelContent", "Select Browser, Explorer or open a file")}
               </div>
             )}
           </div>

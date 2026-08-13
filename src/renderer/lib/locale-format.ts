@@ -4,6 +4,10 @@ export function formatNumber(value: number, language: AppLanguage): string {
   return new Intl.NumberFormat(language).format(value);
 }
 
+export function formatCompactNumber(value: number, language: AppLanguage): string {
+  return new Intl.NumberFormat(language, { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
 export function formatRelativeDateTime(
   value: string | number | Date,
   language: AppLanguage,

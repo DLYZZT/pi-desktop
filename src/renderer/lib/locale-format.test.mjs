@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatFileSize, formatNumber, formatRelativeDateTime } from "./locale-format.ts";
+import { formatCompactNumber, formatFileSize, formatNumber, formatRelativeDateTime } from "./locale-format.ts";
 
 const now = new Date("2026-08-12T12:00:00.000Z");
 
@@ -15,6 +15,8 @@ test("formats relative time with the selected locale and fixed thresholds", () =
 test("formats numbers and file sizes with locale-aware separators", () => {
   assert.equal(formatNumber(1234567, "en-US"), "1,234,567");
   assert.equal(formatNumber(1234567, "zh-CN"), "1,234,567");
+  assert.equal(formatCompactNumber(1200, "en-US"), "1.2K");
+  assert.equal(formatCompactNumber(12000, "zh-CN"), "1.2万");
   assert.equal(formatFileSize(1536, "en-US"), "1.5 KB");
   assert.equal(formatFileSize(1024 * 1024, "zh-CN"), "1 MB");
   assert.equal(formatFileSize(-1, "en-US"), "");
