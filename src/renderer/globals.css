@@ -18,8 +18,6 @@
   --color-bg-subtle: var(--bg-subtle);
   --color-accent-soft: var(--accent-soft);
   --color-accent-soft-border: var(--accent-soft-border);
-  --font-mono-font: var(--font-mono);
-  --font-sans-font: var(--font-sans);
 }
 
 /* Warm paper + orange accent design system (from design.html) */
@@ -63,10 +61,6 @@
   --selection: #fed7aa;
   --thinking-bg: #fbfaf8;
   --thinking-border: #d6d3cd;
-  --font-size-caption: 12px;
-  --font-size-control: 13px;
-  --font-size-body: 14px;
-  --control-height-compact: 32px;
   --chat-content-max-width: 760px;
 }
 
