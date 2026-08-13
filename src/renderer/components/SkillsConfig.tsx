@@ -4,6 +4,9 @@ import { useI18n } from "@/i18n";
 import type { SkillSearchResult } from "@/lib/api-types";
 import { LatestAbortableRequest } from "@/lib/latest-abortable-request";
 import { CapabilityRequired, parseCapabilityIssue, type CapabilityIssue } from "@/components/CapabilityRequired";
+import { formatCompactNumber } from "@/lib/locale-format";
+
+type Translate = (key: string, fallback: string) => string;
 
 interface Skill {
   name: string;
@@ -30,16 +33,31 @@ function sourceLabel(skill: Skill): string {
   return "path";
 }
 
+function sourceLabelText(label: string, t: Translate): string {
+  if (label === "global") return t("skillScopeGlobal", "global");
+  if (label === "project") return t("skillScopeProject", "project");
+  return t("skillScopePath", "path");
+}
+
 function Toggle({ enabled, loading, onToggle }: { enabled: boolean; loading: boolean; onToggle: () => void }) {
+  const { t } = useI18n();
   return (
     <button
       type="button"
       role="switch"
       aria-checked={enabled}
-      aria-label={enabled ? "Disable skill in model prompt" : "Enable skill in model prompt"}
+      aria-label={
+        enabled
+          ? t("disableSkillInModelPrompt", "Disable skill in model prompt")
+          : t("enableSkillInModelPrompt", "Enable skill in model prompt")
+      }
       onClick={onToggle}
       disabled={loading}
-      title={enabled ? "Visible in model prompt — click to disable" : "Hidden from model prompt — click to enable"}
+      title={
+        enabled
+          ? t("visibleSkillInModelPrompt", "Visible in model prompt — click to disable")
+          : t("hiddenSkillFromModelPrompt", "Hidden from model prompt — click to enable")
+      }
       style={{
         flexShrink: 0,
         width: 48,
@@ -88,6 +106,7 @@ const SkillDetail = forwardRef<
     onDirtyChange: (dirty: boolean) => void;
   }
 >(function SkillDetail({ skill, cwd, onToggle, toggling, saveError, onSaved, onDirtyChange }, ref) {
+  const { t } = useI18n();
   const label = sourceLabel(skill);
   const enabled = !skill.disableModelInvocation;
   const [content, setContent] = useState("");
@@ -108,7 +127,8 @@ const SkillDetail = forwardRef<
         setSavedContent(result.content);
       })
       .catch((error) => {
-        if (!cancelled) setContentError(error instanceof Error ? error.message : String(error));
+        if (!cancelled)
+          setContentError(requestErrorMessage(error, t("skillFileLoadFailed", "Failed to load skill file.")));
       })
       .finally(() => {
         if (!cancelled) setContentLoading(false);
@@ -116,7 +136,7 @@ const SkillDetail = forwardRef<
     return () => {
       cancelled = true;
     };
-  }, [cwd, skill.filePath]);
+  }, [cwd, skill.filePath, t]);
 
   const saveContent = useCallback(async (): Promise<boolean> => {
     if (content === savedContent) return true;
@@ -129,17 +149,19 @@ const SkillDetail = forwardRef<
         body: JSON.stringify({ cwd, filePath: skill.filePath, content }),
       });
       const result = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok || result.error) throw new Error(result.error ?? `HTTP ${res.status}`);
+      if (!res.ok || result.error) {
+        throw new Error(result.error ?? t("httpErrorStatus", "HTTP {status}").replace("{status}", String(res.status)));
+      }
       setSavedContent(content);
       onSaved();
       return true;
     } catch (error) {
-      setContentError(error instanceof Error ? error.message : String(error));
+      setContentError(requestErrorMessage(error, t("skillFileSaveFailed", "Failed to save skill file.")));
       return false;
     } finally {
       setContentSaving(false);
     }
-  }, [content, cwd, onSaved, savedContent, skill.filePath]);
+  }, [content, cwd, onSaved, savedContent, skill.filePath, t]);
 
   useImperativeHandle(
     ref,
@@ -177,7 +199,7 @@ const SkillDetail = forwardRef<
             color: label === "project" ? "rgba(99,102,241,0.8)" : "var(--text-dim)",
           }}
         >
-          {label}
+          {sourceLabelText(label, t)}
         </span>
         <span
           style={{
@@ -197,7 +219,7 @@ const SkillDetail = forwardRef<
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Name</span>
+        <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>{t("name", "Name")}</span>
         <span
           style={{
             fontFamily: "var(--font-mono)",
@@ -211,7 +233,9 @@ const SkillDetail = forwardRef<
 
       <div style={{ display: "flex", flexDirection: "column", gap: 7, minHeight: 260 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>SKILL.md</span>
+          <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>
+            {t("skillFileName", "SKILL.md")}
+          </span>
           <button
             type="button"
             onClick={() => void saveContent()}
@@ -227,18 +251,20 @@ const SkillDetail = forwardRef<
               fontSize: 12,
             }}
           >
-            {contentSaving ? "Saving…" : "Save changes"}
+            {contentSaving ? t("saving", "Saving…") : t("saveChanges", "Save changes")}
           </button>
         </div>
         {contentLoading ? (
-          <div style={{ padding: 12, color: "var(--text-dim)", fontSize: 12 }}>Loading skill file…</div>
+          <div style={{ padding: 12, color: "var(--text-dim)", fontSize: 12 }}>
+            {t("loadingSkillFile", "Loading skill file…")}
+          </div>
         ) : (
           <textarea
             value={content}
             onChange={(event) => setContent(event.target.value)}
             disabled={contentSaving}
             spellCheck={false}
-            aria-label="Skill markdown content"
+            aria-label={t("skillMarkdownContent", "Skill markdown content")}
             style={{
               width: "100%",
               flex: 1,
@@ -260,7 +286,9 @@ const SkillDetail = forwardRef<
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Description</span>
+        <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>
+          {t("description", "Description")}
+        </span>
         <span style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.6 }}>{skill.description}</span>
       </div>
     </div>
@@ -268,6 +296,7 @@ const SkillDetail = forwardRef<
 });
 
 function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => void }) {
+  const { language, t } = useI18n();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SkillSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -284,33 +313,36 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
     inputRef.current?.focus();
   }, []);
 
-  const search = useCallback(async (q: string) => {
-    if (!q.trim()) return;
-    setSearching(true);
-    setSearchError(null);
-    setResults([]);
-    try {
-      const res = await fetch("/api/skills/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q.trim() }),
-      });
-      const d = (await res.json()) as {
-        results?: SkillSearchResult[];
-        error?: string;
-      };
-      if (d.error) {
-        setSearchError(d.error);
-        return;
+  const search = useCallback(
+    async (q: string) => {
+      if (!q.trim()) return;
+      setSearching(true);
+      setSearchError(null);
+      setResults([]);
+      try {
+        const res = await fetch("/api/skills/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: q.trim() }),
+        });
+        const d = (await res.json()) as {
+          results?: SkillSearchResult[];
+          error?: string;
+        };
+        if (d.error) {
+          setSearchError(d.error);
+          return;
+        }
+        setResults(d.results ?? []);
+        if ((d.results ?? []).length === 0) setSearchError(t("noSkillsFound", "No skills found"));
+      } catch (e) {
+        setSearchError(requestErrorMessage(e, t("skillSearchFailed", "Skill search failed.")));
+      } finally {
+        setSearching(false);
       }
-      setResults(d.results ?? []);
-      if ((d.results ?? []).length === 0) setSearchError("No skills found");
-    } catch (e) {
-      setSearchError(String(e));
-    } finally {
-      setSearching(false);
-    }
-  }, []);
+    },
+    [t],
+  );
 
   const install = useCallback(
     async (pkg: string) => {
@@ -335,7 +367,13 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
             setPendingInstallPackage(pkg);
             setCapabilityIssue(issue);
           } else {
-            setInstallError(safeInstallError(d.error, `HTTP ${res.status}`));
+            setInstallError(
+              safeInstallError(
+                d.error,
+                t("httpErrorStatus", "HTTP {status}").replace("{status}", String(res.status)),
+                t,
+              ),
+            );
           }
           return;
         }
@@ -343,12 +381,18 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
         setInstalledPkgs((prev) => new Set(prev).add(pkg));
         onInstalled();
       } catch (e) {
-        setInstallError(safeInstallError(e instanceof Error ? e.message : String(e), "Skill installation failed."));
+        setInstallError(
+          safeInstallError(
+            e instanceof Error ? e.message : String(e),
+            t("skillInstallationFailed", "Skill installation failed."),
+            t,
+          ),
+        );
       } finally {
         setInstalling(null);
       }
     },
-    [onInstalled, scope, cwd],
+    [onInstalled, scope, cwd, t],
   );
 
   const installPath = scope === "global" ? "~/.pi/agent/skills/" : `${shortenPath(cwd)}/.pi/agent/skills/`;
@@ -364,7 +408,7 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
           marginBottom: 20,
         }}
       >
-        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>Add Skill</div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{t("addSkill", "Add skill")}</div>
 
         {/* Search row */}
         <div style={{ display: "flex", gap: 8 }}>
@@ -376,8 +420,8 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
             onKeyDown={(e) => {
               if (e.key === "Enter") void search(query);
             }}
-            placeholder="e.g. react, testing, deploy"
-            aria-label="Search skills"
+            placeholder={t("skillSearchExample", "e.g. react, testing, deploy")}
+            aria-label={t("searchSkills", "Search skills")}
             style={{
               flex: 1,
               minHeight: 36,
@@ -407,7 +451,7 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
               flexShrink: 0,
             }}
           >
-            {searching ? "Searching…" : "Search"}
+            {searching ? t("searching", "Searching…") : t("search", "Search")}
           </button>
         </div>
 
@@ -437,7 +481,7 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
                   borderRight: s === "global" ? "1px solid var(--border)" : "none",
                 }}
               >
-                {s}
+                {sourceLabelText(s, t)}
               </button>
             ))}
           </div>
@@ -522,15 +566,20 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
                     >
                       {repopart}
                     </span>
-                    <span
-                      style={{
-                        fontSize: 12,
-                        color: "var(--text-muted)",
-                        fontWeight: 500,
-                      }}
-                    >
-                      {r.installs}
-                    </span>
+                    {r.installs > 0 && (
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: "var(--text-muted)",
+                          fontWeight: 500,
+                        }}
+                      >
+                        {t("skillInstallCount", "{count} installs").replace(
+                          "{count}",
+                          formatCompactNumber(r.installs, language),
+                        )}
+                      </span>
+                    )}
                     {r.url && (
                       <a
                         href={r.url}
@@ -542,7 +591,7 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
                           textDecoration: "none",
                         }}
                       >
-                        skills.sh ↗
+                        {t("skillsCatalogLink", "skills.sh ↗")}
                       </a>
                     )}
                   </div>
@@ -563,7 +612,11 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
                     transition: "color 0.12s",
                   }}
                 >
-                  {isInstalled ? "✓ Installed" : isInstalling ? "Installing…" : "Install"}
+                  {isInstalled
+                    ? t("skillInstalled", "✓ Installed")
+                    : isInstalling
+                      ? t("installing", "Installing…")
+                      : t("install", "Install")}
                 </button>
               </div>
             );
@@ -573,16 +626,16 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
         !searchError &&
         !searching && (
           <div style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.8 }}>
-            Search{" "}
+            {t("searchSkillsCatalogPrefix", "Search")}{" "}
             <a
               href="https://skills.sh"
               target="_blank"
               rel="noreferrer"
               style={{ color: "var(--accent)", textDecoration: "none" }}
             >
-              skills.sh
+              {t("skillsCatalogName", "skills.sh")}
             </a>{" "}
-            to discover and install skills for your agent.
+            {t("searchSkillsCatalogSuffix", "to discover and install skills for your agent.")}
           </div>
         )
       )}
@@ -590,12 +643,22 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
   );
 }
 
-function safeInstallError(message: string | undefined, fallback: string): string {
+function safeInstallError(message: string | undefined, fallback: string, t: Translate): string {
   if (!message) return fallback;
   if (/ENOENT|spawn\s+(?:npm|npx|node)|not found/i.test(message)) {
-    return "A required developer tool is unavailable. Rescan tools or install JavaScript Essentials.";
+    return t(
+      "skillDeveloperToolUnavailable",
+      "A required developer tool is unavailable. Rescan tools or install JavaScript Essentials.",
+    );
   }
+  if (/failed to fetch|network\s*error|load failed/i.test(message)) return fallback;
   return message;
+}
+
+function requestErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof TypeError) return fallback;
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
 }
 
 export interface SkillsConfigHandle {
@@ -673,7 +736,11 @@ export const SkillsConfig = forwardRef<
       const response = await fetch(`/api/skills?cwd=${encodeURIComponent(cwd)}`, { signal: request.signal });
       const result = (await response.json()) as { skills?: Skill[]; error?: string };
       if (!skillsRequestRef.current.isCurrent(request.generation)) return;
-      if (!response.ok || result.error) throw new Error(result.error ?? `HTTP ${response.status}`);
+      if (!response.ok || result.error) {
+        throw new Error(
+          result.error ?? t("httpErrorStatus", "HTTP {status}").replace("{status}", String(response.status)),
+        );
+      }
       const list = result.skills ?? [];
       setSkills(list);
       setSelected((current) =>
@@ -681,11 +748,11 @@ export const SkillsConfig = forwardRef<
       );
     } catch (loadError) {
       if (request.signal.aborted || !skillsRequestRef.current.isCurrent(request.generation)) return;
-      setError(loadError instanceof Error ? loadError.message : String(loadError));
+      setError(requestErrorMessage(loadError, t("skillsLoadFailed", "Failed to load skills.")));
     } finally {
       if (skillsRequestRef.current.finish(request.generation)) setLoading(false);
     }
-  }, [cwd]);
+  }, [cwd, t]);
 
   useEffect(() => {
     const requests = skillsRequestRef.current;
@@ -714,14 +781,14 @@ export const SkillsConfig = forwardRef<
         });
         const d = (await res.json()) as { success?: boolean; error?: string };
         if (!res.ok || d.error) {
-          setSaveError(d.error ?? `HTTP ${res.status}`);
+          setSaveError(d.error ?? t("httpErrorStatus", "HTTP {status}").replace("{status}", String(res.status)));
           return;
         }
         setSkills((prev) =>
           prev.map((s) => (s.filePath === skill.filePath ? { ...s, disableModelInvocation: next } : s)),
         );
       } catch (e) {
-        setSaveError(String(e));
+        setSaveError(requestErrorMessage(e, t("skillVisibilitySaveFailed", "Failed to update skill visibility.")));
       } finally {
         setToggling((s) => {
           const n = new Set(s);
@@ -730,7 +797,7 @@ export const SkillsConfig = forwardRef<
         });
       }
     },
-    [cwd],
+    [cwd, t],
   );
 
   const selectedSkill = skills.find((s) => s.filePath === selected) ?? null;
@@ -788,7 +855,7 @@ export const SkillsConfig = forwardRef<
             }}
           >
             <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Skills</span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>{t("skills", "Skills")}</span>
               <code
                 style={{
                   fontSize: 11,
@@ -844,7 +911,7 @@ export const SkillsConfig = forwardRef<
                     color: "var(--text-muted)",
                   }}
                 >
-                  Loading…
+                  {t("loading", "Loading…")}
                 </div>
               ) : error ? (
                 <div
@@ -864,7 +931,7 @@ export const SkillsConfig = forwardRef<
                     color: "var(--text-dim)",
                   }}
                 >
-                  No skills found
+                  {t("noSkillsFound", "No skills found")}
                 </div>
               ) : (
                 (() => {
@@ -885,7 +952,7 @@ export const SkillsConfig = forwardRef<
                           letterSpacing: "0.06em",
                         }}
                       >
-                        {grpLabel}
+                        {sourceLabelText(grpLabel, t)}
                       </div>
                       {grpSkills.map((skill) => {
                         const isSelected = !addMode && selected === skill.filePath;
@@ -1057,7 +1124,7 @@ export const SkillsConfig = forwardRef<
                 fontSize: 13,
               }}
             >
-              Close
+              {t("close", "Close")}
             </button>
           </div>
         )}

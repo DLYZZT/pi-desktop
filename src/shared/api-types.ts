@@ -1,6 +1,6 @@
 export interface SkillSearchResult {
   package: string;
-  installs: string;
+  installs: number;
   url: string;
 }
 
