@@ -7,6 +7,8 @@ import { createDocxPreviewHtml } from "@/lib/docx-preview-html";
 import { encodeFilePathForApi, getFileName, getParentFilePath, getRelativeFilePath } from "@/lib/file-paths";
 import { INITIAL_TEXT_FILE_LOAD_STATE, textFileLoadReducer, type TextFileData } from "@/lib/file-viewer-load-state";
 import { createBoundedTextDiff, type DiffLine } from "@/lib/text-diff";
+import { useI18n } from "@/i18n";
+import { formatFileSize, formatNumber } from "@/lib/locale-format";
 
 interface Props {
   filePath: string;
@@ -30,12 +32,13 @@ function getFileApiUrl(
 }
 
 function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceSessionId?: string | null }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   return (
     <button
       type="button"
-      title="Download file"
-      aria-label="Download file"
+      title={t("downloadFile", "Download file")}
+      aria-label={t("downloadFile", "Download file")}
       disabled={busy}
       onClick={() => {
         setBusy(true);
@@ -87,6 +90,7 @@ function HtmlPreview({
   filePath: string;
   sourceSessionId?: string | null;
 }) {
+  const { t } = useI18n();
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
@@ -130,7 +134,7 @@ function HtmlPreview({
           textAlign: "center",
         }}
       >
-        HTML preview could not be created: {previewError}
+        {t("htmlPreviewFailed", "HTML preview could not be created: {error}").replace("{error}", previewError)}
       </div>
     );
   }
@@ -144,24 +148,23 @@ function HtmlPreview({
       sandbox="allow-scripts"
       referrerPolicy="no-referrer"
       style={{ display: "block", width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
-      title="HTML preview"
+      title={t("htmlPreview", "HTML preview")}
     />
   );
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function DiffView({ oldContent, newContent }: { oldContent: string; newContent: string }) {
+  const { language, t } = useI18n();
   const result = useMemo(() => createBoundedTextDiff(oldContent, newContent), [oldContent, newContent]);
   if (result.kind === "fallback") {
     return (
       <div role="status" style={{ padding: 16, color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6 }}>
-        Diff is too large to render safely. The file changed from {result.oldLines} to {result.newLines} lines; showing
-        the current source avoids freezing the app.
+        {t(
+          "diffTooLarge",
+          "Diff is too large to render safely. The file changed from {oldLines} to {newLines} lines; showing the current source avoids freezing the app.",
+        )
+          .replace("{oldLines}", formatNumber(result.oldLines, language))
+          .replace("{newLines}", formatNumber(result.newLines, language))}
       </div>
     );
   }
@@ -171,7 +174,7 @@ function DiffView({ oldContent, newContent }: { oldContent: string; newContent: 
   if (!hasChanges) {
     return (
       <div style={{ padding: "12px 16px", fontSize: 12, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-        No changes
+        {t("noChanges", "No changes")}
       </div>
     );
   }
@@ -235,7 +238,7 @@ function DiffView({ oldContent, newContent }: { oldContent: string; newContent: 
                 borderBottom: "1px solid var(--border)",
               }}
             >
-              ... {seg.count} unchanged lines ...
+              {t("unchangedLines", "… {count} unchanged lines …").replace("{count}", formatNumber(seg.count, language))}
             </div>
           );
           diffIdx += seg.count;
@@ -376,6 +379,7 @@ function useFileWatch(filePath: string, sourceSessionId: string | null | undefin
 }
 
 function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
+  const { language, t } = useI18n();
   const [bust, setBust] = useState(0);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const { src, size, error, setError, setSize } = useBlobSrc(filePath, sourceSessionId, bust);
@@ -391,7 +395,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
 
   const ext = getFileName(filePath).toLowerCase().split(".").pop() ?? "";
 
-  const formatSizeStr = size != null ? formatSize(size) : null;
+  const formatSizeStr = size != null ? formatFileSize(size, language) : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -422,7 +426,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
         )}
         {formatSizeStr && <span>{formatSizeStr}</span>}
         <span
-          title={watching ? "Live sync active" : "Not watching"}
+          title={watching ? t("liveSyncActive", "Live sync active") : t("notWatching", "Not watching")}
           style={{
             display: "flex",
             alignItems: "center",
@@ -440,7 +444,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
               boxShadow: watching ? "0 0 4px var(--success)" : "none",
             }}
           />
-          {watching ? "live" : "static"}
+          {watching ? t("live", "live") : t("static", "static")}
         </span>
         <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
       </div>
@@ -462,7 +466,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
         {error ? (
           <div style={{ color: "var(--danger)", fontSize: 13 }}>{error}</div>
         ) : !src ? (
-          <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
+          <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{t("loading", "Loading…")}</div>
         ) : (
           <img
             src={src}
@@ -471,7 +475,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
               const img = e.currentTarget;
               setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
             }}
-            onError={() => setError("Failed to load image")}
+            onError={() => setError(t("imageLoadFailed", "Failed to load image"))}
             style={{
               maxWidth: "100%",
               maxHeight: "100%",
@@ -494,6 +498,7 @@ function formatDuration(seconds: number): string {
 }
 
 function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
+  const { language, t } = useI18n();
   const [bust, setBust] = useState(0);
   const [duration, setDuration] = useState<number | null>(null);
   const { src, size, error, setError, setSize } = useBlobSrc(filePath, sourceSessionId, bust);
@@ -533,9 +538,9 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
         </span>
         <span style={{ marginLeft: "auto" }}>{ext || "audio"}</span>
         {duration != null && <span>{formatDuration(duration)}</span>}
-        {size != null && <span>{formatSize(size)}</span>}
+        {size != null && <span>{formatFileSize(size, language)}</span>}
         <span
-          title={watching ? "Live sync active" : "Not watching"}
+          title={watching ? t("liveSyncActive", "Live sync active") : t("notWatching", "Not watching")}
           style={{
             display: "flex",
             alignItems: "center",
@@ -553,7 +558,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
               boxShadow: watching ? "0 0 4px var(--success)" : "none",
             }}
           />
-          {watching ? "live" : "static"}
+          {watching ? t("live", "live") : t("static", "static")}
         </span>
         <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
       </div>
@@ -578,7 +583,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
               preload="metadata"
               src={src}
               onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-              onError={() => setError("Failed to load audio")}
+              onError={() => setError(t("audioLoadFailed", "Failed to load audio"))}
               style={{ width: "100%" }}
             />
           )}
@@ -590,6 +595,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
 
 function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
   const { isDark } = useTheme();
+  const { language, t } = useI18n();
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -629,7 +635,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
         });
         if (cancelled) return;
         if (preview.kind === "too_large") {
-          setError("DOCX too large for preview (>10MB)");
+          setError(t("docxTooLarge", "DOCX is too large for preview (>10 MB)"));
           return;
         }
         if (preview.kind === "docx" && preview.base64) {
@@ -646,7 +652,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
           revokeRef.current = () => URL.revokeObjectURL(url);
           setPreviewUrl(url);
         } else {
-          setError("Preview not available");
+          setError(t("previewUnavailable", "Preview not available"));
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -658,21 +664,21 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
       revokeRef.current?.();
       revokeRef.current = null;
     };
-  }, [filePath, isDark, isPdf, sourceSessionId, bust]);
+  }, [filePath, isDark, isPdf, sourceSessionId, bust, t]);
 
   const onChange = useCallback(
     (s?: number) => {
       if (typeof s === "number") {
         setSize(s);
         if (!isPdf && s > DOCX_PREVIEW_MAX_BYTES) {
-          setError("DOCX too large for preview (>10MB)");
+          setError(t("docxTooLarge", "DOCX is too large for preview (>10 MB)"));
           return;
         }
       }
       setError(null);
       setBust((b) => b + 1);
     },
-    [isPdf],
+    [isPdf, t],
   );
   const watching = useFileWatch(filePath, sourceSessionId, onChange);
 
@@ -700,11 +706,11 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
         >
           {getRelativeFilePath(filePath, cwd)}
         </span>
-        <span style={{ marginLeft: "auto" }}>{ext === "docx" ? "docx preview" : "pdf"}</span>
-        {size != null && <span>{formatSize(size)}</span>}
+        <span style={{ marginLeft: "auto" }}>{ext === "docx" ? t("docxPreview", "DOCX preview") : "PDF"}</span>
+        {size != null && <span>{formatFileSize(size, language)}</span>}
         <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
         <span
-          title={watching ? "Live sync active" : "Not watching"}
+          title={watching ? t("liveSyncActive", "Live sync active") : t("notWatching", "Not watching")}
           style={{
             display: "flex",
             alignItems: "center",
@@ -723,7 +729,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
               boxShadow: watching ? "0 0 4px var(--success)" : "none",
             }}
           />
-          {watching ? "live" : "static"}
+          {watching ? t("live", "live") : t("static", "static")}
         </span>
       </div>
       <div style={{ flex: 1, minHeight: 0, background: "var(--bg-panel)" }}>
@@ -753,14 +759,14 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
               fontSize: 13,
             }}
           >
-            Loading…
+            {t("loading", "Loading…")}
           </div>
         ) : (
           <iframe
             key={previewUrl}
             src={previewUrl}
             sandbox={isPdf ? undefined : ""}
-            title={`Preview ${getFileName(filePath)}`}
+            title={t("filePreviewTitle", "Preview {name}").replace("{name}", getFileName(filePath))}
             style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
           />
         )}
@@ -784,6 +790,7 @@ export function FileViewer({ filePath, cwd, sourceSessionId }: Props) {
 
 function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
   const { isDark } = useTheme();
+  const { language, t } = useI18n();
   const [loadState, dispatchLoad] = useReducer(textFileLoadReducer, INITIAL_TEXT_FILE_LOAD_STATE);
   const [previewMode, setPreviewMode] = useState(false);
   const [viewMode, setViewMode] = useState<"source" | "diff">("source");
@@ -805,11 +812,14 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
             return null;
           }
           if (d.encoding === "too_large") {
-            dispatchLoad({ type: "failed", error: "File too large for preview" });
+            dispatchLoad({ type: "failed", error: t("fileTooLargeForPreview", "File is too large for preview") });
             return null;
           }
           if (d.encoding === "base64") {
-            dispatchLoad({ type: "failed", error: "Binary file cannot be shown as text" });
+            dispatchLoad({
+              type: "failed",
+              error: t("binaryFileCannotShowText", "Binary file cannot be shown as text"),
+            });
             return null;
           }
           const payload: TextFileData = {
@@ -826,7 +836,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
           return null;
         });
     },
-    [sourceSessionId],
+    [sourceSessionId, t],
   );
 
   // Initial load + watch setup
@@ -884,7 +894,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
           fontSize: 13,
         }}
       >
-        Loading...
+        {t("loading", "Loading…")}
       </div>
     );
   }
@@ -936,12 +946,14 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
           {getRelativeFilePath(filePath, cwd)}
         </span>
         <span style={{ marginLeft: "auto" }}>{data.language}</span>
-        {viewMode === "source" && <span>{lines.length} lines</span>}
-        <span>{formatSize(data.size)}</span>
+        {viewMode === "source" && (
+          <span>{t("lineCount", "{count} lines").replace("{count}", formatNumber(lines.length, language))}</span>
+        )}
+        <span>{formatFileSize(data.size, language)}</span>
 
         {/* Live watch indicator */}
         <span
-          title={watching ? "Live sync active" : "Not watching"}
+          title={watching ? t("liveSyncActive", "Live sync active") : t("notWatching", "Not watching")}
           style={{
             display: "flex",
             alignItems: "center",
@@ -959,7 +971,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
               boxShadow: watching ? "0 0 4px var(--success)" : "none",
             }}
           />
-          {watching ? "live" : "static"}
+          {watching ? t("live", "live") : t("static", "static")}
         </span>
 
         {/* Diff / Source toggle — shown only when there are changes */}
@@ -979,7 +991,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
                 fontWeight: viewMode === "source" ? 600 : 400,
               }}
             >
-              Source
+              {t("source", "Source")}
             </button>
             <button
               type="button"
@@ -996,7 +1008,10 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
                 fontWeight: viewMode === "diff" ? 600 : 400,
               }}
             >
-              Diff {changeCount > 0 && <span style={{ color: "var(--success)", marginLeft: 2 }}>+{changeCount}</span>}
+              {t("diff", "Diff")}{" "}
+              {changeCount > 0 && (
+                <span style={{ color: "var(--success)", marginLeft: 2 }}>+{formatNumber(changeCount, language)}</span>
+              )}
             </button>
           </div>
         )}
@@ -1006,7 +1021,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
           <button
             type="button"
             onClick={() => setWrapLines((v) => !v)}
-            title={wrapLines ? "Disable word wrap" : "Enable word wrap"}
+            title={wrapLines ? t("disableWordWrap", "Disable word wrap") : t("enableWordWrap", "Enable word wrap")}
             style={{
               minHeight: 32,
               padding: "0 10px",
@@ -1019,7 +1034,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
               fontWeight: wrapLines ? 600 : 400,
             }}
           >
-            wrap
+            {t("wrap", "wrap")}
           </button>
         )}
 
@@ -1040,7 +1055,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
                 fontWeight: !previewMode ? 600 : 400,
               }}
             >
-              Code
+              {t("code", "Code")}
             </button>
             <button
               type="button"
@@ -1057,7 +1072,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
                 fontWeight: previewMode ? 600 : 400,
               }}
             >
-              Preview
+              {t("preview", "Preview")}
             </button>
           </div>
         )}
@@ -1079,7 +1094,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
                 fontWeight: previewMode ? 600 : 400,
               }}
             >
-              Preview
+              {t("preview", "Preview")}
             </button>
             <button
               type="button"
@@ -1096,7 +1111,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
                 fontWeight: !previewMode ? 600 : 400,
               }}
             >
-              Raw
+              {t("raw", "Raw")}
             </button>
           </div>
         )}
