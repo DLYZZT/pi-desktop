@@ -7,6 +7,8 @@ import type {
   ChannelLoginEvent,
   ChannelProbeResult,
   ChannelStatus,
+  ChannelActivity,
+  ChannelRuntimeState,
   ChannelsSnapshot,
   FeishuDomain,
 } from "@shared/channel-types";
@@ -74,6 +76,45 @@ function statusColor(status?: ChannelStatus): string {
 }
 
 type Translate = (key: string, fallback: string) => string;
+
+function channelStatusLabel(status: ChannelRuntimeState, t: Translate): string {
+  switch (status) {
+    case "starting":
+      return t("channelStatus_starting", "starting");
+    case "running":
+      return t("channelStatus_running", "running");
+    case "reconnecting":
+      return t("channelStatus_reconnecting", "reconnecting");
+    case "stopped":
+      return t("channelStatus_stopped", "stopped");
+    case "error":
+      return t("channelStatus_error", "error");
+  }
+}
+
+function activityDirectionLabel(direction: ChannelActivity["direction"], t: Translate): string {
+  switch (direction) {
+    case "inbound":
+      return t("activityDirection_inbound", "inbound");
+    case "outbound":
+      return t("activityDirection_outbound", "outbound");
+    case "system":
+      return t("activityDirection_system", "system");
+  }
+}
+
+function activityOutcomeLabel(outcome: ChannelActivity["outcome"], t: Translate): string {
+  switch (outcome) {
+    case "accepted":
+      return t("activityOutcome_accepted", "accepted");
+    case "ignored":
+      return t("activityOutcome_ignored", "ignored");
+    case "sent":
+      return t("activityOutcome_sent", "sent");
+    case "failed":
+      return t("activityOutcome_failed", "failed");
+  }
+}
 
 function channelLabel(channel: ChannelAccountConfig["channel"], t: Translate, domain?: FeishuDomain): string {
   if (channel === "telegram") return "Telegram";
@@ -687,7 +728,7 @@ export function AccountCard({
           <div>
             <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 700 }}>{account.name}</div>
             <div style={{ color: statusColor(status), fontSize: 11, marginTop: 2 }}>
-              {t(`channelStatus_${status?.state ?? "stopped"}`, status?.state ?? "stopped")} ·{" "}
+              {channelStatusLabel(status?.state ?? "stopped", t)} ·{" "}
               {account.credentialFingerprint ?? t("notConfigured", "not configured")}
             </div>
             <div style={{ color: "var(--text-dim)", fontSize: 10, marginTop: 2 }}>
@@ -1285,9 +1326,8 @@ function ActivitySection({ snapshot }: { snapshot: ChannelsSnapshot }) {
                 }}
               >
                 <span style={{ color: activity.outcome === "failed" ? "var(--danger)" : "var(--text-muted)" }}>
-                  {channelLabel(activity.channel, t)} ·{" "}
-                  {t(`activityDirection_${activity.direction}`, activity.direction)} ·{" "}
-                  {t(`activityOutcome_${activity.outcome}`, activity.outcome)}
+                  {channelLabel(activity.channel, t)} · {activityDirectionLabel(activity.direction, t)} ·{" "}
+                  {activityOutcomeLabel(activity.outcome, t)}
                   {activity.peerId ? ` · ${activity.peerId}` : ""}
                   {activity.detail ? ` · ${activity.detail}` : ""}
                 </span>

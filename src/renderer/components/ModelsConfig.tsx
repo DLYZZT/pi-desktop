@@ -253,6 +253,39 @@ function ProviderDetail({
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
+function thinkingLevelLabel(level: ThinkingLevel, t: (key: string, fallback: string) => string): string {
+  switch (level) {
+    case "off":
+      return t("thinkingOff", "off");
+    case "minimal":
+      return t("thinkingMinimal", "minimal");
+    case "low":
+      return t("thinkingLow", "low");
+    case "medium":
+      return t("thinkingMedium", "medium");
+    case "high":
+      return t("thinkingHigh", "high");
+    case "xhigh":
+      return t("thinkingXHigh", "xhigh");
+  }
+}
+
+function modelCostLabel(
+  kind: "input" | "output" | "cacheRead" | "cacheWrite",
+  t: (key: string, fallback: string) => string,
+): string {
+  switch (kind) {
+    case "input":
+      return t("modelCostInput", "input");
+    case "output":
+      return t("modelCostOutput", "output");
+    case "cacheRead":
+      return t("modelCostCacheRead", "cache read");
+    case "cacheWrite":
+      return t("modelCostCacheWrite", "cache write");
+  }
+}
+
 const LEVEL_COLORS: Record<ThinkingLevel, string> = {
   off: "var(--text-dim)",
   minimal: "#a19d92",
@@ -346,17 +379,7 @@ function ThinkingLevelMapEditor({
                   textDecoration: state === "null" ? "line-through" : "none",
                 }}
               >
-                {t(
-                  {
-                    off: "thinkingOff",
-                    minimal: "thinkingMinimal",
-                    low: "thinkingLow",
-                    medium: "thinkingMedium",
-                    high: "thinkingHigh",
-                    xhigh: "thinkingXHigh",
-                  }[level],
-                  level,
-                )}
+                {thinkingLevelLabel(level, t)}
               </span>
             </div>
 
@@ -725,18 +748,7 @@ function ModelDetail({
         <SectionTitle>{t("modelCostPerMillion", "Cost (per million tokens)")}</SectionTitle>
         <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
           {(["input", "output", "cacheRead", "cacheWrite"] as const).map((k) => (
-            <Field
-              key={k}
-              label={t(
-                {
-                  input: "modelCostInput",
-                  output: "modelCostOutput",
-                  cacheRead: "modelCostCacheRead",
-                  cacheWrite: "modelCostCacheWrite",
-                }[k],
-                k,
-              )}
-            >
+            <Field key={k} label={modelCostLabel(k, t)}>
               <NumInput value={costVal(k)} onChange={(v) => setCost(k, v)} placeholder="0" />
             </Field>
           ))}

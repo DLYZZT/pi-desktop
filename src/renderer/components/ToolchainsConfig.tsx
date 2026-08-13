@@ -19,26 +19,18 @@ import { useI18n } from "@/i18n";
 
 const TOOL_CATEGORIES: ReadonlyArray<{
   id: "javascript" | "python" | "cli";
-  titleKey: string;
-  title: string;
   capabilities: readonly ToolCapabilityId[];
 }> = [
   {
     id: "javascript",
-    titleKey: "toolGroupJavaScript",
-    title: "JavaScript",
     capabilities: ["js.node", "js.npm", "js.npx", "js.bun"],
   },
   {
     id: "python",
-    titleKey: "toolGroupPython",
-    title: "Python",
     capabilities: ["python.interpreter", "python.uv", "python.uvx"],
   },
   {
     id: "cli",
-    titleKey: "toolGroupCli",
-    title: "CLI essentials",
     capabilities: ["shell.bash", "shell.powershell", "vcs.git", "search.rg", "search.fd", "data.jq", "network.curl"],
   },
 ];
@@ -96,6 +88,17 @@ const CACHE_LABELS: Record<ToolchainCacheId, string> = {
 };
 
 type Translate = (key: string, fallback: string) => string;
+
+function toolCategoryTitle(category: (typeof TOOL_CATEGORIES)[number]["id"], t: Translate): string {
+  switch (category) {
+    case "javascript":
+      return t("toolGroupJavaScript", "JavaScript");
+    case "python":
+      return t("toolGroupPython", "Python");
+    case "cli":
+      return t("toolGroupCli", "CLI essentials");
+  }
+}
 
 export function ToolchainsConfig({ cwd }: { cwd?: string | null }) {
   const { t } = useI18n();
@@ -247,7 +250,7 @@ export function ToolchainStateView({
                     letterSpacing: "0.06em",
                   }}
                 >
-                  <span>{t(category.titleKey, category.title)}</span>
+                  <span>{toolCategoryTitle(category.id, t)}</span>
                   <span style={{ letterSpacing: 0, fontWeight: 500 }}>
                     {state ? `${readyCount}/${category.capabilities.length}` : "–"}
                   </span>

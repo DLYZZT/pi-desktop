@@ -99,7 +99,7 @@ export function CapabilityRequired({
       }}
     >
       <div style={{ fontSize: 12, fontWeight: 700 }}>
-        {t("capabilityRequiredTitle", `${label} is required for this operation.`).replace("{tool}", label)}
+        {t("capabilityRequiredTitle", "{tool} is required for this operation.").replace("{tool}", label)}
       </div>
       <p style={{ margin: "5px 0 10px", fontSize: 11, lineHeight: 1.55, color: "var(--text-muted)" }}>
         {t(
