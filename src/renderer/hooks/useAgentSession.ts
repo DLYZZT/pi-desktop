@@ -54,6 +54,8 @@ import {
   type SessionHistoryValue,
 } from "@/lib/session-history-update";
 import { NOTICE_VISIBLE_MS, noticeExpiryDelay, noticeReducer, type NoticeType } from "@/lib/notice-queue";
+import { useI18n } from "@/i18n";
+import { sessionClientErrorMessage } from "@/lib/session-error-message";
 
 export type SessionData = SessionDetail;
 type AgentStateResponse = SessionRuntimeState;
@@ -170,11 +172,7 @@ const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home
 
 class EventStreamConnectionError extends Error {
   constructor(public readonly status: Exclude<EventStreamConnectionStatus, "connected">) {
-    super(
-      status === "timeout"
-        ? "Timed out connecting to the agent event stream. Please try again."
-        : "Failed to connect to the agent event stream. Please try again.",
-    );
+    super(`EVENT_STREAM_${status.toUpperCase()}`);
     this.name = "EventStreamConnectionError";
   }
 }
@@ -265,6 +263,7 @@ type SlashCommandsResponse = {
 };
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
+  const { t } = useI18n();
   const {
     session,
     newSessionCwd,
@@ -517,13 +516,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         return d.agentState ?? null;
       } catch (e) {
         if (!traceFailed) failSessionLoadTrace(trace);
-        setError(String(e));
+        setError(sessionClientErrorMessage(e, t, t("sessionLoadFailed", "Failed to load session.")));
         return null;
       } finally {
         if (showLoading) setLoading(false);
       }
     },
-    [commitHistory, updatePagingState],
+    [commitHistory, t, updatePagingState],
   );
 
   useEffect(() => {
@@ -1048,12 +1047,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           void finishPromptWithoutStream(sessionIdRef.current);
           break;
         case "prompt_error":
-          addNotice({ type: "error", message: (event.errorMessage as string | undefined) ?? "Command failed" });
+          addNotice({
+            type: "error",
+            message: (event.errorMessage as string | undefined) ?? t("commandFailed", "Command failed"),
+          });
           break;
         case "extension_error":
           addNotice({
             type: "error",
-            message: (event.error as string | undefined) ?? "Extension command failed",
+            message: (event.error as string | undefined) ?? t("extensionCommandFailed", "Extension command failed"),
           });
           break;
         case "message_start":
@@ -1159,7 +1161,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           break;
       }
     },
-    [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd, updateHistory],
+    [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd, t, updateHistory],
   );
   handleAgentEventRef.current = handleAgentEvent;
 
@@ -1246,7 +1248,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
         addNotice({
           type: "error",
-          message: e instanceof Error ? e.message : String(e),
+          message: sessionClientErrorMessage(e, t, t("messageSendFailed", "Failed to send message.")),
         });
         optimisticUserMessageKeyRef.current = null;
         agentRunningRef.current = false;
@@ -1262,6 +1264,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       newSessionCwd,
       newSessionModel,
       session,
+      t,
       agentRunning,
       ensureNewSession,
       ensureEventsConnected,
@@ -1465,7 +1468,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         return;
       addNotice({
         type: "error",
-        message: "Unable to refresh the model directory. Cached models remain available.",
+        message: t(
+          "modelDirectoryRefreshFailed",
+          "Unable to refresh the model directory. Cached models remain available.",
+        ),
       });
     } finally {
       if (modelRefreshRequestRef.current === requestId) {
@@ -1473,7 +1479,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setModelRefreshing(false);
       }
     }
-  }, [addNotice, applyModelsResult, newSessionCwd, session?.cwd]);
+  }, [addNotice, applyModelsResult, newSessionCwd, session?.cwd, t]);
 
   const handleBuiltinSlashCommand = useCallback(
     async (text: string): Promise<BuiltinSlashCommandResult> => {
@@ -1489,7 +1495,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (result.error) {
           addNotice({ type: "error", message: result.error });
         } else if (result.action !== "openSessionStats") {
-          addNotice({ type: "success", message: result.message ?? "Command completed" });
+          addNotice({ type: "success", message: result.message ?? t("commandCompleted", "Command completed") });
         }
         return result;
       };
@@ -1497,7 +1503,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       try {
         switch (commandName) {
           case "compact": {
-            if (!sid || isCompacting) return complete({ handled: true, error: "No active session to compact" });
+            if (!sid || isCompacting) {
+              return complete({
+                handled: true,
+                error: t("noActiveSessionToCompact", "No active session to compact"),
+              });
+            }
             setIsCompacting(true);
             setCompactError(null);
             setCompactResult(null);
@@ -1507,26 +1518,36 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             });
             setCompactResult(readCompactResult(result, "manual"));
             if (await loadSession(sid, true)) promoteNewSession();
-            return complete({ handled: true, message: "Compacted context" });
+            return complete({ handled: true, message: t("contextCompacted", "Compacted context") });
           }
 
           case "reload": {
-            if (!sid) return complete({ handled: true, error: "No active session to reload" });
+            if (!sid) {
+              return complete({ handled: true, error: t("noActiveSessionToReload", "No active session to reload") });
+            }
             await sendAgentCommand(sid, { type: "reload" });
             await Promise.all([loadSession(sid, false, true), loadTools(sid), loadSlashCommands(), loadModels()]);
-            return complete({ handled: true, message: "Reloaded session resources" });
+            return complete({
+              handled: true,
+              message: t("sessionResourcesReloaded", "Reloaded session resources"),
+            });
           }
 
           case "name": {
-            if (!sid) return complete({ handled: true, error: "No active session to name" });
-            if (!args) return complete({ handled: true, error: "Usage: /name <name>" });
+            if (!sid) {
+              return complete({ handled: true, error: t("noActiveSessionToName", "No active session to name") });
+            }
+            if (!args) return complete({ handled: true, error: t("nameCommandUsage", "Usage: /name <name>") });
             await sendAgentCommand(sid, { type: "set_session_name", name: args });
             if (await loadSession(sid)) promoteNewSession();
-            return complete({ handled: true, message: `Session renamed to ${args}` });
+            return complete({
+              handled: true,
+              message: t("sessionRenamedTo", "Session renamed to {name}").replace("{name}", args),
+            });
           }
 
           case "session": {
-            if (!sid) return complete({ handled: true, error: "No active session" });
+            if (!sid) return complete({ handled: true, error: t("noActiveSession", "No active session") });
             const stats = await sendAgentCommand<SessionStatsInfo>(sid, { type: "get_session_stats" });
             if (stats) {
               setSessionStatsOverride(stats);
@@ -1536,12 +1557,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           }
 
           case "copy": {
-            if (!sid) return complete({ handled: true, error: "No active session" });
+            if (!sid) return complete({ handled: true, error: t("noActiveSession", "No active session") });
             const data = await sendAgentCommand<LastAssistantTextResponse>(sid, { type: "get_last_assistant_text" });
             const textToCopy = data?.text ?? "";
-            if (!textToCopy) return complete({ handled: true, error: "No assistant message to copy" });
+            if (!textToCopy) {
+              return complete({
+                handled: true,
+                error: t("noAssistantMessageToCopy", "No assistant message to copy"),
+              });
+            }
             await navigator.clipboard.writeText(textToCopy);
-            return complete({ handled: true, message: "Copied last assistant message" });
+            return complete({
+              handled: true,
+              message: t("copiedLastAssistantMessage", "Copied last assistant message"),
+            });
           }
 
           default:
@@ -1563,6 +1592,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       loadTools,
       promoteNewSession,
       onSessionStatsPanelOpen,
+      t,
     ],
   );
 
@@ -1575,7 +1605,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const sid = sessionIdRef.current;
       if (!sid) {
         const error = new Error("The active session is no longer available");
-        addNotice({ type: "error", message: "Unable to steer the running agent. The message was not queued." });
+        addNotice({
+          type: "error",
+          message: t("steerFailedNotQueued", "Unable to steer the running agent. The message was not queued."),
+        });
         throw error;
       }
       const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
@@ -1587,11 +1620,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
       } catch (error) {
         console.error("Failed to steer:", error);
-        addNotice({ type: "error", message: "Unable to steer the running agent. The message was not queued." });
+        addNotice({
+          type: "error",
+          message: t("steerFailedNotQueued", "Unable to steer the running agent. The message was not queued."),
+        });
         throw error;
       }
     },
-    [addNotice],
+    [addNotice, t],
   );
 
   const handlePromptWithStreamingBehavior = useCallback(
@@ -1599,7 +1635,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const sid = sessionIdRef.current;
       if (!sid) {
         const error = new Error("The active session is no longer available");
-        addNotice({ type: "error", message: "Unable to queue this prompt. The message was not queued." });
+        addNotice({
+          type: "error",
+          message: t("promptQueueFailedNotQueued", "Unable to queue this prompt. The message was not queued."),
+        });
         throw error;
       }
       const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
@@ -1612,11 +1651,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
       } catch (error) {
         console.error("Failed to queue prompt:", error);
-        addNotice({ type: "error", message: "Unable to queue this prompt. The message was not queued." });
+        addNotice({
+          type: "error",
+          message: t("promptQueueFailedNotQueued", "Unable to queue this prompt. The message was not queued."),
+        });
         throw error;
       }
     },
-    [addNotice],
+    [addNotice, t],
   );
 
   const handleFollowUp = useCallback(
@@ -1624,7 +1666,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const sid = sessionIdRef.current;
       if (!sid) {
         const error = new Error("The active session is no longer available");
-        addNotice({ type: "error", message: "Unable to queue this follow-up. The message was not queued." });
+        addNotice({
+          type: "error",
+          message: t("followUpQueueFailedNotQueued", "Unable to queue this follow-up. The message was not queued."),
+        });
         throw error;
       }
       const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
@@ -1636,11 +1681,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
       } catch (error) {
         console.error("Failed to follow up:", error);
-        addNotice({ type: "error", message: "Unable to queue this follow-up. The message was not queued." });
+        addNotice({
+          type: "error",
+          message: t("followUpQueueFailedNotQueued", "Unable to queue this follow-up. The message was not queued."),
+        });
         throw error;
       }
     },
-    [addNotice],
+    [addNotice, t],
   );
 
   const handleAbortCompaction = useCallback(async () => {
@@ -1667,9 +1715,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch (e) {
       console.error("Failed to recall queued messages:", e);
-      addNotice({ type: "error", message: "Failed to recall queued messages" });
+      addNotice({ type: "error", message: t("queuedMessagesRecallFailed", "Failed to recall queued messages") });
     }
-  }, [opts.chatInputRef, addNotice]);
+  }, [opts.chatInputRef, addNotice, t]);
 
   const handleThinkingLevelChange = useCallback(async (level: ThinkingLevelOption) => {
     setThinkingLevel(level);
@@ -1898,12 +1946,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         type: "warning",
         message:
           modelListSizeRef.current > 0
-            ? "Unable to load the model directory. Cached models remain available; retry from the model picker."
-            : "Unable to load the model directory. Retry from the model picker or check the Agent Host connection.",
+            ? t(
+                "modelDirectoryLoadFailedCached",
+                "Unable to load the model directory. Cached models remain available; retry from the model picker.",
+              )
+            : t(
+                "modelDirectoryLoadFailed",
+                "Unable to load the model directory. Retry from the model picker or check the Agent Host connection.",
+              ),
       });
     });
     return () => controller.abort();
-  }, [addNotice, loadModels, modelsRefreshKey]);
+  }, [addNotice, loadModels, modelsRefreshKey, t]);
 
   useEffect(() => cancelModelRefresh, [cancelModelRefresh, newSessionCwd, session?.cwd]);
 

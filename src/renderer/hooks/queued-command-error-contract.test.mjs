@@ -6,16 +6,16 @@ const hookSource = readFileSync(new URL("./useAgentSession.ts", import.meta.url)
 const inputSource = readFileSync(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
 
 test("queued command handlers notify and reject on command failures", () => {
-  for (const [logMessage, noticeMessage] of [
-    ["Failed to steer:", "Unable to steer the running agent. The message was not queued."],
-    ["Failed to queue prompt:", "Unable to queue this prompt. The message was not queued."],
-    ["Failed to follow up:", "Unable to queue this follow-up. The message was not queued."],
+  for (const [logMessage, translationKey] of [
+    ["Failed to steer:", "steerFailedNotQueued"],
+    ["Failed to queue prompt:", "promptQueueFailedNotQueued"],
+    ["Failed to follow up:", "followUpQueueFailedNotQueued"],
   ]) {
-    assert.ok(
-      hookSource.includes(
-        `console.error("${logMessage}", error);\n        addNotice({ type: "error", message: "${noticeMessage}" });\n        throw error;`,
-      ),
-    );
+    const logIndex = hookSource.indexOf(`console.error("${logMessage}", error);`);
+    assert.notEqual(logIndex, -1);
+    const rejectionBlock = hookSource.slice(logIndex, hookSource.indexOf("throw error;", logIndex) + 12);
+    assert.match(rejectionBlock, new RegExp(`t\\("${translationKey}"`));
+    assert.match(rejectionBlock, /addNotice\(\{[\s\S]*?type: "error"/);
   }
 });
 
