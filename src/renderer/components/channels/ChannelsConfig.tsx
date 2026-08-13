@@ -352,7 +352,9 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
       <div style={{ maxWidth: 820, margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
           <div>
-            <h2 style={{ margin: 0, color: "var(--text)", fontSize: 16 }}>{t("channels", "Messaging channels")}</h2>
+            <h2 style={{ margin: 0, color: "var(--text)", fontSize: 16 }}>
+              {t("messagingChannels", "Messaging channels")}
+            </h2>
             <p style={{ margin: "6px 0 0", color: "var(--text-dim)", fontSize: 12, lineHeight: 1.6 }}>
               {t("channelsDescription", "Connect IM accounts, control access, and bind conversations to Pi sessions.")}
             </p>
@@ -1807,7 +1809,9 @@ export function LoginDialog({
         }}
       >
         <h3 style={{ margin: 0, color: "var(--text)", fontSize: 16 }}>
-          {isFeishu ? t("feishuScanCreate", "Scan to create Feishu / Lark bot") : t("connectWeixin", "Connect WeChat")}
+          {isFeishu
+            ? t("feishuScanCreateTitle", "Scan to create Feishu / Lark bot")
+            : t("connectWeixin", "Connect WeChat")}
         </h3>
         {event.qrContent && !terminal && (
           <div

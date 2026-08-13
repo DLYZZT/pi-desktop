@@ -1125,12 +1125,12 @@ export function AppShell() {
                           [t("usageInput", "Input"), sessionStats.tokens.input.toLocaleString(language)],
                           [t("usageOutput", "Output"), sessionStats.tokens.output.toLocaleString(language)],
                           ...(sessionStats.tokens.cacheRead > 0
-                            ? [[t("cacheRead", "Cache Read"), sessionStats.tokens.cacheRead.toLocaleString(language)]]
+                            ? [[t("cacheRead", "Cache read"), sessionStats.tokens.cacheRead.toLocaleString(language)]]
                             : []),
                           ...(sessionStats.tokens.cacheWrite > 0
                             ? [
                                 [
-                                  t("cacheWrite", "Cache Write"),
+                                  t("cacheWrite", "Cache write"),
                                   sessionStats.tokens.cacheWrite.toLocaleString(language),
                                 ],
                               ]
@@ -1296,7 +1296,7 @@ export function AppShell() {
                         const sessionInfoSection = (
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
-                              {t("sessionInfo", "Session Info")}
+                              {t("sessionInfo", "Session info")}
                             </div>
                             <div
                               style={{
@@ -1349,7 +1349,7 @@ export function AppShell() {
                           >
                             {sessionInfoSection}
                             {section(t("messages", "Messages"), messageRows)}
-                            {section(t("tokens", "Tokens"), [...tokenRows, ...extraTokenRows], "right", true)}
+                            {section(t("tokenStatistics", "Tokens"), [...tokenRows, ...extraTokenRows], "right", true)}
                           </div>
                         );
                       })()

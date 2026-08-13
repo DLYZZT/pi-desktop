@@ -2652,7 +2652,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                           <line x1="10" y1="14" x2="3" y2="21" />
                           <line x1="21" y1="3" x2="14" y2="10" />
                         </svg>
-                        {!isMobile && <span style={{ whiteSpace: "nowrap" }}>{t("compact", "Compact")}</span>}
+                        {!isMobile && <span style={{ whiteSpace: "nowrap" }}>{t("compactAction", "Compact")}</span>}
                       </>
                     )}
                   </button>

@@ -13,7 +13,7 @@ const browserService = read(new URL("../../../main/browser/browser-service.ts", 
 const browserTabManager = read(new URL("../../../main/browser/browser-tab-manager.ts", import.meta.url));
 const mainProcess = read(new URL("../../../main/main.ts", import.meta.url));
 const mainWindow = read(new URL("../../../main/window.ts", import.meta.url));
-const i18n = read(new URL("../../i18n.ts", import.meta.url));
+const i18n = read(new URL("../../i18n-dictionaries.ts", import.meta.url));
 
 test("Browser remains a fixed right-panel resource and hides its native surface behind Settings", () => {
   assert.match(appShell, /const BROWSER_TAB_ID = "browser"/);

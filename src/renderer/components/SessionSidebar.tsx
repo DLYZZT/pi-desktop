@@ -1862,7 +1862,9 @@ export function SessionSidebar({
             }}
           >
             <span>{t("sessions", "Sessions")}</span>
-            <span aria-label={`${filteredSessions.length} ${t("sessions", "sessions")}`}>
+            <span
+              aria-label={t("sessionCount", "{count} sessions").replace("{count}", String(filteredSessions.length))}
+            >
               {filteredSessions.length}
             </span>
           </div>
@@ -1892,7 +1894,7 @@ export function SessionSidebar({
               type="search"
               value={sessionFilter}
               onChange={(event) => setSessionFilter(event.target.value)}
-              placeholder={t("searchSessions", "Search sessions…")}
+              placeholder={t("searchSessions", "Search sessions")}
               aria-label={t("searchSessions", "Search sessions")}
               style={{
                 width: "100%",
@@ -2430,7 +2432,7 @@ function SessionItem({
             aria-current={isSelected ? "page" : undefined}
             aria-label={
               isRunning
-                ? `${title} · ${t("agentRunning", "Agent running")}`
+                ? `${title} · ${t("agentRunningStatus", "Agent running")}`
                 : isUnread
                   ? `${title} · ${t("newSessionActivity", "New activity")}`
                   : title
