@@ -331,6 +331,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [previousCursor, setPreviousCursor] = useState<string | null>(null);
   const [historyRevision, setHistoryRevision] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  // True when the chat viewport has scrolled away from the bottom; drives the
+  // floating "scroll to bottom" affordance in ChatWindow.
+  const [isAwayFromBottom, setIsAwayFromBottom] = useState(false);
 
   const eventUnsubRef = useRef<(() => void) | null>(null);
   const [eventConnectionManager] = useState(() => new EventStreamConnectionManager(eventUnsubRef));
@@ -351,6 +354,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const lastScrollTopRef = useRef(0);
   const externalTurnAutoFollowRef = useRef(false);
+  // Set when the user explicitly re-attaches the viewport to the newest
+  // content (clicks "scroll to bottom"); live-follow then stays engaged until
+  // the user scrolls away again or the run ends.
+  const autoFollowMagnetRef = useRef(false);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
@@ -1011,6 +1018,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         case "channel_turn_end":
         case "channel_turn_error":
           externalTurnAutoFollowRef.current = false;
+          autoFollowMagnetRef.current = false;
           break;
         case "agent_start":
           agentRunningRef.current = true;
@@ -1027,6 +1035,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setAgentPhase(null);
           setRetryInfo(null);
           dispatch({ type: "end" });
+          autoFollowMagnetRef.current = false;
           if (sessionIdRef.current) {
             void loadSession(sessionIdRef.current);
             void agentState(sessionIdRef.current)
@@ -1193,6 +1202,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       dispatch({ type: "start" });
       pendingScrollToUserRef.current = true;
       completionScrollAllowedRef.current = true;
+      autoFollowMagnetRef.current = false;
 
       const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
 
@@ -1765,6 +1775,26 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     container.scrollTo({ top: elAbsTop - 16, behavior: "smooth" });
   }, []);
 
+  const updateScrollPresence = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const nearBottom = isNearChatBottom(container);
+    // Bail out of re-renders when the value is unchanged.
+    setIsAwayFromBottom((prev) => (prev === !nearBottom ? prev : !nearBottom));
+  }, []);
+
+  // "Scroll to bottom": snap to the end and re-magnet the viewport so the next
+  // streaming ticks keep following until the user scrolls away again.
+  const reattachAutoFollow = useCallback(() => {
+    completionScrollAllowedRef.current = true;
+    externalTurnAutoFollowRef.current = false;
+    autoFollowMagnetRef.current = true;
+    pendingScrollToUserRef.current = false;
+    initialScrollDoneRef.current = true;
+    userScrollIntentUntilRef.current = 0;
+    scrollToBottom("auto");
+  }, [scrollToBottom]);
+
   const markUserScrollIntent = useCallback((event: Event) => {
     if (event instanceof KeyboardEvent) {
       if (!SCROLL_KEYS.has(event.key)) return;
@@ -1781,6 +1811,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const previousScrollTop = lastScrollTopRef.current;
     const currentScrollTop = container.scrollTop;
     lastScrollTopRef.current = currentScrollTop;
+    updateScrollPresence();
     if (!agentRunningRef.current) return;
     const now = Date.now();
     // Local prompts deliberately move the user's message to the top; retain
@@ -1799,8 +1830,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     ) {
       completionScrollAllowedRef.current = false;
       externalTurnAutoFollowRef.current = false;
+      autoFollowMagnetRef.current = false;
     }
-  }, []);
+  }, [updateScrollPresence]);
 
   // Load session on mount
   useEffect(() => {
@@ -1927,14 +1959,41 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
 
   useEffect(() => {
-    if (!agentRunning || !externalTurnAutoFollowRef.current || !completionScrollAllowedRef.current) return;
+    if (!agentRunning || !completionScrollAllowedRef.current) return;
+    if (!externalTurnAutoFollowRef.current && !autoFollowMagnetRef.current) return;
     const frame = requestAnimationFrame(() => {
-      if (!externalTurnAutoFollowRef.current || !completionScrollAllowedRef.current) return;
+      if (!completionScrollAllowedRef.current) return;
+      if (!externalTurnAutoFollowRef.current && !autoFollowMagnetRef.current) return;
       if (Date.now() <= userScrollIntentUntilRef.current) return;
       scrollLiveContentToBottom();
     });
     return () => cancelAnimationFrame(frame);
-  }, [agentRunning, agentPhase, messages.length, scrollLiveContentToBottom, streamState.streamingMessage]);
+  }, [
+    agentRunning,
+    agentPhase,
+    messages.length,
+    isAwayFromBottom,
+    scrollLiveContentToBottom,
+    streamState.streamingMessage,
+  ]);
+
+  // Keep "away from bottom" fresh when the container is resized.
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const ro = new ResizeObserver(() => updateScrollPresence());
+    ro.observe(container);
+    updateScrollPresence();
+    return () => ro.disconnect();
+  }, [loading, updateScrollPresence]);
+
+  // Content can grow without firing a scroll event (the streaming tail makes
+  // the container taller while scrollTop stays put) — re-evaluate presence
+  // after messages/streaming change.
+  useEffect(() => {
+    const t = setTimeout(updateScrollPresence, 30);
+    return () => clearTimeout(t);
+  }, [messages.length, streamState.isStreaming, streamState.streamingMessage, updateScrollPresence]);
 
   // Load model list
   useEffect(() => {
@@ -2043,6 +2102,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,
+    // "Scroll to bottom" affordance state + action
+    isAwayFromBottom,
+    reattachAutoFollow,
     // Refs
     sessionIdRef,
     eventUnsubRef,

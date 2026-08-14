@@ -339,6 +339,8 @@ export function ChatWindow({
     loadSlashCommands,
     loadOlder,
     loadDeferredContent,
+    isAwayFromBottom,
+    reattachAutoFollow,
   } = useAgentSession({
     session,
     newSessionCwd,
@@ -953,6 +955,53 @@ export function ChatWindow({
                   historyTruncated={hasOlder}
                 />
               </SessionProfiler>
+            )}
+
+            {/* Floating "scroll to bottom" badge: appears when the chat has
+                scrolled away from the newest content. Clicking it snaps to the
+                bottom and re-magnets the viewport so streaming thinking/tool
+                output keeps the view attached until the user scrolls away. */}
+            {isAwayFromBottom && (
+              <button
+                type="button"
+                className="chat-scroll-to-bottom"
+                onClick={reattachAutoFollow}
+                aria-label={t("scrollToBottom", "Scroll to bottom")}
+                title={agentRunning ? t("jumpToLatest", "Jump to latest") : t("scrollToBottom", "Scroll to bottom")}
+                style={{
+                  bottom: 12,
+                  right: isMobile ? 12 : CHAT_MINIMAP_WIDTH + 12,
+                }}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="3.5 6 8 10.5 12.5 6" />
+                </svg>
+                {agentRunning && (
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: "absolute",
+                      top: 2,
+                      right: 2,
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      background: "var(--accent)",
+                      animation: "blink 1.2s ease-in-out infinite",
+                    }}
+                  />
+                )}
+              </button>
             )}
           </div>
         </>
