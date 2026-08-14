@@ -30,6 +30,16 @@ import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { subscribeActiveSessionLiveSync } from "./active-session-live-sync";
 import { isNearChatBottom, shouldStopChatAutoFollow } from "./chat-scroll-policy";
+
+// Module-level scroll magnet: survives ChatWindow remounts (each session switch
+// uses key={sessionKey} in AppShell, which would otherwise wipe every useRef).
+let scrollMagnetEngaged = false;
+function getScrollMagnetEngaged(): boolean {
+  return scrollMagnetEngaged;
+}
+function setScrollMagnetEngaged(value: boolean): void {
+  scrollMagnetEngaged = value;
+}
 import {
   consumeSessionLoadTrace,
   failSessionLoadTrace,
@@ -357,7 +367,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // Set when the user explicitly re-attaches the viewport to the newest
   // content (clicks "scroll to bottom"); live-follow then stays engaged until
   // the user scrolls away again or the run ends.
-  const autoFollowMagnetRef = useRef(false);
+  // Restored from the module flag so the magnet survives session switches that
+  // remount ChatWindow (key={sessionKey}).
+  const autoFollowMagnetRef = useRef(getScrollMagnetEngaged());
   const sessionChangeIgnoreScrollUntilRef = useRef(0);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
@@ -1756,7 +1768,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
-    messagesEndRef.current?.scrollIntoView({ behavior });
+    // Prefer the live-content end anchor. When the agent is running there is
+    // a full-viewport spacer below it (see ChatWindow), and messagesEndRef
+    // sits AFTER that spacer — scrolling to it lands in blank footer space
+    // with the real content still above the fold.
+    const el = agentRunningRef.current ? liveContentEndRef.current : messagesEndRef.current;
+    el?.scrollIntoView({ behavior, block: "end" });
   }, []);
 
   const scrollLiveContentToBottom = useCallback(() => {
@@ -1787,6 +1804,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     completionScrollAllowedRef.current = true;
     externalTurnAutoFollowRef.current = false;
     autoFollowMagnetRef.current = true;
+    setScrollMagnetEngaged(true);
     pendingScrollToUserRef.current = false;
     initialScrollDoneRef.current = true;
     userScrollIntentUntilRef.current = 0;
@@ -1832,6 +1850,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // from content reload should not disengage an already-engaged magnet.
       if (Date.now() >= sessionChangeIgnoreScrollUntilRef.current) {
         autoFollowMagnetRef.current = false;
+        setScrollMagnetEngaged(false);
       }
     }
   }, [updateScrollPresence]);
@@ -1879,6 +1898,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
       void loadSession(session.id, true, true, true).then((agentState) => {
         if (disposed) return;
+        // When the magnet was engaged before switching sessions, scroll to
+        // the very last message after messages load; otherwise the viewport
+        // may show empty footer space while the real content sits above.
+        // Defer via rAF and re-check: the message list can render in multiple
+        // frames, so scroll target should be the live-content end (not the
+        // spacer after it).
+        if (autoFollowMagnetRef.current) {
+          const trySnap = () => {
+            const el = agentRunningRef.current ? liveContentEndRef.current : messagesEndRef.current;
+            if (el) el.scrollIntoView({ behavior: "auto", block: "end" });
+          };
+          requestAnimationFrame(trySnap);
+          requestAnimationFrame(() => requestAnimationFrame(trySnap));
+        }
         if (agentState?.running) {
           void loadTools(session.id);
           if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
