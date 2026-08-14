@@ -358,6 +358,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // content (clicks "scroll to bottom"); live-follow then stays engaged until
   // the user scrolls away again or the run ends.
   const autoFollowMagnetRef = useRef(false);
+  const sessionChangeIgnoreScrollUntilRef = useRef(0);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
@@ -1018,7 +1019,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         case "channel_turn_end":
         case "channel_turn_error":
           externalTurnAutoFollowRef.current = false;
-          autoFollowMagnetRef.current = false;
           break;
         case "agent_start":
           agentRunningRef.current = true;
@@ -1035,7 +1035,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setAgentPhase(null);
           setRetryInfo(null);
           dispatch({ type: "end" });
-          autoFollowMagnetRef.current = false;
           if (sessionIdRef.current) {
             void loadSession(sessionIdRef.current);
             void agentState(sessionIdRef.current)
@@ -1202,7 +1201,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       dispatch({ type: "start" });
       pendingScrollToUserRef.current = true;
       completionScrollAllowedRef.current = true;
-      autoFollowMagnetRef.current = false;
 
       const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
 
@@ -1830,7 +1828,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     ) {
       completionScrollAllowedRef.current = false;
       externalTurnAutoFollowRef.current = false;
-      autoFollowMagnetRef.current = false;
+      // Don't clear the magnet during session transitions: the scroll event
+      // from content reload should not disengage an already-engaged magnet.
+      if (Date.now() >= sessionChangeIgnoreScrollUntilRef.current) {
+        autoFollowMagnetRef.current = false;
+      }
     }
   }, [updateScrollPresence]);
 
@@ -1849,6 +1851,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setPreviousCursor(null);
     setLoadingOlder(false);
     if (session) {
+      sessionChangeIgnoreScrollUntilRef.current = Date.now() + 1500;
       sessionIdRef.current = session.id;
 
       // Subscribe even when the session is currently idle. IM turns can start
