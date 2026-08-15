@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-This notice was reviewed against the Pi Agent Desktop v0.1.7 production dependency graph. The license links below
+This notice was reviewed against the Pi Agent Desktop v0.1.8 production dependency graph. The license links below
 identify the upstream terms that apply to each component; Pi Agent Desktop does not modify or replace those terms.
 A reference-only entry records project lineage and does not mean that the referenced project is bundled with the
 application.
