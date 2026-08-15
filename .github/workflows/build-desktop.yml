@@ -181,22 +181,25 @@ jobs:
           case "${{ matrix.platform }}" in
             mac)
               metadata="dist/latest-mac.yml"
-              update_artifact="dist/Pi-Agent-Desktop-${version}-${{ matrix.arch }}.zip"
+              update_artifacts=(
+                "dist/Pi-Agent-Desktop-${version}-${{ matrix.arch }}.dmg"
+                "dist/Pi-Agent-Desktop-${version}-${{ matrix.arch }}.zip"
+              )
               ;;
             win)
               metadata="dist/latest.yml"
-              update_artifact="dist/Pi-Agent-Desktop-Unsigned-Beta-Setup-${version}.exe"
+              update_artifacts=("dist/Pi-Agent-Desktop-Unsigned-Beta-Setup-${version}.exe")
               ;;
             linux)
               metadata="dist/latest-linux.yml"
-              update_artifact="dist/Pi-Agent-Desktop-${version}-x86_64.AppImage"
+              update_artifacts=("dist/Pi-Agent-Desktop-${version}-x86_64.AppImage")
               ;;
             *)
               echo "Unsupported package platform: ${{ matrix.platform }}" >&2
               exit 1
               ;;
           esac
-          node scripts/verify-update-metadata.mjs "$metadata" "$version" "$update_artifact"
+          node scripts/verify-update-metadata.mjs "$metadata" "$version" "${update_artifacts[@]}"
 
       - name: Upload ${{ matrix.name }} artifacts
         uses: actions/upload-artifact@v7

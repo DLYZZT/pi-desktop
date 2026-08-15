@@ -47,3 +47,29 @@ test("metadata parser accepts quoted scalars and rejects documents without file 
   });
   assert.throws(() => parseUpdateMetadata("version: 0.2.0\nfiles: []"), /no file entries/);
 });
+
+test("AppImage metadata validates its embedded block map without requiring a sidecar", async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "pi-appimage-metadata-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const artifact = path.join(directory, "Pi-Agent-Desktop-0.2.0-x86_64.AppImage");
+  const content = "AppImage with embedded block map";
+  writeFileSync(artifact, content);
+  const metadata = path.join(directory, "latest-linux.yml");
+  const writeMetadata = (blockMapSize) =>
+    writeFileSync(
+      metadata,
+      [
+        "version: 0.2.0",
+        "files:",
+        `  - url: ${path.basename(artifact)}`,
+        `    sha512: ${digest(content)}`,
+        `    size: ${Buffer.byteLength(content)}`,
+        `    blockMapSize: ${blockMapSize}`,
+      ].join("\n"),
+    );
+
+  writeMetadata(8);
+  await verifyUpdateMetadata(metadata, "0.2.0", [artifact]);
+  writeMetadata(0);
+  await assert.rejects(verifyUpdateMetadata(metadata, "0.2.0", [artifact]), /invalid embedded block map size/);
+});

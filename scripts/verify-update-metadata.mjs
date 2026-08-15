@@ -26,7 +26,7 @@ export function parseUpdateMetadata(document) {
       continue;
     }
     if (!current) continue;
-    const propertyMatch = line.match(/^\s+(sha512|size)\s*:\s*(.+?)\s*$/);
+    const propertyMatch = line.match(/^\s+(sha512|size|blockMapSize)\s*:\s*(.+?)\s*$/);
     if (propertyMatch) {
       current[propertyMatch[1]] = scalar(propertyMatch[2]);
     } else if (/^\S/.test(line)) {
@@ -78,9 +78,20 @@ export async function verifyUpdateMetadata(metadataFile, expectedVersion, artifa
     if (entry.sha512 !== digest) {
       throw new Error(`${metadataFile}: SHA-512 mismatch for ${entry.url}`);
     }
-    const blockmap = `${file}.blockmap`;
-    if (!statSync(blockmap).isFile() || statSync(blockmap).size === 0) {
-      throw new Error(`${blockmap}: blockmap is missing or empty`);
+    if (file.endsWith(".AppImage")) {
+      const embeddedBlockMapSize = Number(entry.blockMapSize);
+      if (
+        !Number.isSafeInteger(embeddedBlockMapSize) ||
+        embeddedBlockMapSize <= 0 ||
+        embeddedBlockMapSize >= fileStats.size
+      ) {
+        throw new Error(`${metadataFile}: invalid embedded block map size for ${entry.url}`);
+      }
+    } else {
+      const blockmap = `${file}.blockmap`;
+      if (!statSync(blockmap).isFile() || statSync(blockmap).size === 0) {
+        throw new Error(`${blockmap}: blockmap is missing or empty`);
+      }
     }
   }
 }

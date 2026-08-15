@@ -196,8 +196,9 @@ export async function runSmokeHostChecks(
       if (!dirtyConflict) throw new Error("dirty worktree removal did not return structured conflict detail");
       await call("worktrees.remove", { cwd: repo, path: worktreePath, force: true });
     } finally {
-      fs.rmSync(repo, { recursive: true, force: true });
-      fs.rmSync(worktreeParent, { recursive: true, force: true });
+      const cleanupOptions = { recursive: true, force: true, maxRetries: 10, retryDelay: 200 } as const;
+      fs.rmSync(repo, cleanupOptions);
+      fs.rmSync(worktreeParent, cleanupOptions);
     }
 
     const smokeWindow = createWindow((message) => {
