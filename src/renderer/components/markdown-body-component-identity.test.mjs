@@ -1,11 +1,12 @@
 import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 const { getMarkdownComponentIdentityForTest } = await importTestBundle(
   "src/renderer/components/markdown-body-component-identity",
   {
-    entryPoints: [new URL("./MarkdownBody.tsx", import.meta.url).pathname],
+    entryPoints: [fileURLToPath(new URL("./MarkdownBody.tsx", import.meta.url))],
     jsx: "automatic",
     external: ["react", "react/jsx-runtime", "react-markdown", "mermaid"],
     plugins: [

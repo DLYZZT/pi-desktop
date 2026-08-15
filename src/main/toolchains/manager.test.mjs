@@ -334,16 +334,27 @@ test("resolves compatible coupled Node and Python distributions per project inte
 test("uses a verified legacy npmCommand only for plugin compatibility without mutating the setting", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-legacy-npm-resolution-"));
   try {
-    const node = { ...seed("js.node", "/system/node/bin/node"), componentRoot: "/system/node" };
+    const platform = process.platform;
+    const platformPath = platform === "win32" ? path.win32 : path.posix;
+    const nodeRoot = platform === "win32" ? "C:\\system\\node" : "/system/node";
+    const nodeExecutable = platformPath.join(nodeRoot, "bin", platform === "win32" ? "node.exe" : "node");
+    const legacyNpmExecutable =
+      platform === "win32" ? "C:\\Users\\test\\.local\\bin\\mise.exe" : "/home/user/.local/bin/mise";
+    const node = {
+      ...seed("js.node", nodeExecutable),
+      binDir: platformPath.dirname(nodeExecutable),
+      componentRoot: nodeRoot,
+    };
     const legacyNpm = {
-      ...seed("js.npm", "/home/user/.local/bin/mise"),
+      ...seed("js.npm", legacyNpmExecutable),
+      binDir: platformPath.dirname(legacyNpmExecutable),
       provider: "custom",
       discovery: "legacy-npm-command",
       argvPrefix: ["exec", "node@22", "--", "npm"],
     };
     const manager = new ToolchainManager({
-      platform: "linux",
-      arch: "x64",
+      platform,
+      arch: process.arch,
       fileSystem,
       registry: {
         async collect() {

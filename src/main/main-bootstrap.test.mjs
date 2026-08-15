@@ -18,5 +18,5 @@ test("single-instance lock failure returns before Main registers lifecycle liste
   assert.ok(earlyReturn > quit && earlyReturn < firstListener);
   assert.ok(firstListener > earlyReturn);
   assert.ok(ready > earlyReturn);
-  assert.match(source, /}\n\nstartMainProcess\(\);\s*$/);
+  assert.match(source, /}\r?\n\r?\nstartMainProcess\(\);\s*$/);
 });
