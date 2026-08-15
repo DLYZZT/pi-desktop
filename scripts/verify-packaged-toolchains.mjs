@@ -287,6 +287,7 @@ function runPackagedStartup(executable, toolTarget, environmentPatch = {}, extra
     USERPROFILE: isolated,
     APPDATA: path.join(isolated, "AppData", "Roaming"),
     LOCALAPPDATA: path.join(isolated, "AppData", "Local"),
+    TMPDIR: isolated,
     XDG_CONFIG_HOME: path.join(isolated, ".config"),
     XDG_CACHE_HOME: path.join(isolated, ".cache"),
     XDG_DATA_HOME: path.join(isolated, ".local", "share"),

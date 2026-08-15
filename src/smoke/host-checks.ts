@@ -197,8 +197,16 @@ export async function runSmokeHostChecks(
       await call("worktrees.remove", { cwd: repo, path: worktreePath, force: true });
     } finally {
       const cleanupOptions = { recursive: true, force: true, maxRetries: 10, retryDelay: 200 } as const;
-      fs.rmSync(repo, cleanupOptions);
-      fs.rmSync(worktreeParent, cleanupOptions);
+      for (const directory of [repo, worktreeParent]) {
+        try {
+          fs.rmSync(directory, cleanupOptions);
+        } catch (error) {
+          // Antivirus and git processes can briefly retain handles on Windows.
+          // The smoke assertions have already completed, and the OS owns these
+          // temporary directories, so a deferred cleanup must not mask them.
+          appendMainLog(`smoke: temporary cleanup deferred: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
     }
 
     const smokeWindow = createWindow((message) => {

@@ -100,9 +100,22 @@ function finishPackagedStartupValidation(error?: string): void {
   }
   isQuitting = true;
   updateManager?.stopAutomaticChecks();
-  void hostManager?.stop();
-  for (const win of BrowserWindow.getAllWindows()) win.destroy();
-  app.exit(error ? 1 : 0);
+  const exitCode = error ? 1 : 0;
+  void (async () => {
+    try {
+      // The packaged probe exits immediately after startup. Let the utility
+      // process release the packaged resources before Electron shuts down so
+      // AppImage extraction mode can reap the temporary application cleanly.
+      await hostManager?.stop();
+    } catch (stopError) {
+      appendMainLog(
+        `packaged startup host shutdown failed: ${stopError instanceof Error ? stopError.message : String(stopError)}`,
+      );
+    } finally {
+      for (const win of BrowserWindow.getAllWindows()) win.destroy();
+      app.exit(exitCode);
+    }
+  })();
 }
 
 function getMainWindow(): BrowserWindow | null {
