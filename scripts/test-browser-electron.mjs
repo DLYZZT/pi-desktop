@@ -2,36 +2,25 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import {
-  assertSuccessfulSpawn,
-  resolveElectronBinary,
-  resolvePackageFile,
-  terminateProcessTree,
-} from "./process-utils.mjs";
+import { buildSync } from "esbuild";
+import { resolveElectronBinary, terminateProcessTree } from "./process-utils.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-browser-harness-build-"));
 const outfile = path.join(temp, "browser-electron-harness.cjs");
 try {
-  const esbuild = resolvePackageFile(root, "esbuild", "bin/esbuild");
-  assertSuccessfulSpawn(
-    spawnSync(
-      process.execPath,
-      [
-        esbuild,
-        "src/smoke/browser-electron-harness.ts",
-        "--bundle",
-        "--platform=node",
-        "--format=cjs",
-        "--external:electron",
-        `--outfile=${outfile}`,
-      ],
-      { cwd: root, stdio: "inherit" },
-    ),
-    "Browser Electron harness build",
-  );
+  buildSync({
+    absWorkingDir: root,
+    entryPoints: ["src/smoke/browser-electron-harness.ts"],
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    external: ["electron"],
+    outfile,
+    logLevel: "info",
+  });
   const electronBinary = resolveElectronBinary(root);
   const child = spawn(electronBinary, [outfile], {
     cwd: root,

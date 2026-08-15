@@ -1,14 +1,13 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildSync } from "esbuild";
 import {
-  assertSuccessfulSpawn,
   createProjectBuildTemp,
   projectNodePath,
   resolveElectronBinary,
-  resolvePackageFile,
   terminateProcessTree,
 } from "./process-utils.mjs";
 
@@ -16,24 +15,19 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temp = createProjectBuildTemp(root, "pi-browser-agent-e2e-build-");
 const hostOutfile = path.join(temp, "browser-agent-host.mjs");
 const mainOutfile = path.join(temp, "browser-agent-e2e-harness.cjs");
-const esbuild = resolvePackageFile(root, "esbuild", "bin/esbuild");
 
 function build(entry, outfile, format, externals) {
-  const result = spawnSync(
-    process.execPath,
-    [
-      esbuild,
-      entry,
-      "--bundle",
-      "--platform=node",
-      "--packages=external",
-      `--format=${format}`,
-      ...externals.map((external) => `--external:${external}`),
-      `--outfile=${outfile}`,
-    ],
-    { cwd: root, stdio: "inherit" },
-  );
-  assertSuccessfulSpawn(result, `esbuild for ${entry}`);
+  buildSync({
+    absWorkingDir: root,
+    entryPoints: [entry],
+    bundle: true,
+    platform: "node",
+    packages: "external",
+    format,
+    external: externals,
+    outfile,
+    logLevel: "info",
+  });
 }
 
 try {
