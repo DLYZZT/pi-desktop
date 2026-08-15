@@ -1,15 +1,18 @@
 import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import test from "node:test";
-const { AgentSessionWrapper } = await importTestBundle("src/agent-host/channels/channel-session-scheduler", {
-  packages: "external",
-  stdin: {
-    contents: 'export { AgentSessionWrapper } from "../rpc-manager.ts";',
-    resolveDir: import.meta.dirname,
-    sourcefile: "channel-session-test-entry.ts",
-    loader: "ts",
+const { AgentSessionWrapper, getLegacySessionToolNames } = await importTestBundle(
+  "src/agent-host/channels/channel-session-scheduler",
+  {
+    packages: "external",
+    stdin: {
+      contents: 'export { AgentSessionWrapper, getLegacySessionToolNames } from "../rpc-manager.ts";',
+      resolveDir: import.meta.dirname,
+      sourcefile: "channel-session-test-entry.ts",
+      loader: "ts",
+    },
   },
-});
+);
 
 test("UI prompts and messaging-channel turns share one serial session scheduler", async (t) => {
   const order = [];
@@ -134,6 +137,57 @@ test("UI prompts and messaging-channel turns share one serial session scheduler"
     progress.map((event) => event.type),
     ["message_end", "message_update"],
   );
+});
+
+test("session tool changes use Desktop persistence and can enable tools after an empty initialization", async (t) => {
+  const persistedStates = [];
+  let activeToolNames = [];
+  const inner = {
+    sessionId: "session-tools",
+    sessionFile: "/tmp/session-tools.jsonl",
+    sessionManager: {
+      getHeader: () => ({ cwd: "/tmp" }),
+    },
+    agent: { state: { messages: [], systemPrompt: "initial" } },
+    getAllTools: () => [
+      { name: "read", description: "Read" },
+      { name: "bash", description: "Bash" },
+    ],
+    getActiveToolNames: () => [...activeToolNames],
+    setActiveToolsByName(toolNames) {
+      activeToolNames = [...toolNames];
+      this.agent.state.systemPrompt = toolNames.length > 0 ? "tools enabled" : "no tools";
+    },
+  };
+  const wrapper = new AgentSessionWrapper(inner, [], (sessionId, toolNames) => {
+    persistedStates.push({ sessionId, toolNames: [...toolNames] });
+  });
+  t.after(() => wrapper.destroy());
+
+  assert.equal(inner.agent.state.systemPrompt, "");
+  await wrapper.send({ type: "set_tools", toolNames: ["read", "bash"] });
+  assert.deepEqual(activeToolNames, ["read", "bash"]);
+  assert.equal(inner.agent.state.systemPrompt, "tools enabled");
+  assert.deepEqual(persistedStates.at(-1), { sessionId: "session-tools", toolNames: ["read", "bash"] });
+
+  await wrapper.send({ type: "set_tools", toolNames: [] });
+  assert.deepEqual(activeToolNames, []);
+  assert.equal(inner.agent.state.systemPrompt, "");
+  assert.deepEqual(persistedStates.at(-1), { sessionId: "session-tools", toolNames: [] });
+});
+
+test("legacy JSONL session tools use the latest valid state for sidecar migration", () => {
+  const entries = [
+    { type: "custom", customType: "pi-desktop-session-tools", data: { version: 1, toolNames: ["read"] } },
+    { type: "custom", customType: "other", data: { version: 1, toolNames: ["bash"] } },
+    { type: "custom", customType: "pi-desktop-session-tools", data: { version: 2, toolNames: ["write"] } },
+    {
+      type: "custom",
+      customType: "pi-desktop-session-tools",
+      data: { version: 1, toolNames: [" bash ", "bash", "edit"] },
+    },
+  ];
+  assert.deepEqual(getLegacySessionToolNames({ getEntries: () => entries }), ["bash", "edit"]);
 });
 
 test("session destroy notifies every teardown owner once and isolates failures", () => {

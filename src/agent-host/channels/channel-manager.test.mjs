@@ -272,6 +272,95 @@ test("fake adapter runs inbound message through binding, Pi bridge, and delivery
   await manager.shutdown();
 });
 
+test("account tool changes update bindings and synchronize their existing sessions", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-manager-default-tools-"));
+  const fake = createFakeAdapter("telegram");
+  const registry = new AdapterRegistry();
+  registry.register(fake.adapter);
+  const bindingsSeen = [];
+  const toolSyncs = [];
+  const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
+    dataDirectory: dir,
+    registry,
+    secretAccess: {
+      get: async () => ({ token: "token", providerAccountId: "bot", baseUrl: "https://example.test" }),
+      set: async () => {},
+      delete: async () => {},
+    },
+    bridge: {
+      async syncTools(binding, toolNames) {
+        toolSyncs.push({ peerId: binding.peerId, sessionId: binding.sessionId, toolNames: [...toolNames] });
+      },
+      async runTurn(binding, _envelope, _onProgress, _attachments, newSessionToolNames) {
+        bindingsSeen.push({
+          peerId: binding.peerId,
+          bindingToolNames: [...binding.toolNames],
+          newSessionToolNames: [...newSessionToolNames],
+        });
+        return {
+          sessionId: binding.sessionId ?? `session-${binding.peerId}`,
+          cwd: binding.cwd,
+          finalText: "ok",
+          generatedFiles: [],
+        };
+      },
+    },
+  });
+  const now = new Date().toISOString();
+  const account = {
+    id: "telegram-default-tools",
+    channel: "telegram",
+    name: "Default tools bot",
+    enabled: true,
+    providerAccountId: "bot",
+    dmPolicy: "open",
+    allowFrom: [],
+    groupPolicy: "disabled",
+    groupIds: [],
+    groupAllowFrom: [],
+    requireMention: true,
+    toolNames: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  const envelope = (id, peerId) => ({
+    id,
+    channel: "telegram",
+    accountId: account.id,
+    peer: { kind: "dm", id: peerId },
+    sender: { id: peerId },
+    text: "test",
+    mentionsBot: false,
+    attachments: [],
+    timestamp: Date.now(),
+  });
+
+  await manager.upsertAccount(account);
+  await fake.emit(envelope("before-update", "user-one"));
+
+  const fullTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+  await manager.upsertAccount({ ...account, toolNames: fullTools });
+  await fake.emit(envelope("existing-after-update", "user-one"));
+  await fake.emit(envelope("new-after-update", "user-two"));
+
+  assert.deepEqual(bindingsSeen, [
+    { peerId: "user-one", bindingToolNames: [], newSessionToolNames: [] },
+    { peerId: "user-one", bindingToolNames: fullTools, newSessionToolNames: fullTools },
+    { peerId: "user-two", bindingToolNames: fullTools, newSessionToolNames: fullTools },
+  ]);
+  assert.deepEqual(toolSyncs, [{ peerId: "user-one", sessionId: "session-user-one", toolNames: fullTools }]);
+  const snapshot = await manager.snapshot();
+  assert.deepEqual(snapshot.accounts[0].toolNames, fullTools);
+  assert.deepEqual(
+    snapshot.bindings.map((binding) => [binding.peerId, binding.toolNames]),
+    [
+      ["user-one", fullTools],
+      ["user-two", fullTools],
+    ],
+  );
+  await manager.shutdown();
+});
+
 test("accepted media is staged privately and passed to the existing Pi turn", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-manager-media-"));
   const fake = createFakeAdapter("telegram");
@@ -583,8 +672,8 @@ test("opt-in IM commands execute locally while unknown and disabled commands rem
         getSessionStatus(binding) {
           return { hasSession: Boolean(binding.sessionId), running: false };
         },
-        async newSession() {
-          commandCalls.push({ command: "new" });
+        async newSession(_binding, toolNames) {
+          commandCalls.push({ command: "new", toolNames: [...toolNames] });
           return { sessionId: "session-command" };
         },
         async runCommand(_binding, command, customInstructions) {
@@ -599,6 +688,7 @@ test("opt-in IM commands execute locally while unknown and disabled commands rem
     },
   );
   const now = new Date().toISOString();
+  const fullTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
   const account = {
     id: "wx-commands",
     channel: "weixin",
@@ -612,7 +702,7 @@ test("opt-in IM commands execute locally while unknown and disabled commands rem
     requireMention: true,
     commandsEnabled: true,
     defaultCwd: path.join(dir, "workspace"),
-    toolNames: [],
+    toolNames: fullTools,
     createdAt: now,
     updatedAt: now,
   };
@@ -641,7 +731,7 @@ test("opt-in IM commands execute locally while unknown and disabled commands rem
   await send("/compact keep decisions");
   await send("/reload");
   assert.deepEqual(commandCalls, [
-    { command: "new" },
+    { command: "new", toolNames: fullTools },
     { command: "compact", customInstructions: "keep decisions" },
     { command: "reload", customInstructions: undefined },
   ]);

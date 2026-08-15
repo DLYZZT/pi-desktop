@@ -18,6 +18,7 @@ import {
 import type { ChannelTurnProgressEvent, StagedInboundAttachment } from "./types";
 import { resolveSessionPath } from "../session-reader";
 import { collectOutboundFiles } from "./outbound-files";
+import { setDesktopSessionToolNames } from "../session-tool-store";
 
 const OUTBOUND_FILE_CONTEXT = [
   "This IM transport can send files from the current workspace when the user explicitly asks to receive them.",
@@ -36,9 +37,14 @@ type OpenedSession = { session: AgentSessionWrapper; sessionId: string; cwd: str
 
 export class PiSessionBridge {
   private readonly onSession: (session: AgentSessionWrapper, sessionId: string) => void;
+  private readonly persistToolNames: (sessionId: string, toolNames: string[]) => void;
 
-  constructor(onSession: (session: AgentSessionWrapper, sessionId: string) => void) {
+  constructor(
+    onSession: (session: AgentSessionWrapper, sessionId: string) => void,
+    persistToolNames: (sessionId: string, toolNames: string[]) => void = setDesktopSessionToolNames,
+  ) {
     this.onSession = onSession;
+    this.persistToolNames = persistToolNames;
   }
 
   private prepareWorkspace(binding: ChannelBinding): void {
@@ -46,14 +52,17 @@ export class PiSessionBridge {
     allowFileRoot(binding.cwd);
   }
 
-  private async create(binding: ChannelBinding): Promise<OpenedSession> {
+  private async create(binding: ChannelBinding, toolNames: string[] = binding.toolNames): Promise<OpenedSession> {
     this.prepareWorkspace(binding);
-    const started = await startRpcSession(`__channel__${randomUUID()}`, "", binding.cwd, binding.toolNames);
+    const started = await startRpcSession(`__channel__${randomUUID()}`, "", binding.cwd, toolNames);
     this.onSession(started.session, started.realSessionId);
     return { session: started.session, sessionId: started.realSessionId, cwd: started.session.cwd || binding.cwd };
   }
 
-  private async open(binding: ChannelBinding): Promise<OpenedSession> {
+  private async open(
+    binding: ChannelBinding,
+    newSessionToolNames: string[] = binding.toolNames,
+  ): Promise<OpenedSession> {
     this.prepareWorkspace(binding);
 
     if (binding.sessionId) {
@@ -65,23 +74,33 @@ export class PiSessionBridge {
       const sessionFile = await resolveSessionPath(binding.sessionId);
       if (sessionFile) {
         const cwd = SessionManager.open(sessionFile).getHeader()?.cwd ?? binding.cwd;
-        const started = await startRpcSession(binding.sessionId, sessionFile, cwd);
+        const started = await startRpcSession(binding.sessionId, sessionFile, cwd, binding.toolNames);
         this.onSession(started.session, started.realSessionId);
         return { session: started.session, sessionId: started.realSessionId, cwd: started.session.cwd || cwd };
       }
     }
 
-    return this.create(binding);
+    return this.create(binding, newSessionToolNames);
   }
 
-  async newSession(binding: ChannelBinding): Promise<{ sessionId: string }> {
-    const { sessionId } = await this.create(binding);
+  async newSession(binding: ChannelBinding, toolNames: string[] = binding.toolNames): Promise<{ sessionId: string }> {
+    const { sessionId } = await this.create(binding, toolNames);
     return { sessionId };
   }
 
   getSessionStatus(binding: ChannelBinding): { hasSession: boolean; running: boolean } {
     if (!binding.sessionId) return { hasSession: false, running: false };
     return { hasSession: true, running: getRpcSession(binding.sessionId)?.isRunning() === true };
+  }
+
+  async syncTools(binding: ChannelBinding, toolNames: string[]): Promise<void> {
+    if (!binding.sessionId) return;
+    const existing = getRpcSession(binding.sessionId);
+    if (existing?.isAlive()) {
+      await existing.send({ type: "set_tools", toolNames });
+      return;
+    }
+    this.persistToolNames(binding.sessionId, toolNames);
   }
 
   async runCommand(
@@ -99,8 +118,9 @@ export class PiSessionBridge {
     envelope: InboundEnvelope,
     onProgress?: (event: ChannelTurnProgressEvent) => void,
     stagedAttachments: StagedInboundAttachment[] = [],
+    newSessionToolNames: string[] = binding.toolNames,
   ): Promise<ExternalTurnResult> {
-    const { session, sessionId, cwd } = await this.open(binding);
+    const { session, sessionId, cwd } = await this.open(binding, newSessionToolNames);
     const runId = randomUUID();
     allowFileRoot(cwd);
     for (const attachment of stagedAttachments) allowFileRoot(path.dirname(attachment.path));

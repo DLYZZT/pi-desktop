@@ -877,6 +877,12 @@ export function AccountCard({
             <option value="read">{t("toolPresetRead", "Read-only tools")}</option>
             <option value="full">{t("toolPresetFull", "Full coding tools")}</option>
           </select>
+          <span style={{ color: "var(--text-dim)", fontSize: 10, lineHeight: 1.5 }}>
+            {t(
+              "defaultToolsHint",
+              "Used for new channel sessions and synchronized to sessions currently bound to this account when saved.",
+            )}
+          </span>
         </Field>
         <Field label={t("defaultProjectDirectory", "Default project directory")}>
           <div style={{ display: "flex", gap: 6 }}>

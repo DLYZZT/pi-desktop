@@ -342,6 +342,8 @@ export const enUS: Record<string, string> = {
   dedicatedImSession: "Dedicated IM session",
   defaultProjectDirectory: "Default project directory",
   defaultTools: "Default tools",
+  defaultToolsHint:
+    "Used for new channel sessions and synchronized to sessions currently bound to this account when saved.",
   delete: "Delete",
   deleteBinding: "Delete binding",
   deleteChannelConfirm: "Delete this messaging account and its bindings?",
@@ -1312,6 +1314,7 @@ export const zhCN: Record<string, string> = {
   dedicatedImSession: "使用独立 IM 会话",
   defaultProjectDirectory: "默认项目目录",
   defaultTools: "默认工具权限",
+  defaultToolsHint: "用于新建渠道会话；保存后也会同步到当前绑定至此账号的会话。",
   delete: "删除",
   deleteBinding: "删除绑定",
   deleteChannelConfirm: "删除此消息账号及其所有会话绑定？",

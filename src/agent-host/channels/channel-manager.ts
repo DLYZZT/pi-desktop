@@ -42,7 +42,7 @@ export type ChannelManagerOptions = {
   dataDirectory?: string;
   registry?: AdapterRegistry;
   secretAccess?: SecretAccess;
-  bridge?: Pick<PiSessionBridge, "getSessionStatus" | "newSession" | "runCommand" | "runTurn">;
+  bridge?: Pick<PiSessionBridge, "getSessionStatus" | "newSession" | "runCommand" | "runTurn" | "syncTools">;
 };
 
 const PAIRING_TTL_MS = 10 * 60_000;
@@ -52,6 +52,10 @@ function channelDisplayName(channel: ChannelId): string {
   if (channel === "weixin") return "微信";
   if (channel === "telegram") return "Telegram";
   return "飞书 / Lark";
+}
+
+function sameToolNames(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((name, index) => name === right[index]);
 }
 
 function userDataPath(): string {
@@ -127,7 +131,10 @@ export class ChannelManager {
   private readonly registry: AdapterRegistry;
   private readonly lanes = new LaneScheduler();
   private readonly media: ChannelMediaStore;
-  private readonly bridge: Pick<PiSessionBridge, "getSessionStatus" | "newSession" | "runCommand" | "runTurn">;
+  private readonly bridge: Pick<
+    PiSessionBridge,
+    "getSessionStatus" | "newSession" | "runCommand" | "runTurn" | "syncTools"
+  >;
   private readonly secretAccess: SecretAccess;
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly starting = new Map<string, StartingEntry>();
@@ -258,7 +265,23 @@ export class ChannelManager {
   }
 
   async upsertAccount(account: ChannelAccountConfig): Promise<ChannelsSnapshot> {
+    const previous = this.config.getAccount(account.id);
     const saved = this.config.upsertAccount(account);
+    if (previous && !sameToolNames(previous.toolNames, saved.toolNames)) {
+      const syncedSessionIds = new Set<string>();
+      for (const binding of this.config.listBindings()) {
+        if (binding.accountId !== saved.id) continue;
+        const updatedBinding = this.config.upsertBinding({ ...binding, toolNames: saved.toolNames });
+        this.server.emit("channels.binding", updatedBinding.id, {
+          action: "upsert",
+          bindingId: updatedBinding.id,
+          binding: updatedBinding,
+        });
+        if (!updatedBinding.sessionId || syncedSessionIds.has(updatedBinding.sessionId)) continue;
+        syncedSessionIds.add(updatedBinding.sessionId);
+        await this.bridge.syncTools(updatedBinding, saved.toolNames);
+      }
+    }
     if (saved.enabled) await this.restartAccount(saved.id);
     else await this.stopAccount(saved.id);
     return this.snapshot();
@@ -750,7 +773,7 @@ export class ChannelManager {
     }
 
     if (command.name === "new") {
-      const created = await this.bridge.newSession(binding);
+      const created = await this.bridge.newSession(binding, account.toolNames);
       return {
         sessionId: created.sessionId,
         notifySession: true,
@@ -942,6 +965,7 @@ export class ChannelManager {
                 envelope,
                 (event) => progressiveOutput?.update(event),
                 stagedAttachments,
+                account.toolNames,
               )),
               notifySession: true,
             };

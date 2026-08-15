@@ -30,6 +30,7 @@ import {
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
 import { browserAgentRuntime } from "./browser-agent-runtime";
 import { projectExtensionDiagnostics } from "./extension-diagnostics";
+import { getDesktopSessionToolNames, setDesktopSessionToolNames } from "./session-tool-store";
 
 // ============================================================================
 // Types
@@ -83,8 +84,38 @@ type ExtensionBindingOptions = {
 export type ExternalSessionCommand = "compact" | "reload";
 
 const CODING_TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const SESSION_TOOLS_ENTRY = "pi-desktop-session-tools";
 const LEGACY_CHANNEL_PROMPT = /^\[外部消息来源：(微信|Telegram|飞书 \/ Lark)\]\n/;
 const LEGACY_CHANNEL_PROMPT_DELIMITER = "\n---\n";
+
+type PersistedSessionTools = {
+  version: 1;
+  toolNames: string[];
+};
+
+function parsePersistedSessionTools(value: unknown): string[] | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const state = value as Partial<PersistedSessionTools>;
+  if (
+    state.version !== 1 ||
+    !Array.isArray(state.toolNames) ||
+    !state.toolNames.every((name) => typeof name === "string")
+  ) {
+    return undefined;
+  }
+  return [...new Set(state.toolNames.map((name) => name.trim()).filter(Boolean))];
+}
+
+export function getLegacySessionToolNames(sessionManager: Pick<SessionManager, "getEntries">): string[] | undefined {
+  const entries = sessionManager.getEntries();
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry.type !== "custom" || entry.customType !== SESSION_TOOLS_ENTRY) continue;
+    const toolNames = parsePersistedSessionTools(entry.data);
+    if (toolNames !== undefined) return toolNames;
+  }
+  return undefined;
+}
 
 function stripLegacyChannelPromptText(text: string): string {
   if (!LEGACY_CHANNEL_PROMPT.test(text)) return text;
@@ -165,11 +196,21 @@ export class AgentSessionWrapper {
   private destroyCallbacks = new Set<() => void>();
   private disposePromise: Promise<void> | null = null;
   private _alive = true;
+  private requestedToolNames: string[] | undefined;
+  private readonly persistToolNames: (sessionId: string, toolNames: string[]) => void;
 
-  constructor(inner: AgentSessionLike) {
+  constructor(
+    inner: AgentSessionLike,
+    requestedToolNames?: string[],
+    persistToolNames: (sessionId: string, toolNames: string[]) => void = setDesktopSessionToolNames,
+  ) {
     this.inner = inner;
+    this.persistToolNames = persistToolNames;
+    this.requestedToolNames = requestedToolNames ? [...requestedToolNames] : requestedToolNames;
+    this.forceEmptySystemPrompt = requestedToolNames?.length === 0;
     const messages = this.inner.agent.state?.messages;
     if (Array.isArray(messages)) this.inner.agent.state!.messages = stripLegacyChannelPrompts(messages);
+    this.applyForcedEmptySystemPrompt();
   }
 
   get sessionId(): string {
@@ -215,6 +256,10 @@ export class AgentSessionWrapper {
   }
 
   syncBrowserToolActivation(): void {
+    if (this.forceEmptySystemPrompt) {
+      this.inner.setActiveToolsByName([]);
+      return;
+    }
     const current = this.inner.getActiveToolNames().filter((name) => !isBrowserToolName(name));
     const browserTools = browserToolNamesForSnapshot(browserCapabilityRuntime.getSnapshot());
     this.inner.setActiveToolsByName([...new Set([...current, ...browserTools])]);
@@ -232,11 +277,6 @@ export class AgentSessionWrapper {
         ...(this.externalTurnAttachments?.length ? { channelAttachments: this.externalTurnAttachments } : {}),
       },
     };
-  }
-
-  setForceEmptySystemPrompt(force: boolean): void {
-    this.forceEmptySystemPrompt = force;
-    this.applyForcedEmptySystemPrompt();
   }
 
   setToolchainSummary(revision: number, summary: readonly string[]): void {
@@ -358,6 +398,14 @@ export class AgentSessionWrapper {
     }
   }
 
+  private applyRequestedTools(toolNames: string[]): void {
+    this.requestedToolNames = [...toolNames];
+    this.forceEmptySystemPrompt = toolNames.length === 0;
+    this.inner.setActiveToolsByName(withExtensionTools(this.inner, toolNames));
+    this.syncBrowserToolActivation();
+    this.applyForcedEmptySystemPrompt();
+  }
+
   private applyToolchainSummary(): void {
     if (this.forceEmptySystemPrompt || !this.toolchainPrompt || !this.inner.agent.state) return;
     const marker = /\n*<pi-desktop-toolchain revision="\d+">[\s\S]*?<\/pi-desktop-toolchain>\n*/g;
@@ -473,6 +521,7 @@ export class AgentSessionWrapper {
     this.extensionWidgets.clear();
     await this.inner.reload();
     await this.ensureExtensionsBound();
+    if (this.requestedToolNames !== undefined) this.applyRequestedTools(this.requestedToolNames);
     this.applyForcedEmptySystemPrompt();
     this.applyToolchainSummary();
   }
@@ -736,10 +785,8 @@ export class AgentSessionWrapper {
 
       case "set_tools": {
         const toolNames = command.toolNames as string[];
-        this.setForceEmptySystemPrompt(toolNames.length === 0);
-        this.inner.setActiveToolsByName(withExtensionTools(this.inner, toolNames));
-        this.syncBrowserToolActivation();
-        this.applyForcedEmptySystemPrompt();
+        this.applyRequestedTools(toolNames);
+        this.persistToolNames(this.sessionId, toolNames);
         return null;
       }
 
@@ -1374,19 +1421,13 @@ export async function startRpcSession(
       ? SessionManager.open(sessionFile, undefined)
       : SessionManager.create(cwd, undefined);
 
-    // Determine which tools to pass based on requested toolNames.
-    // Since v0.68.0, session creation expects string[] tool names instead of Tool[] instances.
-    let toolsOption: string[] | undefined;
-    if (toolNames !== undefined) {
-      // toolNames === [] -> "all off" (an empty allow-list disables every tool).
-      // Otherwise DO NOT pass a builtin-only allow-list: passing CODING_TOOL_NAMES
-      // set allowedToolNames to coding builtins only, which filtered every
-      // extension/package-provided tool (e.g. subagents, web access) out of the
-      // tool registry — so they were unavailable in desktop sessions even though the
-      // `pi` CLI keeps them. Leaving the allow-list unset lets the SDK register all
-      // tools (and activate extension tools); we narrow the ACTIVE set below.
-      toolsOption = toolNames.length === 0 ? [] : undefined;
-    }
+    // Desktop-owned session choices live outside Pi's shared JSONL so the CLI
+    // remains unaffected. Read the old custom entry only for one-way migration.
+    const managerSessionId = sessionManager.getSessionId();
+    const desktopToolNames = getDesktopSessionToolNames(managerSessionId);
+    const legacyToolNames = desktopToolNames === undefined ? getLegacySessionToolNames(sessionManager) : undefined;
+    const persistedToolNames = desktopToolNames ?? legacyToolNames;
+    const sessionToolNames = persistedToolNames ?? toolNames;
 
     // Build services first so extension-registered providers are available
     // before the SDK restores the saved model from the session file.
@@ -1410,36 +1451,29 @@ export async function startRpcSession(
     const { session: inner } = await createAgentSessionFromServices({
       services,
       sessionManager,
-      ...(toolsOption !== undefined ? { tools: toolsOption } : {}),
       customTools,
     });
+    const realSessionId = inner.sessionId as string;
 
-    // If specific tool names were requested (non-empty), set the active tools to the
-    // requested builtin coding tools PLUS all extension/package tools, so installed
-    // extensions stay usable in Pi Desktop just like in the `pi` CLI.
-    if (toolNames && toolNames.length > 0) {
-      inner.setActiveToolsByName(withExtensionTools(inner, toolNames));
+    // Keep every tool registered so a session initialized with no tools can enable
+    // them later. Narrow only the active set, never the registry allow-list.
+    if (sessionToolNames !== undefined) {
+      inner.setActiveToolsByName(withExtensionTools(inner, sessionToolNames));
+      if (desktopToolNames === undefined) setDesktopSessionToolNames(realSessionId, sessionToolNames);
     }
 
-    const wrapper = new AgentSessionWrapper(inner);
+    const wrapper = new AgentSessionWrapper(inner, sessionToolNames);
     wrapper.setRuntimeDiagnostics(services.diagnostics);
     wrapper.setToolchainSummary(executionContext.inventoryRevision, executionContext.summary);
-    // When all tools are disabled, clear the system prompt entirely.
-    // pi's buildSystemPrompt always produces a non-empty prompt even with no tools;
-    // keep this forced after extension resource discovery and reloads as well.
-    if (toolNames?.length === 0) {
-      wrapper.setForceEmptySystemPrompt(true);
-    }
     wrapper.start();
     wrapper.syncBrowserToolActivation();
 
-    const realSessionId = inner.sessionId as string;
     const realSessionFile = inner.sessionFile as string | undefined;
     if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);
 
     wrapper.onDestroy(() => registry.delete(realSessionId));
     registry.set(realSessionId, wrapper);
-    wrapper.beginExtensionBinding({ forceEmptySystemPrompt: toolNames?.length === 0 });
+    wrapper.beginExtensionBinding({ forceEmptySystemPrompt: sessionToolNames?.length === 0 });
 
     return { session: wrapper, realSessionId };
   })().finally(() => locks.delete(sessionId));

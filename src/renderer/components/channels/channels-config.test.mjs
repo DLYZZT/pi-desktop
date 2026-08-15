@@ -72,6 +72,8 @@ test("channel account settings expose the opt-in IM command switch", () => {
   );
   assert.match(html, /IM commands/);
   assert.match(html, /Enable \/help, \/status, \/new, \/compact, and \/reload/);
+  assert.match(html, /Default tools/);
+  assert.match(html, /synchronized to sessions currently bound to this account/);
 });
 
 test("Feishu setup dialog provides one-click batch permission import and concise guidance", () => {
