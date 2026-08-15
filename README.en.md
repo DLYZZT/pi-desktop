@@ -87,6 +87,7 @@ Local-first · No local server · Cross-platform
 - Connect personal WeChat with QR login, Telegram with a BotFather token, or Feishu/Lark by creating a new bot through the official QR flow or supplying an existing app's App ID and App Secret
 - Protect direct messages with pairing and Telegram or Feishu/Lark groups with allowlists and mention requirements; WeChat groups are not enabled yet, and remote tools are disabled by default
 - Give each external conversation an isolated Pi Session by default, or bind it from the active desktop session to share history and context with the UI; the binding list stays within the window and scrolls internally when long
+- Use an account's default tool grant for new dedicated channel sessions and synchronize saved changes to sessions already bound to that account; tool grants are Pi Session-scoped, so every channel entry point sharing one Session also shares one grant
 - Send only the user's actual IM text as the model's user prompt; the desktop distinguishes sources with black local, green WeChat, blue Telegram, and orange Feishu/Lark user bubbles
 - Receive images, files, and voice messages from WeChat, Telegram, and Feishu/Lark, plus Feishu/Lark video resources; images enter the model as multimodal input, while other attachments use an isolated staging area and WeChat SILK audio is converted to WAV when possible
 - Stream previews in Telegram private chats and collapse reasoning and tool details
