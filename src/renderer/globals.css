@@ -838,6 +838,56 @@ span.linenumber {
   }
 }
 
+/* Floating "scroll to bottom" badge (chat) */
+.chat-scroll-to-bottom {
+  position: absolute;
+  z-index: 30;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  opacity: 0.96;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+  animation: chat-scroll-to-bottom-in 0.18s ease-out both;
+}
+
+.chat-scroll-to-bottom:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+}
+
+.chat-scroll-to-bottom:active {
+  transform: translateY(0);
+}
+
+@keyframes chat-scroll-to-bottom-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.chat-scroll-to-bottom-live-dot {
+  animation: blink 1.2s ease-in-out infinite;
+}
+
 @keyframes notice-shelf-in {
   from {
     opacity: 0;
@@ -889,6 +939,14 @@ span.linenumber {
 
   .notice-shelf-item {
     animation-duration: 0.001ms !important;
+  }
+
+  .chat-scroll-to-bottom {
+    animation-duration: 0.001ms !important;
+  }
+
+  .chat-scroll-to-bottom-live-dot {
+    animation: none;
   }
 }
 

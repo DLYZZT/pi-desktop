@@ -37,3 +37,14 @@ test("external-turn follow starts near the bottom and stops only for a meaningfu
   assert.equal(shouldStopChatAutoFollow({ ...decision, userIntentUntil: 999 }), false);
   assert.equal(shouldStopChatAutoFollow({ ...decision, currentScrollTop: 950 }), false);
 });
+
+test("run spacer must not count as content: bottom stays near even with a full-viewport spacer", () => {
+  // Without the spacer correction, a live run at content end looks "away from
+  // bottom" (scrollHeight is inflated by one viewport) and the badge lingers.
+  const metrics = { scrollTop: 1_000, scrollHeight: 2_000, clientHeight: 500 };
+  assert.equal(isNearChatBottom(metrics), false, "raw metrics say away");
+  assert.equal(isNearChatBottom({ ...metrics, spacerHeight: 500 }), true, "spacer excluded: content end reached");
+  assert.equal(isNearChatBottom({ ...metrics, spacerHeight: 0 }), false, "zero spacer keeps raw behavior");
+  // Scrolled past content into the spacer itself still counts as bottom.
+  assert.equal(isNearChatBottom({ scrollTop: 1_500, scrollHeight: 2_000, clientHeight: 500, spacerHeight: 500 }), true);
+});
