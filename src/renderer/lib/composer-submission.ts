@@ -4,14 +4,21 @@ export interface ComposerSubmissionImage {
   previewUrl: string;
 }
 
+export interface ComposerSubmissionFile {
+  name: string;
+  path: string;
+}
+
 export interface ComposerSubmissionSnapshot {
   value: string;
   images: ComposerSubmissionImage[];
+  files: ComposerSubmissionFile[];
 }
 
 export function captureComposerSubmission(
   value: string,
   images: readonly ComposerSubmissionImage[],
+  files: readonly ComposerSubmissionFile[] = [],
 ): ComposerSubmissionSnapshot {
   return {
     value,
@@ -19,6 +26,7 @@ export function captureComposerSubmission(
       ...image,
       previewUrl: `data:${image.mimeType};base64,${image.data}`,
     })),
+    files: files.map((file) => ({ ...file })),
   };
 }
 

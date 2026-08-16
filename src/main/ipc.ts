@@ -1,5 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell } from "electron";
-import type { IpcMainEvent, IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, shell } from "electron";
+import type { ContextMenuParams, IpcMainEvent, IpcMainInvokeEvent } from "electron";
 import type {
   ChannelCredentialWrite,
   DesktopUpdateState,
@@ -9,6 +9,7 @@ import type {
 import { exportDiagnostics } from "./diagnostics";
 import type { HostManager } from "./host-manager";
 import { appendMainLog, getMainLogPath } from "./logger";
+import { buildFileContextMenu } from "./window";
 import { createHtmlPreviewUrl, releaseHtmlPreviewUrl } from "./protocol";
 import { loadUiState, saveUiState } from "./window-state";
 import path from "node:path";
@@ -182,6 +183,31 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
 
   trustedHandle("desktop:show-item-in-folder", async (_event, fsPath: string) => {
     if (typeof fsPath === "string") shell.showItemInFolder(fsPath);
+  });
+
+  // Rich file context menu, built in main from a real path (Chromium does not
+  // reliably fill params.linkURL for file: links in Electron 43, so the renderer
+  // resolves the path itself and hands it over here).
+  trustedHandle("desktop:file-context-menu", async (event, fsPath: unknown) => {
+    // Renderer supplies the path (Chromium drops file: linkURL); require an
+    // absolute path so the menu actions (open/copy) stay on real filesystem targets.
+    if (typeof fsPath !== "string" || !path.isAbsolute(fsPath)) return;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return;
+    try {
+      const template = await buildFileContextMenu(
+        win,
+        fsPath,
+        {
+          selectionText: "",
+          isEditable: false,
+        } as ContextMenuParams,
+        { withTextItems: false },
+      );
+      if (!win.isDestroyed()) Menu.buildFromTemplate(template).popup({ window: win });
+    } catch {
+      /* menu is best-effort */
+    }
   });
 
   trustedHandle("desktop:select-directory", async (event) => {

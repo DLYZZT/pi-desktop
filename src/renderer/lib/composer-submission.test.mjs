@@ -16,6 +16,7 @@ test("submission snapshots use durable previews before composer URLs are revoked
   assert.deepEqual(captureComposerSubmission("hello", [image("abc")]), {
     value: "hello",
     images: [{ data: "abc", mimeType: "image/png", previewUrl: "data:image/png;base64,abc" }],
+    files: [],
   });
 });
 

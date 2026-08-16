@@ -9,12 +9,12 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import { SyntaxHighlighter, vs, vscDarkPlus } from "@/lib/syntax-highlight";
 import { useTheme } from "@/hooks/useTheme";
 import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { resolveLocalFileHref } from "@/lib/file-links";
-import { markdownRehypePlugins, markdownRemarkPlugins } from "@/lib/markdown";
+import { markdownRehypePlugins, markdownRemarkPlugins, autolinkPathsInMarkdown } from "@/lib/markdown";
 import { shouldHighlightCode } from "@/lib/code-highlight-policy";
 import { mermaidCacheKey, renderMermaidSvg } from "@/lib/mermaid-renderer";
 import { SessionProfiler } from "./SessionProfiler";
@@ -73,17 +73,34 @@ function MarkdownAnchor({ href, children, node: _node, ...props }: MarkdownCompo
     );
   }
 
+  // Absolute links (attachments, agent-printed paths) reveal in Explorer;
+  // relative repo links still open in the in-app viewer.
+  const hrefText = typeof href === "string" ? href : "";
+  const revealInFolder = /^file:/i.test(hrefText) || /^[a-zA-Z]:[\\/]/.test(hrefText) || hrefText.startsWith("/");
+
   const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
     if (event.defaultPrevented || event.button !== 0) return;
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const target = event.currentTarget.getAttribute("target");
     if (target && target !== "_self") return;
     event.preventDefault();
+    if (revealInFolder && window.piBridge?.showItemInFolder) {
+      void window.piBridge.showItemInFolder(filePath);
+      return;
+    }
     onOpenFile(filePath);
   };
 
+  const handleContextMenu = (event: MouseEvent<HTMLAnchorElement>) => {
+    // Chromium (Electron 43) does not reliably report file: links in the
+    // native context-menu event, so we show the rich file menu ourselves.
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+    void window.piBridge?.showFileContextMenu?.(filePath);
+  };
+
   return (
-    <a href={href} {...props} onClick={handleClick}>
+    <a href={href} {...props} onClick={handleClick} onContextMenu={handleContextMenu}>
       {children}
     </a>
   );
@@ -119,6 +136,14 @@ const markdownComponents: Components = {
   table: MarkdownTable,
 };
 
+// react-markdown 10 strips non-web protocols from href/src via defaultUrlTransform
+// (file: becomes ""). Local file links are this app's core feature, so allow file:.
+type UrlTransform = (url: string, key: string, node: unknown) => string;
+const fileAwareUrlTransform: UrlTransform = (url, key, node) => {
+  if (/^file:/i.test(url)) return url;
+  return (defaultUrlTransform as UrlTransform)(url, key, node);
+};
+
 export function MarkdownBody({
   children,
   className,
@@ -128,7 +153,7 @@ export function MarkdownBody({
   sourceSessionId,
   onOpenFile,
 }: MarkdownBodyProps) {
-  const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
+  const normalizedMarkdown = useMemo(() => autolinkPathsInMarkdown(normalizeDisplayMath(children)), [children]);
   const renderContext = useMemo(
     () => ({ isStreaming, cwd, imageBasePath, sourceSessionId, onOpenFile }),
     [cwd, imageBasePath, isStreaming, onOpenFile, sourceSessionId],
@@ -141,6 +166,7 @@ export function MarkdownBody({
           <ReactMarkdown
             remarkPlugins={markdownRemarkPlugins}
             rehypePlugins={markdownRehypePlugins}
+            urlTransform={fileAwareUrlTransform}
             components={markdownComponents}
           >
             {normalizedMarkdown}

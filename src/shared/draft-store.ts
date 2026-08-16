@@ -3,9 +3,15 @@ export interface ChatDraftImage {
   mimeType: string;
 }
 
+export interface ChatDraftFile {
+  name: string;
+  path: string;
+}
+
 export interface ChatDraft {
   value: string;
   images: ChatDraftImage[];
+  files?: ChatDraftFile[];
 }
 
 const drafts = new Map<string, ChatDraft | null>();
@@ -16,11 +22,12 @@ function cloneDraft(draft: ChatDraft): ChatDraft {
   return {
     value: draft.value,
     images: draft.images.map((image) => ({ ...image })),
+    files: draft.files?.map((file) => ({ ...file })),
   };
 }
 
 function isEmptyDraft(draft: ChatDraft): boolean {
-  return !draft.value && draft.images.length === 0;
+  return !draft.value && draft.images.length === 0 && (draft.files?.length ?? 0) === 0;
 }
 
 function persistKey(key: string): string {
@@ -53,6 +60,7 @@ function loadFromStorage(key: string): ChatDraft | null {
     return {
       value: parsed.value,
       images: Array.isArray(parsed.images) ? parsed.images.slice(0, 4) : [],
+      files: Array.isArray(parsed.files) ? parsed.files.slice(0, 8) : [],
     };
   } catch {
     return null;
@@ -71,6 +79,7 @@ function saveToStorage(key: string, draft: ChatDraft | null): void {
     const toStore: ChatDraft = {
       value: draft.value,
       images: persistableDraftImages(draft.images),
+      files: draft.files ?? [],
     };
     localStorage.setItem(persistKey(key), JSON.stringify(toStore));
   } catch {

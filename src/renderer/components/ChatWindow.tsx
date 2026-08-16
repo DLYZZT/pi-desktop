@@ -404,10 +404,10 @@ export function ChatWindow({
 
   const onDrop = useCallback(
     (files: File[]) => {
-      if (agentRunning) return;
+      // Attaching while the agent runs is fine — send stays gated separately.
       chatInputRef?.current?.addImages(files);
     },
-    [agentRunning, chatInputRef],
+    [chatInputRef],
   );
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
@@ -533,7 +533,7 @@ export function ChatWindow({
       <div className="chat-corner-tick chat-corner-tick-bl" aria-hidden="true" />
       <div className="chat-corner-tick chat-corner-tick-br" aria-hidden="true" />
 
-      {isDragOver && !agentRunning && (
+      {isDragOver && (
         <div
           className="pointer-events-none absolute inset-0 z-50 flex animate-[drop-zone-in_0.15s_ease_both] items-center justify-center backdrop-blur-[1px]"
           style={{ background: "color-mix(in srgb, var(--accent) 6%, transparent)" }}

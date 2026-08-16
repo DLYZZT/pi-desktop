@@ -30,7 +30,7 @@ test("queued command handlers reject a missing-session race", () => {
 test("ChatInput awaits queue handlers and restores revision-aware snapshots after rejection", () => {
   assert.match(inputSource, /onSteer\?:[\s\S]*?Promise<void> \| void/);
   assert.match(inputSource, /onFollowUp\?:[\s\S]*?Promise<void> \| void/);
-  assert.match(inputSource, /await Promise\.resolve\(onSteer\(msg, undefined\)\)/);
-  assert.match(inputSource, /await Promise\.resolve\(onFollowUp\(msg, undefined\)\)/);
+  assert.match(inputSource, /await Promise\.resolve\(onSteer\(msg, images\)\)/);
+  assert.match(inputSource, /await Promise\.resolve\(onFollowUp\(msg, images\)\)/);
   assert.match(inputSource, /catch \{\s*restoreFailedSubmission\(snapshot, clearedAtRevision, "queue"\)/);
 });
