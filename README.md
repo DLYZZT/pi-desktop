@@ -16,7 +16,7 @@
 
 [English](./README.en.md) · **简体中文**
 
-[下载 v0.1.9](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.9) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
+[下载 v0.1.10](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.10) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
 
 </div>
 
@@ -44,6 +44,7 @@
 ### 一个完整的 Agent 工作台
 
 - 创建、切换、重命名和删除会话，并持续展示流式回复
+- 新会话可根据首条有效消息在后台自动生成简短标题；可在设置中关闭，手动名称始终优先
 - 搜索会话、按日期分组浏览，并在列表和主对话顶部使用稳定的会话标题
 - 查看工具调用、执行过程和上下文压缩状态
 - 支持排队消息、Steer / Follow-up 等交互方式
@@ -106,9 +107,9 @@
 
 ### 使用桌面安装包
 
-最新稳定版为 [v0.1.9](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.9)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
+最新稳定版为 [v0.1.10](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.10)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
 
-Pi Agent Desktop v0.1.9 已内置 Pi Coding Agent 0.84.0 运行时。普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
+Pi Agent Desktop v0.1.10 已内置 Pi Coding Agent 0.84.0 运行时。普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
 
 应用会读取 `~/.pi/agent/` 中的会话与配置。如果你已经使用 Pi CLI，可以直接复用现有数据，无需迁移；此前没有使用过 Pi CLI 也不影响使用。
 

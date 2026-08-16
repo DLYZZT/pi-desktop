@@ -135,7 +135,6 @@ export interface Api {
   "agent.generateTitle": {
     params: {
       sessionId: string;
-      cwd: string;
       message: string;
       provider?: string;
       modelId?: string;

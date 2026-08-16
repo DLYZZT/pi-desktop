@@ -416,9 +416,10 @@ const AUTO_TITLE_SYSTEM_PROMPT =
   `of at most ${AUTO_TITLE_MAX_LENGTH} characters; no quotes, no trailing punctuation, no Markdown.`;
 
 type TitleSessionServices = Awaited<ReturnType<typeof createAgentSessionServices>>;
+type TitleModelServices = Pick<TitleSessionServices, "modelRuntime" | "settingsManager">;
 
 function resolveTitleModel(
-  services: TitleSessionServices,
+  services: TitleModelServices,
   provider?: string,
   modelId?: string,
 ): AvailableModel | undefined {
@@ -438,7 +439,7 @@ function resolveTitleModel(
 }
 
 async function generateSessionTitle(
-  services: TitleSessionServices,
+  services: TitleModelServices,
   message: string,
   provider?: string,
   modelId?: string,
@@ -472,6 +473,23 @@ async function generateSessionTitle(
   }
 }
 
+export async function generateSessionTitleWithFallback(
+  createServices: () => Promise<TitleModelServices>,
+  message: string,
+  provider?: string,
+  modelId?: string,
+): Promise<string> {
+  try {
+    const services = await createServices();
+    const generated = await generateSessionTitle(services, message, provider, modelId);
+    return generated ?? makeFallbackTitle(message);
+  } catch {
+    // Service creation can fail before a model request starts (for example,
+    // while loading project resources). The local fallback must still apply.
+    return makeFallbackTitle(message);
+  }
+}
+
 async function hasSessionName(sessionId: string): Promise<boolean> {
   const existing = getRpcSession(sessionId);
   if (existing?.isAlive()) {
@@ -486,6 +504,67 @@ async function hasSessionName(sessionId: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function applyLiveSessionNameIfEmpty(sessionId: string, name: string): boolean | null {
+  const existing = getRpcSession(sessionId);
+  if (!existing?.isAlive()) return null;
+  const currentName = existing.inner.sessionName;
+  if (typeof currentName === "string" && currentName.trim().length > 0) return false;
+
+  // Keep the check and write in the same synchronous turn. A manual rename
+  // that ran first is observed above; one that runs later overwrites this
+  // automatic value, so the manual choice always wins.
+  existing.inner.setSessionName(name);
+  return true;
+}
+
+export async function applySessionNameIfEmpty(sessionId: string, name: string): Promise<boolean> {
+  const normalized = name.trim();
+  if (!normalized) return false;
+
+  const liveResult = applyLiveSessionNameIfEmpty(sessionId, normalized);
+  if (liveResult !== null) return liveResult;
+
+  const filePath = await resolveSessionPath(sessionId);
+  if (!filePath) return false;
+
+  // The session may have become live while its path was resolving.
+  const liveResultAfterLookup = applyLiveSessionNameIfEmpty(sessionId, normalized);
+  if (liveResultAfterLookup !== null) return liveResultAfterLookup;
+
+  const manager = SessionManager.open(filePath, undefined);
+  const storedName = manager.getSessionName();
+  if (typeof storedName === "string" && storedName.trim().length > 0) return false;
+
+  // SessionManager's read and append are synchronous, so another Renderer RPC
+  // cannot interleave a manual rename between this final check and the write.
+  manager.appendSessionInfo(normalized);
+  invalidateSessionContent(filePath);
+  return true;
+}
+
+async function resolveTitleSessionTarget(
+  sessionId: string,
+): Promise<{ cwd: string; services?: TitleModelServices } | null> {
+  const existing = getRpcSession(sessionId);
+  if (existing?.isAlive()) {
+    const dir = validateExistingDirectory(existing.cwd);
+    if (!dir.ok) return null;
+    return {
+      cwd: dir.path,
+      services: {
+        modelRuntime: existing.inner.modelRuntime as unknown as TitleSessionServices["modelRuntime"],
+        settingsManager: existing.inner.settingsManager,
+      },
+    };
+  }
+
+  const filePath = await resolveSessionPath(sessionId);
+  if (!filePath) return null;
+  const cwd = SessionManager.open(filePath, undefined).getHeader()?.cwd;
+  const dir = validateExistingDirectory(cwd);
+  return dir.ok ? { cwd: dir.path } : null;
 }
 
 type DirectoryValidation = { ok: true; path: string; canonicalPath: string } | { ok: false; error: string };
@@ -1060,51 +1139,38 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     "agent.generateTitle": async (params) => {
       const body = params as {
         sessionId: string;
-        cwd: string;
         message: string;
         provider?: string;
         modelId?: string;
       };
-      const { sessionId, cwd, message } = body;
+      const { sessionId, message } = body;
       if (typeof sessionId !== "string" || !sessionId) {
         throw new RpcError({ code: "BAD_REQUEST", message: "sessionId is required" });
-      }
-      if (typeof cwd !== "string" || !cwd) {
-        throw new RpcError({ code: "BAD_REQUEST", message: "cwd is required" });
       }
       if (typeof message !== "string" || !message.trim()) {
         throw new RpcError({ code: "BAD_REQUEST", message: "message is required" });
       }
-      const dir = validateExistingDirectory(cwd);
-      if (!dir.ok) {
-        throw new RpcError({ code: "BAD_REQUEST", message: dir.error });
-      }
+      const target = await resolveTitleSessionTarget(sessionId);
+      if (!target) return { title: null };
+
       // Never overwrite a title the user already set (or an earlier title).
       if (await hasSessionName(sessionId)) return { title: null };
 
-      let services: TitleSessionServices;
-      try {
-        services = await createAgentSessionServices({ cwd: dir.path, agentDir: getAgentDir() });
-      } catch {
-        return { title: null };
-      }
-      const generated = await generateSessionTitle(services, message, body.provider, body.modelId);
-      const finalTitle = generated ?? makeFallbackTitle(message);
+      const finalTitle = await generateSessionTitleWithFallback(
+        target.services
+          ? async () => target.services as TitleModelServices
+          : () => createAgentSessionServices({ cwd: target.cwd, agentDir: getAgentDir() }),
+        message,
+        body.provider,
+        body.modelId,
+      );
 
-      // Re-check right before applying: the user may have renamed the session
-      // while the model was generating — a manual rename always wins.
-      if (await hasSessionName(sessionId)) return { title: null };
+      // Check and write atomically at the live session or SessionManager edge.
+      // A concurrent manual rename either runs first and blocks this write, or
+      // runs afterwards and replaces the automatic title.
+      if (!(await applySessionNameIfEmpty(sessionId, finalTitle))) return { title: null };
 
-      const existing = getRpcSession(sessionId);
-      if (existing?.isAlive()) {
-        await existing.send({ type: "set_session_name", name: finalTitle });
-      } else {
-        const filePath = await resolveSessionPath(sessionId);
-        if (!filePath) return { title: null };
-        SessionManager.open(filePath, undefined).appendSessionInfo(finalTitle);
-        invalidateSessionContent(filePath);
-      }
-      await emitIndexedSessionChange(server, sessionId, dir.path);
+      await emitIndexedSessionChange(server, sessionId, target.cwd);
       return { title: finalTitle };
     },
 

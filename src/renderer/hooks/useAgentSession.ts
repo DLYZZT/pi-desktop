@@ -1258,10 +1258,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             // forget: generation is a silent background LLM request and the Host
             // applies it with a rename guard (a manual rename always wins).
             const titleModel = newSessionModel ?? newSessionDefaultModel;
-            if (shouldAutoTitleMessage(trimmedMessage, !!piImages?.length)) {
+            if (shouldAutoTitleMessage(trimmedMessage)) {
               void requestAutoSessionTitle({
                 sessionId: sid,
-                cwd: newSessionCwd,
                 message: trimmedMessage,
                 ...(titleModel ? { provider: titleModel.provider, modelId: titleModel.modelId } : {}),
               });

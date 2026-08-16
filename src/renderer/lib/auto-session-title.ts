@@ -41,17 +41,16 @@ export function setAutoSessionTitleEnabled(enabled: boolean): void {
  * A new-session first message qualifies when auto-titles are on and the message
  * is real text — not a slash command and long enough to summarize.
  */
-export function shouldAutoTitleMessage(message: string, hasImages: boolean): boolean {
+export function shouldAutoTitleMessage(message: string): boolean {
   if (!isAutoSessionTitleEnabled()) return false;
   const trimmed = message.trim();
   if (!trimmed || trimmed.startsWith("/")) return false;
-  if (!hasImages && [...trimmed].length < AUTO_TITLE_MIN_MESSAGE_LENGTH) return false;
+  if ([...trimmed].length < AUTO_TITLE_MIN_MESSAGE_LENGTH) return false;
   return true;
 }
 
 export interface AutoSessionTitleOptions {
   sessionId: string;
-  cwd: string;
   message: string;
   provider?: string;
   modelId?: string;
@@ -67,7 +66,6 @@ export async function requestAutoSessionTitle(options: AutoSessionTitleOptions):
   try {
     const result = await call("agent.generateTitle", {
       sessionId: options.sessionId,
-      cwd: options.cwd,
       message: options.message,
       ...(options.provider ? { provider: options.provider } : {}),
       ...(options.modelId ? { modelId: options.modelId } : {}),

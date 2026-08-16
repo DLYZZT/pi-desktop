@@ -36,30 +36,26 @@ test("setting persistence round-trips through localStorage", () => {
 });
 
 test("a real first message qualifies", () => {
-  assert.equal(shouldAutoTitleMessage("修复登录页的样式问题", false), true);
-  assert.equal(shouldAutoTitleMessage("Fix the login page", false), true);
+  assert.equal(shouldAutoTitleMessage("修复登录页的样式问题"), true);
+  assert.equal(shouldAutoTitleMessage("Fix the login page"), true);
 });
 
 test("slash commands never qualify", () => {
-  assert.equal(shouldAutoTitleMessage("/init", false), false);
-  assert.equal(shouldAutoTitleMessage("/model gpt-4o", false), false);
+  assert.equal(shouldAutoTitleMessage("/init"), false);
+  assert.equal(shouldAutoTitleMessage("/model gpt-4o"), false);
 });
 
-test("text-only messages shorter than two characters never qualify", () => {
-  assert.equal(shouldAutoTitleMessage("a", false), false);
-  assert.equal(shouldAutoTitleMessage("  ", false), false);
-});
-
-test("an image-only message qualifies even when its text is minimal", () => {
-  assert.equal(shouldAutoTitleMessage("a", true), true);
-  assert.equal(shouldAutoTitleMessage("", true), false);
+test("messages shorter than two characters never qualify", () => {
+  assert.equal(shouldAutoTitleMessage("a"), false);
+  assert.equal(shouldAutoTitleMessage("好"), false);
+  assert.equal(shouldAutoTitleMessage("  "), false);
 });
 
 test("qualification respects the settings toggle", () => {
   setAutoSessionTitleEnabled(false);
-  assert.equal(shouldAutoTitleMessage("Fix the login page", false), false);
+  assert.equal(shouldAutoTitleMessage("Fix the login page"), false);
   setAutoSessionTitleEnabled(true);
-  assert.equal(shouldAutoTitleMessage("Fix the login page", false), true);
+  assert.equal(shouldAutoTitleMessage("Fix the login page"), true);
 });
 
 test("missing window (non-renderer context) keeps the default enabled state", () => {
