@@ -23,7 +23,7 @@ const { getMarkdownComponentIdentityForTest } = await importTestBundle(
                 : args.path === "@/lib/file-links"
                   ? "export const resolveLocalFileHref = () => null;"
                   : args.path === "@/lib/markdown"
-                    ? "export const markdownRehypePlugins = []; export const markdownRemarkPlugins = [];"
+                    ? "export const markdownRehypePlugins = []; export const markdownRemarkPlugins = []; export const autolinkPathsInMarkdown = (s) => s;"
                     : args.path === "@/lib/code-highlight-policy"
                       ? "export const shouldHighlightCode = () => false;"
                       : args.path === "@/lib/mermaid-renderer"
