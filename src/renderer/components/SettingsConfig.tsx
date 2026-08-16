@@ -13,6 +13,7 @@ import { APP_WEBSITE_URL } from "@shared/app-links";
 import type { DesktopUpdateState } from "../../contract/desktop";
 import { APP_AUTHOR, APP_DISPLAY_NAME, APP_GITHUB_URL, APP_VERSION, PI_VERSION } from "@/lib/app-version";
 import appIconUrl from "../../../build/icon.png";
+import { isAutoSessionTitleEnabled, setAutoSessionTitleEnabled } from "../lib/auto-session-title";
 
 export type SettingsTab = "general" | "browser" | "channels" | "models" | "tools" | "skills" | "plugins" | "about";
 
@@ -949,8 +950,10 @@ function GeneralSettings({
   const [backgroundModeLoading, setBackgroundModeLoading] = useState(true);
   const [backgroundModeSaving, setBackgroundModeSaving] = useState(false);
   const [backgroundModeError, setBackgroundModeError] = useState<"load" | "save" | null>(null);
+  const [autoSessionTitle, setAutoSessionTitle] = useState(() => isAutoSessionTitleEnabled());
   const languageControlId = useId();
   const backgroundModeControlId = useId();
+  const autoSessionTitleControlId = useId();
   const themeControlId = useId();
   useEffect(() => {
     let disposed = false;
@@ -1050,6 +1053,49 @@ function GeneralSettings({
               : t("backgroundModeLoadFailed", "Background mode could not be loaded. The default remains selected.")}
           </p>
         )}
+      </section>
+
+      <div style={{ height: 1, background: "var(--border)", maxWidth: 620, margin: "28px 0" }} />
+
+      <section style={{ maxWidth: 620 }}>
+        <h2 style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>{t("conversationSettings", "Conversation")}</h2>
+        <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
+          {t(
+            "autoSessionTitleDescription",
+            "Generate a short session title from the first message using the current model. Runs silently in the background and never overwrites a title you set manually.",
+          )}
+        </p>
+        <SettingRow label={t("autoSessionTitle", "Auto-title new sessions")} controlId={autoSessionTitleControlId}>
+          <label
+            htmlFor={autoSessionTitleControlId}
+            style={{
+              width: 36,
+              height: 36,
+              display: "grid",
+              placeItems: "center",
+              flexShrink: 0,
+              cursor: "pointer",
+            }}
+          >
+            <input
+              id={autoSessionTitleControlId}
+              type="checkbox"
+              checked={autoSessionTitle}
+              onChange={(event) => {
+                const next = event.target.checked;
+                setAutoSessionTitle(next);
+                setAutoSessionTitleEnabled(next);
+              }}
+              style={{
+                width: 18,
+                height: 18,
+                margin: 0,
+                accentColor: "var(--accent)",
+                cursor: "pointer",
+              }}
+            />
+          </label>
+        </SettingRow>
       </section>
 
       <div style={{ height: 1, background: "var(--border)", maxWidth: 620, margin: "28px 0" }} />

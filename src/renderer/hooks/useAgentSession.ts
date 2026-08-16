@@ -30,6 +30,7 @@ import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { subscribeActiveSessionLiveSync } from "./active-session-live-sync";
 import { isNearChatBottom, shouldDisengageScrollMagnet, shouldStopChatAutoFollow } from "./chat-scroll-policy";
+import { requestAutoSessionTitle, shouldAutoTitleMessage } from "../lib/auto-session-title";
 
 // Module-level scroll magnet: survives ChatWindow remounts (each session switch
 // uses key={sessionKey} in AppShell, which would otherwise wipe every useRef).
@@ -1253,6 +1254,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               ...(piImages?.length ? { images: piImages } : {}),
             });
             promoteNewSession(1, message);
+            // Auto-title the brand-new session from its first message. Fire and
+            // forget: generation is a silent background LLM request and the Host
+            // applies it with a rename guard (a manual rename always wins).
+            const titleModel = newSessionModel ?? newSessionDefaultModel;
+            if (shouldAutoTitleMessage(trimmedMessage, !!piImages?.length)) {
+              void requestAutoSessionTitle({
+                sessionId: sid,
+                cwd: newSessionCwd,
+                message: trimmedMessage,
+                ...(titleModel ? { provider: titleModel.provider, modelId: titleModel.modelId } : {}),
+              });
+            }
           }
         } else if (session) {
           sentSessionId = session.id;
@@ -1294,6 +1307,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       isNew,
       newSessionCwd,
       newSessionModel,
+      newSessionDefaultModel,
       session,
       t,
       agentRunning,

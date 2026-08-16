@@ -28,6 +28,13 @@ import {
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type AuthInteraction } from "@earendil-works/pi-ai";
+import {
+  AUTO_TITLE_MAX_LENGTH,
+  makeFallbackTitle,
+  messageContentText,
+  sanitizeGeneratedTitle,
+  takeCodePoints,
+} from "./session-title";
 import type { RpcServer } from "../contract/rpc";
 import {
   RpcError,
@@ -394,6 +401,91 @@ function resolveModelsCwd(params: { cwd?: string } | void): string {
     throw new RpcError({ code: "BAD_REQUEST", message: `Directory does not exist: ${cwd}` });
   }
   return cwd;
+}
+
+// ============================================================================
+// Auto session title — silent LLM request that never touches session history.
+// ============================================================================
+
+const AUTO_TITLE_REQUEST_MAX_CHARS = 2000;
+const AUTO_TITLE_MAX_TOKENS = 60;
+const AUTO_TITLE_TIMEOUT_MS = 15_000;
+const AUTO_TITLE_SYSTEM_PROMPT =
+  "You create a concise session title from the user's first message. " +
+  "Rules: match the language of the message; return only a short noun phrase " +
+  `of at most ${AUTO_TITLE_MAX_LENGTH} characters; no quotes, no trailing punctuation, no Markdown.`;
+
+type TitleSessionServices = Awaited<ReturnType<typeof createAgentSessionServices>>;
+
+function resolveTitleModel(
+  services: TitleSessionServices,
+  provider?: string,
+  modelId?: string,
+): AvailableModel | undefined {
+  const runtime = services.modelRuntime;
+  if (provider && modelId) {
+    const byRef = runtime.getModel(provider, modelId);
+    if (byRef) return byRef as AvailableModel;
+  }
+  const settings = services.settingsManager;
+  const defaultProvider = settings.getDefaultProvider();
+  const defaultModelId = settings.getDefaultModel();
+  if (defaultProvider && defaultModelId) {
+    const byDefault = runtime.getModel(defaultProvider, defaultModelId);
+    if (byDefault) return byDefault as AvailableModel;
+  }
+  return runtime.getAvailableSnapshot()[0];
+}
+
+async function generateSessionTitle(
+  services: TitleSessionServices,
+  message: string,
+  provider?: string,
+  modelId?: string,
+): Promise<string | null> {
+  const model = resolveTitleModel(services, provider, modelId);
+  if (!model) return null;
+  try {
+    const assistant = await services.modelRuntime.completeSimple(
+      model,
+      {
+        systemPrompt: AUTO_TITLE_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: takeCodePoints(message, AUTO_TITLE_REQUEST_MAX_CHARS),
+            timestamp: Date.now(),
+          },
+        ],
+      },
+      {
+        // Standalone request: never reuse or write prompt-cache entries.
+        cacheRetention: "none",
+        maxTokens: AUTO_TITLE_MAX_TOKENS,
+        sessionId: randomUUID(),
+        signal: AbortSignal.timeout(AUTO_TITLE_TIMEOUT_MS),
+      },
+    );
+    return sanitizeGeneratedTitle(messageContentText(assistant.content));
+  } catch {
+    return null;
+  }
+}
+
+async function hasSessionName(sessionId: string): Promise<boolean> {
+  const existing = getRpcSession(sessionId);
+  if (existing?.isAlive()) {
+    const name = existing.inner.sessionName;
+    return typeof name === "string" && name.trim().length > 0;
+  }
+  try {
+    const filePath = await resolveSessionPath(sessionId);
+    if (!filePath) return false;
+    const storedName = SessionManager.open(filePath, undefined).getSessionName();
+    return typeof storedName === "string" && storedName.trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 type DirectoryValidation = { ok: true; path: string; canonicalPath: string } | { ok: false; error: string };
@@ -963,6 +1055,57 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       if (!session || !session.isAlive()) return { running: false };
       const state = await session.send({ type: "get_state" });
       return { running: true, state };
+    },
+
+    "agent.generateTitle": async (params) => {
+      const body = params as {
+        sessionId: string;
+        cwd: string;
+        message: string;
+        provider?: string;
+        modelId?: string;
+      };
+      const { sessionId, cwd, message } = body;
+      if (typeof sessionId !== "string" || !sessionId) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "sessionId is required" });
+      }
+      if (typeof cwd !== "string" || !cwd) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "cwd is required" });
+      }
+      if (typeof message !== "string" || !message.trim()) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "message is required" });
+      }
+      const dir = validateExistingDirectory(cwd);
+      if (!dir.ok) {
+        throw new RpcError({ code: "BAD_REQUEST", message: dir.error });
+      }
+      // Never overwrite a title the user already set (or an earlier title).
+      if (await hasSessionName(sessionId)) return { title: null };
+
+      let services: TitleSessionServices;
+      try {
+        services = await createAgentSessionServices({ cwd: dir.path, agentDir: getAgentDir() });
+      } catch {
+        return { title: null };
+      }
+      const generated = await generateSessionTitle(services, message, body.provider, body.modelId);
+      const finalTitle = generated ?? makeFallbackTitle(message);
+
+      // Re-check right before applying: the user may have renamed the session
+      // while the model was generating — a manual rename always wins.
+      if (await hasSessionName(sessionId)) return { title: null };
+
+      const existing = getRpcSession(sessionId);
+      if (existing?.isAlive()) {
+        await existing.send({ type: "set_session_name", name: finalTitle });
+      } else {
+        const filePath = await resolveSessionPath(sessionId);
+        if (!filePath) return { title: null };
+        SessionManager.open(filePath, undefined).appendSessionInfo(finalTitle);
+        invalidateSessionContent(filePath);
+      }
+      await emitIndexedSessionChange(server, sessionId, dir.path);
+      return { title: finalTitle };
     },
 
     "channels.list": async () => channelManager.snapshot(),
