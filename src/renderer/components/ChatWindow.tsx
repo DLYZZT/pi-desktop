@@ -500,7 +500,7 @@ export function ChatWindow({
       onAudioUnlock={unlockAudio}
       draftKey={session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined)}
       cwd={session?.cwd ?? newSessionCwd}
-      statusChips={extensionStatuses}
+      statusChips={extensionStatuses.filter((status) => /grok|usage/i.test(`${status.key} ${status.text}`))}
     />
   );
 
