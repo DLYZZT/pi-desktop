@@ -131,6 +131,17 @@ export interface Api {
     params: { sessionId: string };
     result: { running: boolean; state?: unknown };
   };
+  /** Generate a concise session title from the first user message (silent LLM request, never touches session history). */
+  "agent.generateTitle": {
+    params: {
+      sessionId: string;
+      cwd: string;
+      message: string;
+      provider?: string;
+      modelId?: string;
+    };
+    result: { title: string | null };
+  };
 
   // Messaging channels
   "channels.list": { params: void; result: ChannelsSnapshot };
