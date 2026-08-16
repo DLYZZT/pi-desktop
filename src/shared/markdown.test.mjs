@@ -27,10 +27,10 @@ const WB = String.raw;
 
 test("autolinks Windows absolute path with spaces (trailing word cut)", async () => {
   const { autolinkPathsInMarkdown } = await loadSubject();
-  const out = autolinkPathsInMarkdown(WB`Build: C:\Users\Anarki\x\Pi Agent Desktop.exe big`);
-  assert.ok(out.includes(WB`[C:\Users\Anarki\x\Pi Agent Desktop.exe]`), out);
+  const out = autolinkPathsInMarkdown(WB`Build: C:\Users\tester\x\Pi Agent Desktop.exe big`);
+  assert.ok(out.includes(WB`[C:\Users\tester\x\Pi Agent Desktop.exe]`), out);
   // href must be a canonical file:/// URL — a bare "C:\" href is stripped by the sanitizer
-  assert.ok(out.includes("](file:///C:/Users/Anarki/x/Pi%20Agent%20Desktop.exe)"), out);
+  assert.ok(out.includes("](file:///C:/Users/tester/x/Pi%20Agent%20Desktop.exe)"), out);
   assert.ok(!out.includes("big]"), out + " <- 'big' must stay outside link");
 });
 
