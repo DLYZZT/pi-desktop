@@ -6,6 +6,7 @@ import {
   getAssistantFailureDetail,
   hasRenderableAssistantMessage,
   isAssistantFailure,
+  isEmptyTextBlock,
   isEmptyThinkingBlock,
 } from "@/lib/message-display";
 import { getUserBubbleStyle } from "@/lib/channel-message-style";
@@ -546,7 +547,7 @@ function AssistantMessageView({
   const time = showTimestamp ? formatTime(message.timestamp) : null;
   const blockItems = (message.content ?? [])
     .map((block, originalIndex) => ({ block, originalIndex }))
-    .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming }));
+    .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming }) && !isEmptyTextBlock(block, { isStreaming }));
   const blocks = blockItems.map(({ block }) => block);
   const [hovered, setHovered] = useState(false);
   const { copied, copy } = useCopyFeedback();
@@ -916,9 +917,32 @@ function TextBlock({
   );
 }
 
+// Expanded/collapsed state survives chat switches (component remounts wipe
+// useState; this module state lives for the app's lifetime).
+// Per-content override + a default from the user's last toggle: expand one
+// block and new thinking blocks start expanded; collapse → new start collapsed.
+// Bounded FIFO: keys are full thinking texts (KBs each), so cap the map.
+const THINKING_STATE_LIMIT = 200;
+const thinkingExpandedByContent = new Map<string, boolean>();
+let thinkingDefaultExpanded = false;
+
 function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?: number }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(
+    () => thinkingExpandedByContent.get(block.thinking) ?? thinkingDefaultExpanded,
+  );
   const { t } = useI18n();
+  const toggleExpanded = () =>
+    setExpanded((prev) => {
+      const next = !prev;
+      thinkingExpandedByContent.delete(block.thinking); // refresh position for FIFO order
+      thinkingExpandedByContent.set(block.thinking, next);
+      if (thinkingExpandedByContent.size > THINKING_STATE_LIMIT) {
+        const oldest = thinkingExpandedByContent.keys().next().value;
+        if (oldest !== undefined) thinkingExpandedByContent.delete(oldest);
+      }
+      thinkingDefaultExpanded = next;
+      return next;
+    });
   return (
     <div
       style={{
@@ -930,7 +954,7 @@ function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?:
       }}
     >
       <button
-        onClick={() => setExpanded((v) => !v)}
+        onClick={toggleExpanded}
         style={{
           display: "flex",
           alignItems: "center",

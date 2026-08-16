@@ -1,4 +1,4 @@
-import type { AssistantContentBlock, AssistantMessage, ThinkingContent, ToolCallContent } from "./types";
+import type { AssistantContentBlock, AssistantMessage, TextContent, ThinkingContent, ToolCallContent } from "./types";
 
 interface DisplayOptions {
   isStreaming?: boolean;
@@ -21,11 +21,18 @@ export function isEmptyThinkingBlock(
   return block.type === "thinking" && !options.isStreaming && block.thinking.trim() === "";
 }
 
+/** Empty text segments render as pointless blank bubbles (e.g. between thinking and tool calls). */
+export function isEmptyTextBlock(block: AssistantContentBlock, options: DisplayOptions = {}): block is TextContent {
+  return block.type === "text" && !options.isStreaming && block.text.trim() === "";
+}
+
 export function getDisplayableAssistantBlocks(
   message: AssistantMessage,
   options: DisplayOptions = {},
 ): AssistantContentBlock[] {
-  return (message.content ?? []).filter((block) => !isEmptyThinkingBlock(block, options));
+  return (message.content ?? []).filter(
+    (block) => !isEmptyThinkingBlock(block, options) && !isEmptyTextBlock(block, options),
+  );
 }
 
 export function hasRenderableAssistantMessage(message: AssistantMessage, options: DisplayOptions = {}): boolean {
