@@ -1843,6 +1843,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const container = scrollContainerRef.current;
     if (container) lastScrollTopRef.current = container.scrollTop;
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
+
+    // Explicit upward gestures release the follow magnet immediately. Waiting
+    // for scroll-position deltas loses during streaming: every follow frame
+    // refreshes the programmatic-scroll guard, so a small user scroll-up gets
+    // swallowed and the view snaps back down.
+    const isUpwardGesture =
+      (event instanceof WheelEvent && event.deltaY < 0 && !event.ctrlKey) || // ctrl+wheel = pinch-zoom, not scroll
+      (event instanceof KeyboardEvent && (event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home"));
+    if (isUpwardGesture && Date.now() >= sessionChangeIgnoreScrollUntilRef.current) {
+      completionScrollAllowedRef.current = false;
+      externalTurnAutoFollowRef.current = false;
+      autoFollowMagnetRef.current = false;
+      setScrollMagnetEngaged(false);
+    }
   }, []);
 
   const handleScrollPositionChange = useCallback(() => {
