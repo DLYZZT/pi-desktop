@@ -103,7 +103,7 @@ test("staging a draft performs no synchronous localStorage write until flush", (
     flushDraft("debounce-proof");
     assert.equal(writes.length, 1);
     assert.equal(writes[0][0], "set");
-    assert.deepEqual(JSON.parse(writes[0][2]), { value: "draft", images: [] });
+    assert.deepEqual(JSON.parse(writes[0][2]), { value: "draft", images: [], files: [] });
   } finally {
     if (descriptor) Object.defineProperty(globalThis, "localStorage", descriptor);
     else delete globalThis.localStorage;

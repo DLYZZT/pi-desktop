@@ -110,6 +110,10 @@ export interface PiBridge {
   requestHostPort: () => void;
   openExternal: (url: string) => Promise<void>;
   showItemInFolder: (fsPath: string) => Promise<void>;
+  /** Show the app's rich file context menu for a resolved path. */
+  showFileContextMenu: (fsPath: string) => Promise<void>;
+  /** Resolve the absolute filesystem path for a dropped/injected File object. */
+  getPathForFile?: (file: File) => string | null;
   selectDirectory: () => Promise<string | null>;
   setChannelCredential: (payload: ChannelCredentialWrite) => Promise<void>;
   saveFile: (opts: SaveTextFileOptions) => Promise<string | null>;
