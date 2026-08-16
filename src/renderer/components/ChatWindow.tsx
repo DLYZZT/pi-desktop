@@ -939,7 +939,7 @@ export function ChatWindow({
 
                   <div ref={liveContentEndRef} />
 
-                  {agentRunning && <div style={{ height: chatViewportHeight }} />}
+                  {agentRunning && <div data-run-spacer style={{ height: chatViewportHeight }} />}
 
                   <div ref={messagesEndRef} />
                 </div>
@@ -989,6 +989,7 @@ export function ChatWindow({
                 {agentRunning && (
                   <span
                     aria-hidden="true"
+                    className="chat-scroll-to-bottom-live-dot"
                     style={{
                       position: "absolute",
                       top: 2,
@@ -997,7 +998,6 @@ export function ChatWindow({
                       height: 6,
                       borderRadius: "50%",
                       background: "var(--accent)",
-                      animation: "blink 1.2s ease-in-out infinite",
                     }}
                   />
                 )}

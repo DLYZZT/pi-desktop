@@ -29,7 +29,7 @@ import {
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { subscribeActiveSessionLiveSync } from "./active-session-live-sync";
-import { isNearChatBottom, shouldStopChatAutoFollow } from "./chat-scroll-policy";
+import { didUserScrollUp, isNearChatBottom, shouldStopChatAutoFollow } from "./chat-scroll-policy";
 
 // Module-level scroll magnet: survives ChatWindow remounts (each session switch
 // uses key={sessionKey} in AppShell, which would otherwise wipe every useRef).
@@ -169,6 +169,17 @@ export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" 
 
 const PROGRAMMATIC_SCROLL_IGNORE_MS = 700;
 const USER_SCROLL_INTENT_MS = 1200;
+
+/** Near-bottom check that ignores the full-viewport run spacer. */
+function isNearBottomExcludingSpacer(container: HTMLElement): boolean {
+  const spacer = container.querySelector<HTMLElement>("[data-run-spacer]");
+  return isNearChatBottom({
+    scrollTop: container.scrollTop,
+    scrollHeight: container.scrollHeight,
+    clientHeight: container.clientHeight,
+    spacerHeight: spacer ? spacer.offsetHeight : 0,
+  });
+}
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
@@ -1022,7 +1033,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       switch (event.type) {
         case "channel_turn_start": {
           const container = scrollContainerRef.current;
-          const shouldFollow = container ? isNearChatBottom(container) : true;
+          const shouldFollow = container ? isNearBottomExcludingSpacer(container) : true;
           externalTurnAutoFollowRef.current = shouldFollow;
           completionScrollAllowedRef.current = shouldFollow;
           if (container) lastScrollTopRef.current = container.scrollTop;
@@ -1793,7 +1804,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const updateScrollPresence = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    const nearBottom = isNearChatBottom(container);
+    const nearBottom = isNearBottomExcludingSpacer(container);
     // Bail out of re-renders when the value is unchanged.
     setIsAwayFromBottom((prev) => (prev === !nearBottom ? prev : !nearBottom));
   }, []);
@@ -1828,7 +1839,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const currentScrollTop = container.scrollTop;
     lastScrollTopRef.current = currentScrollTop;
     updateScrollPresence();
-    if (!agentRunningRef.current) return;
+    if (!agentRunningRef.current) {
+      // Idle: there is no programmatic scrolling, so an upward movement is a
+      // deliberate user scroll and must disengage the magnet — otherwise the
+      // next run unexpectedly resumes auto-follow. Scrolling back to the
+      // bottom re-engages it, mirroring the streaming behavior.
+      if (Date.now() >= sessionChangeIgnoreScrollUntilRef.current) {
+        if (didUserScrollUp(previousScrollTop, currentScrollTop)) {
+          autoFollowMagnetRef.current = false;
+          setScrollMagnetEngaged(false);
+        } else if (isNearBottomExcludingSpacer(container)) {
+          autoFollowMagnetRef.current = true;
+          setScrollMagnetEngaged(true);
+        }
+      }
+      return;
+    }
     const now = Date.now();
     // Local prompts deliberately move the user's message to the top; retain
     // the old programmatic-scroll guard for that path. During external

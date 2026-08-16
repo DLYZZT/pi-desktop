@@ -884,6 +884,10 @@ span.linenumber {
   }
 }
 
+.chat-scroll-to-bottom-live-dot {
+  animation: blink 1.2s ease-in-out infinite;
+}
+
 @keyframes notice-shelf-in {
   from {
     opacity: 0;
@@ -939,6 +943,10 @@ span.linenumber {
 
   .chat-scroll-to-bottom {
     animation-duration: 0.001ms !important;
+  }
+
+  .chat-scroll-to-bottom-live-dot {
+    animation: none;
   }
 }
 
