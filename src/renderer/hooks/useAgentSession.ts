@@ -29,7 +29,7 @@ import {
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { subscribeActiveSessionLiveSync } from "./active-session-live-sync";
-import { didUserScrollUp, isNearChatBottom, shouldStopChatAutoFollow } from "./chat-scroll-policy";
+import { isNearChatBottom, shouldDisengageScrollMagnet, shouldStopChatAutoFollow } from "./chat-scroll-policy";
 
 // Module-level scroll magnet: survives ChatWindow remounts (each session switch
 // uses key={sessionKey} in AppShell, which would otherwise wipe every useRef).
@@ -1840,18 +1840,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     lastScrollTopRef.current = currentScrollTop;
     updateScrollPresence();
     if (!agentRunningRef.current) {
-      // Idle: there is no programmatic scrolling, so an upward movement is a
-      // deliberate user scroll and must disengage the magnet — otherwise the
-      // next run unexpectedly resumes auto-follow. Scrolling back to the
-      // bottom re-engages it, mirroring the streaming behavior.
-      if (Date.now() >= sessionChangeIgnoreScrollUntilRef.current) {
-        if (didUserScrollUp(previousScrollTop, currentScrollTop)) {
-          autoFollowMagnetRef.current = false;
-          setScrollMagnetEngaged(false);
-        } else if (isNearBottomExcludingSpacer(container)) {
-          autoFollowMagnetRef.current = true;
-          setScrollMagnetEngaged(true);
-        }
+      // Idle upward movement normally disengages the magnet so the next run
+      // does not unexpectedly resume auto-follow. During session transitions,
+      // the policy filters synthetic movement but still accepts explicit user
+      // input. Scrolling back to the bottom re-engages the magnet.
+      const now = Date.now();
+      if (
+        shouldDisengageScrollMagnet({
+          previousScrollTop,
+          currentScrollTop,
+          now,
+          userIntentUntil: userScrollIntentUntilRef.current,
+          sessionChangeIgnoreUntil: sessionChangeIgnoreScrollUntilRef.current,
+        })
+      ) {
+        autoFollowMagnetRef.current = false;
+        setScrollMagnetEngaged(false);
+      } else if (now >= sessionChangeIgnoreScrollUntilRef.current && isNearBottomExcludingSpacer(container)) {
+        autoFollowMagnetRef.current = true;
+        setScrollMagnetEngaged(true);
       }
       return;
     }
@@ -1872,12 +1879,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     ) {
       completionScrollAllowedRef.current = false;
       externalTurnAutoFollowRef.current = false;
-      // Don't clear the magnet during session transitions: the scroll event
-      // from content reload should not disengage an already-engaged magnet.
-      if (Date.now() >= sessionChangeIgnoreScrollUntilRef.current) {
-        autoFollowMagnetRef.current = false;
-        setScrollMagnetEngaged(false);
-      }
+      // shouldStopChatAutoFollow only accepts explicit user intent, so it must
+      // win even while a session-transition guard is active.
+      autoFollowMagnetRef.current = false;
+      setScrollMagnetEngaged(false);
     }
   }, [updateScrollPresence]);
 
@@ -2039,15 +2044,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     streamState.streamingMessage,
   ]);
 
-  // Keep "away from bottom" fresh when the container is resized.
+  // Keep "away from bottom" fresh when the viewport or message layout changes.
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
     const ro = new ResizeObserver(() => updateScrollPresence());
     ro.observe(container);
+    // scrollHeight can change without resizing the viewport (for example when
+    // an image loads or process details expand), so observe the content too.
+    const content = liveContentEndRef.current?.parentElement;
+    if (content) ro.observe(content);
     updateScrollPresence();
     return () => ro.disconnect();
-  }, [loading, updateScrollPresence]);
+  }, [loading, messages.length, updateScrollPresence]);
 
   // Content can grow without firing a scroll event (the streaming tail makes
   // the container taller while scrollTop stays put) — re-evaluate presence

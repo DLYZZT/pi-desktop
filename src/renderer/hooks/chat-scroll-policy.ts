@@ -22,6 +22,22 @@ export function didUserScrollUp(previousScrollTop: number, currentScrollTop: num
   return currentScrollTop < previousScrollTop - USER_SCROLL_UP_MIN_PX;
 }
 
+export interface ScrollMagnetDisengageInput {
+  previousScrollTop: number;
+  currentScrollTop: number;
+  now: number;
+  userIntentUntil: number;
+  sessionChangeIgnoreUntil: number;
+}
+
+export function shouldDisengageScrollMagnet(input: ScrollMagnetDisengageInput): boolean {
+  if (!didUserScrollUp(input.previousScrollTop, input.currentScrollTop)) return false;
+  // Session changes can produce synthetic upward scroll events while content
+  // is replaced. Ignore those, but never ignore an explicit wheel/touch/key
+  // gesture from the user during the same transition window.
+  return input.now >= input.sessionChangeIgnoreUntil || input.now <= input.userIntentUntil;
+}
+
 export interface AutoFollowStopInput {
   previousScrollTop: number;
   currentScrollTop: number;
