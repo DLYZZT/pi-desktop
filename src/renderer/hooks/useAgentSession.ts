@@ -848,13 +848,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType }) => {
     const message = notice.message.trim();
     if (!message) return;
+    const multiline = message.includes("\n") || message.length > 80;
     dispatchNotice({
       type: "add",
       notice: {
         id: notice.id ?? createNoticeId(),
         message,
         type: notice.type ?? "info",
-        expiresAt: Date.now() + NOTICE_VISIBLE_MS,
+        expiresAt: Date.now() + (multiline ? NOTICE_VISIBLE_MS * 4 : NOTICE_VISIBLE_MS),
       },
     });
   }, []);

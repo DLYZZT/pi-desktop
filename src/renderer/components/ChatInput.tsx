@@ -93,6 +93,7 @@ interface Props {
   draftKey?: string;
   /** Session working directory — enables the @ file autocomplete menu */
   cwd?: string | null;
+  statusChips?: Array<{ key: string; text: string }>;
 }
 
 export interface ChatInputHandle {
@@ -261,6 +262,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     onPromptWithStreamingBehavior,
     draftKey,
     cwd,
+    statusChips,
   }: Props,
   ref,
 ) {
@@ -2204,6 +2206,30 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                   )}
               </div>
             )}
+            {(statusChips ?? [])
+              .filter((chip) => chip.text.trim().length > 0)
+              .map((chip) => (
+                <span
+                  key={chip.key}
+                  title={`${chip.key}: ${chip.text}`}
+                  style={{
+                    maxWidth: 220,
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    border: "1px solid var(--border)",
+                    background: "var(--bg-panel)",
+                    color: "var(--text-muted)",
+                    fontSize: 11,
+                    lineHeight: "20px",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    flexShrink: 1,
+                  }}
+                >
+                  {chip.text}
+                </span>
+              ))}
           </div>
 
           {/* spacer */}

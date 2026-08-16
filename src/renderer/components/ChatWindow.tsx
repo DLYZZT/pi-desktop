@@ -500,6 +500,7 @@ export function ChatWindow({
       onAudioUnlock={unlockAudio}
       draftKey={session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined)}
       cwd={session?.cwd ?? newSessionCwd}
+      statusChips={extensionStatuses}
     />
   );
 
@@ -702,7 +703,9 @@ export function ChatWindow({
                       </button>
                     </div>
                   )}
-                  <ExtensionStatusBar statuses={extensionStatuses} />
+                  <ExtensionStatusBar
+                    statuses={extensionStatuses.filter((status) => !/grok|usage/i.test(status.key))}
+                  />
                   <ExtensionWidgets widgets={aboveEditorWidgets} />
 
                   {(() => {
@@ -1141,9 +1144,9 @@ function NoticeShelf({
               display: "flex",
               alignItems: "center",
               gap: 10,
-              minHeight: 60,
-              height: 60,
-              maxHeight: 60,
+              minHeight: 40,
+              maxHeight: 240,
+              alignItems: "flex-start" as const,
               marginBottom: index === notices.length - 1 ? 0 : 6,
               overflow: "hidden",
               borderRadius: 14,
@@ -1175,12 +1178,14 @@ function NoticeShelf({
             />
             <span
               style={{
-                padding: "14px 0",
+                padding: "10px 0",
                 minWidth: 0,
                 maxWidth: "100%",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                fontSize: 13,
+                lineHeight: 1.4,
               }}
             >
               {notice.message}
