@@ -98,13 +98,19 @@ export async function runDev(projectRoot = root) {
     await waitForViteReady(rendererUrl);
 
     console.log("[dev] Vite ready; starting Electron…");
-    runtime.run("Electron", resolveElectronBinary(projectRoot), ["."], {
-      allowCleanExit: true,
-      env: {
-        VITE_DEV_SERVER_URL: rendererUrl,
-        ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
+    const userDataDir = process.env.PI_DESKTOP_USER_DATA_DIR;
+    runtime.run(
+      "Electron",
+      resolveElectronBinary(projectRoot),
+      [".", ...(userDataDir ? [`--user-data-dir=${userDataDir}`] : [])],
+      {
+        allowCleanExit: true,
+        env: {
+          VITE_DEV_SERVER_URL: rendererUrl,
+          ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
+        },
       },
-    });
+    );
   } catch (error) {
     console.error(`[dev] ${error instanceof Error ? error.message : error}`);
     runtime.shutdown(1);

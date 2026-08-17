@@ -3,6 +3,7 @@
  * Runs pi-coding-agent in-process; serves Api/Streams over MessagePort.
  */
 import { createRpcServer } from "../contract/rpc";
+import { installHttpIdleTimeout } from "./http-idle-timeout";
 import { registerHandlers } from "./handlers";
 import { startSessionWatcher } from "./session-watcher";
 import { toolchainRuntime } from "./toolchain-runtime";
@@ -15,11 +16,6 @@ import { readPiRuntimeVersion } from "./runtime-version";
 
 const piRuntimeVersion = readPiRuntimeVersion();
 
-const server = createRpcServer();
-const restoreGitRunner = installToolchainGitRunner();
-const stopHandlers = registerHandlers(server);
-const stopWatcher = startSessionWatcher(server);
-
 function log(message: string): void {
   try {
     process.parentPort?.postMessage({ type: "log", message });
@@ -27,6 +23,14 @@ function log(message: string): void {
     console.log(`[agent-host] ${message}`);
   }
 }
+
+const httpIdleTimeoutMs = await installHttpIdleTimeout();
+log(`HTTP idle timeout ${httpIdleTimeoutMs}ms`);
+
+const server = createRpcServer();
+const restoreGitRunner = installToolchainGitRunner();
+const stopHandlers = registerHandlers(server);
+const stopWatcher = startSessionWatcher(server);
 
 // Electron utilityProcess parent messaging
 const parentPort = process.parentPort;

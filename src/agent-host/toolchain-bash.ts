@@ -1,5 +1,6 @@
-import { createLocalBashOperations, type BashToolOptions } from "@earendil-works/pi-coding-agent";
+import type { BashToolOptions } from "@earendil-works/pi-coding-agent";
 import type { ToolExecutionContext } from "../shared/toolchains/types.ts";
+import { execDesktopBash } from "./desktop-bash-exec.ts";
 import { toolchainRuntime, type ToolchainRuntime } from "./toolchain-runtime.ts";
 
 /** Build Bash options from one immutable project resolution. */
@@ -21,14 +22,13 @@ export function createToolchainBashOptions(
       },
     };
   }
-  const local = createLocalBashOperations({ shellPath: descriptor.executable });
   return {
     commandPrefix,
     shellPath: descriptor.executable,
     operations: {
       async exec(command, cwd, options) {
         await beforeExec?.(command);
-        return local.exec(command, cwd, options);
+        return execDesktopBash(command, cwd, options, descriptor.executable);
       },
     },
     spawnHook(spawnContext) {
