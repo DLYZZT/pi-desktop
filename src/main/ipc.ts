@@ -20,6 +20,8 @@ import {
 import { ToolchainError } from "../shared/toolchains/errors";
 import type { BrowserService } from "./browser/browser-service";
 import { BrowserError } from "./browser/browser-error";
+import { applySessionTuiSelect } from "./fork/session-tui";
+import { bundledPiCliPath, spawnExternalPi } from "./fork/session-tui-spawn";
 import { isTrustedDesktopIpcSender } from "./ipc-trust";
 import type {
   BrowserConfirmationKind,
@@ -177,6 +179,23 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   trustedOn("desktop:abort-session", (_event, sessionId: unknown) => {
     if (typeof sessionId !== "string" || !sessionId.trim()) return;
     getHostManager()?.abortSession(sessionId.trim());
+  });
+
+  trustedOn("desktop:start-session-tui", (_event, payload: unknown) => {
+    if (!payload || typeof payload !== "object") return;
+    const sessionId = "sessionId" in payload ? payload.sessionId : undefined;
+    const cwd = "cwd" in payload ? payload.cwd : undefined;
+    if (typeof sessionId !== "string" || !sessionId.trim()) return;
+    if (typeof cwd !== "string" || !cwd.trim()) return;
+    applySessionTuiSelect(
+      { sessionId: sessionId.trim(), cwd: cwd.trim() },
+      { bundledPi: bundledPiCliPath() },
+      {
+        spawn(request) {
+          spawnExternalPi(request, process.execPath);
+        },
+      },
+    );
   });
 
   trustedHandle("desktop:open-external", async (_event, url: string) => {

@@ -73,6 +73,20 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
         ipcRenderer.send("desktop:abort-session", sessionId.trim());
       }
     },
+    startSessionTui: (session) => {
+      if (
+        session &&
+        typeof session.sessionId === "string" &&
+        session.sessionId.trim() &&
+        typeof session.cwd === "string" &&
+        session.cwd.trim()
+      ) {
+        ipcRenderer.send("desktop:start-session-tui", {
+          sessionId: session.sessionId.trim(),
+          cwd: session.cwd.trim(),
+        });
+      }
+    },
     openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
     showItemInFolder: (fsPath) => ipcRenderer.invoke("desktop:show-item-in-folder", fsPath),
     selectDirectory: () => ipcRenderer.invoke("desktop:select-directory"),
