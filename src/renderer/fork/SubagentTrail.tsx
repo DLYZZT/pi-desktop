@@ -1,6 +1,5 @@
 import type { CSSProperties } from "react";
-import type { ToolResultMessage } from "@/lib/types";
-import { parseSubagentTrail, type SubagentTrail, type TrailItem, type TrailMark } from "./subagent-trail";
+import { type SubagentTrail, type TrailItem, type TrailMark } from "./subagent-trail";
 
 const bodyStyle: CSSProperties = {
   padding: "8px 12px",
@@ -12,12 +11,6 @@ const bodyStyle: CSSProperties = {
 };
 
 const muted: CSSProperties = { color: "var(--text-dim)" };
-
-export function ForkSubagentTrail({ result, expanded }: { result: ToolResultMessage; expanded: boolean }) {
-  const trail = parseSubagentTrail(result.details, result.timestamp === undefined);
-  if (!trail) return null;
-  return <SubagentTrailView trail={trail} expanded={expanded} />;
-}
 
 export function SubagentTrailView({ trail, expanded }: { trail: SubagentTrail; expanded: boolean }) {
   return (
