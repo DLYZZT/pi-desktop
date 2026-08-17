@@ -7,12 +7,21 @@ import {
   saveUnreadSessionIds as saveStoredUnreadSessionIds,
 } from "@/lib/unread-session-storage";
 import {
-  filterSessionsForQuery,
   getSessionDisplayTitle,
   resolveInitialSessionRestore,
   sessionDateGroup,
   type SessionDateGroup,
 } from "@/lib/session-list";
+import {
+  ForkAllProjectsOption,
+  ForkArchiveMenuItem,
+  ForkArchivedDrawer,
+  ForkGroupByProjectToggle,
+  ForkProjectFolder,
+  ForkProjectPickerLabel,
+  ForkProjectTag,
+  useForkSessionList,
+} from "@/fork";
 import { applySessionChangedEvent } from "@/lib/session-sidebar-state";
 import { abbreviateHomePath } from "@/lib/display-path";
 import { formatNumber, formatRelativeDateTime } from "@/lib/locale-format";
@@ -670,6 +679,21 @@ export function SessionSidebar({
     }
   }, [allSessions, error, initialSessionId, loading, onInitialRestoreDone, onSelectSession, selectedCwd]);
 
+  const {
+    listScope,
+    setListScope,
+    archivedOpen,
+    setArchivedOpen,
+    filteredSessions,
+    archivedSessions,
+    groupByProject,
+    setGroupByProject,
+    projectFolders,
+    collapsedProjects,
+    toggleProjectFolder,
+    showProjectTag,
+  } = useForkSessionList(allSessions, sessionFilter);
+
   const commitCustomPath = useCallback(async () => {
     const path = customPathValue.trim();
     if (!path || customPathValidating) return;
@@ -688,6 +712,7 @@ export function SessionSidebar({
         return;
       }
       setSelectedCwd(data.cwd ?? path);
+      setListScope(data.cwd ?? path);
       setCustomPathOpen(false);
       setCustomPathValue("");
       setDropdownOpen(false);
@@ -696,7 +721,7 @@ export function SessionSidebar({
     } finally {
       setCustomPathValidating(false);
     }
-  }, [customPathValue, customPathValidating]);
+  }, [customPathValue, customPathValidating, setListScope]);
 
   const handleDefaultCwd = useCallback(async () => {
     try {
@@ -704,6 +729,7 @@ export function SessionSidebar({
       const data = (await res.json()) as { cwd?: string; error?: string };
       if (data.cwd) {
         setSelectedCwd(data.cwd);
+        setListScope(data.cwd);
         setCustomPathOpen(false);
         setCustomPathValue("");
         setCustomPathError(null);
@@ -712,7 +738,7 @@ export function SessionSidebar({
     } catch {
       // ignore
     }
-  }, []);
+  }, [setListScope]);
 
   /** Desktop-native directory picker (design §6.1). Falls back to path input. */
   const handlePickDirectory = useCallback(async () => {
@@ -730,6 +756,7 @@ export function SessionSidebar({
         return;
       }
       setSelectedCwd(data.cwd ?? dir);
+      setListScope(data.cwd ?? dir);
       setCustomPathOpen(false);
       setCustomPathValue("");
       setCustomPathError(null);
@@ -737,7 +764,7 @@ export function SessionSidebar({
     } catch (e) {
       setCustomPathError(e instanceof Error ? e.message : String(e));
     }
-  }, [t]);
+  }, [t, setListScope]);
 
   const handleCreateWorktree = useCallback(async () => {
     const branch = wtNewBranch.trim();
@@ -837,16 +864,22 @@ export function SessionSidebar({
     [onSelectSession],
   );
 
+  const startSessionIn = useCallback(
+    (cwd: string) => {
+      const tempId =
+        typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+      setSelectedCwd(cwd);
+      onNewSession?.(tempId, cwd);
+    },
+    [onNewSession],
+  );
+
   const handleNewSession = useCallback(() => {
     if (!selectedCwd) return;
-    // Generate a temporary UUID client-side — no backend call needed.
-    // Pi will be spawned lazily when the user sends the first message.
-    const tempId =
-      typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
-    onNewSession?.(tempId, selectedCwd);
-  }, [selectedCwd, onNewSession]);
+    startSessionIn(selectedCwd);
+  }, [selectedCwd, startSessionIn]);
 
   const recentProjects = getRecentProjects(allSessions);
   const showProjectFilter = recentProjects.length > 8;
@@ -854,12 +887,8 @@ export function SessionSidebar({
     ? recentProjects.filter((p) => p.toLowerCase().includes(projectFilter.trim().toLowerCase()))
     : recentProjects;
 
-  // Sessions of every worktree in the selected project are shown together
+  // New session still lands in selectedCwd. The list itself is all projects unless filtered.
   const selectedProject = projectRootFor(selectedCwd);
-  const projectSessions = selectedProject
-    ? allSessions.filter((s) => (s.projectRoot ?? s.cwd) === selectedProject)
-    : allSessions;
-  const filteredSessions = filterSessionsForQuery(projectSessions, sessionFilter);
   const showWorktreeSwitcher = Boolean(
     worktreeState?.isGit && worktreeState.isTopLevel && selectedCwd && selectedProject === worktreeState.projectRoot,
   );
@@ -1018,7 +1047,7 @@ export function SessionSidebar({
         <div ref={dropdownRef} style={{ position: "relative" }}>
           <button
             onClick={() => setDropdownOpen((v) => !v)}
-            title={selectedProject ?? selectedCwd ?? ""}
+            title={listScope ?? t("allProjects", "All projects")}
             style={{
               width: "100%",
               display: "flex",
@@ -1034,31 +1063,10 @@ export function SessionSidebar({
               transition: "border-color 0.15s, background 0.15s",
             }}
           >
-            {selectedCwd ? (
-              <PathLabel
-                text={abbreviateHomePath(selectedProject ?? selectedCwd, homeDir)}
-                style={{
-                  flex: 1,
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  color: "var(--text)",
-                }}
-              />
-            ) : (
-              <span
-                style={{
-                  flex: 1,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  color: "var(--text-dim)",
-                }}
-              >
-                {initialSessionId && !restoredRef.current ? "" : t("selectProjectEllipsis", "Select project…")}
-              </span>
-            )}
+            <ForkProjectPickerLabel
+              scopedLabel={listScope ? abbreviateHomePath(listScope, homeDir) : null}
+              allLabel={t("allProjects", "All projects")}
+            />
           </button>
 
           <AnimatedDropdown
@@ -1105,10 +1113,25 @@ export function SessionSidebar({
               </div>
             )}
             <div style={{ maxHeight: "min(50vh, 380px)", overflowY: "auto" }}>
+              {!projectFilter.trim() && (
+                <ForkAllProjectsOption
+                  selected={listScope === null}
+                  label={t("allProjects", "All projects")}
+                  onSelect={() => {
+                    setListScope(null);
+                    setProjectFilter("");
+                    setCustomPathOpen(false);
+                    setCustomPathValue("");
+                    setCustomPathError(null);
+                    setDropdownOpen(false);
+                  }}
+                />
+              )}
               {visibleProjects.map((project) => (
                 <button
                   key={project}
                   onClick={() => {
+                    setListScope(project);
                     setSelectedCwd(project);
                     setProjectFilter("");
                     setCustomPathOpen(false);
@@ -1125,7 +1148,7 @@ export function SessionSidebar({
                     background: "var(--bg)",
                     border: "none",
                     borderBottom: "1px solid var(--border)",
-                    color: project === selectedProject ? "var(--text)" : "var(--text-muted)",
+                    color: project === listScope ? "var(--text)" : "var(--text-muted)",
                     cursor: "pointer",
                     textAlign: "left",
                     fontSize: 11,
@@ -1136,7 +1159,7 @@ export function SessionSidebar({
                   }}
                   title={project}
                 >
-                  {project === selectedProject && (
+                  {project === listScope && (
                     <svg
                       width="10"
                       height="10"
@@ -1151,7 +1174,7 @@ export function SessionSidebar({
                       <polyline points="1.5 5 4 7.5 8.5 2.5" />
                     </svg>
                   )}
-                  {project !== selectedProject && <span style={{ width: 10, flexShrink: 0 }} />}
+                  {project !== listScope && <span style={{ width: 10, flexShrink: 0 }} />}
                   <PathLabel text={abbreviateHomePath(project, homeDir)} style={{ flex: 1 }} />
                 </button>
               ))}
@@ -1870,10 +1893,20 @@ export function SessionSidebar({
             }}
           >
             <span>{t("sessions", "Sessions")}</span>
-            <span
-              aria-label={t("sessionCount", "{count} sessions").replace("{count}", String(filteredSessions.length))}
-            >
-              {filteredSessions.length}
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {!listScope && (
+                <ForkGroupByProjectToggle
+                  enabled={groupByProject}
+                  onLabel={t("groupSessionsByProject", "Group by project folders")}
+                  offLabel={t("ungroupSessionsByProject", "Show a flat session list")}
+                  onToggle={() => setGroupByProject(!groupByProject)}
+                />
+              )}
+              <span
+                aria-label={t("sessionCount", "{count} sessions").replace("{count}", String(filteredSessions.length))}
+              >
+                {filteredSessions.length}
+              </span>
             </span>
           </div>
           <div style={{ position: "relative" }}>
@@ -1948,7 +1981,7 @@ export function SessionSidebar({
           </div>
         )}
         {error && <div style={{ padding: "12px 14px", color: "var(--danger)", fontSize: 12 }}>{error}</div>}
-        {!loading && !error && filteredSessions.length === 0 && (
+        {!loading && !error && filteredSessions.length === 0 && projectFolders.length === 0 && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 13 }}>
             {sessionFilter.trim()
               ? t("noMatchingSessions", "No matching sessions")
@@ -1956,44 +1989,106 @@ export function SessionSidebar({
           </div>
         )}
         <div style={{ padding: "0 6px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
-          {sessionGroups.map(
-            (group) =>
-              group.nodes.length > 0 && (
-                <section key={group.id} aria-labelledby={`session-group-${group.id}`}>
-                  <div
-                    id={`session-group-${group.id}`}
-                    style={{
-                      padding: "7px 8px 4px",
-                      color: "var(--text-dim)",
-                      fontSize: 12,
-                      fontWeight: 650,
-                    }}
-                  >
-                    {group.label}
-                  </div>
-                  <div role="list" style={{ display: "flex", flexDirection: "column" }}>
-                    {group.nodes.map((node) => (
-                      <SessionTreeItem
-                        key={node.session.id}
-                        node={node}
-                        selectedSessionId={selectedSessionId}
-                        runningSessionIds={runningSessionIds}
-                        unreadSessionIds={unreadSessionIds}
-                        onSelectSession={handleSelectSessionFromList}
-                        onRenamed={loadSessions}
-                        onSessionDeleted={(id) => {
-                          onSessionDeleted?.(id);
-                          void loadSessions();
+          {groupByProject
+            ? projectFolders.map((folder) => (
+                <ForkProjectFolder
+                  key={folder.root}
+                  label={folder.label}
+                  count={folder.sessions.length}
+                  collapsed={collapsedProjects.has(folder.root)}
+                  newSessionLabel={t("newSessionInProject", "New session in {project}").replace(
+                    "{project}",
+                    folder.label,
+                  )}
+                  onToggle={() => toggleProjectFolder(folder.root)}
+                  onNewSession={() => startSessionIn(folder.root)}
+                >
+                  {buildSessionTree(folder.sessions).map((node) => (
+                    <SessionTreeItem
+                      key={node.session.id}
+                      node={node}
+                      selectedSessionId={selectedSessionId}
+                      runningSessionIds={runningSessionIds}
+                      unreadSessionIds={unreadSessionIds}
+                      onSelectSession={handleSelectSessionFromList}
+                      onRenamed={loadSessions}
+                      onArchived={loadSessions}
+                      showProjectTag={false}
+                      onSessionDeleted={(id) => {
+                        onSessionDeleted?.(id);
+                        void loadSessions();
+                      }}
+                      depth={0}
+                    />
+                  ))}
+                </ForkProjectFolder>
+              ))
+            : sessionGroups.map(
+                (group) =>
+                  group.nodes.length > 0 && (
+                    <section key={group.id} aria-labelledby={`session-group-${group.id}`}>
+                      <div
+                        id={`session-group-${group.id}`}
+                        style={{
+                          padding: "7px 8px 4px",
+                          color: "var(--text-dim)",
+                          fontSize: 12,
+                          fontWeight: 650,
                         }}
-                        depth={0}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ),
-          )}
+                      >
+                        {group.label}
+                      </div>
+                      <div role="list" style={{ display: "flex", flexDirection: "column" }}>
+                        {group.nodes.map((node) => (
+                          <SessionTreeItem
+                            key={node.session.id}
+                            node={node}
+                            selectedSessionId={selectedSessionId}
+                            runningSessionIds={runningSessionIds}
+                            unreadSessionIds={unreadSessionIds}
+                            onSelectSession={handleSelectSessionFromList}
+                            onRenamed={loadSessions}
+                            onArchived={loadSessions}
+                            showProjectTag={showProjectTag}
+                            onSessionDeleted={(id) => {
+                              onSessionDeleted?.(id);
+                              void loadSessions();
+                            }}
+                            depth={0}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ),
+              )}
         </div>
       </nav>
+      <ForkArchivedDrawer
+        open={archivedOpen}
+        count={archivedSessions.length}
+        title={t("archivedSessions", "Archived")}
+        countLabel={t("archivedSessionCount", "{count} archived").replace("{count}", String(archivedSessions.length))}
+        emptyLabel={t("noArchivedSessions", "No archived sessions")}
+        onToggle={() => setArchivedOpen((open) => !open)}
+      >
+        {archivedSessions.map((session) => (
+          <SessionItem
+            key={session.id}
+            session={session}
+            isSelected={session.id === selectedSessionId}
+            isRunning={runningSessionIds.has(session.id)}
+            isUnread={unreadSessionIds.has(session.id)}
+            onClick={() => handleSelectSessionFromList(session)}
+            onRenamed={loadSessions}
+            onArchived={loadSessions}
+            showProjectTag={showProjectTag}
+            onDeleted={(id) => {
+              onSessionDeleted?.(id);
+              void loadSessions();
+            }}
+          />
+        ))}
+      </ForkArchivedDrawer>
     </div>
   );
 }
@@ -2005,6 +2100,8 @@ function SessionTreeItem({
   unreadSessionIds,
   onSelectSession,
   onRenamed,
+  onArchived,
+  showProjectTag,
   onSessionDeleted,
   depth,
 }: {
@@ -2014,6 +2111,8 @@ function SessionTreeItem({
   unreadSessionIds: Set<string>;
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
+  onArchived?: () => void;
+  showProjectTag?: boolean;
   onSessionDeleted?: (id: string) => void;
   depth: number;
 }) {
@@ -2044,6 +2143,8 @@ function SessionTreeItem({
           isUnread={unreadSessionIds.has(node.session.id)}
           onClick={() => onSelectSession(node.session)}
           onRenamed={onRenamed}
+          onArchived={onArchived}
+          showProjectTag={showProjectTag}
           onDeleted={(id) => onSessionDeleted?.(id)}
           depth={depth}
           hasChildren={hasChildren}
@@ -2062,6 +2163,8 @@ function SessionTreeItem({
               unreadSessionIds={unreadSessionIds}
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
+              onArchived={onArchived}
+              showProjectTag={showProjectTag}
               onSessionDeleted={onSessionDeleted}
               depth={depth + 1}
             />
@@ -2155,6 +2258,8 @@ function SessionItem({
   isUnread,
   onClick,
   onRenamed,
+  onArchived,
+  showProjectTag = false,
   onDeleted,
   depth = 0,
   hasChildren = false,
@@ -2167,6 +2272,8 @@ function SessionItem({
   isUnread?: boolean;
   onClick: () => void;
   onRenamed?: () => void;
+  onArchived?: () => void;
+  showProjectTag?: boolean;
   onDeleted?: (id: string) => void;
   depth?: number;
   hasChildren?: boolean;
@@ -2293,6 +2400,29 @@ function SessionItem({
     e.stopPropagation();
     setConfirmDelete(false);
   }, []);
+
+  const handleArchiveClick = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      closeActionsMenu();
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ archived: !session.archived }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          window.alert(body.error ?? `Archive failed (${res.status})`);
+          return;
+        }
+        onArchived?.();
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [closeActionsMenu, onArchived, session.archived, session.id],
+  );
 
   // Fixed-height outer wrapper — content swaps in place so the list never reflows
   const ITEM_HEIGHT = 54;
@@ -2541,6 +2671,7 @@ function SessionItem({
                 }}
               >
                 <span title={session.modified}>{formatRelativeDateTime(session.modified, language)}</span>
+                {showProjectTag && <ForkProjectTag session={session} />}
                 <span
                   style={{
                     fontFamily: "var(--font-mono)",
@@ -2699,6 +2830,13 @@ function SessionItem({
                   boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
                 }}
               >
+                <ForkArchiveMenuItem
+                  archived={session.archived}
+                  archiveLabel={t("archiveSession", "Archive")}
+                  unarchiveLabel={t("unarchiveSession", "Unarchive")}
+                  style={sessionMenuItemStyle}
+                  onClick={handleArchiveClick}
+                />
                 <button
                   type="button"
                   role="menuitem"

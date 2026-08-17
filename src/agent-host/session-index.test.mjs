@@ -89,11 +89,32 @@ test("refreshPath updates only one changed file and removePath deletes it", asyn
   );
   const updated = await index.refreshPath(parentPath);
   assert.equal(updated.name, "renamed");
+  assert.equal(updated.archived, undefined);
   assert.equal(index.getMetrics().filesDiscovered, 1);
   assert.equal(index.getMetrics().filesParsed, 1);
   unlinkSync(parentPath);
   assert.equal(index.removePath(parentPath).id, "parent");
   assert.equal(await index.resolvePath("parent"), null);
+});
+
+test("refreshPath reads desktop.archived custom entries", async () => {
+  const filePath = writeSession("archived-one");
+  const index = new SessionIndex();
+  await index.refreshAll();
+  appendFileSync(
+    filePath,
+    `${JSON.stringify({
+      type: "custom",
+      id: "archived-one-flag",
+      parentId: "archived-one-user",
+      timestamp: "2026-08-16T00:00:00.000Z",
+      customType: "desktop.archived",
+      data: { archived: true },
+    })}\n`,
+  );
+  const updated = await index.refreshPath(filePath);
+  assert.ok(updated);
+  assert.equal(updated.archived, true);
 });
 
 test("unchanged invalid files are recorded without repeated parsing", async () => {

@@ -58,6 +58,7 @@ import {
   resolveSessionPath,
 } from "./session-reader";
 import { isFilePathReferencedBySession } from "./session-file-references";
+import { forkAppendArchived } from "./fork/archive";
 import {
   addWorktree,
   getGitStatus,
@@ -826,6 +827,24 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         const sm = SessionManager.open(filePath);
         // ISSUE-014: SDK uses appendSessionInfo, not setSessionName
         sm.appendSessionInfo(name.trim());
+        invalidateSessionContent(filePath);
+      }
+      await emitIndexedSessionChange(server, id, null);
+      return { ok: true as const };
+    },
+
+    "sessions.setArchived": async (params) => {
+      const { id, archived } = params as { id: string; archived: boolean };
+      if (typeof archived !== "boolean") {
+        throw new RpcError({ code: "BAD_REQUEST", message: "archived is required" });
+      }
+      const existing = getRpcSession(id);
+      if (existing?.isAlive()) {
+        forkAppendArchived(existing.inner.sessionManager, archived);
+      } else {
+        const filePath = await resolveSessionPath(id);
+        if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+        forkAppendArchived(SessionManager.open(filePath), archived);
         invalidateSessionContent(filePath);
       }
       await emitIndexedSessionChange(server, id, null);

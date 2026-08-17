@@ -85,6 +85,10 @@ export interface Api {
     params: { id: string; name: string };
     result: { ok: true };
   };
+  "sessions.setArchived": {
+    params: { id: string; archived: boolean };
+    result: { ok: true };
+  };
 
   "worktrees.list": {
     params: { projectRoot: string };

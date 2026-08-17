@@ -18,6 +18,7 @@ import { installDesktopIpc } from "./ipc";
 import { createCredentialRequestHandler, CredentialVault } from "./credential-vault";
 import { createProductionUpdateAdapter, isProductionUpdatePlatformEnabled } from "./update-adapter";
 import { createUpdateManager, redactUpdateError, type UpdateManager } from "./update-manager";
+import { forkAllowOfficialUpdater } from "./fork/updates";
 import { ToolchainManager } from "./toolchains/manager";
 import { resolveRuntimeCatalogPath } from "./toolchains/catalog";
 import { resolveBundledCorePaths } from "./toolchains/bundled-core";
@@ -264,7 +265,7 @@ function startMainProcess(): void {
       (updaterTestMode && (process.platform === "darwin" || process.platform === "win32"));
     const updaterRequested = app.isPackaged || updaterTestMode;
     let updateAdapter = null;
-    if (updaterSupported && updaterRequested) {
+    if (forkAllowOfficialUpdater() && updaterSupported && updaterRequested) {
       try {
         updateAdapter = await createProductionUpdateAdapter({
           useDevelopmentConfig: updaterTestMode,
@@ -277,7 +278,7 @@ function startMainProcess(): void {
       adapter: updateAdapter,
       currentVersion: app.getVersion(),
       isPackaged: app.isPackaged,
-      automaticChecksEnabled: ui.automaticUpdateChecks !== false,
+      automaticChecksEnabled: forkAllowOfficialUpdater() && ui.automaticUpdateChecks !== false,
       prepareToInstall: async () => {
         isQuitting = true;
         destroyTray();

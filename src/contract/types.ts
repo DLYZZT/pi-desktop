@@ -24,6 +24,7 @@ export interface SessionInfo {
   parentSessionId?: string;
   projectRoot?: string;
   worktreeBranch?: string;
+  archived?: boolean;
 }
 
 export interface SessionDetail {

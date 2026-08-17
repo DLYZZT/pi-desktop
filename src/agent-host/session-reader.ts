@@ -15,6 +15,7 @@ import type {
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "../shared/normalize";
 import { resolveProject, type ProjectInfo } from "../shared/worktree";
+import { forkSessionInfoPatch } from "../shared/session-archive";
 import { sessionIndex } from "./session-index";
 
 export { getAgentDir };
@@ -170,6 +171,7 @@ export async function buildSessionInfoFromManager(
     ...(parentSessionId ? { parentSessionId } : {}),
     projectRoot: project?.projectRoot ?? header.cwd,
     ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
+    ...forkSessionInfoPatch(entries),
   };
 }
 
