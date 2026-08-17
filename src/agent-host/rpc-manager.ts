@@ -649,6 +649,8 @@ export class AgentSessionWrapper {
         // Do not await waitForIdle. Hung bash/HTTP would pin this RPC, and later
         // Stop clicks queue behind it looking dead.
         void this.withFinalRunningNotification(() => this.inner.abort());
+        this.emit({ type: "agent_end", messages: [] });
+        this.emit({ type: "prompt_done" });
         notifyRunningChange();
         return null;
       }

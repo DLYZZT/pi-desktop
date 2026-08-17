@@ -115,6 +115,12 @@ void app.whenReady().then(async () => {
     rescanToolchains: async (cwd) => (await toolchainManager.rescan({ cwd })).publicState,
     performToolchainAction: (request) => toolchainManager.performAction(request),
     chooseCustomTool: (capability, executable) => toolchainManager.registerCustomTool(capability, executable),
+    resolveNodeExecutable: async (cwd) => {
+      const resolution = await toolchainManager.resolveForProject(cwd);
+      const executable = resolution.commands["js.node"]?.executable;
+      if (!executable) throw new Error("Node.js is required to open Pi CLI");
+      return executable;
+    },
     setChannelCredential: (payload) =>
       credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
     getBrowserService: () => null,

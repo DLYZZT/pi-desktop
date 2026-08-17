@@ -18,18 +18,78 @@ function resolveTimeoutMs(timeout: number | undefined): number | undefined {
   return timeoutMs;
 }
 
-function waitForClose(child: ChildProcess): Promise<number | null> {
+const EXIT_STDIO_GRACE_MS = 100;
+
+/** Wait for exit without hanging on inherited SSH/stdio handles. Pi #5303. */
+function waitForChildProcess(child: ChildProcess): Promise<number | null> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode);
   return new Promise((resolve, reject) => {
-    const onError = (error: Error) => {
-      child.removeListener("close", onClose);
-      reject(error);
-    };
-    const onClose = (code: number | null) => {
+    let settled = false;
+    let exited = false;
+    let exitCode: number | null = null;
+    let postExitTimer: NodeJS.Timeout | undefined;
+    let stdoutEnded = child.stdout === null;
+    let stderrEnded = child.stderr === null;
+
+    const cleanup = () => {
+      if (postExitTimer) clearTimeout(postExitTimer);
       child.removeListener("error", onError);
+      child.removeListener("exit", onExit);
+      child.removeListener("close", onClose);
+      child.stdout?.removeListener("end", onStdoutEnd);
+      child.stderr?.removeListener("end", onStderrEnd);
+      child.stdout?.removeListener("data", onIdleData);
+      child.stderr?.removeListener("data", onIdleData);
+    };
+    const finalize = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
       resolve(code);
     };
+    const maybeFinalizeAfterExit = () => {
+      if (!exited || settled) return;
+      if (stdoutEnded && stderrEnded) finalize(exitCode);
+    };
+    const armIdleTimer = () => {
+      if (postExitTimer) clearTimeout(postExitTimer);
+      postExitTimer = setTimeout(() => finalize(exitCode), EXIT_STDIO_GRACE_MS);
+    };
+    const onIdleData = () => {
+      if (exited && !settled) armIdleTimer();
+    };
+    const onStdoutEnd = () => {
+      stdoutEnded = true;
+      maybeFinalizeAfterExit();
+    };
+    const onStderrEnd = () => {
+      stderrEnded = true;
+      maybeFinalizeAfterExit();
+    };
+    const onError = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onExit = (code: number | null) => {
+      exited = true;
+      exitCode = code;
+      maybeFinalizeAfterExit();
+      if (!settled) armIdleTimer();
+    };
+    const onClose = (code: number | null) => {
+      finalize(code);
+    };
+
+    child.stdout?.once("end", onStdoutEnd);
+    child.stderr?.once("end", onStderrEnd);
+    child.stdout?.on("data", onIdleData);
+    child.stderr?.on("data", onIdleData);
     child.once("error", onError);
+    child.once("exit", onExit);
     child.once("close", onClose);
   });
 }
@@ -68,9 +128,19 @@ export async function execDesktopBash(
     child.stdin?.end(command);
   }
 
+  const childPid = child.pid;
+  if (childPid) bashChildListener?.(childPid, true);
+
   let timedOut = false;
   let timeoutHandle: NodeJS.Timeout | undefined;
   const kill = () => {
+    if (child.pid) {
+      try {
+        child.kill("SIGINT");
+      } catch {
+        /* already gone */
+      }
+    }
     void terminateProcessTree(child, 400);
   };
   const onAbort = () => kill();
@@ -88,12 +158,20 @@ export async function execDesktopBash(
       if (options.signal.aborted) onAbort();
       else options.signal.addEventListener("abort", onAbort, { once: true });
     }
-    const exitCode = await waitForClose(child);
+    const exitCode = await waitForChildProcess(child);
     if (options.signal?.aborted) throw new Error("aborted");
     if (timedOut) throw new Error(`timeout:${options.timeout}`);
     return { exitCode };
   } finally {
+    if (childPid) bashChildListener?.(childPid, false);
     if (timeoutHandle) clearTimeout(timeoutHandle);
     options.signal?.removeEventListener("abort", onAbort);
   }
+}
+
+type BashChildListener = (pid: number, alive: boolean) => void;
+let bashChildListener: BashChildListener | undefined;
+
+export function setBashChildListener(listener?: BashChildListener): void {
+  bashChildListener = listener;
 }

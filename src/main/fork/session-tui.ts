@@ -6,6 +6,7 @@ export const sessionTuiMarks: SessionTuiMarks = new Map();
 
 export type SessionTuiSelectInput = {
   sessionId: string;
+  sessionPath?: string;
   cwd: string;
 };
 
@@ -13,6 +14,7 @@ export type SessionTuiSpawnRequest = {
   action: "spawn";
   sessionId: string;
   cwd: string;
+  nodeExecutable: string;
   program: string;
   args: string[];
 };
@@ -36,7 +38,7 @@ export function sessionTuiMarkOf(marks: SessionTuiMarks, sessionId: string): Ses
 
 export function applySessionTuiSelect(
   session: SessionTuiSelectInput,
-  bundled: { bundledPi: string },
+  bundled: { bundledPi: string; nodeExecutable: string },
   port: SessionTuiProcessPort,
   marks: SessionTuiMarks = new Map(),
 ): SessionTuiAction {
@@ -49,8 +51,9 @@ export function applySessionTuiSelect(
     action: "spawn",
     sessionId: session.sessionId,
     cwd: session.cwd,
+    nodeExecutable: bundled.nodeExecutable,
     program: bundled.bundledPi,
-    args: ["--session", session.sessionId],
+    args: ["--session", session.sessionPath || session.sessionId],
   };
   port.spawn(request);
   marks.set(session.sessionId, "running");
@@ -85,4 +88,5 @@ export function reconcileSessionTuiMarks(marks: SessionTuiMarks, aliveIds: Itera
   for (const [sessionId, mark] of marks) {
     if (mark === "running" && !alive.has(sessionId)) marks.set(sessionId, "dead");
   }
+  for (const sessionId of alive) marks.set(sessionId, "running");
 }

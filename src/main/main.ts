@@ -3,7 +3,7 @@
  * Responsibilities: window lifecycle, menus, tray/badge, deep link,
  * Host supervision, system IPC. No business logic.
  */
-import { app, BrowserWindow, crashReporter, nativeTheme, nativeImage, net, Notification } from "electron";
+import { app, BrowserWindow, crashReporter, nativeTheme, nativeImage, net, Notification, screen } from "electron";
 import fs from "node:fs";
 import path from "path";
 import { HostManager, getUserDataPath, resolveHostEntry } from "./host-manager";
@@ -15,6 +15,7 @@ import { loadUiState } from "./window-state";
 import { createTray, destroyTray, setTrayRunningCount } from "./tray";
 import { createMainWindow } from "./window";
 import { layoutCockpitBounds } from "./fork/cockpit-windows";
+import { linkCockpitWindowsToSession } from "./fork/cockpit-window-owner";
 import { installDesktopIpc } from "./ipc";
 import { createCredentialRequestHandler, CredentialVault } from "./credential-vault";
 import { createProductionUpdateAdapter, isProductionUpdatePlatformEnabled } from "./update-adapter";
@@ -196,7 +197,7 @@ function startMainProcess(): void {
     const shared = {
       isDev,
       persistBounds: false,
-      alwaysOnTop: true,
+      alwaysOnTop: false,
       minHeight: 400,
       consumePendingDeepLink: () => {
         const sessionId = pendingDeepLink;
@@ -412,6 +413,17 @@ function startMainProcess(): void {
       },
       performToolchainAction: (request) => toolchainManager!.performAction(request),
       chooseCustomTool: (capability, executable) => toolchainManager!.registerCustomTool(capability, executable),
+      resolveNodeExecutable: async (cwd) => {
+        const resolution = await toolchainManager!.resolveForProject(cwd, {
+          intent: "project-command",
+          trusted: false,
+        });
+        const executable = resolution.commands["js.node"]?.executable;
+        if (!executable) throw new Error("Node.js is required to open Pi CLI");
+        return executable;
+      },
+      linkCockpitToSession: (sessionId, cwd) =>
+        linkCockpitWindowsToSession(sessionId, cwd, [leftCockpitWindow, rightCockpitWindow]),
       setChannelCredential: (payload) =>
         credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
       getBrowserService: () => browserService,

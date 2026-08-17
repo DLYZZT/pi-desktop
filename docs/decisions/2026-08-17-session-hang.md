@@ -26,6 +26,18 @@ Decisions from the hang grill. Not a spec.
 - **Why:** `Failed to abort: RPC call timed out: agent.command` meant Stop never reached the handler. Parent port is the ping path; it does not share the 120s renderer RPC.
 - **Rejected:** Another `agent.command` abort rewrite. New `agent.abort` RPC on the same MessagePort. Auto-background-on-timeout (Claude Code). Kill host from main when abort is not acked.
 
+## Decision: in-flight abort cut (after transport)
+
+- **Chosen:** A — cut the live stream/process and keep Stop until `agent_end`.
+- **Why:** 2026-08-17 log: `session-abort … delivered` three times in two minutes. Delivery worked; Grok/bash did not stop. Optimistic idle hid Stop.
+- **Rejected:** B — kill the host process tree from main if abort stays running. Still open for event-loop wedge.
+
+## Decision: Stop is Ctrl+C from main
+
+- **Chosen:** On Stop, main `taskkill /T /F` tracked bash pids and host `ssh`/`bash` descendants. Host `session-abort` still posted.
+- **Why:** Log: `session-abort delivered` many times while SSH stayed up. Host handler is not a console Ctrl+C. Git-bash can hide `ssh.exe` from the wrapper tree.
+- **Rejected:** Waiting for host abort to become a real SIGINT. Killing the whole host process on first Stop.
+
 ## Still open
 
 - Default wall-clock duration (2 / 5 / 10 min).

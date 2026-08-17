@@ -25,6 +25,16 @@ test("selecting another session publishes the same start/focus path so the right
       },
     },
   };
-  forkOnSelectSession({ id: "sess-2", cwd: "F:/Project/dlyzzt-pi-desktop" });
-  assert.deepEqual(calls, [{ sessionId: "sess-2", cwd: "F:/Project/dlyzzt-pi-desktop" }]);
+  forkOnSelectSession({
+    id: "sess-2",
+    path: "F:/PiData/agent/sessions/project/session.jsonl",
+    cwd: "F:/Project/dlyzzt-pi-desktop",
+  });
+  assert.deepEqual(calls, [
+    {
+      sessionId: "sess-2",
+      sessionPath: "F:/PiData/agent/sessions/project/session.jsonl",
+      cwd: "F:/Project/dlyzzt-pi-desktop",
+    },
+  ]);
 });

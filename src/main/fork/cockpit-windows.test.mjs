@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { layoutCockpitBounds } from "./cockpit-windows.ts";
@@ -9,4 +10,11 @@ test("cockpit windows sit on the left and right edges and leave the middle empty
   assert.equal(layout.right.x + layout.right.width, 1920);
   assert.ok(layout.left.width + layout.right.width < 1920);
   assert.ok(layout.left.x + layout.left.width <= layout.right.x);
+});
+
+test("cockpit windows become native owned windows of the Pi terminal", () => {
+  const source = readFileSync(new URL("./cockpit-window-owner.ts", import.meta.url), "utf8");
+  assert.match(source, /GWLP_HWNDPARENT/);
+  assert.match(source, /FindExactTitle/);
+  assert.match(source, /SetOwner/);
 });

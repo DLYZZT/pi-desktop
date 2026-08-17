@@ -1,24 +1,60 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { findPackageJSON } from "node:module";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import type { SessionTuiFocusRequest, SessionTuiSpawnRequest } from "./session-tui.ts";
 
 export function parseAliveSessionIds(processText: string): string[] {
-  return [...new Set([...processText.matchAll(/--session\s+(\S+)/g)].map((match) => match[1]))];
+  const sessionIds = [...processText.matchAll(/--session(?:=|\s+)(?:"([^"]+)"|(\S+))/g)].flatMap((match) => {
+    const sessionArgument = match[1] || match[2];
+    if (!sessionArgument) return [];
+    const idFromPath = sessionArgument.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
+    return [idFromPath || sessionArgument];
+  });
+  return [...new Set(sessionIds)];
 }
 
 export function sessionTuiWindowName(sessionId: string): string {
   return `pi-${sessionId}`;
 }
 
-export function bundledPiCliPath(): string {
-  return join(dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))), "cli.js");
+export function sessionTuiWindowTitle(sessionId: string): string {
+  return `π · ${sessionId.slice(0, 8)}`;
 }
 
-export function spawnExternalPi(request: SessionTuiSpawnRequest, electronExecPath: string): void {
-  const command = `set ELECTRON_RUN_AS_NODE=1&& "${electronExecPath}" "${request.program}" ${request.args.join(" ")}`;
-  spawn("wt.exe", ["-w", sessionTuiWindowName(request.sessionId), "-d", request.cwd, "--", "cmd.exe", "/c", command], {
+export function sessionTuiSpawnArgs(request: SessionTuiSpawnRequest): string[] {
+  return [
+    "-w",
+    sessionTuiWindowName(request.sessionId),
+    "new-tab",
+    "--title",
+    sessionTuiWindowTitle(request.sessionId),
+    "--suppressApplicationTitle",
+    "-d",
+    request.cwd,
+    "--",
+    request.nodeExecutable,
+    request.program,
+    ...request.args,
+  ];
+}
+
+export function sessionTuiFocusArgs(request: SessionTuiFocusRequest): string[] {
+  return ["-w", sessionTuiWindowName(request.sessionId), "focus-tab", "--target", "0"];
+}
+
+export function bundledPiCliPath(): string {
+  const packageJsonPath = findPackageJSON(
+    "@earendil-works/pi-coding-agent",
+    typeof __filename === "string" ? __filename : import.meta.url,
+  );
+  if (!packageJsonPath) throw new Error("Bundled pi package not found");
+  return join(dirname(packageJsonPath), "dist", "cli.js");
+}
+
+export function spawnExternalPi(request: SessionTuiSpawnRequest): void {
+  spawn("wt.exe", sessionTuiSpawnArgs(request), {
     detached: true,
     stdio: "ignore",
     windowsHide: false,
@@ -26,7 +62,7 @@ export function spawnExternalPi(request: SessionTuiSpawnRequest, electronExecPat
 }
 
 export function focusExternalPi(request: SessionTuiFocusRequest): void {
-  spawn("wt.exe", ["-w", sessionTuiWindowName(request.sessionId)], {
+  spawn("wt.exe", sessionTuiFocusArgs(request), {
     detached: true,
     stdio: "ignore",
     windowsHide: false,
@@ -43,15 +79,20 @@ export function killExternalPiSessions(sessionIds: string[]): void {
   }
 }
 
-export function listAliveSessionTuiIds(): string[] | null {
-  try {
-    const text = execFileSync("wmic", ["process", "get", "CommandLine"], {
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: 2000,
+const execFileAsync = promisify(execFile);
+let aliveSessionLookup: Promise<string[] | null> | null = null;
+
+export function listAliveSessionTuiIds(): Promise<string[] | null> {
+  if (aliveSessionLookup) return aliveSessionLookup;
+  aliveSessionLookup = execFileAsync("wmic", ["process", "where", "Name='node.exe'", "get", "CommandLine"], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 2000,
+  })
+    .then(({ stdout }) => parseAliveSessionIds(String(stdout)))
+    .catch(() => null)
+    .finally(() => {
+      aliveSessionLookup = null;
     });
-    return parseAliveSessionIds(text);
-  } catch {
-    return null;
-  }
+  return aliveSessionLookup;
 }

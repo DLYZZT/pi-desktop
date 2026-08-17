@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { execDesktopBash } from "./desktop-bash-exec.ts";
+
+const source = readFileSync(new URL("./desktop-bash-exec.ts", import.meta.url), "utf8");
+
+test("desktop bash waits on exit plus stdio idle, not close-only", () => {
+  assert.match(source, /EXIT_STDIO_GRACE_MS/);
+  assert.match(source, /child\.once\("exit"/);
+  assert.doesNotMatch(source, /function waitForClose/);
+});
 
 const gitBash = process.env.ProgramFiles ? `${process.env.ProgramFiles}\\Git\\bin\\bash.exe` : "";
 

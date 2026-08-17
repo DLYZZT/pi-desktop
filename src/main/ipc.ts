@@ -63,6 +63,8 @@ export type DesktopIpcOptions = {
     capability: Extract<ToolchainActionRequest, { action: "choose-custom-tool" }>["capability"],
     executable: string,
   ) => Promise<PublicToolchainState>;
+  resolveNodeExecutable: (cwd: string) => Promise<string>;
+  linkCockpitToSession?: (sessionId: string, cwd: string) => Promise<boolean>;
   setChannelCredential: (payload: ChannelCredentialWrite) => void;
   getBrowserService: () => BrowserService | null;
   updateManager: {
@@ -85,6 +87,8 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     rescanToolchains,
     performToolchainAction,
     chooseCustomTool,
+    resolveNodeExecutable,
+    linkCockpitToSession,
     setChannelCredential,
     getBrowserService,
     updateManager,
@@ -203,7 +207,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   };
   const sessionTuiPort = {
     spawn(request: Parameters<typeof spawnExternalPi>[0]) {
-      spawnExternalPi(request, process.execPath);
+      spawnExternalPi(request);
       emitSessionTuiMarks();
     },
     focus(request: Parameters<typeof focusExternalPi>[0]) {
@@ -219,14 +223,35 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   trustedOn("desktop:start-session-tui", (_event, payload: unknown) => {
     if (!payload || typeof payload !== "object") return;
     const sessionId = "sessionId" in payload ? payload.sessionId : undefined;
+    const sessionPath = "sessionPath" in payload ? payload.sessionPath : undefined;
     const cwd = "cwd" in payload ? payload.cwd : undefined;
     if (typeof sessionId !== "string" || !sessionId.trim()) return;
     if (typeof cwd !== "string" || !cwd.trim()) return;
-    const selected = { sessionId: sessionId.trim(), cwd: cwd.trim() };
-    applySessionTuiSelect(selected, { bundledPi: bundledPiCliPath() }, sessionTuiPort, sessionTuiMarks);
+    const selected = {
+      sessionId: sessionId.trim(),
+      ...(typeof sessionPath === "string" && sessionPath.trim() ? { sessionPath: sessionPath.trim() } : {}),
+      cwd: cwd.trim(),
+    };
     for (const win of trustedWindows()) {
       if (win && !win.isDestroyed()) win.webContents.send("desktop:cockpit-selection", selected);
     }
+    void resolveNodeExecutable(selected.cwd)
+      .then((nodeExecutable) => {
+        applySessionTuiSelect(
+          selected,
+          { bundledPi: bundledPiCliPath(), nodeExecutable },
+          sessionTuiPort,
+          sessionTuiMarks,
+        );
+        if (linkCockpitToSession) {
+          void linkCockpitToSession(selected.sessionId, selected.cwd).then((linked) => {
+            if (!linked) appendMainLog(`session TUI window link timed out session=${selected.sessionId}`);
+          });
+        }
+      })
+      .catch((error) => {
+        appendMainLog(`session TUI start failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
   });
 
   trustedOn("desktop:kill-session-tui", (_event, sessionId: unknown) => {
@@ -234,8 +259,8 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     applySessionTuiKill(sessionId.trim(), sessionTuiMarks, sessionTuiPort);
   });
 
-  trustedHandle("desktop:get-session-tui-marks", () => {
-    const alive = listAliveSessionTuiIds();
+  trustedHandle("desktop:get-session-tui-marks", async () => {
+    const alive = await listAliveSessionTuiIds();
     if (alive) reconcileSessionTuiMarks(sessionTuiMarks, alive);
     return snapshotSessionTuiMarks(sessionTuiMarks);
   });

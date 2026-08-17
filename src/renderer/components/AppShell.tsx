@@ -9,7 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { forkOnNewSession, type CockpitRole } from "@/fork";
+import { forkOnNewSession, shouldCollapseSidebarAfterSessionPick, type CockpitRole } from "@/fork";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileExplorer } from "./FileExplorer";
@@ -102,11 +102,17 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
 
-  // On mobile the sidebar is an overlay drawer; hide it by default so the chat
-  // is visible on load. Runs once the breakpoint resolves after hydration.
+  // In the full shell, the mobile sidebar is an overlay drawer; hide it by
+  // default so the chat is visible. The left cockpit only contains this
+  // sidebar, so it must stay open even though its narrow window matches the
+  // mobile breakpoint.
   useEffect(() => {
-    if (isMobile) setSidebarOpen(false);
-  }, [isMobile]);
+    if (role === "left") {
+      setSidebarOpen(true);
+    } else if (isMobile) {
+      setSidebarOpen(false);
+    }
+  }, [isMobile, role]);
   useEffect(() => {
     setMobileSidebarReady(true);
   }, []);
@@ -500,7 +506,7 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
       setSessionKey((k) => k + 1);
       setInitialSessionRestored(true);
       // On mobile, collapse the overlay drawer so the chat is revealed after pick.
-      if (isMobile && !isRestore) setSidebarOpen(false);
+      if (shouldCollapseSidebarAfterSessionPick(role, isMobile, isRestore)) setSidebarOpen(false);
       if (isRestore) {
         // Suppress the redundant sessionKey bump that would come from the
         // onCwdChange effect firing after setSelectedCwd in the sidebar
@@ -512,7 +518,7 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
         router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
       }
     },
-    [router, isMobile],
+    [router, isMobile, role],
   );
 
   const handleNewSession = useCallback(
@@ -530,11 +536,11 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
       });
       setSessionKey((k) => k + 1);
       setActiveTopPanel(null);
-      if (isMobile) setSidebarOpen(false);
+      if (shouldCollapseSidebarAfterSessionPick(role, isMobile, false)) setSidebarOpen(false);
       forkOnNewSession(sessionId, cwd);
       router.replace(`?session=${encodeURIComponent(sessionId)}`, { scroll: false });
     },
-    [router, isMobile],
+    [router, isMobile, role],
   );
 
   // Client-built transient SessionInfo (new session / fork) lacks the

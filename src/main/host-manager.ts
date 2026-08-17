@@ -10,6 +10,7 @@ import type { ToolchainSnapshot } from "../shared/toolchains/types";
 import type { BrowserCapabilitySnapshot } from "../contract/browser";
 import { BrowserError } from "./browser/browser-error";
 import { createHostExitSignal, reserveHostRestart, trySpawnHost, type HostExitSignal } from "./host-restart-core";
+import { interruptCommandDescendants, terminatePidTree } from "../agent-host/process-tree";
 import { HostOutputLineBuffer } from "./logger-core";
 
 const CRASH_WINDOW_MS = 30_000;
@@ -46,6 +47,7 @@ export class HostManager {
   private browserCapabilitySnapshot: BrowserCapabilitySnapshot | null = null;
   private browserAckRevision = -1;
   private piVersion: string | null = null;
+  private bashChildPids = new Set<number>();
 
   constructor(private readonly hostEntry: string) {}
 
@@ -121,14 +123,25 @@ export class HostManager {
     return exitPromise;
   }
 
-  /** Fire-and-forget abort over the parent port. Never uses renderer RPC. */
+  /** Fire-and-forget abort. Host signal plus main-side Ctrl+C of bash/ssh children. */
   abortSession(sessionId: string): void {
+    const bashPids = [...this.bashChildPids];
+    for (const pid of bashPids) terminatePidTree(pid);
+    const hostPid = this.child?.pid;
+    if (typeof hostPid === "number") {
+      interruptCommandDescendants(hostPid, (pids) => {
+        appendMainLog(`session-abort killed host-children=${pids.join(",") || "none"}`);
+      });
+    }
     if (!this.child) {
       appendMainLog(`session-abort dropped (no host): ${sessionId}`);
       return;
     }
     try {
       this.child.postMessage({ type: "session-abort", sessionId });
+      appendMainLog(
+        `session-abort ${sessionId} interrupt host=${hostPid ?? "none"} bash=${bashPids.join(",") || "none"}`,
+      );
     } catch (error) {
       appendMainLog(`session-abort post failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -272,6 +285,12 @@ export class HostManager {
         }
       } else if (m?.type === "pong") {
         this.lastPong = Date.now();
+      } else if (m?.type === "bash-child") {
+        const pid = Number(m.pid);
+        if (Number.isSafeInteger(pid) && pid > 0) {
+          if (m.alive) this.bashChildPids.add(pid);
+          else this.bashChildPids.delete(pid);
+        }
       } else if (m?.type === "log") {
         appendMainLog(`[host] ${m.message}`);
       } else if (m?.type === "toolchain:ack") {
@@ -325,7 +344,10 @@ export class HostManager {
       appendMainLog(`agent-host exit code=${code}`);
       this.clearPing();
       const wasCurrentChild = this.child === child;
-      if (wasCurrentChild) this.child = null;
+      if (wasCurrentChild) {
+        this.child = null;
+        this.bashChildPids.clear();
+      }
       exitSignal.resolve();
       if (this.childExitSignal === exitSignal) this.childExitSignal = null;
       if (!wasCurrentChild) return;

@@ -109,11 +109,11 @@ export interface PiBridge {
   performToolchainAction: (request: ToolchainActionRequest) => Promise<PublicToolchainState>;
   requestHostPort: () => void;
   abortSession: (sessionId: string) => void;
-  startSessionTui: (session: { sessionId: string; cwd: string }) => void;
+  startSessionTui: (session: { sessionId: string; sessionPath?: string; cwd: string }) => void;
   killSessionTui: (sessionId: string) => void;
   getSessionTuiMarks: () => Promise<Record<string, "running" | "dead">>;
   onSessionTuiMarks: (cb: (marks: Record<string, "running" | "dead">) => void) => () => void;
-  onCockpitSelection: (cb: (session: { sessionId: string; cwd: string }) => void) => () => void;
+  onCockpitSelection: (cb: (session: { sessionId: string; sessionPath?: string; cwd: string }) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
   showItemInFolder: (fsPath: string) => Promise<void>;
   selectDirectory: () => Promise<string | null>;

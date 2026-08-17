@@ -3,6 +3,7 @@
  * Runs pi-coding-agent in-process; serves Api/Streams over MessagePort.
  */
 import { createRpcServer } from "../contract/rpc";
+import { installFetchBodyAbort } from "./fetch-abort";
 import { installHttpIdleTimeout } from "./http-idle-timeout";
 import { registerHandlers } from "./handlers";
 import { startSessionWatcher } from "./session-watcher";
@@ -11,6 +12,7 @@ import type { ToolchainSnapshot } from "../shared/toolchains/types";
 import { installToolchainGitRunner } from "./toolchain-git";
 import type { BrowserCapabilitySnapshot } from "../contract/browser";
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
+import { setBashChildListener } from "./desktop-bash-exec";
 import { abortLiveRpcSession, syncBrowserToolsForAllSessions } from "./rpc-manager";
 import { readPiRuntimeVersion } from "./runtime-version";
 
@@ -25,6 +27,14 @@ function log(message: string): void {
 }
 
 const httpIdleTimeoutMs = await installHttpIdleTimeout();
+installFetchBodyAbort();
+setBashChildListener((pid, alive) => {
+  try {
+    process.parentPort?.postMessage({ type: "bash-child", pid, alive });
+  } catch {
+    /* parent gone */
+  }
+});
 log(`HTTP idle timeout ${httpIdleTimeoutMs}ms`);
 
 const server = createRpcServer();
