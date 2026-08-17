@@ -9,6 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { type CockpitRole } from "@/fork";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileExplorer } from "./FileExplorer";
@@ -80,7 +81,7 @@ function loadBrowserPanelPreferredWidth(): number {
   }
 }
 
-export function AppShell() {
+export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
   const router = routerCompat;
   const { isDark, toggleTheme } = useTheme();
   const { language, t } = useI18n();
@@ -430,6 +431,10 @@ export function AppShell() {
       setSettingsOpen(true);
     });
     // ISSUE-016: Switch Session palette — focus sidebar / open project list
+    const offCockpit = window.piBridge?.onCockpitSelection?.((session) => {
+      setActiveCwd(session.cwd);
+      setSelectedSession((current) => (current?.id === session.sessionId ? { ...current, cwd: session.cwd } : current));
+    });
     const offSwitch = window.piBridge?.onMenu?.("switch-session", () => {
       setSidebarOpen(true);
       // Nudge sidebar to refresh sessions
@@ -442,6 +447,7 @@ export function AppShell() {
       offCheckForUpdates?.();
       offShowUpdate?.();
       offSwitch?.();
+      offCockpit?.();
     };
   }, [activeCwd, router]);
 
@@ -606,7 +612,7 @@ export function AppShell() {
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
-  const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
+  const showChat = role === "full" && (selectedSession !== null || effectiveNewSessionCwd !== null);
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
 
@@ -776,10 +782,11 @@ export function AppShell() {
           style={{
             background: "var(--bg-panel)",
             borderRight: "1px solid var(--border)",
-            display: "flex",
+            display: role === "right" ? "none" : "flex",
             flexDirection: "column",
             flexShrink: 0,
             zIndex: 200,
+            width: role === "left" ? "100%" : undefined,
           }}
         >
           {sidebarContent}
@@ -789,7 +796,7 @@ export function AppShell() {
         <div
           style={{
             flex: 1,
-            display: "flex",
+            display: role === "full" ? "flex" : "none",
             flexDirection: "column",
             overflow: "hidden",
             minWidth: 0,
@@ -1438,14 +1445,16 @@ export function AppShell() {
 
         {/* Right panel: Browser, Explorer and file previews — always mounted, width animated via CSS */}
         <div
-          className={`right-panel-container${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}${rightPanelResizing ? " right-panel-resizing" : ""}`}
+          className={`right-panel-container${rightPanelOpen || role === "right" ? " right-panel-open" : " right-panel-closed"}${rightPanelResizing ? " right-panel-resizing" : ""}`}
           style={
             {
-              display: "flex",
+              display: role === "left" ? "none" : "flex",
               flexDirection: "column",
               borderLeft: "1px solid var(--border)",
               background: "var(--bg)",
-              "--right-panel-width": `${rightPanelWidth}px`,
+              flex: role === "right" ? 1 : undefined,
+              width: role === "right" ? "100%" : undefined,
+              "--right-panel-width": role === "right" ? "100%" : `${rightPanelWidth}px`,
               "--right-panel-min-width": `${rightPanelBounds.minWidth}px`,
             } as CSSProperties
           }

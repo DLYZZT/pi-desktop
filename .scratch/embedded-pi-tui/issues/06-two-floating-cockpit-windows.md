@@ -6,9 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] Session tree and files/browser are two independent always-on-top windows, not docked to the terminal
-- [ ] There is no middle chat pane acting as the live agent
-- [ ] Desktop does not issue in-process prompts, steers, follow-ups, or aborts on this path
-- [ ] No Desktop transcript / history viewer is added
-- [ ] Channel inbound does not open or prompt these sessions; settings make that drop visible
-- [ ] Agent browser tools stay unused; the user can still drive the browser dock
+- [x] Session tree and files/browser are two independent always-on-top windows, not docked to the terminal
+- [x] There is no middle chat pane acting as the live agent
+- [x] Desktop does not issue in-process prompts, steers, follow-ups, or aborts on this path
+- [x] No Desktop transcript / history viewer is added
+- [x] Channel inbound does not open or prompt these sessions; settings make that drop visible
+- [x] Agent browser tools stay unused; the user can still drive the browser dock

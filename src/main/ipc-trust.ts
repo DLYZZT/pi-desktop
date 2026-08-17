@@ -10,11 +10,17 @@ type IpcSender = {
   senderFrame: unknown;
 };
 
-export function isTrustedDesktopIpcSender(window: TrustedWindow | null, event: IpcSender): boolean {
-  return Boolean(
-    window &&
-    !window.isDestroyed() &&
-    event.sender === window.webContents &&
-    event.senderFrame === window.webContents.mainFrame,
+export function isTrustedDesktopIpcSender(
+  window: TrustedWindow | readonly (TrustedWindow | null)[] | null,
+  event: IpcSender,
+): boolean {
+  const windows = Array.isArray(window) ? window : [window];
+  return windows.some((candidate) =>
+    Boolean(
+      candidate &&
+      !candidate.isDestroyed() &&
+      event.sender === candidate.webContents &&
+      event.senderFrame === candidate.webContents.mainFrame,
+    ),
   );
 }

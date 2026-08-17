@@ -113,6 +113,7 @@ export interface PiBridge {
   killSessionTui: (sessionId: string) => void;
   getSessionTuiMarks: () => Promise<Record<string, "running" | "dead">>;
   onSessionTuiMarks: (cb: (marks: Record<string, "running" | "dead">) => void) => () => void;
+  onCockpitSelection: (cb: (session: { sessionId: string; cwd: string }) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
   showItemInFolder: (fsPath: string) => Promise<void>;
   selectDirectory: () => Promise<string | null>;

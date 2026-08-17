@@ -755,6 +755,8 @@ export const enUS: Record<string, string> = {
   unarchiveSession: "Unarchive",
   stopSessionTui: "Stop TUI",
   sessionTuiDead: "TUI stopped",
+  channelInboundDisabledForTui:
+    "Inbound IM turns are off in this cut. The live agent is the external pi TUI, not the Desktop host.",
   archivedSessions: "Archived",
   archivedSessionCount: "{count} archived",
   noArchivedSessions: "No archived sessions",
@@ -1724,6 +1726,7 @@ export const zhCN: Record<string, string> = {
   unarchiveSession: "取消归档",
   stopSessionTui: "停止 TUI",
   sessionTuiDead: "TUI 已停",
+  channelInboundDisabledForTui: "这一版关闭 IM inbound。活的 agent 是外挂 pi TUI，不是 Desktop host。",
   archivedSessions: "已归档",
   archivedSessionCount: "{count} 条已归档",
   noArchivedSessions: "没有已归档会话",

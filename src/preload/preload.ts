@@ -84,6 +84,11 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
       ipcRenderer.on("desktop:session-tui-marks", handler);
       return () => ipcRenderer.removeListener("desktop:session-tui-marks", handler);
     },
+    onCockpitSelection: (cb) => {
+      const handler = (_: Electron.IpcRendererEvent, session: { sessionId: string; cwd: string }) => cb(session);
+      ipcRenderer.on("desktop:cockpit-selection", handler);
+      return () => ipcRenderer.removeListener("desktop:cockpit-selection", handler);
+    },
     startSessionTui: (session) => {
       if (
         session &&

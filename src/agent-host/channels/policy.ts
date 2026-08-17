@@ -2,6 +2,10 @@ import type { ChannelAccountConfig, InboundEnvelope } from "../../shared/channel
 
 export type ChannelPolicyDecision = "allow" | "pair" | "ignore";
 
+export function isChannelInboundEnabled(): boolean {
+  return false;
+}
+
 export function evaluateInboundPolicy(account: ChannelAccountConfig, envelope: InboundEnvelope): ChannelPolicyDecision {
   const senderId = envelope.sender.id;
   if (envelope.peer.kind === "group") {

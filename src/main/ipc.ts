@@ -53,6 +53,7 @@ import type {
 export type DesktopIpcOptions = {
   getHostManager: () => HostManager | null;
   getMainWindow: () => BrowserWindow | null;
+  getTrustedWindows?: () => Array<BrowserWindow | null>;
   getUnreadBadge: () => number;
   applyBadgeCount: (count: number) => void;
   getToolchainState: (cwd?: string) => PublicToolchainState | Promise<PublicToolchainState>;
@@ -77,6 +78,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   const {
     getHostManager,
     getMainWindow,
+    getTrustedWindows,
     getUnreadBadge,
     applyBadgeCount,
     getToolchainState,
@@ -87,9 +89,9 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     getBrowserService,
     updateManager,
   } = options;
+  const trustedWindows = (): Array<BrowserWindow | null> => getTrustedWindows?.() ?? [getMainWindow()];
   const assertTrustedSender = (event: IpcMainInvokeEvent): void => {
-    const win = getMainWindow();
-    if (!isTrustedDesktopIpcSender(win, event)) throw new Error("Untrusted desktop IPC sender");
+    if (!isTrustedDesktopIpcSender(trustedWindows(), event)) throw new Error("Untrusted desktop IPC sender");
   };
   const trustedHandle = <T extends unknown[], R>(
     channel: string,
@@ -105,7 +107,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     listener: (event: IpcMainEvent, ...args: T) => void,
   ): void => {
     ipcMain.on(channel, (event, ...args) => {
-      if (!isTrustedDesktopIpcSender(getMainWindow(), event)) return;
+      if (!isTrustedDesktopIpcSender(trustedWindows(), event)) return;
       listener(event, ...(args as T));
     });
   };
@@ -194,9 +196,10 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   });
 
   const emitSessionTuiMarks = (): void => {
-    const win = getMainWindow();
-    if (!win || win.isDestroyed()) return;
-    win.webContents.send("desktop:session-tui-marks", snapshotSessionTuiMarks(sessionTuiMarks));
+    const marks = snapshotSessionTuiMarks(sessionTuiMarks);
+    for (const win of trustedWindows()) {
+      if (win && !win.isDestroyed()) win.webContents.send("desktop:session-tui-marks", marks);
+    }
   };
   const sessionTuiPort = {
     spawn(request: Parameters<typeof spawnExternalPi>[0]) {
@@ -219,12 +222,11 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     const cwd = "cwd" in payload ? payload.cwd : undefined;
     if (typeof sessionId !== "string" || !sessionId.trim()) return;
     if (typeof cwd !== "string" || !cwd.trim()) return;
-    applySessionTuiSelect(
-      { sessionId: sessionId.trim(), cwd: cwd.trim() },
-      { bundledPi: bundledPiCliPath() },
-      sessionTuiPort,
-      sessionTuiMarks,
-    );
+    const selected = { sessionId: sessionId.trim(), cwd: cwd.trim() };
+    applySessionTuiSelect(selected, { bundledPi: bundledPiCliPath() }, sessionTuiPort, sessionTuiMarks);
+    for (const win of trustedWindows()) {
+      if (win && !win.isDestroyed()) win.webContents.send("desktop:cockpit-selection", selected);
+    }
   });
 
   trustedOn("desktop:kill-session-tui", (_event, sessionId: unknown) => {

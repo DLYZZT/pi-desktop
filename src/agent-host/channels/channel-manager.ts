@@ -23,7 +23,7 @@ import { LaneScheduler } from "./lane-scheduler";
 import { CHANNEL_MEDIA_MAX_ATTACHMENTS, ChannelMediaStore } from "./media-store";
 import { callMain } from "../parent-rpc";
 import { PiSessionBridge } from "./pi-session-bridge";
-import { evaluateInboundPolicy } from "./policy";
+import { evaluateInboundPolicy, isChannelInboundEnabled } from "./policy";
 import { fingerprintSecret, safeChannelError } from "./redaction";
 import { ChannelStateStore } from "./state-store";
 import type { AdapterTurnOutput, ChannelSecret, OutboundAttachment, StagedInboundAttachment } from "./types";
@@ -836,6 +836,17 @@ export class ChannelManager {
 
   private async handleInbound(envelope: InboundEnvelope): Promise<void> {
     await this.lanes.run(routeKey(envelope), async () => {
+      if (!isChannelInboundEnabled()) {
+        this.addActivity({
+          channel: envelope.channel,
+          accountId: envelope.accountId,
+          direction: "inbound",
+          outcome: "ignored",
+          peerId: envelope.peer.id,
+          detail: "TUI cockpit: inbound disabled",
+        });
+        return;
+      }
       const account = this.config.getAccount(envelope.accountId);
       if (!account || !account.enabled) return;
       const secret = await this.getSecret(account);
