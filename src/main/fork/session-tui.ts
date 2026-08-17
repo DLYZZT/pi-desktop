@@ -47,3 +47,8 @@ export function applySessionTuiSelect(
   live.add(session.sessionId);
   return request;
 }
+
+export function applySessionTuiQuit(live: Set<string>, port: { killAll: (sessionIds: string[]) => void }): void {
+  port.killAll([...live]);
+  live.clear();
+}

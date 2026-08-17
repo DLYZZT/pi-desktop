@@ -18,6 +18,8 @@ import { installDesktopIpc } from "./ipc";
 import { createCredentialRequestHandler, CredentialVault } from "./credential-vault";
 import { createProductionUpdateAdapter, isProductionUpdatePlatformEnabled } from "./update-adapter";
 import { createUpdateManager, redactUpdateError, type UpdateManager } from "./update-manager";
+import { applySessionTuiQuit, sessionTuiLive } from "./fork/session-tui";
+import { killExternalPiSessions } from "./fork/session-tui-spawn";
 import { forkAllowOfficialUpdater } from "./fork/updates";
 import { ToolchainManager } from "./toolchains/manager";
 import { resolveRuntimeCatalogPath } from "./toolchains/catalog";
@@ -487,6 +489,7 @@ function startMainProcess(): void {
 
   app.on("before-quit", () => {
     isQuitting = true;
+    applySessionTuiQuit(sessionTuiLive, { killAll: killExternalPiSessions });
     updateManager?.stopAutomaticChecks();
     destroyTray();
     void hostManager?.stop();

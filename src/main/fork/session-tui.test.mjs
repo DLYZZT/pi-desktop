@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { bundledPiCliPath } from "./session-tui-spawn.ts";
-import { applySessionTuiSelect } from "./session-tui.ts";
+import { applySessionTuiQuit, applySessionTuiSelect } from "./session-tui.ts";
 
 test("selecting a session with no live process spawns bundled pi --session in that cwd", () => {
   const spawned = [];
@@ -79,4 +79,16 @@ test("switching sessions keeps the previous pi live and only spawns the new one"
   assert.deepEqual(focused, ["sess-1"]);
   assert.equal(live.has("sess-1"), true);
   assert.equal(live.has("sess-2"), true);
+});
+
+test("quit kills every live session and leaves an empty process map", () => {
+  const killed = [];
+  const live = new Set(["sess-1", "sess-2"]);
+  applySessionTuiQuit(live, {
+    killAll(sessionIds) {
+      killed.push(...sessionIds);
+    },
+  });
+  assert.deepEqual(killed.sort(), ["sess-1", "sess-2"]);
+  assert.equal(live.size, 0);
 });

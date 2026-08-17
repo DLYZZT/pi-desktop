@@ -6,6 +6,6 @@
 
 **Status:** ready-for-agent
 
-- [ ] Closing Desktop terminates every tracked `pi` tree
-- [ ] A new launch has an empty process map
-- [ ] Lifecycle tests: quit → kill all
+- [x] Closing Desktop terminates every tracked `pi` tree
+- [x] A new launch has an empty process map
+- [x] Lifecycle tests: quit → kill all

@@ -28,3 +28,13 @@ export function focusExternalPi(request: SessionTuiFocusRequest): void {
     windowsHide: false,
   }).unref();
 }
+
+export function killExternalPiSessions(sessionIds: string[]): void {
+  for (const sessionId of sessionIds) {
+    spawn("wmic", ["process", "where", `CommandLine like '%--session ${sessionId}%'`, "call", "terminate"], {
+      shell: false,
+      windowsHide: true,
+      stdio: "ignore",
+    }).on("error", () => undefined);
+  }
+}
