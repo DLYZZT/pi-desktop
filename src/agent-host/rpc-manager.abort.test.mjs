@@ -2,10 +2,10 @@ import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { AgentSessionWrapper } = await importTestBundle("src/agent-host/rpc-manager", {
+const { AgentSessionWrapper, abortLiveRpcSession } = await importTestBundle("src/agent-host/rpc-manager", {
   packages: "external",
   stdin: {
-    contents: 'export { AgentSessionWrapper } from "./rpc-manager.ts";',
+    contents: 'export { AgentSessionWrapper, abortLiveRpcSession } from "./rpc-manager.ts";',
     resolveDir: import.meta.dirname,
     sourcefile: "rpc-manager-abort-test-entry.ts",
     loader: "ts",
@@ -176,4 +176,8 @@ test("steer still injects after abort latch and cuts the current run", async () 
   assert.equal(wrapper.pendingAbort, false);
   assert.ok(inner.abortCalls() >= 1);
   wrapper.destroy();
+});
+
+test("abortLiveRpcSession does not start a missing session", () => {
+  assert.equal(abortLiveRpcSession("missing-session"), false);
 });

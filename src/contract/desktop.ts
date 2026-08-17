@@ -108,6 +108,7 @@ export interface PiBridge {
   rescanToolchains: (cwd?: string) => Promise<PublicToolchainState>;
   performToolchainAction: (request: ToolchainActionRequest) => Promise<PublicToolchainState>;
   requestHostPort: () => void;
+  abortSession: (sessionId: string) => void;
   openExternal: (url: string) => Promise<void>;
   showItemInFolder: (fsPath: string) => Promise<void>;
   selectDirectory: () => Promise<string | null>;

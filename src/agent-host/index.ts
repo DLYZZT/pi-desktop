@@ -11,7 +11,7 @@ import type { ToolchainSnapshot } from "../shared/toolchains/types";
 import { installToolchainGitRunner } from "./toolchain-git";
 import type { BrowserCapabilitySnapshot } from "../contract/browser";
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
-import { syncBrowserToolsForAllSessions } from "./rpc-manager";
+import { abortLiveRpcSession, syncBrowserToolsForAllSessions } from "./rpc-manager";
 import { readPiRuntimeVersion } from "./runtime-version";
 
 const piRuntimeVersion = readPiRuntimeVersion();
@@ -36,9 +36,20 @@ const stopWatcher = startSessionWatcher(server);
 const parentPort = process.parentPort;
 if (parentPort) {
   parentPort.on("message", (event) => {
-    const msg = event.data as { type?: string; snapshot?: ToolchainSnapshot | BrowserCapabilitySnapshot };
+    const msg = event.data as {
+      type?: string;
+      sessionId?: string;
+      snapshot?: ToolchainSnapshot | BrowserCapabilitySnapshot;
+    };
     if (msg?.type === "ping") {
       parentPort.postMessage({ type: "pong", ts: Date.now() });
+      return;
+    }
+    if (msg?.type === "session-abort") {
+      const sessionId = typeof msg.sessionId === "string" ? msg.sessionId.trim() : "";
+      if (!sessionId) return;
+      const hit = abortLiveRpcSession(sessionId);
+      log(`session-abort ${sessionId} ${hit ? "delivered" : "no-live-session"}`);
       return;
     }
     if (msg?.type === "attach-port") {

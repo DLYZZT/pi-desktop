@@ -1388,6 +1388,14 @@ export function getRpcSession(sessionId: string): AgentSessionWrapper | undefine
   return getRegistry().get(sessionId);
 }
 
+/** Abort a live session only. Never starts or reloads a session. */
+export function abortLiveRpcSession(sessionId: string): boolean {
+  const session = getRpcSession(sessionId);
+  if (!session?.isAlive()) return false;
+  void session.send({ type: "abort" });
+  return true;
+}
+
 export async function disposeAllRpcSessions(reason = "host-shutdown"): Promise<void> {
   await Promise.all([...getRegistry().values()].map((session) => session.dispose({ abort: true, reason })));
 }

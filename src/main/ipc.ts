@@ -174,6 +174,11 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     event.sender.postMessage("desktop:host-port", null, [port1]);
   });
 
+  trustedOn("desktop:abort-session", (_event, sessionId: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId.trim()) return;
+    getHostManager()?.abortSession(sessionId.trim());
+  });
+
   trustedHandle("desktop:open-external", async (_event, url: string) => {
     if (typeof url !== "string") return;
     if (!/^(https?:|mailto:)/i.test(url)) throw new Error("Blocked non-http(s)/mailto URL");

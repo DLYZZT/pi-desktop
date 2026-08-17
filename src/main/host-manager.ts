@@ -121,6 +121,19 @@ export class HostManager {
     return exitPromise;
   }
 
+  /** Fire-and-forget abort over the parent port. Never uses renderer RPC. */
+  abortSession(sessionId: string): void {
+    if (!this.child) {
+      appendMainLog(`session-abort dropped (no host): ${sessionId}`);
+      return;
+    }
+    try {
+      this.child.postMessage({ type: "session-abort", sessionId });
+    } catch (error) {
+      appendMainLog(`session-abort post failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   /** Hand a MessagePort to the Host so a renderer can talk to it directly. */
   attachRendererPort(port: MessagePortMain): void {
     if (!this.child || this.status !== "ready") {

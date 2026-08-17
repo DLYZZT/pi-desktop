@@ -25,5 +25,8 @@ test("all desktop IPC registrations pass through the trusted wrappers", () => {
   assert.equal(source.match(/ipcMain\.handle\(/g)?.length, 1, "only trustedHandle may call ipcMain.handle");
   assert.equal(source.match(/ipcMain\.on\(/g)?.length, 1, "only trustedOn may call ipcMain.on");
   assert.equal(source.includes('"desktop:clear-badge"'), false, "the unused invoke badge channel must stay removed");
+  assert.match(source, /trustedOn\("desktop:abort-session"/);
+  assert.doesNotMatch(source, /trustedHandle\("desktop:abort-session"/);
+  assert.doesNotMatch(source, /manager\.call\([^\n]*abort/i);
   assert.doesNotMatch(source, /assertTrustedToolchainSender/);
 });

@@ -11,7 +11,8 @@ test("handleAbort latches before session id exists and waits for ensureNewSessio
   assert.match(block, /abortRequestedRef\.current = true/);
   assert.match(block, /setAgentRunning\(false\)/);
   assert.match(block, /sessionIdRef\.current \?\? \(await ensuringNewSessionRef\.current\)/);
-  assert.match(block, /sendAgentCommand\(sid, \{ type: "abort" \}\)/);
+  assert.match(block, /abortAgentSession\(sid\)/);
+  assert.doesNotMatch(block, /sendAgentCommand\(sid, \{ type: "abort" \}\)/);
 });
 
 test("handleSend checks the abort latch before the prompt leaves", () => {

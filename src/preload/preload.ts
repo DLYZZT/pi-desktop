@@ -68,6 +68,11 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
     requestHostPort: () => {
       ipcRenderer.send("desktop:connect-host");
     },
+    abortSession: (sessionId) => {
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        ipcRenderer.send("desktop:abort-session", sessionId.trim());
+      }
+    },
     openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
     showItemInFolder: (fsPath) => ipcRenderer.invoke("desktop:show-item-in-folder", fsPath),
     selectDirectory: () => ipcRenderer.invoke("desktop:select-directory"),

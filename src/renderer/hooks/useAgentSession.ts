@@ -13,7 +13,7 @@ import type {
 } from "@/lib/types";
 import type { ModelCatalogStatus, ModelsListResult, SessionDetail, SessionRuntimeState } from "@contract/types";
 import { normalizeToolCalls } from "@/lib/normalize";
-import { sendAgentCommand } from "@/lib/agent-client";
+import { abortAgentSession, sendAgentCommand } from "@/lib/agent-client";
 import {
   agentState,
   cancelModelsRefresh,
@@ -1250,13 +1250,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
       const throwIfSendAborted = async (sid: string | null) => {
         if (!abortRequestedRef.current) return;
-        if (sid) {
-          try {
-            await sendAgentCommand(sid, { type: "abort" });
-          } catch (error) {
-            console.error("Failed to abort:", error);
-          }
-        }
+        if (sid) abortAgentSession(sid);
         const error = new Error("Aborted");
         error.name = "AbortError";
         throw error;
@@ -1361,11 +1355,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     void (async () => {
       const sid = sessionIdRef.current ?? (await ensuringNewSessionRef.current);
       if (!sid) return;
-      try {
-        await sendAgentCommand(sid, { type: "abort" });
-      } catch (e) {
-        console.error("Failed to abort:", e);
-      }
+      abortAgentSession(sid);
     })();
   }, []);
 
