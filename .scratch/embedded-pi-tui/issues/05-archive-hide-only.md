@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] Archive / unarchive change list membership only; they do not kill or spawn
-- [ ] Selecting an archived session starts or focuses `pi --session` with the same rules as an unarchived tab
-- [ ] Unarchive does not open a terminal until the user selects the row
-- [ ] Lifecycle tests: archive does not spawn/kill; select archived → spawn or focus
+- [x] Archive / unarchive change list membership only; they do not kill or spawn
+- [x] Selecting an archived session starts or focuses `pi --session` with the same rules as an unarchived tab
+- [x] Unarchive does not open a terminal until the user selects the row
+- [x] Lifecycle tests: archive does not spawn/kill; select archived → spawn or focus

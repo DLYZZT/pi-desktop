@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] A live session shows running (waiting-for-input optional); no process shows no live mark; an exited process shows dead
-- [ ] Tree status comes from the process map, not in-process `agent.state`
-- [ ] Tree kill or child exit stops that `pi` and leaves the selected session dead without auto-spawn
-- [ ] A later select of a dead session spawns again
-- [ ] Lifecycle tests: kill/exit → dead + no flap; later select → spawn
+- [x] A live session shows running (waiting-for-input optional); no process shows no live mark; an exited process shows dead
+- [x] Tree status comes from the process map, not in-process `agent.state`
+- [x] Tree kill or child exit stops that `pi` and leaves the selected session dead without auto-spawn
+- [x] A later select of a dead session spawns again
+- [x] Lifecycle tests: kill/exit → dead + no flap; later select → spawn

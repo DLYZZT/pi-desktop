@@ -27,8 +27,11 @@ test("all desktop IPC registrations pass through the trusted wrappers", () => {
   assert.equal(source.includes('"desktop:clear-badge"'), false, "the unused invoke badge channel must stay removed");
   assert.match(source, /trustedOn\("desktop:abort-session"/);
   assert.match(source, /trustedOn\("desktop:start-session-tui"/);
+  assert.match(source, /trustedOn\("desktop:kill-session-tui"/);
+  assert.match(source, /trustedHandle\("desktop:get-session-tui-marks"/);
   assert.doesNotMatch(source, /trustedHandle\("desktop:abort-session"/);
   assert.doesNotMatch(source, /trustedHandle\("desktop:start-session-tui"/);
+  assert.doesNotMatch(source, /trustedHandle\("desktop:kill-session-tui"/);
   assert.doesNotMatch(source, /manager\.call\([^\n]*abort/i);
   assert.doesNotMatch(source, /assertTrustedToolchainSender/);
 });

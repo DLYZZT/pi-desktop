@@ -73,6 +73,17 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
         ipcRenderer.send("desktop:abort-session", sessionId.trim());
       }
     },
+    killSessionTui: (sessionId) => {
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        ipcRenderer.send("desktop:kill-session-tui", sessionId.trim());
+      }
+    },
+    getSessionTuiMarks: () => ipcRenderer.invoke("desktop:get-session-tui-marks"),
+    onSessionTuiMarks: (cb) => {
+      const handler = (_: Electron.IpcRendererEvent, marks: Record<string, "running" | "dead">) => cb(marks);
+      ipcRenderer.on("desktop:session-tui-marks", handler);
+      return () => ipcRenderer.removeListener("desktop:session-tui-marks", handler);
+    },
     startSessionTui: (session) => {
       if (
         session &&

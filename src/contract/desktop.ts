@@ -110,6 +110,9 @@ export interface PiBridge {
   requestHostPort: () => void;
   abortSession: (sessionId: string) => void;
   startSessionTui: (session: { sessionId: string; cwd: string }) => void;
+  killSessionTui: (sessionId: string) => void;
+  getSessionTuiMarks: () => Promise<Record<string, "running" | "dead">>;
+  onSessionTuiMarks: (cb: (marks: Record<string, "running" | "dead">) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
   showItemInFolder: (fsPath: string) => Promise<void>;
   selectDirectory: () => Promise<string | null>;

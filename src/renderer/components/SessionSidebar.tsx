@@ -20,8 +20,10 @@ import {
   ForkProjectFolder,
   ForkProjectPickerLabel,
   ForkProjectTag,
+  forkOnKillSession,
   forkOnSelectSession,
   useForkSessionList,
+  useSessionTuiMarks,
 } from "@/fork";
 import { applySessionChangedEvent } from "@/lib/session-sidebar-state";
 import { abbreviateHomePath } from "@/lib/display-path";
@@ -357,6 +359,7 @@ export function SessionSidebar({
   onCwdChange,
 }: Props) {
   const { t } = useI18n();
+  const sessionTuiMarks = useSessionTuiMarks();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2011,6 +2014,7 @@ export function SessionSidebar({
                       node={node}
                       selectedSessionId={selectedSessionId}
                       runningSessionIds={runningSessionIds}
+                      sessionTuiMarks={sessionTuiMarks}
                       unreadSessionIds={unreadSessionIds}
                       onSelectSession={handleSelectSessionFromList}
                       onRenamed={loadSessions}
@@ -2047,6 +2051,7 @@ export function SessionSidebar({
                             node={node}
                             selectedSessionId={selectedSessionId}
                             runningSessionIds={runningSessionIds}
+                            sessionTuiMarks={sessionTuiMarks}
                             unreadSessionIds={unreadSessionIds}
                             onSelectSession={handleSelectSessionFromList}
                             onRenamed={loadSessions}
@@ -2078,11 +2083,13 @@ export function SessionSidebar({
             key={session.id}
             session={session}
             isSelected={session.id === selectedSessionId}
-            isRunning={runningSessionIds.has(session.id)}
+            isRunning={sessionTuiMarks[session.id] === "running"}
+            isDead={sessionTuiMarks[session.id] === "dead"}
             isUnread={unreadSessionIds.has(session.id)}
             onClick={() => handleSelectSessionFromList(session)}
             onRenamed={loadSessions}
             onArchived={loadSessions}
+            onStopTui={() => forkOnKillSession(session.id)}
             showProjectTag={showProjectTag}
             onDeleted={(id) => {
               onSessionDeleted?.(id);
@@ -2099,6 +2106,7 @@ function SessionTreeItem({
   node,
   selectedSessionId,
   runningSessionIds,
+  sessionTuiMarks,
   unreadSessionIds,
   onSelectSession,
   onRenamed,
@@ -2110,6 +2118,7 @@ function SessionTreeItem({
   node: SessionTreeNode;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
+  sessionTuiMarks: Record<string, "running" | "dead">;
   unreadSessionIds: Set<string>;
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
@@ -2141,11 +2150,13 @@ function SessionTreeItem({
         <SessionItem
           session={node.session}
           isSelected={node.session.id === selectedSessionId}
-          isRunning={runningSessionIds.has(node.session.id)}
+          isRunning={sessionTuiMarks[node.session.id] === "running"}
+          isDead={sessionTuiMarks[node.session.id] === "dead"}
           isUnread={unreadSessionIds.has(node.session.id)}
           onClick={() => onSelectSession(node.session)}
           onRenamed={onRenamed}
           onArchived={onArchived}
+          onStopTui={() => forkOnKillSession(node.session.id)}
           showProjectTag={showProjectTag}
           onDeleted={(id) => onSessionDeleted?.(id)}
           depth={depth}
@@ -2162,6 +2173,7 @@ function SessionTreeItem({
               node={child}
               selectedSessionId={selectedSessionId}
               runningSessionIds={runningSessionIds}
+              sessionTuiMarks={sessionTuiMarks}
               unreadSessionIds={unreadSessionIds}
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
@@ -2174,6 +2186,29 @@ function SessionTreeItem({
         </div>
       )}
     </div>
+  );
+}
+
+function DeadSessionIndicator() {
+  const { t } = useI18n();
+  return (
+    <span
+      title={t("sessionTuiDead", "TUI stopped")}
+      aria-label={t("sessionTuiDead", "TUI stopped")}
+      style={{
+        width: 14,
+        height: 14,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        color: "var(--text-dim)",
+        fontSize: 11,
+        fontWeight: 700,
+      }}
+    >
+      ×
+    </span>
   );
 }
 
@@ -2257,10 +2292,12 @@ function SessionItem({
   session,
   isSelected,
   isRunning,
+  isDead,
   isUnread,
   onClick,
   onRenamed,
   onArchived,
+  onStopTui,
   showProjectTag = false,
   onDeleted,
   depth = 0,
@@ -2271,10 +2308,12 @@ function SessionItem({
   session: SessionInfo;
   isSelected: boolean;
   isRunning?: boolean;
+  isDead?: boolean;
   isUnread?: boolean;
   onClick: () => void;
   onRenamed?: () => void;
   onArchived?: () => void;
+  onStopTui?: () => void;
   showProjectTag?: boolean;
   onDeleted?: (id: string) => void;
   depth?: number;
@@ -2635,13 +2674,17 @@ function SessionItem({
                 title={
                   isRunning
                     ? `${title} · ${t("agentRunning", "Agent is running…")}`
-                    : isUnread
-                      ? `${title} · ${t("newSessionActivity", "New activity")}`
-                      : title
+                    : isDead
+                      ? `${title} · ${t("sessionTuiDead", "TUI stopped")}`
+                      : isUnread
+                        ? `${title} · ${t("newSessionActivity", "New activity")}`
+                        : title
                 }
               >
                 {isRunning ? (
                   <RunningSessionIndicator />
+                ) : isDead ? (
+                  <DeadSessionIndicator />
                 ) : isUnread ? (
                   <UnreadSessionIndicator />
                 ) : (
@@ -2832,6 +2875,21 @@ function SessionItem({
                   boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
                 }}
               >
+                {isRunning && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="session-menu-item"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeActionsMenu();
+                      onStopTui?.();
+                    }}
+                    style={sessionMenuItemStyle}
+                  >
+                    {t("stopSessionTui", "Stop TUI")}
+                  </button>
+                )}
                 <ForkArchiveMenuItem
                   archived={session.archived}
                   archiveLabel={t("archiveSession", "Archive")}

@@ -1,4 +1,8 @@
-export const sessionTuiLive = new Set<string>();
+export type SessionTuiMark = "running" | "dead";
+
+export type SessionTuiMarks = Map<string, SessionTuiMark>;
+
+export const sessionTuiMarks: SessionTuiMarks = new Map();
 
 export type SessionTuiSelectInput = {
   sessionId: string;
@@ -23,15 +27,20 @@ export type SessionTuiAction = SessionTuiSpawnRequest | SessionTuiFocusRequest;
 export type SessionTuiProcessPort = {
   spawn: (request: SessionTuiSpawnRequest) => void;
   focus: (request: SessionTuiFocusRequest) => void;
+  kill?: (sessionIds: string[]) => void;
 };
+
+export function sessionTuiMarkOf(marks: SessionTuiMarks, sessionId: string): SessionTuiMark | null {
+  return marks.get(sessionId) ?? null;
+}
 
 export function applySessionTuiSelect(
   session: SessionTuiSelectInput,
   bundled: { bundledPi: string },
   port: SessionTuiProcessPort,
-  live: Set<string> = new Set(),
+  marks: SessionTuiMarks = new Map(),
 ): SessionTuiAction {
-  if (live.has(session.sessionId)) {
+  if (marks.get(session.sessionId) === "running") {
     const request: SessionTuiFocusRequest = { action: "focus", sessionId: session.sessionId };
     port.focus(request);
     return request;
@@ -44,11 +53,36 @@ export function applySessionTuiSelect(
     args: ["--session", session.sessionId],
   };
   port.spawn(request);
-  live.add(session.sessionId);
+  marks.set(session.sessionId, "running");
   return request;
 }
 
-export function applySessionTuiQuit(live: Set<string>, port: { killAll: (sessionIds: string[]) => void }): void {
-  port.killAll([...live]);
-  live.clear();
+export function applySessionTuiKill(
+  sessionId: string,
+  marks: SessionTuiMarks,
+  port: Pick<SessionTuiProcessPort, "kill">,
+): void {
+  port.kill?.([sessionId]);
+  marks.set(sessionId, "dead");
+}
+
+export function applySessionTuiExited(sessionId: string, marks: SessionTuiMarks): void {
+  if (marks.has(sessionId)) marks.set(sessionId, "dead");
+}
+
+export function applySessionTuiQuit(marks: SessionTuiMarks, port: { killAll: (sessionIds: string[]) => void }): void {
+  const running = [...marks].filter(([, mark]) => mark === "running").map(([sessionId]) => sessionId);
+  port.killAll(running);
+  marks.clear();
+}
+
+export function snapshotSessionTuiMarks(marks: SessionTuiMarks): Record<string, SessionTuiMark> {
+  return Object.fromEntries(marks);
+}
+
+export function reconcileSessionTuiMarks(marks: SessionTuiMarks, aliveIds: Iterable<string>): void {
+  const alive = new Set(aliveIds);
+  for (const [sessionId, mark] of marks) {
+    if (mark === "running" && !alive.has(sessionId)) marks.set(sessionId, "dead");
+  }
 }

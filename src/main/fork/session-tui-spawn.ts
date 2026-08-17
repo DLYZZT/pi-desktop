@@ -1,8 +1,12 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { SessionTuiFocusRequest, SessionTuiSpawnRequest } from "./session-tui.ts";
+
+export function parseAliveSessionIds(processText: string): string[] {
+  return [...new Set([...processText.matchAll(/--session\s+(\S+)/g)].map((match) => match[1]))];
+}
 
 export function sessionTuiWindowName(sessionId: string): string {
   return `pi-${sessionId}`;
@@ -36,5 +40,18 @@ export function killExternalPiSessions(sessionIds: string[]): void {
       windowsHide: true,
       stdio: "ignore",
     }).on("error", () => undefined);
+  }
+}
+
+export function listAliveSessionTuiIds(): string[] | null {
+  try {
+    const text = execFileSync("wmic", ["process", "get", "CommandLine"], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 2000,
+    });
+    return parseAliveSessionIds(text);
+  } catch {
+    return null;
   }
 }

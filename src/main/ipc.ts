@@ -20,8 +20,20 @@ import {
 import { ToolchainError } from "../shared/toolchains/errors";
 import type { BrowserService } from "./browser/browser-service";
 import { BrowserError } from "./browser/browser-error";
-import { applySessionTuiSelect, sessionTuiLive } from "./fork/session-tui";
-import { bundledPiCliPath, focusExternalPi, spawnExternalPi } from "./fork/session-tui-spawn";
+import {
+  applySessionTuiKill,
+  applySessionTuiSelect,
+  reconcileSessionTuiMarks,
+  sessionTuiMarks,
+  snapshotSessionTuiMarks,
+} from "./fork/session-tui";
+import {
+  bundledPiCliPath,
+  focusExternalPi,
+  killExternalPiSessions,
+  listAliveSessionTuiIds,
+  spawnExternalPi,
+} from "./fork/session-tui-spawn";
 import { isTrustedDesktopIpcSender } from "./ipc-trust";
 import type {
   BrowserConfirmationKind,
@@ -181,6 +193,26 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     getHostManager()?.abortSession(sessionId.trim());
   });
 
+  const emitSessionTuiMarks = (): void => {
+    const win = getMainWindow();
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send("desktop:session-tui-marks", snapshotSessionTuiMarks(sessionTuiMarks));
+  };
+  const sessionTuiPort = {
+    spawn(request: Parameters<typeof spawnExternalPi>[0]) {
+      spawnExternalPi(request, process.execPath);
+      emitSessionTuiMarks();
+    },
+    focus(request: Parameters<typeof focusExternalPi>[0]) {
+      focusExternalPi(request);
+      emitSessionTuiMarks();
+    },
+    kill(sessionIds: string[]) {
+      killExternalPiSessions(sessionIds);
+      emitSessionTuiMarks();
+    },
+  };
+
   trustedOn("desktop:start-session-tui", (_event, payload: unknown) => {
     if (!payload || typeof payload !== "object") return;
     const sessionId = "sessionId" in payload ? payload.sessionId : undefined;
@@ -190,16 +222,20 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     applySessionTuiSelect(
       { sessionId: sessionId.trim(), cwd: cwd.trim() },
       { bundledPi: bundledPiCliPath() },
-      {
-        spawn(request) {
-          spawnExternalPi(request, process.execPath);
-        },
-        focus(request) {
-          focusExternalPi(request);
-        },
-      },
-      sessionTuiLive,
+      sessionTuiPort,
+      sessionTuiMarks,
     );
+  });
+
+  trustedOn("desktop:kill-session-tui", (_event, sessionId: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId.trim()) return;
+    applySessionTuiKill(sessionId.trim(), sessionTuiMarks, sessionTuiPort);
+  });
+
+  trustedHandle("desktop:get-session-tui-marks", () => {
+    const alive = listAliveSessionTuiIds();
+    if (alive) reconcileSessionTuiMarks(sessionTuiMarks, alive);
+    return snapshotSessionTuiMarks(sessionTuiMarks);
   });
 
   trustedHandle("desktop:open-external", async (_event, url: string) => {
