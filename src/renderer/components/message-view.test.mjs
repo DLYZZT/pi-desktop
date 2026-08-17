@@ -110,6 +110,123 @@ test("continues to hide a completed empty non-error assistant message", () => {
   assert.equal(renderToStaticMarkup(createElement(MessageView, { message: assistant() })), "");
 });
 
+function toolCallMessage(toolName, toolCallId = "call-1") {
+  return assistant({
+    content: [{ type: "toolCall", toolCallId, toolName, input: { agent: "scout", task: "find auth" } }],
+  });
+}
+
+function textItems(count) {
+  return Array.from({ length: count }, (_, i) => ({
+    role: "assistant",
+    content: [{ type: "text", text: `item-${i + 1}` }],
+  }));
+}
+
+test("live subagent details show agent and child tool instead of running", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: toolCallMessage("subagent"),
+      toolResults: new Map([
+        [
+          "call-1",
+          {
+            role: "toolResult",
+            toolCallId: "call-1",
+            content: [{ type: "text", text: "(running...)" }],
+            details: {
+              mode: "single",
+              results: [
+                {
+                  agent: "scout",
+                  exitCode: 0,
+                  messages: [
+                    {
+                      role: "assistant",
+                      content: [{ type: "toolCall", name: "grep", arguments: { pattern: "auth" } }],
+                    },
+                  ],
+                  usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+    }),
+  );
+
+  assert.match(html, /scout/);
+  assert.match(html, /grep/);
+  assert.doesNotMatch(html, />running</);
+});
+
+test("final subagent details keep a collapsed trail from history", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: toolCallMessage("subagent"),
+      toolResults: new Map([
+        [
+          "call-1",
+          {
+            role: "toolResult",
+            toolCallId: "call-1",
+            timestamp: 2_000,
+            content: [{ type: "text", text: "done" }],
+            details: {
+              mode: "single",
+              results: [
+                {
+                  agent: "scout",
+                  exitCode: 0,
+                  messages: textItems(12),
+                  usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+    }),
+  );
+
+  assert.match(html, /item-12/);
+  assert.doesNotMatch(html, /item-1</);
+});
+
+test("running bash without details still shows running", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: toolCallMessage("bash"),
+    }),
+  );
+
+  assert.match(html, /running/);
+});
+
+test("edit details without subagent shape still render as a diff", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: toolCallMessage("edit"),
+      toolResults: new Map([
+        [
+          "call-1",
+          {
+            role: "toolResult",
+            toolCallId: "call-1",
+            timestamp: 2_000,
+            content: [{ type: "text", text: "ok" }],
+            details: { patch: "diff --git a/file b/file\n+hello" },
+          },
+        ],
+      ]),
+    }),
+  );
+
+  assert.match(html, /\+hello/);
+  assert.doesNotMatch(html, /data-testid="subagent-trail"/);
+});
+
 test("renders compaction summaries collapsed by default", () => {
   const html = renderToStaticMarkup(
     createElement(MessageView, {

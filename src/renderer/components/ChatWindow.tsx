@@ -25,8 +25,10 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useObservedElementHeight } from "@/hooks/useObservedElementHeight";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { MessageRenderKeyRegistry, type MessageRenderRole } from "@/lib/message-render-key";
+import { mergeToolResults } from "@/lib/tool-execution-partials";
 import { buildToolMessageIndex } from "@/lib/tool-message-index";
 import { useI18n } from "@/i18n";
+import { forkNoticeItemStyle, forkNoticeMessageStyle, forkStatusBarStatuses, forkUsageChips } from "@/fork";
 
 interface Props {
   session: SessionInfo | null;
@@ -315,6 +317,7 @@ export function ChatWindow({
     sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
+    toolPartials,
     isNew,
     messagesEndRef,
     liveContentEndRef,
@@ -500,7 +503,7 @@ export function ChatWindow({
       onAudioUnlock={unlockAudio}
       draftKey={session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined)}
       cwd={session?.cwd ?? newSessionCwd}
-      statusChips={extensionStatuses.filter((status) => /grok|usage/i.test(`${status.key} ${status.text}`))}
+      statusChips={forkUsageChips(extensionStatuses)}
     />
   );
 
@@ -703,9 +706,7 @@ export function ChatWindow({
                       </button>
                     </div>
                   )}
-                  <ExtensionStatusBar
-                    statuses={extensionStatuses.filter((status) => !/grok|usage/i.test(status.key))}
-                  />
+                  <ExtensionStatusBar statuses={forkStatusBarStatuses(extensionStatuses)} />
                   <ExtensionWidgets widgets={aboveEditorWidgets} />
 
                   {(() => {
@@ -775,7 +776,7 @@ export function ChatWindow({
                         <SessionProfiler key={renderKey} id="MessageView">
                           <MessageView
                             message={msg}
-                            toolResults={toolData?.results}
+                            toolResults={mergeToolResults(toolData?.results, toolPartials)}
                             toolCallDurations={toolData?.durations}
                             modelNames={modelNames}
                             cwd={messageCwd}
@@ -1144,9 +1145,10 @@ function NoticeShelf({
               display: "flex",
               alignItems: "center",
               gap: 10,
-              minHeight: 40,
-              maxHeight: 240,
-              alignItems: "flex-start" as const,
+              minHeight: 60,
+              height: 60,
+              maxHeight: 60,
+              ...forkNoticeItemStyle(),
               marginBottom: index === notices.length - 1 ? 0 : 6,
               overflow: "hidden",
               borderRadius: 14,
@@ -1178,14 +1180,13 @@ function NoticeShelf({
             />
             <span
               style={{
-                padding: "10px 0",
+                padding: "14px 0",
                 minWidth: 0,
                 maxWidth: "100%",
-                overflow: "auto",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                fontSize: 13,
-                lineHeight: 1.4,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                ...forkNoticeMessageStyle(),
               }}
             >
               {notice.message}

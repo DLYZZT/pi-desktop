@@ -29,6 +29,18 @@ export function clearAllToolExecutionPartials(): Map<string, ToolResultMessage> 
   return new Map();
 }
 
+export function mergeToolResults(
+  history: ReadonlyMap<string, ToolResultMessage> | undefined,
+  partials: ReadonlyMap<string, ToolResultMessage> | undefined,
+): ReadonlyMap<string, ToolResultMessage> | undefined {
+  if (!partials || partials.size === 0) return history;
+  const next = new Map(history);
+  for (const [id, partial] of partials) {
+    if (!next.has(id)) next.set(id, partial);
+  }
+  return next;
+}
+
 function extractContent(partialResult: unknown): TextContent[] {
   if (!isRecord(partialResult) || !Array.isArray(partialResult.content)) return [];
   return partialResult.content.filter(

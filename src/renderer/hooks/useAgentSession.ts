@@ -9,6 +9,7 @@ import type {
   SessionInfo,
   SessionTreeNode,
   TextContent,
+  ToolResultMessage,
 } from "@/lib/types";
 import type { ModelCatalogStatus, ModelsListResult, SessionDetail, SessionRuntimeState } from "@contract/types";
 import { normalizeToolCalls } from "@/lib/normalize";
@@ -28,6 +29,11 @@ import {
 } from "@/lib/api-client";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
+import {
+  applyToolExecutionUpdate,
+  clearAllToolExecutionPartials,
+  clearToolExecutionPartial,
+} from "@/lib/tool-execution-partials";
 import { subscribeActiveSessionLiveSync } from "./active-session-live-sync";
 import { isNearChatBottom, shouldDisengageScrollMagnet, shouldStopChatAutoFollow } from "./chat-scroll-policy";
 
@@ -63,7 +69,8 @@ import {
   replaceLastHistoryMessage,
   type SessionHistoryValue,
 } from "@/lib/session-history-update";
-import { NOTICE_VISIBLE_MS, noticeExpiryDelay, noticeReducer, type NoticeType } from "@/lib/notice-queue";
+import { noticeExpiryDelay, noticeReducer, type NoticeType } from "@/lib/notice-queue";
+import { forkNoticeDurationMs } from "@/fork";
 import { useI18n } from "@/i18n";
 import { sessionClientErrorMessage } from "@/lib/session-error-message";
 
@@ -340,6 +347,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [compactError, setCompactError] = useState<string | null>(null);
   const [compactResult, setCompactResult] = useState<CompactResultInfo | null>(null);
   const [agentPhase, setAgentPhase] = useState<AgentPhase>(null);
+  const [toolPartials, setToolPartials] = useState<ReadonlyMap<string, ToolResultMessage>>(() => new Map());
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
@@ -363,6 +371,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const modelListSizeRef = useRef(0);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const agentRunningRef = useRef(false);
+  const abortRequestedRef = useRef(false);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
   const initialScrollDoneRef = useRef(false);
   const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
@@ -848,14 +857,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType }) => {
     const message = notice.message.trim();
     if (!message) return;
-    const multiline = message.includes("\n") || message.length > 80;
     dispatchNotice({
       type: "add",
       notice: {
         id: notice.id ?? createNoticeId(),
         message,
         type: notice.type ?? "info",
-        expiresAt: Date.now() + (multiline ? NOTICE_VISIBLE_MS * 4 : NOTICE_VISIBLE_MS),
+        expiresAt: Date.now() + forkNoticeDurationMs(message),
       },
     });
   }, []);
@@ -1045,12 +1053,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           externalTurnAutoFollowRef.current = false;
           break;
         case "agent_start":
+          if (abortRequestedRef.current) break;
           agentRunningRef.current = true;
           setAgentRunning(true);
           setAgentPhase({ kind: "waiting_model" });
           dispatch({ type: "start" });
           break;
         case "agent_end":
+          abortRequestedRef.current = false;
           // A late agent_end can arrive over the stream after reconcileAgentState
           // already finished this run — don't re-trigger completion.
           if (!agentRunningRef.current) break;
@@ -1058,6 +1068,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setAgentRunning(false);
           setAgentPhase(null);
           setRetryInfo(null);
+          setToolPartials(clearAllToolExecutionPartials());
           dispatch({ type: "end" });
           if (sessionIdRef.current) {
             void loadSession(sessionIdRef.current);
@@ -1136,6 +1147,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           break;
         }
         case "tool_execution_start": {
+          if (!agentRunningRef.current) break;
           const id = event.toolCallId as string;
           const name = event.toolName as string;
           setAgentPhase((prev) => {
@@ -1145,8 +1157,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           });
           break;
         }
+        case "tool_execution_update": {
+          if (!agentRunningRef.current) break;
+          setToolPartials((prev) => applyToolExecutionUpdate(prev, event));
+          break;
+        }
         case "tool_execution_end": {
+          if (!agentRunningRef.current) break;
           const id = event.toolCallId as string;
+          setToolPartials((prev) => clearToolExecutionPartial(prev, id));
           setAgentPhase((prev) => {
             if (prev?.kind !== "running_tools") return prev;
             const tools = prev.tools.filter((t) => t.id !== id);
@@ -1202,6 +1221,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const trimmedMessage = message.trim();
       if (!trimmedMessage && !images?.length) return;
       if (agentRunning) return;
+      abortRequestedRef.current = false;
       const isSlashCommandPrompt = !images?.length && trimmedMessage.startsWith("/");
       const promptRunId = promptRunIdRef.current + 1;
 
@@ -1228,12 +1248,27 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
       const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
 
+      const throwIfSendAborted = async (sid: string | null) => {
+        if (!abortRequestedRef.current) return;
+        if (sid) {
+          try {
+            await sendAgentCommand(sid, { type: "abort" });
+          } catch (error) {
+            console.error("Failed to abort:", error);
+          }
+        }
+        const error = new Error("Aborted");
+        error.name = "AbortError";
+        throw error;
+      };
+
       try {
         let sentSessionId: string | null = null;
         if (isNew && newSessionCwd) {
           const selectedModel = newSessionModel;
           const existingSid = sessionIdRef.current ?? (await ensuringNewSessionRef.current);
           const sid = existingSid ?? (await ensureNewSession());
+          await throwIfSendAborted(sid);
 
           if (sid) {
             sentSessionId = sid;
@@ -1245,9 +1280,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
                   provider: selectedModel.provider,
                   modelId: selectedModel.modelId,
                 });
+                await throwIfSendAborted(sid);
               }
             }
             await ensureEventsConnected(sid);
+            await throwIfSendAborted(sid);
             await sendAgentCommand(sid, {
               type: "prompt",
               message,
@@ -1257,7 +1294,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           }
         } else if (session) {
           sentSessionId = session.id;
+          await throwIfSendAborted(session.id);
           await ensureEventsConnected(session.id);
+          await throwIfSendAborted(session.id);
           await sendAgentCommand(session.id, {
             type: "prompt",
             message,
@@ -1268,7 +1307,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           void waitForPromptSettlement(sentSessionId, promptRunId);
         }
       } catch (e) {
-        console.error("Failed to send message:", e);
+        const aborted = e instanceof Error && e.name === "AbortError";
+        if (!aborted) console.error("Failed to send message:", e);
         const optimisticKey = optimisticUserMessageKeyRef.current;
         if (optimisticKey) {
           updateHistory((current) => {
@@ -1278,10 +1318,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               : current;
           });
         }
-        addNotice({
-          type: "error",
-          message: sessionClientErrorMessage(e, t, t("messageSendFailed", "Failed to send message.")),
-        });
+        if (!aborted) {
+          addNotice({
+            type: "error",
+            message: sessionClientErrorMessage(e, t, t("messageSendFailed", "Failed to send message.")),
+          });
+        }
         optimisticUserMessageKeyRef.current = null;
         agentRunningRef.current = false;
         setAgentRunning(false);
@@ -1307,14 +1349,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     ],
   );
 
-  const handleAbort = useCallback(async () => {
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    try {
-      await sendAgentCommand(sid, { type: "abort" });
-    } catch (e) {
-      console.error("Failed to abort:", e);
+  const handleAbort = useCallback(() => {
+    abortRequestedRef.current = true;
+    if (agentRunningRef.current) {
+      agentRunningRef.current = false;
+      setAgentRunning(false);
+      setAgentPhase(null);
+      setRetryInfo(null);
+      dispatch({ type: "end" });
     }
+    void (async () => {
+      const sid = sessionIdRef.current ?? (await ensuringNewSessionRef.current);
+      if (!sid) return;
+      try {
+        await sendAgentCommand(sid, { type: "abort" });
+      } catch (e) {
+        console.error("Failed to abort:", e);
+      }
+    })();
   }, []);
 
   const handleFork = useCallback(
@@ -2173,6 +2225,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
+    toolPartials,
     isNew,
     // "Scroll to bottom" affordance state + action
     isAwayFromBottom,

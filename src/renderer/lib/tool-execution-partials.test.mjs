@@ -5,6 +5,7 @@ import {
   applyToolExecutionUpdate,
   clearAllToolExecutionPartials,
   clearToolExecutionPartial,
+  mergeToolResults,
 } from "./tool-execution-partials.ts";
 
 test("second update same id keeps latest content and details", () => {
@@ -67,4 +68,17 @@ test("run reset empties the map", () => {
   });
   assert.equal(clearAllToolExecutionPartials().size, 0);
   assert.equal(filled.size, 1);
+});
+
+test("merge prefers history over a live partial", () => {
+  const history = new Map([
+    ["call-1", { role: "toolResult", toolCallId: "call-1", content: [{ type: "text", text: "final" }] }],
+  ]);
+  const partials = new Map([
+    ["call-1", { role: "toolResult", toolCallId: "call-1", content: [{ type: "text", text: "live" }] }],
+    ["call-2", { role: "toolResult", toolCallId: "call-2", content: [{ type: "text", text: "other" }] }],
+  ]);
+  const merged = mergeToolResults(history, partials);
+  assert.equal(merged.get("call-1").content[0].text, "final");
+  assert.equal(merged.get("call-2").content[0].text, "other");
 });
