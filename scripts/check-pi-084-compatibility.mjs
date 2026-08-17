@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const targetVersion = "0.84.0";
+const targetVersion = "0.84.2";
 const directPackages = ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"];
 
 function fail(message) {

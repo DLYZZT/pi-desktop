@@ -11,5 +11,5 @@ const { readPiRuntimeVersion } = await importTestBundle("src/agent-host/runtime-
 });
 
 test("runtime version resolves through the public ESM entry despite package export restrictions", () => {
-  assert.equal(readPiRuntimeVersion(), "0.84.0");
+  assert.equal(readPiRuntimeVersion(), "0.84.2");
 });
