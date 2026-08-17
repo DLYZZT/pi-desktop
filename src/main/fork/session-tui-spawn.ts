@@ -2,7 +2,11 @@ import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { SessionTuiSpawnRequest } from "./session-tui.ts";
+import type { SessionTuiFocusRequest, SessionTuiSpawnRequest } from "./session-tui.ts";
+
+export function sessionTuiWindowName(sessionId: string): string {
+  return `pi-${sessionId}`;
+}
 
 export function bundledPiCliPath(): string {
   return join(dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))), "cli.js");
@@ -10,7 +14,15 @@ export function bundledPiCliPath(): string {
 
 export function spawnExternalPi(request: SessionTuiSpawnRequest, electronExecPath: string): void {
   const command = `set ELECTRON_RUN_AS_NODE=1&& "${electronExecPath}" "${request.program}" ${request.args.join(" ")}`;
-  spawn("wt.exe", ["-d", request.cwd, "--", "cmd.exe", "/c", command], {
+  spawn("wt.exe", ["-w", sessionTuiWindowName(request.sessionId), "-d", request.cwd, "--", "cmd.exe", "/c", command], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+  }).unref();
+}
+
+export function focusExternalPi(request: SessionTuiFocusRequest): void {
+  spawn("wt.exe", ["-w", sessionTuiWindowName(request.sessionId)], {
     detached: true,
     stdio: "ignore",
     windowsHide: false,

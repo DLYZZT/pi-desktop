@@ -20,8 +20,8 @@ import {
 import { ToolchainError } from "../shared/toolchains/errors";
 import type { BrowserService } from "./browser/browser-service";
 import { BrowserError } from "./browser/browser-error";
-import { applySessionTuiSelect } from "./fork/session-tui";
-import { bundledPiCliPath, spawnExternalPi } from "./fork/session-tui-spawn";
+import { applySessionTuiSelect, sessionTuiLive } from "./fork/session-tui";
+import { bundledPiCliPath, focusExternalPi, spawnExternalPi } from "./fork/session-tui-spawn";
 import { isTrustedDesktopIpcSender } from "./ipc-trust";
 import type {
   BrowserConfirmationKind,
@@ -194,7 +194,11 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
         spawn(request) {
           spawnExternalPi(request, process.execPath);
         },
+        focus(request) {
+          focusExternalPi(request);
+        },
       },
+      sessionTuiLive,
     );
   });
 

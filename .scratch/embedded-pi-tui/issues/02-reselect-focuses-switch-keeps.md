@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] Selecting a live session focuses its terminal and does not spawn another process
-- [ ] Selecting the already-selected live tab only focuses
-- [ ] After switching away, the previous session's process is still live
-- [ ] Lifecycle tests: live select → focus; switch → keep
+- [x] Selecting a live session focuses its terminal and does not spawn another process
+- [x] Selecting the already-selected live tab only focuses
+- [x] After switching away, the previous session's process is still live
+- [x] Lifecycle tests: live select → focus; switch → keep
