@@ -27,6 +27,7 @@ import {
   getAgentDir,
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { getSupportedThinkingLevels, type AuthInteraction } from "@earendil-works/pi-ai";
 import {
   AUTO_TITLE_MAX_LENGTH,
@@ -53,6 +54,7 @@ import {
   disposeAllRpcSessions,
   getRpcSession,
   getRunningRpcSessionIds,
+  refreshAllLiveSessionModelRuntimes,
   startRpcSession,
   subscribeRunningSessions,
 } from "./rpc-manager";
@@ -270,6 +272,88 @@ function writeModelsJson(data: Record<string, unknown>, expectedVersion: string)
     throw e;
   }
   return modelsContentVersion(serialized);
+}
+
+/**
+ * Fetch a provider's model list over the network (GET {baseUrl}/models),
+ * adapting the request per API type. Auth is resolved exactly like the
+ * "test" action: a throwaway ModelRuntime built from the provider's current
+ * form values honors ENV_VAR, !shell-command and literal apiKey sources.
+ */
+async function fetchProviderModels(
+  providerName: string,
+  provider: Record<string, unknown>,
+): Promise<Array<{ id: string; name?: string }>> {
+  const api = typeof provider.api === "string" ? provider.api : "openai-completions";
+  const baseUrl = typeof provider.baseUrl === "string" && provider.baseUrl.trim() ? provider.baseUrl.trim() : "";
+  if (!baseUrl) throw new Error("Base URL is required");
+
+  const tempDir = mkdtempSync(path.join(tmpdir(), "pi-desktop-models-fetch-"));
+  try {
+    const modelsPath = path.join(tempDir, "models.json");
+    writeFileSync(modelsPath, JSON.stringify({ providers: { [providerName]: provider } }, null, 2), "utf8");
+    const modelRuntime = await ModelRuntime.create({ modelsPath, allowModelNetwork: false });
+    const loadError = modelRuntime.getError();
+    if (loadError) throw new Error(loadError);
+
+    const auth = await modelRuntime.getAuth(providerName);
+    if (!auth?.auth) throw new Error(`No authentication found for "${providerName}"`);
+    const authObj = auth.auth as { apiKey?: string; headers?: Record<string, string> };
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (authObj.headers && Object.keys(authObj.headers).length > 0) {
+      Object.assign(headers, authObj.headers);
+    } else if (authObj.apiKey) {
+      if (api === "google-generative-ai") headers["x-goog-api-key"] = authObj.apiKey;
+      else headers["Authorization"] = `Bearer ${authObj.apiKey}`;
+    }
+
+    const FETCH_TIMEOUT_MS = 20_000;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const url = `${baseUrl.replace(/\/+$/, "")}/models`;
+      const res = await fetch(url, { headers, signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} from ${url}`);
+      const data = (await res.json()) as Record<string, unknown>;
+      let models: Array<{ id: string; name?: string }> = [];
+      if (Array.isArray(data.data)) {
+        // OpenAI-compatible: { data: [{ id, name?, ... }] }
+        models = data.data
+          .filter((m): m is Record<string, unknown> => !!m && typeof m === "object")
+          .map((m) => {
+            const id = typeof m.id === "string" ? m.id.trim() : "";
+            if (!id) return null;
+            const name =
+              typeof m.name === "string" && m.name.trim() && m.name.trim() !== id ? m.name.trim() : undefined;
+            return { id, name };
+          })
+          .filter((m): m is NonNullable<typeof m> => m !== null);
+      } else if (Array.isArray(data.models)) {
+        // Gemini-style: { models: [{ name: "models/gemini-...", ... }] }
+        models = data.models
+          .filter((m): m is Record<string, unknown> => !!m && typeof m === "object")
+          .map((m) => {
+            const raw = typeof m.name === "string" ? m.name : "";
+            const id = raw.replace(/^models\//, "").trim();
+            if (!id) return null;
+            const display =
+              typeof m.displayName === "string" && m.displayName.trim() ? m.displayName.trim() : undefined;
+            return { id, name: display && display !== id ? display : undefined };
+          })
+          .filter((m): m is NonNullable<typeof m> => m !== null);
+      }
+      if (models.length === 0) throw new Error("The provider returned no models");
+      return models;
+    } finally {
+      clearTimeout(timeout);
+    }
+  } finally {
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 async function resolveLoadedSkill(cwd: string, filePath: string) {
@@ -1565,6 +1649,9 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       }
       const version = writeModelsJson(config, body.expectedVersion);
       await reloadSharedModelRuntimeConfig();
+      // Also refresh live session runtimes so open sessions can switch to
+      // newly added providers/models without a restart.
+      await refreshAllLiveSessionModelRuntimes();
       return { ok: true as const, version };
     },
     "modelsConfig.test": async (params) => {
@@ -1671,6 +1758,48 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
           } catch {
             /* ignore */
           }
+        }
+      }
+    },
+
+    "modelsConfig.fetchModels": async (params) => {
+      const body = params as unknown as {
+        providerName?: string;
+        provider?: Record<string, unknown>;
+      };
+      const providerName = typeof body.providerName === "string" ? body.providerName.trim() : "";
+      if (!providerName) return { ok: false, error: "providerName is required" };
+      if (!body.provider || typeof body.provider !== "object") {
+        return { ok: false, error: "provider is required" };
+      }
+      try {
+        const models = await fetchProviderModels(providerName, body.provider as Record<string, unknown>);
+        return { ok: true as const, source: "network" as const, providerName, models };
+      } catch (networkError) {
+        // Fall back to the built-in catalog for known providers, then surface a clear error.
+        try {
+          const builtin = getBuiltinModels(providerName as Parameters<typeof getBuiltinModels>[0]);
+          if (builtin && builtin.length > 0) {
+            const models = builtin
+              .map((m: { id?: unknown; name?: unknown }) => {
+                const id = typeof m.id === "string" ? m.id.trim() : "";
+                if (!id) return null;
+                const name =
+                  typeof m.name === "string" && m.name.trim() && m.name.trim() !== id ? m.name.trim() : undefined;
+                return { id, name };
+              })
+              .filter((m): m is NonNullable<typeof m> => m !== null);
+            return {
+              ok: true as const,
+              source: "catalog" as const,
+              providerName,
+              models,
+              warning: networkError instanceof Error ? networkError.message : String(networkError),
+            };
+          }
+          return { ok: false, error: networkError instanceof Error ? networkError.message : String(networkError) };
+        } catch {
+          return { ok: false, error: networkError instanceof Error ? networkError.message : String(networkError) };
         }
       }
     },
