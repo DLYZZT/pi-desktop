@@ -9,7 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { type CockpitRole } from "@/fork";
+import { forkOnNewSession, type CockpitRole } from "@/fork";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileExplorer } from "./FileExplorer";
@@ -433,7 +433,18 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
     // ISSUE-016: Switch Session palette — focus sidebar / open project list
     const offCockpit = window.piBridge?.onCockpitSelection?.((session) => {
       setActiveCwd(session.cwd);
-      setSelectedSession((current) => (current?.id === session.sessionId ? { ...current, cwd: session.cwd } : current));
+      setSelectedSession((current) => {
+        if (current?.id === session.sessionId) return { ...current, cwd: session.cwd };
+        return {
+          id: session.sessionId,
+          cwd: session.cwd,
+          path: "",
+          created: "",
+          modified: "",
+          messageCount: 0,
+          firstMessage: "",
+        };
+      });
     });
     const offSwitch = window.piBridge?.onMenu?.("switch-session", () => {
       setSidebarOpen(true);
@@ -505,13 +516,23 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
   );
 
   const handleNewSession = useCallback(
-    (_sessionId: string, cwd: string) => {
-      setSelectedSession(null);
+    (sessionId: string, cwd: string) => {
+      setActiveCwd(cwd);
       setNewSessionCwd(cwd);
+      setSelectedSession({
+        id: sessionId,
+        cwd,
+        path: "",
+        created: new Date().toISOString(),
+        modified: new Date().toISOString(),
+        messageCount: 0,
+        firstMessage: "",
+      });
       setSessionKey((k) => k + 1);
       setActiveTopPanel(null);
       if (isMobile) setSidebarOpen(false);
-      router.replace("/", { scroll: false });
+      forkOnNewSession(sessionId, cwd);
+      router.replace(`?session=${encodeURIComponent(sessionId)}`, { scroll: false });
     },
     [router, isMobile],
   );

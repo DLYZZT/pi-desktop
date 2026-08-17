@@ -4,7 +4,7 @@ export { forkNoticeDurationMs, forkNoticeItemStyle, forkNoticeMessageStyle } fro
 export { filterSessionsForSidebar, groupSessionsByProject, sessionProjectLabel, sessionProjectRoot } from "./sessions";
 export { useForkSessionList } from "./useForkSessionList";
 export { readCockpitRole, type CockpitRole } from "./cockpit";
-export { forkOnSelectSession } from "./session-tui-select";
+export { forkOnNewSession, forkOnSelectSession } from "./session-tui-select";
 export { forkOnKillSession, useSessionTuiMarks } from "./session-tui-marks";
 export {
   ForkAllProjectsOption,

@@ -6,6 +6,6 @@
 
 **Status:** ready-for-agent
 
-- [ ] Folder `+` creates a session in that folder's cwd and starts `pi --session`
-- [ ] The right window's files (and browser cwd context) match the selected session
-- [ ] Switching tabs updates the right window to the new session cwd
+- [x] Folder `+` creates a session in that folder's cwd and starts `pi --session`
+- [x] The right window's files (and browser cwd context) match the selected session
+- [x] Switching tabs updates the right window to the new session cwd

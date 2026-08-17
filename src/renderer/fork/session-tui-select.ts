@@ -4,3 +4,7 @@ export function forkOnSelectSession(session: { id?: string; cwd?: string }): voi
   if (!sessionId || !cwd) return;
   window.piBridge.startSessionTui?.({ sessionId, cwd });
 }
+
+export function forkOnNewSession(sessionId: string, cwd: string): void {
+  forkOnSelectSession({ id: sessionId, cwd });
+}
