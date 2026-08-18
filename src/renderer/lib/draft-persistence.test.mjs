@@ -3,6 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 import {
+  CHAT_DRAFT_SCHEMA_VERSION,
   DraftPersistenceController,
   MAX_PERSISTED_DRAFT_IMAGE_BYTES,
   flushDraft,
@@ -103,7 +104,12 @@ test("staging a draft performs no synchronous localStorage write until flush", (
     flushDraft("debounce-proof");
     assert.equal(writes.length, 1);
     assert.equal(writes[0][0], "set");
-    assert.deepEqual(JSON.parse(writes[0][2]), { value: "draft", images: [], files: [] });
+    const stored = JSON.parse(writes[0][2]);
+    assert.equal(stored.schemaVersion, CHAT_DRAFT_SCHEMA_VERSION);
+    assert.equal(stored.value, "draft");
+    assert.deepEqual(stored.images, []);
+    assert.deepEqual(stored.files, []);
+    assert.equal(typeof stored.updatedAt, "number");
   } finally {
     if (descriptor) Object.defineProperty(globalThis, "localStorage", descriptor);
     else delete globalThis.localStorage;
@@ -136,6 +142,9 @@ test("ChatInput schedules edits and commits exact refs on key switch and unmount
   assert.match(source, /draftPersistenceRef\.current\?\.schedule\(draftKey/);
   assert.match(source, /draftPersistenceRef\.current\?\.commit\(previousDraftKey/);
   assert.match(source, /draftPersistenceRef\.current\?\.commit\(currentDraftKey/);
+  assert.match(source, /files: attachedFilesRef\.current/);
+  assert.match(source, /mergeFailedSubmissionFiles\(current, snapshot\.files\)/);
+  assert.match(source, /const setAttachedFiles = useCallback[\s\S]*?inputRevisionRef\.current \+= 1/);
   assert.match(source, /draftPersistenceRef\.current\?\.clear\(draftKey\)/);
   assert.match(source, /commitCurrentDraft\(\);\s*clearInput\(\)/);
 });

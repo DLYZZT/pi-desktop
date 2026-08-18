@@ -20,19 +20,21 @@ const { getMarkdownComponentIdentityForTest } = await importTestBundle(
             contents:
               args.path === "@/hooks/useTheme"
                 ? "export const useTheme = () => ({ isDark: false });"
-                : args.path === "@/lib/file-links"
-                  ? "export const resolveLocalFileHref = () => null;"
-                  : args.path === "@/lib/markdown"
-                    ? "export const markdownRehypePlugins = []; export const markdownRemarkPlugins = []; export const autolinkPathsInMarkdown = (s) => s;"
-                    : args.path === "@/lib/code-highlight-policy"
-                      ? "export const shouldHighlightCode = () => false;"
-                      : args.path === "@/lib/mermaid-renderer"
-                        ? "export const mermaidCacheKey = () => 'key'; export const renderMermaidSvg = async () => '<svg />';"
-                        : args.path === "@/hooks/useCopyFeedback"
-                          ? "export const useCopyFeedback = () => ({ copied: false, copy: async () => true });"
-                          : args.path === "@/lib/syntax-highlight"
-                            ? "export const SyntaxHighlighter = 'pre'; export const vs = {}; export const vscDarkPlus = {};"
-                            : "export const SessionProfiler = ({ children }) => children;",
+                : args.path === "@/i18n"
+                  ? "export const useI18n = () => ({ language: 'en-US', t: (_key, fallback) => fallback });"
+                  : args.path === "@/lib/file-links"
+                    ? "export const resolveLocalFileHref = () => null;"
+                    : args.path === "@/lib/markdown"
+                      ? "export const markdownRehypePlugins = []; export const markdownRemarkPlugins = [];"
+                      : args.path === "@/lib/code-highlight-policy"
+                        ? "export const shouldHighlightCode = () => false;"
+                        : args.path === "@/lib/mermaid-renderer"
+                          ? "export const mermaidCacheKey = () => 'key'; export const renderMermaidSvg = async () => '<svg />';"
+                          : args.path === "@/hooks/useCopyFeedback"
+                            ? "export const useCopyFeedback = () => ({ copied: false, copy: async () => true });"
+                            : args.path === "@/lib/syntax-highlight"
+                              ? "export const SyntaxHighlighter = 'pre'; export const vs = {}; export const vscDarkPlus = {};"
+                              : "export const SessionProfiler = ({ children }) => children;",
           }));
         },
       },

@@ -45,7 +45,7 @@ const cache = new Map<string, { at: number; result: FileAssociations }>();
 
 function regQuery(key: string): Promise<Map<string, string>> {
   return new Promise((resolve) => {
-    execFile("reg.exe", ["query", key], { timeout: 5000, windowsHide: true }, (_err, stdout) => {
+    execFile("reg.exe", ["query", key], { timeout: 1500, windowsHide: true }, (_err, stdout) => {
       resolve(parseRegOutput(String(stdout ?? "")));
     });
   });
@@ -94,11 +94,22 @@ async function readFileDescriptions(exes: string[]): Promise<Map<string, string>
   try {
     const { spawn } = await import("node:child_process");
     const out = await new Promise<string>((resolve) => {
-      const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+      const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
       let buf = "";
+      const timeout = setTimeout(() => child.kill(), 1500);
+      timeout.unref?.();
       child.stdout.on("data", (d: Buffer) => (buf += d.toString("utf8")));
-      child.on("close", () => resolve(buf));
-      child.on("error", () => resolve(""));
+      child.on("close", () => {
+        clearTimeout(timeout);
+        resolve(buf);
+      });
+      child.on("error", () => {
+        clearTimeout(timeout);
+        resolve("");
+      });
     });
     for (const line of out.split(/\r?\n/)) {
       const i = line.indexOf("\x1f");
@@ -184,11 +195,6 @@ async function resolveExeApp(exeName: string): Promise<ResolvedHandler | null> {
   }
 }
 
-function isBlocked(handler: ResolvedHandler): boolean {
-  const base = handler.exe ? path.basename(handler.exe).toLowerCase() : "";
-  return base !== "" && SHELL_BLOCKLIST.has(base);
-}
-
 function sameHandler(a: ResolvedHandler | FileOpenHandler, b: ResolvedHandler | FileOpenHandler): boolean {
   const keyOf = (h: ResolvedHandler | FileOpenHandler) => ("exe" in h && h.exe ? h.exe : h.command).toLowerCase();
   return keyOf(a) === keyOf(b);
@@ -221,9 +227,6 @@ async function computeAssociations(ext: string): Promise<FileAssociations> {
   const resolvedProgIds = await Promise.all([...progIds].map(resolveProgId));
   const resolvedExes = await Promise.all(exeNames.map(resolveExeApp));
   const all = [...resolvedProgIds, ...resolvedExes].filter((h): h is ResolvedHandler => h !== null);
-  // Raw exe basenames ("chrome") get replaced with FileDescription ("Google Chrome").
-  await applyPrettyNames(all);
-
   // Default app for "Open in X" — the per-user choice wins over the system default.
   let defaultApp: ResolvedHandler | null = null;
   if (defaultProgId) {
@@ -231,17 +234,20 @@ async function computeAssociations(ext: string): Promise<FileAssociations> {
       ? await resolveExeApp(defaultProgId.replace(/^Applications\\/i, ""))
       : await resolveProgId(defaultProgId);
   }
-  if (defaultApp && isBlocked(defaultApp)) defaultApp = null;
+  if (defaultApp && !isSafeOpenHandlerCommand(defaultApp.command)) defaultApp = null;
   // Self-executing types (.exe, .bat...) resolve to a bare "%1" command —
   // that's not an editor, "Open file" already covers it.
   if (defaultApp && /^"?%1"?/.test(defaultApp.command.trim())) defaultApp = null;
+  // Resolve descriptions after the default app is known so both the default
+  // action and submenu receive the same friendly-name treatment.
+  await applyPrettyNames(defaultApp ? [...all, defaultApp] : all);
 
   // Handlers for "Open with": dedupe by exe/command, drop shells and the default
   // (it already has its own menu entry).
   const seen = new Set<string>();
   const handlers: FileOpenHandler[] = [];
   for (const handler of all) {
-    if (isBlocked(handler)) continue;
+    if (!isSafeOpenHandlerCommand(handler.command)) continue;
     if (defaultApp && sameHandler(handler, defaultApp)) continue;
     const key = (handler.exe || handler.command).toLowerCase();
     if (seen.has(key)) continue;
@@ -267,37 +273,84 @@ export async function getFileAssociations(filePath: string): Promise<FileAssocia
   return result;
 }
 
-/** Split a trusted registry command line into tokens (quotes stripped). */
-function tokenizeCommandLine(cmd: string): string[] {
+/** Parse the Windows command-line quoting/backslash rules used by registry handlers. */
+export function parseWindowsCommandLine(cmd: string): string[] {
   const tokens: string[] = [];
-  const re = /"([^"]*)"|(\S+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(cmd))) tokens.push(m[1] ?? m[2]);
+  let index = 0;
+  while (index < cmd.length) {
+    while (index < cmd.length && /\s/.test(cmd[index])) index += 1;
+    if (index >= cmd.length) break;
+    let token = "";
+    let quoted = false;
+    while (index < cmd.length) {
+      if (!quoted && /\s/.test(cmd[index])) break;
+      let backslashes = 0;
+      while (cmd[index] === "\\") {
+        backslashes += 1;
+        index += 1;
+      }
+      if (cmd[index] === '"') {
+        token += "\\".repeat(Math.floor(backslashes / 2));
+        if (backslashes % 2 === 1) token += '"';
+        else quoted = !quoted;
+        index += 1;
+        continue;
+      }
+      token += "\\".repeat(backslashes);
+      if (index >= cmd.length || (!quoted && /\s/.test(cmd[index]))) break;
+      token += cmd[index];
+      index += 1;
+    }
+    if (quoted) return [];
+    tokens.push(token);
+    while (index < cmd.length && /\s/.test(cmd[index])) index += 1;
+  }
   return tokens;
+}
+
+export function buildOpenWithInvocation(
+  command: string,
+  targetPath: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): { exe: string; args: string[] } | null {
+  const expanded = command.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (match, name: string) => environment[name] ?? match);
+  const tokens = parseWindowsCommandLine(expanded);
+  if (!tokens.length || !tokens[0] || tokens[0].includes("%") || /%(?:1|l|v|\*)/i.test(tokens[0])) return null;
+  let substituted = false;
+  const args = tokens.slice(1).map((token) => {
+    if (/%(?:1|l|v)/i.test(token)) {
+      substituted = true;
+      return token.replace(/%(?:1|l|v)/gi, targetPath);
+    }
+    if (/%\*/i.test(token)) {
+      substituted = true;
+      return token.replace(/%\*/gi, targetPath);
+    }
+    return token;
+  });
+  if (!substituted) args.push(targetPath);
+  return { exe: tokens[0], args };
+}
+
+export function isSafeOpenHandlerCommand(command: string, environment: NodeJS.ProcessEnv = process.env): boolean {
+  const invocation = buildOpenWithInvocation(command, "C:\\__pi_desktop_file_target__.txt", environment);
+  if (!invocation) return false;
+  const executable = path.win32.basename(invocation.exe).toLowerCase();
+  return executable.endsWith(".exe") && !SHELL_BLOCKLIST.has(executable);
 }
 
 /** Run a registry open-command against a file: expands env vars, substitutes %1 / %*.
  *  Uses spawn without a shell so %VAR%-like sequences inside the file name survive. */
 export function runOpenWith(command: string, targetPath: string): void {
-  const expanded = command.replace(/%([A-Za-z0-9_]+)%/g, (match, name: string) => process.env[name] ?? match);
-  const tokens = tokenizeCommandLine(expanded);
-  if (!tokens.length) return;
-  const exe = tokens[0];
-  let substituted = false;
-  const args = tokens.slice(1).map((token) => {
-    if (/%1/i.test(token)) {
-      substituted = true;
-      return token.replace(/%1/gi, targetPath);
-    }
-    if (token === "%*") {
-      substituted = true;
-      return targetPath;
-    }
-    return token;
-  });
-  if (!substituted) args.push(targetPath);
+  const invocation = buildOpenWithInvocation(command, targetPath);
+  if (!invocation) return;
   try {
-    const child = spawn(exe, args, { windowsHide: true, detached: true, stdio: "ignore" });
+    const child = spawn(invocation.exe, invocation.args, {
+      windowsHide: true,
+      detached: true,
+      stdio: "ignore",
+      shell: false,
+    });
     child.on("error", () => {});
     child.unref();
   } catch {

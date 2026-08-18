@@ -14,10 +14,11 @@ import { SyntaxHighlighter, vs, vscDarkPlus } from "@/lib/syntax-highlight";
 import { useTheme } from "@/hooks/useTheme";
 import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { resolveLocalFileHref } from "@/lib/file-links";
-import { markdownRehypePlugins, markdownRemarkPlugins, autolinkPathsInMarkdown } from "@/lib/markdown";
+import { markdownRehypePlugins, markdownRemarkPlugins } from "@/lib/markdown";
 import { shouldHighlightCode } from "@/lib/code-highlight-policy";
 import { mermaidCacheKey, renderMermaidSvg } from "@/lib/mermaid-renderer";
 import { SessionProfiler } from "./SessionProfiler";
+import { useI18n } from "@/i18n";
 
 interface MarkdownBodyProps {
   children: string;
@@ -64,6 +65,8 @@ function MarkdownPre({ children }: MarkdownComponentProps<"pre">) {
 
 function MarkdownAnchor({ href, children, node: _node, ...props }: MarkdownComponentProps<"a">) {
   const { cwd, onOpenFile } = useContext(MarkdownRenderContext);
+  const { language, t } = useI18n();
+  const [menuError, setMenuError] = useState(false);
   const filePath = onOpenFile ? resolveLocalFileHref(href, cwd) : null;
   if (!filePath || !onOpenFile) {
     return (
@@ -96,13 +99,26 @@ function MarkdownAnchor({ href, children, node: _node, ...props }: MarkdownCompo
     // native context-menu event, so we show the rich file menu ourselves.
     if (event.defaultPrevented) return;
     event.preventDefault();
-    void window.piBridge?.showFileContextMenu?.(filePath);
+    const request = window.piBridge.showFileContextMenu({
+      href: filePath,
+      cwd,
+      source: "rendered-agent-text",
+      language,
+    });
+    void request.then((result) => setMenuError(!result.shown)).catch(() => setMenuError(true));
   };
 
   return (
-    <a href={href} {...props} onClick={handleClick} onContextMenu={handleContextMenu}>
-      {children}
-    </a>
+    <>
+      <a href={href} {...props} onClick={handleClick} onContextMenu={handleContextMenu}>
+        {children}
+      </a>
+      {menuError && (
+        <span role="status" style={{ marginLeft: 4, color: "var(--danger)", fontSize: "0.85em" }}>
+          {t("fileContextMenuUnavailable", "The file menu could not be opened.")}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -153,7 +169,7 @@ export function MarkdownBody({
   sourceSessionId,
   onOpenFile,
 }: MarkdownBodyProps) {
-  const normalizedMarkdown = useMemo(() => autolinkPathsInMarkdown(normalizeDisplayMath(children)), [children]);
+  const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
   const renderContext = useMemo(
     () => ({ isStreaming, cwd, imageBasePath, sourceSessionId, onOpenFile }),
     [cwd, imageBasePath, isStreaming, onOpenFile, sourceSessionId],

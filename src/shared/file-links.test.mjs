@@ -78,3 +78,8 @@ test("resolves UNC file URLs and backslash UNC paths", async () => {
     "//server/share/project/file.txt",
   );
 });
+
+test("rejects malformed four-slash file URLs instead of treating them as UNC", async () => {
+  const { resolveLocalFileHref } = await loadSubject();
+  assert.equal(resolveLocalFileHref("file:////tmp/a.txt", "/tmp"), null);
+});

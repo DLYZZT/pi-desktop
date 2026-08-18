@@ -30,6 +30,7 @@ import { reduceFileTabState } from "@/lib/file-tab-state";
 import { readSessionIdFromSearch, routerCompat } from "@/lib/router-compat";
 import { SessionProfiler } from "./SessionProfiler";
 import { buildAtMentionText } from "@/lib/file-fuzzy";
+import { ThinkingExpansionRegistry } from "@/lib/thinking-expansion-store";
 import {
   RIGHT_PANEL_DEFAULT_WIDTH,
   RIGHT_PANEL_MIN_WIDTH,
@@ -110,6 +111,8 @@ export function AppShell() {
     setMobileSidebarReady(true);
   }, []);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
+  const thinkingExpansionRegistryRef = useRef(new ThinkingExpansionRegistry());
+  const processDetailsExpansionRegistryRef = useRef(new ThinkingExpansionRegistry());
 
   const refreshChannelSnapshot = useCallback(async () => {
     try {
@@ -562,6 +565,8 @@ export function AppShell() {
 
   const handleSessionDeleted = useCallback(
     (sessionId: string) => {
+      thinkingExpansionRegistryRef.current.delete(sessionId);
+      processDetailsExpansionRegistryRef.current.delete(sessionId);
       setRefreshKey((k) => k + 1);
       if (selectedSession?.id === sessionId) {
         const cwd = selectedSession.cwd;
@@ -1375,6 +1380,12 @@ export function AppShell() {
                   onSessionStatsPanelOpen={openSessionStatsPanel}
                   onContextUsageChange={handleContextUsageChange}
                   onOpenFile={handleOpenLinkedFile}
+                  thinkingExpansionStore={thinkingExpansionRegistryRef.current.get(
+                    selectedSession?.id ?? `new:${effectiveNewSessionCwd ?? "untitled"}`,
+                  )}
+                  processDetailsExpansionStore={processDetailsExpansionRegistryRef.current.get(
+                    selectedSession?.id ?? `new:${effectiveNewSessionCwd ?? "untitled"}`,
+                  )}
                 />
               </SessionProfiler>
             ) : showPlaceholder ? (

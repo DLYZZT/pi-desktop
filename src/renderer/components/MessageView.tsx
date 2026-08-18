@@ -1,4 +1,4 @@
-import { memo, useState, useRef, useEffect, useMemo } from "react";
+import { memo, useState, useRef, useEffect, useMemo, useSyncExternalStore } from "react";
 import { MarkdownBody } from "./MarkdownBody";
 import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
@@ -13,6 +13,7 @@ import { getUserBubbleStyle } from "@/lib/channel-message-style";
 import { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelAttachmentCopyText } from "@shared/channel-message";
 import { useI18n } from "@/i18n";
 import { useTheme } from "@/hooks/useTheme";
+import { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import type {
   AgentMessage,
@@ -44,6 +45,7 @@ interface Props {
   showTimestamp?: boolean;
   prevTimestamp?: number;
   onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
+  thinkingExpansionStore?: ThinkingExpansionStore;
 }
 
 function formatTime(ts?: number): string | null {
@@ -137,6 +139,7 @@ export const MessageView = memo(function MessageView({
   showTimestamp,
   prevTimestamp,
   onLoadDeferredContent,
+  thinkingExpansionStore,
 }: Props) {
   if (message.role === "user") {
     return (
@@ -167,6 +170,8 @@ export const MessageView = memo(function MessageView({
         showTimestamp={showTimestamp}
         prevTimestamp={prevTimestamp}
         onLoadDeferredContent={onLoadDeferredContent}
+        entryId={entryId}
+        thinkingExpansionStore={thinkingExpansionStore}
       />
     );
   }
@@ -531,6 +536,8 @@ function AssistantMessageView({
   showTimestamp,
   prevTimestamp,
   onLoadDeferredContent,
+  entryId,
+  thinkingExpansionStore,
 }: {
   message: AssistantMessage;
   isStreaming?: boolean;
@@ -542,6 +549,8 @@ function AssistantMessageView({
   showTimestamp?: boolean;
   prevTimestamp?: number;
   onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
+  entryId?: string;
+  thinkingExpansionStore?: ThinkingExpansionStore;
 }) {
   const { t } = useI18n();
   const time = showTimestamp ? formatTime(message.timestamp) : null;
@@ -737,6 +746,8 @@ function AssistantMessageView({
             cwd={cwd}
             onOpenFile={onOpenFile}
             onLoadDeferredContent={onLoadDeferredContent}
+            thinkingStateKey={`${entryId ?? "assistant"}:${originalIndex}`}
+            thinkingExpansionStore={thinkingExpansionStore}
           />
         ))}
         <DeferredContentActions content={message.content} onLoad={onLoadDeferredContent} />
@@ -852,6 +863,8 @@ function BlockView({
   cwd,
   onOpenFile,
   onLoadDeferredContent,
+  thinkingStateKey,
+  thinkingExpansionStore,
 }: {
   block: AssistantContentBlock;
   toolResults?: ReadonlyMap<string, ToolResultMessage>;
@@ -861,6 +874,8 @@ function BlockView({
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
   onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
+  thinkingStateKey: string;
+  thinkingExpansionStore?: ThinkingExpansionStore;
 }) {
   if (block.type === "text") {
     return <TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} />;
@@ -868,7 +883,12 @@ function BlockView({
   if (block.type === "thinking") {
     return (
       <>
-        <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} />
+        <ThinkingBlock
+          block={block as ThinkingContent}
+          duration={streamingDuration}
+          stateKey={thinkingStateKey}
+          store={thinkingExpansionStore}
+        />
         <DeferredContentActions content={[block]} onLoad={onLoadDeferredContent} />
       </>
     );
@@ -917,32 +937,24 @@ function TextBlock({
   );
 }
 
-// Expanded/collapsed state survives chat switches (component remounts wipe
-// useState; this module state lives for the app's lifetime).
-// Per-content override + a default from the user's last toggle: expand one
-// block and new thinking blocks start expanded; collapse → new start collapsed.
-// Bounded FIFO: keys are full thinking texts (KBs each), so cap the map.
-const THINKING_STATE_LIMIT = 200;
-const thinkingExpandedByContent = new Map<string, boolean>();
-let thinkingDefaultExpanded = false;
-
-function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?: number }) {
-  const [expanded, setExpanded] = useState(
-    () => thinkingExpandedByContent.get(block.thinking) ?? thinkingDefaultExpanded,
-  );
+function ThinkingBlock({
+  block,
+  duration,
+  stateKey,
+  store,
+}: {
+  block: ThinkingContent;
+  duration?: number;
+  stateKey: string;
+  store?: ThinkingExpansionStore;
+}) {
+  const localStoreRef = useRef<ThinkingExpansionStore | null>(null);
+  if (!localStoreRef.current) localStoreRef.current = new ThinkingExpansionStore(1);
+  const stateStore = store ?? localStoreRef.current;
+  const getSnapshot = useMemo(() => () => stateStore.getSnapshot(stateKey), [stateKey, stateStore]);
+  const expanded = useSyncExternalStore(stateStore.subscribe, getSnapshot, getSnapshot);
   const { t } = useI18n();
-  const toggleExpanded = () =>
-    setExpanded((prev) => {
-      const next = !prev;
-      thinkingExpandedByContent.delete(block.thinking); // refresh position for FIFO order
-      thinkingExpandedByContent.set(block.thinking, next);
-      if (thinkingExpandedByContent.size > THINKING_STATE_LIMIT) {
-        const oldest = thinkingExpandedByContent.keys().next().value;
-        if (oldest !== undefined) thinkingExpandedByContent.delete(oldest);
-      }
-      thinkingDefaultExpanded = next;
-      return next;
-    });
+  const toggleExpanded = () => stateStore.toggle(stateKey);
   return (
     <div
       style={{

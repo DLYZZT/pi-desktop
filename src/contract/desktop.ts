@@ -93,6 +93,30 @@ export interface SaveBinaryFileOptions {
   defaultPath?: string;
 }
 
+export type FileContextMenuSource = "local-file-reference" | "rendered-agent-text";
+export type FileContextMenuErrorCode = "INVALID_REQUEST" | "NOT_FOUND" | "NOT_A_FILE_OR_DIRECTORY" | "UNAVAILABLE";
+
+export interface ShowFileContextMenuRequest {
+  href: string;
+  cwd?: string;
+  source: FileContextMenuSource;
+  language?: "en-US" | "zh-CN";
+}
+
+export type ShowFileContextMenuResult = { shown: true } | { shown: false; code: FileContextMenuErrorCode };
+
+export interface InspectLocalFilesRequest {
+  paths: string[];
+  cwd?: string;
+}
+
+export interface LocalFileInspection {
+  path: string;
+  exists: boolean;
+  isFile: boolean;
+  insideCwd: boolean;
+}
+
 /** The complete, shared preload surface exposed to the sandboxed renderer. */
 export interface PiBridge {
   platform: NodeJS.Platform;
@@ -110,8 +134,9 @@ export interface PiBridge {
   requestHostPort: () => void;
   openExternal: (url: string) => Promise<void>;
   showItemInFolder: (fsPath: string) => Promise<void>;
-  /** Show the app's rich file context menu for a resolved path. */
-  showFileContextMenu: (fsPath: string) => Promise<void>;
+  /** Show the app's rich file context menu after main-process path validation. */
+  showFileContextMenu: (request: ShowFileContextMenuRequest) => Promise<ShowFileContextMenuResult>;
+  inspectLocalFiles: (request: InspectLocalFilesRequest) => Promise<LocalFileInspection[]>;
   /** Resolve the absolute filesystem path for a dropped/injected File object. */
   getPathForFile?: (file: File) => string | null;
   selectDirectory: () => Promise<string | null>;

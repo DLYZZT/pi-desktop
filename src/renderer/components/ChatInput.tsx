@@ -15,7 +15,15 @@ import type {
   QueuedMessages,
   SlashCommandInfo,
 } from "@/hooks/useAgentSession";
-import { DraftPersistenceController, getDraft, type ChatDraftImage } from "@/lib/draft-store";
+import {
+  DraftPersistenceController,
+  MAX_PERSISTED_DRAFT_FILES,
+  MAX_PERSISTED_DRAFT_IMAGES,
+  MAX_PERSISTED_DRAFT_IMAGE_BYTES,
+  getDraft,
+  selectDraftImageAdditions,
+  type ChatDraftImage,
+} from "@/lib/draft-store";
 import { LatestAbortableRequest } from "@/lib/latest-abortable-request";
 import {
   buildEntriesFromFiles,
@@ -31,8 +39,15 @@ import { useI18n } from "@/i18n";
 import type { ModelCatalogStatus } from "@contract/types";
 import { processImageFileBatch } from "@/lib/image-file-processing";
 import {
+  localFilePathKey,
+  localFileReferenceToMarkdown,
+  splitLocalFileReferenceMarkdown,
+  type LocalFileReference,
+} from "@/lib/file-url";
+import {
   captureComposerSubmission,
   failedComposerSubmissionAction,
+  mergeFailedSubmissionFiles,
   mergeFailedSubmissionImages,
   type ComposerSubmissionSnapshot,
 } from "@/lib/composer-submission";
@@ -99,7 +114,7 @@ export interface ChatInputHandle {
   insertText: (text: string) => void;
   insertIfEmpty: (text: string) => void;
   prependText: (text: string) => void;
-  addImages: (files: File[]) => void;
+  addFiles: (files: File[]) => void;
 }
 
 const TOOL_PRESETS = ["off", "default", "full"] as const;
@@ -171,27 +186,6 @@ function slashMatchRank(command: SlashCommandPaletteItem, query: string): number
   return 4;
 }
 
-export interface AttachedFile {
-  name: string;
-  path: string;
-}
-
-/** Markdown link for an attached file: name escaped, path URL-encoded.
- *  UNC paths (\\server\share\...) become file://server/share/... so the host survives. */
-function fileToMarkdownLink(file: AttachedFile): string {
-  const safeName = file.name.replace(/[[\]]/g, "\\$&");
-  const href = file.path
-    .replace(/\\/g, "/")
-    .replace(/%/g, "%25")
-    .replace(/\(/g, "%28")
-    .replace(/\)/g, "%29")
-    .replace(/ /g, "%20")
-    .replace(/#/g, "%23")
-    .replace(/\?/g, "%3F");
-  const prefix = href.startsWith("//") ? "file:" : "file:///";
-  return `[${safeName}](${prefix}${href})`;
-}
-
 function imageToDraftImage(image: AttachedImage): ChatDraftImage {
   return { data: image.data, mimeType: image.mimeType };
 }
@@ -209,25 +203,9 @@ function revokeImagePreview(image: AttachedImage): void {
   }
 }
 
-// Split queued text into plain segments and file-link segments so attached
-// files render as compact chips instead of raw "[name](file:///...)" markdown.
-function splitFileLinks(text: string): { text: string; file: string | null }[] {
-  const parts: { text: string; file: string | null }[] = [];
-  const re = /\[([^\]]+)\]\(file:\/\/[^)]+\)/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    if (m.index > last) parts.push({ text: text.slice(last, m.index), file: null });
-    parts.push({ text: m[1], file: m[0] });
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) parts.push({ text: text.slice(last), file: null });
-  return parts;
-}
-
 function QueuedMessageRow({ kind, text }: { kind: "steer" | "follow-up"; text: string }) {
   const { t } = useI18n();
-  const segments = splitFileLinks(text);
+  const segments = splitLocalFileReferenceMarkdown(text);
   return (
     <div
       title={text}
@@ -327,7 +305,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   ref,
 ) {
   const isMobile = useIsMobile();
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [value, setValueState] = useState(() => (draftKey ? (getDraft(draftKey)?.value ?? "") : ""));
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -336,9 +314,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const [attachedImages, setAttachedImagesState] = useState<AttachedImage[]>(() =>
     draftKey ? (getDraft(draftKey)?.images.map(draftImageToAttachedImage) ?? []) : [],
   );
-  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>(() =>
+  const [attachedFiles, setAttachedFilesState] = useState<LocalFileReference[]>(() =>
     draftKey ? (getDraft(draftKey)?.files?.map((file) => ({ ...file })) ?? []) : [],
   );
+  const [fileInspectionByPath, setFileInspectionByPath] = useState<
+    Map<string, { exists: boolean; isFile: boolean; insideCwd: boolean }>
+  >(new Map());
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [atQuery, setAtQuery] = useState<AtQueryMatch | null>(null);
@@ -377,12 +358,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const draftKeyRef = useRef(draftKey);
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
+  const attachedFilesRef = useRef(attachedFiles);
   const imageBatchGenerationRef = useRef(0);
   const imageProcessingActiveRef = useRef(true);
   const pendingImagePreviewsRef = useRef(new Set<string>());
   const inputRevisionRef = useRef(0);
+  const draftPersistenceErrorHandlerRef = useRef<() => void>(() => {});
   const draftPersistenceRef = useRef<DraftPersistenceController | null>(null);
-  if (!draftPersistenceRef.current) draftPersistenceRef.current = new DraftPersistenceController();
+  draftPersistenceErrorHandlerRef.current = () =>
+    setSubmissionNotice(
+      t(
+        "draftPersistenceFailed",
+        "Draft could not be saved on this device. Your current input is still on screen; check available storage.",
+      ),
+    );
+  if (!draftPersistenceRef.current) {
+    draftPersistenceRef.current = new DraftPersistenceController(500, undefined, () =>
+      draftPersistenceErrorHandlerRef.current(),
+    );
+  }
   const setValue = useCallback((next: React.SetStateAction<string>) => {
     const resolved = typeof next === "function" ? next(valueRef.current) : next;
     inputRevisionRef.current += 1;
@@ -395,7 +389,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     attachedImagesRef.current = resolved;
     setAttachedImagesState(resolved);
   }, []);
-  const attachedFilesRef = useRef(attachedFiles);
+  const setAttachedFiles = useCallback((next: React.SetStateAction<LocalFileReference[]>) => {
+    const resolved = typeof next === "function" ? next(attachedFilesRef.current) : next;
+    inputRevisionRef.current += 1;
+    attachedFilesRef.current = resolved;
+    setAttachedFilesState(resolved);
+  }, []);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
   attachedFilesRef.current = attachedFiles;
@@ -454,64 +453,119 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
       });
     },
-    addImages(files: File[]) {
+    addFiles(files: File[]) {
       void processFiles(files);
     },
   }));
 
+  const processImageAttachments = useCallback(
+    async (imageFiles: File[]): Promise<string[]> => {
+      if (imageFiles.length === 0) return [];
+      const generation = ++imageBatchGenerationRef.current;
+      const { images, failures } = await processImageFileBatch(imageFiles);
+      if (!imageProcessingActiveRef.current) {
+        images.forEach(revokeImagePreview);
+        return [];
+      }
+      const notices: string[] = [];
+      if (images.length > 0) {
+        const selection = selectDraftImageAdditions(attachedImagesRef.current, images);
+        selection.accepted.forEach((image) => pendingImagePreviewsRef.current.add(image.previewUrl));
+        selection.rejected.forEach(({ image }) => revokeImagePreview(image));
+        if (selection.accepted.length > 0) {
+          setAttachedImages((prev) => [...prev, ...selection.accepted]);
+        }
+        if (selection.rejected.some(({ reason }) => reason === "count")) {
+          notices.push(
+            t(
+              "draftImageCountLimit",
+              "A draft can save up to {count} images. Remove an image before adding another.",
+            ).replace("{count}", String(MAX_PERSISTED_DRAFT_IMAGES)),
+          );
+        }
+        if (selection.rejected.some(({ reason }) => reason === "bytes")) {
+          notices.push(
+            t(
+              "draftImageSizeLimit",
+              "The total image size exceeds the {size} MB draft limit. Remove or compress some images.",
+            ).replace("{size}", String(MAX_PERSISTED_DRAFT_IMAGE_BYTES / 1024 / 1024)),
+          );
+        }
+      }
+      if (generation === imageBatchGenerationRef.current && failures.length > 0) {
+        notices.push(
+          images.length > 0
+            ? t("someImagesAttachFailed", "{failed} of {total} images could not be attached")
+                .replace("{failed}", String(failures.length))
+                .replace("{total}", String(imageFiles.length))
+            : t("imagesAttachFailed", "The selected images could not be attached"),
+        );
+      }
+      return notices;
+    },
+    [setAttachedImages, t],
+  );
+
+  const processLocalFileReferences = useCallback(
+    (files: File[]): string[] => {
+      if (files.length === 0) return [];
+      const notices: string[] = [];
+      const newFiles: LocalFileReference[] = [];
+      let pathlessCount = 0;
+      for (const file of files) {
+        const absolutePath = window.piBridge?.getPathForFile?.(file) ?? "";
+        if (absolutePath) newFiles.push({ name: file.name, path: absolutePath });
+        else pathlessCount += 1;
+      }
+      if (pathlessCount > 0) {
+        notices.push(
+          t("pathlessFilesAttachFailed", "{count} files had no local path and were not added").replace(
+            "{count}",
+            String(pathlessCount),
+          ),
+        );
+      }
+      if (newFiles.length === 0) return notices;
+
+      const next = [...attachedFilesRef.current];
+      const seen = new Set(next.map((file) => localFilePathKey(file.path)));
+      let limitReached = false;
+      for (const file of newFiles) {
+        const key = localFilePathKey(file.path);
+        if (!key || seen.has(key)) continue;
+        if (next.length >= MAX_PERSISTED_DRAFT_FILES) {
+          limitReached = true;
+          break;
+        }
+        seen.add(key);
+        next.push(file);
+      }
+      setAttachedFiles(next);
+      if (limitReached) {
+        notices.push(
+          t("localFileReferenceLimit", "A maximum of {count} local file references can be added").replace(
+            "{count}",
+            String(MAX_PERSISTED_DRAFT_FILES),
+          ),
+        );
+      }
+      return notices;
+    },
+    [setAttachedFiles, t],
+  );
+
   const processFiles = useCallback(
     async (files: File[]) => {
-      // Attaching is allowed while streaming; sending is gated separately
-      // (canQueueStreamingMessage / handleSend), so the user can prepare files
-      // for the next prompt while the agent is answering.
-      const imageFiles = files.filter((f) => f.type.startsWith("image/"));
-      if (imageFiles.length) {
-        const generation = ++imageBatchGenerationRef.current;
-        const { images, failures } = await processImageFileBatch(imageFiles);
-        if (!imageProcessingActiveRef.current) {
-          images.forEach(revokeImagePreview);
-          return;
-        }
-        if (images.length > 0) {
-          images.forEach((image) => pendingImagePreviewsRef.current.add(image.previewUrl));
-          setAttachedImages((prev) => [...prev, ...images]);
-        }
-        if (generation === imageBatchGenerationRef.current) {
-          setImageAttachNotice(
-            failures.length === 0
-              ? null
-              : images.length > 0
-                ? `${failures.length} of ${imageFiles.length} images could not be attached.`
-                : "The selected images could not be attached.",
-          );
-        }
-      }
-
-      // Non-image files become chips above the input; their markdown links are
-      // appended to the outgoing message at send time (see handleSend).
-      if (window.piBridge?.getPathForFile) {
-        const newFiles: AttachedFile[] = [];
-        for (const file of files) {
-          if (file.type.startsWith("image/")) continue;
-          const absPath = window.piBridge.getPathForFile(file);
-          if (absPath) newFiles.push({ name: file.name, path: absPath });
-        }
-        // Clipboard files without a filesystem path (mail client, messenger)
-        // resolve to nothing — tell the user instead of silently dropping them.
-        const nonImageCount = files.length - imageFiles.length;
-        if (nonImageCount > 0 && newFiles.length === 0) {
-          setImageAttachNotice(
-            "Only files with a real path can be attached (drag from Explorer or use the attach button).",
-          );
-        }
-        if (newFiles.length)
-          setAttachedFiles((prev) => {
-            const seen = new Set(prev.map((f) => f.path));
-            return [...prev, ...newFiles.filter((f) => !seen.has(f.path))];
-          });
-      }
+      // Attaching is allowed while streaming; sending is gated separately,
+      // so the user can prepare files for the next prompt while the agent runs.
+      const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+      const localFiles = files.filter((file) => !file.type.startsWith("image/"));
+      const notices = await processImageAttachments(imageFiles);
+      if (!imageProcessingActiveRef.current) return;
+      notices.push(...processLocalFileReferences(localFiles));
+      setImageAttachNotice(notices.length > 0 ? notices.join(". ") : null);
     },
-    [setAttachedImages],
+    [processImageAttachments, processLocalFileReferences],
   );
 
   const removeImage = useCallback(
@@ -533,9 +587,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     });
   }, [setAttachedImages]);
 
-  const removeFile = useCallback((index: number) => {
-    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
-  }, []);
+  const removeFile = useCallback(
+    (index: number) => {
+      setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+    },
+    [setAttachedFiles],
+  );
 
   const clearInput = useCallback(() => {
     setValue("");
@@ -549,7 +606,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [clearImages, draftKey, setValue]);
+  }, [clearImages, draftKey, setAttachedFiles, setValue]);
 
   const restoreFailedSubmission = useCallback(
     (snapshot: ComposerSubmissionSnapshot, clearedAtRevision: number, kind: "send" | "queue") => {
@@ -558,20 +615,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         setValue(snapshot.value);
         setAttachedImages(snapshot.images);
         setAttachedFiles(snapshot.files ?? []);
-      } else if (snapshot.images.length > 0) {
-        setAttachedImages((current) => mergeFailedSubmissionImages(current, snapshot.images));
+      } else {
+        if (snapshot.images.length > 0) {
+          setAttachedImages((current) => mergeFailedSubmissionImages(current, snapshot.images));
+        }
+        if (snapshot.files.length > 0) {
+          setAttachedFiles((current) => mergeFailedSubmissionFiles(current, snapshot.files));
+        }
       }
       setSubmissionNotice(
         action === "restore"
           ? kind === "send"
-            ? "Message was not sent. Your draft was restored."
-            : "Message could not be queued. Your draft was restored."
+            ? t("messageNotSentDraftRestored", "Message was not sent. Your draft was restored.")
+            : t("messageNotQueuedDraftRestored", "Message could not be queued. Your draft was restored.")
           : kind === "send"
-            ? "The previous message was not sent. Your newer draft was kept."
-            : "The previous message could not be queued. Your newer draft was kept.",
+            ? t("messageNotSentNewDraftKept", "The previous message was not sent. Your newer draft was kept.")
+            : t("messageNotQueuedNewDraftKept", "The previous message could not be queued. Your newer draft was kept."),
       );
     },
-    [setAttachedImages, setValue],
+    [setAttachedFiles, setAttachedImages, setValue, t],
   );
 
   const commitCurrentDraft = useCallback(() => {
@@ -580,6 +642,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     draftPersistenceRef.current?.commit(currentDraftKey, {
       value: valueRef.current,
       images: attachedImagesRef.current.map(imageToDraftImage),
+      files: attachedFilesRef.current,
     });
   }, []);
 
@@ -613,7 +676,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       return draft?.images.map(draftImageToAttachedImage) ?? [];
     });
     setAttachedFiles(draft?.files?.map((file) => ({ ...file })) ?? []);
-  }, [draftKey, setAttachedImages, setValue]);
+  }, [draftKey, setAttachedFiles, setAttachedImages, setValue]);
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -621,6 +684,33 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     ta.style.height = "auto";
     if (value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [value]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (attachedFiles.length === 0 || !window.piBridge?.inspectLocalFiles) {
+      setFileInspectionByPath(new Map());
+      return () => {
+        cancelled = true;
+      };
+    }
+    void window.piBridge
+      .inspectLocalFiles({ paths: attachedFiles.map((file) => file.path), cwd: cwd ?? undefined })
+      .then((inspections) => {
+        if (cancelled) return;
+        const next = new Map<string, { exists: boolean; isFile: boolean; insideCwd: boolean }>();
+        inspections.forEach((inspection, index) => {
+          const file = attachedFiles[index];
+          if (file) next.set(localFilePathKey(file.path), inspection);
+        });
+        setFileInspectionByPath(next);
+      })
+      .catch(() => {
+        if (!cancelled) setFileInspectionByPath(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachedFiles, cwd]);
 
   useEffect(() => {
     for (const image of attachedImages) pendingImagePreviewsRef.current.delete(image.previewUrl);
@@ -639,11 +729,45 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     };
   }, [commitCurrentDraft]);
 
+  const validateLocalFileReferences = useCallback(
+    async (files: readonly LocalFileReference[]): Promise<boolean> => {
+      if (files.length === 0) return true;
+      const inspections = await window.piBridge?.inspectLocalFiles?.({
+        paths: files.map((file) => file.path),
+        cwd: cwd ?? undefined,
+      });
+      if (!inspections || inspections.length !== files.length) {
+        setSubmissionNotice(t("localFileValidationFailed", "Local file references could not be validated."));
+        return false;
+      }
+      const invalidNames = files
+        .filter((_file, index) => !inspections[index]?.exists || !inspections[index]?.isFile)
+        .map((file) => file.name);
+      if (invalidNames.length > 0) {
+        setSubmissionNotice(
+          t("localFilesUnavailable", "These local files are missing or unavailable: {files}").replace(
+            "{files}",
+            invalidNames.join(", "),
+          ),
+        );
+        return false;
+      }
+      return true;
+    },
+    [cwd, t],
+  );
+
   const handleSend = useCallback(async () => {
     const text = value.trim();
-    const msg = [text, ...attachedFiles.map(fileToMarkdownLink)].filter(Boolean).join(" ");
+    const msg = [text, ...attachedFiles.map(localFileReferenceToMarkdown)].filter(Boolean).join(" ");
     if (!msg && !attachedImages.length) return;
     if (isStreaming) return;
+    const validationRevision = inputRevisionRef.current;
+    if (!(await validateLocalFileReferences(attachedFiles))) return;
+    if (validationRevision !== inputRevisionRef.current) {
+      setSubmissionNotice(t("draftChangedDuringValidation", "The draft changed while files were checked. Send again."));
+      return;
+    }
     onAudioUnlock?.();
     const snapshot = captureComposerSubmission(value, attachedImages, attachedFiles);
     setSubmissionNotice(null);
@@ -678,6 +802,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     onBuiltinCommand,
     onSend,
     restoreFailedSubmission,
+    t,
+    validateLocalFileReferences,
     value,
   ]);
 
@@ -718,9 +844,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const slashCommandCountLabel =
     filteredSlashCommands.length === 1
       ? slashQuery
-        ? "1 match"
-        : "1 command"
-      : `${filteredSlashCommands.length} ${slashQuery ? "matches" : "commands"}`;
+        ? t("oneMatch", "1 match")
+        : t("oneCommand", "1 command")
+      : slashQuery
+        ? t("matchCount", "{count} matches").replace("{count}", String(filteredSlashCommands.length))
+        : t("commandCount", "{count} commands").replace("{count}", String(filteredSlashCommands.length));
   const hasInputText = Boolean(value.trim());
   const canQueueStreamingMessage = hasInputText || attachedFiles.length > 0 || attachedImages.length > 0;
 
@@ -904,10 +1032,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
   const sendQueued = useCallback(
     async (mode: "steer" | "followup") => {
-      // Files are plain markdown links in the message text; images go through
-      // the SDK's steer/followUp image parameter — both queue fine mid-stream.
-      const msg = [value.trim(), ...attachedFiles.map(fileToMarkdownLink)].filter(Boolean).join(" ");
+      // Pi 0.84 queues image content but exposes only message strings through
+      // queue_update/clearQueue. Keep images in the composer until the Agent is
+      // idle so recall can never silently discard them.
+      if (attachedImages.length > 0) {
+        setSubmissionNotice(
+          t("queuedImagesUnsupported", "Image messages can be sent after the current response finishes."),
+        );
+        return;
+      }
+      const msg = [value.trim(), ...attachedFiles.map(localFileReferenceToMarkdown)].filter(Boolean).join(" ");
       if (!msg && !attachedImages.length) return;
+      const validationRevision = inputRevisionRef.current;
+      if (!(await validateLocalFileReferences(attachedFiles))) return;
+      if (validationRevision !== inputRevisionRef.current) {
+        setSubmissionNotice(
+          t("draftChangedDuringValidation", "The draft changed while files were checked. Send again."),
+        );
+        return;
+      }
       onAudioUnlock?.();
       const snapshot = captureComposerSubmission(value, attachedImages, attachedFiles);
       const streamingBehavior = mode === "steer" ? "steer" : "followUp";
@@ -916,15 +1059,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       clearInput();
       const clearedAtRevision = inputRevisionRef.current;
       try {
-        const images = attachedImages.length ? attachedImages : undefined;
         if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
-          await Promise.resolve(onPromptWithStreamingBehavior(msg, streamingBehavior, images));
+          await Promise.resolve(onPromptWithStreamingBehavior(msg, streamingBehavior));
           return;
         }
         if (mode === "steer" && onSteer) {
-          await Promise.resolve(onSteer(msg, images));
+          await Promise.resolve(onSteer(msg));
         } else if (mode === "followup" && onFollowUp) {
-          await Promise.resolve(onFollowUp(msg, images));
+          await Promise.resolve(onFollowUp(msg));
         }
       } catch {
         restoreFailedSubmission(snapshot, clearedAtRevision, "queue");
@@ -940,6 +1082,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       onPromptWithStreamingBehavior,
       onSteer,
       restoreFailedSubmission,
+      t,
+      validateLocalFileReferences,
       value,
     ],
   );
@@ -1501,7 +1645,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             <button
               type="button"
               onClick={() => setSubmissionNotice(null)}
-              aria-label="Dismiss submission error"
+              aria-label={t("dismissSubmissionError", "Dismiss submission error")}
               style={{
                 border: "none",
                 background: "transparent",
@@ -1602,76 +1746,117 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
         {/* File attachment chips */}
         {attachedFiles.length > 0 && (
-          <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
-            {attachedFiles.map((file, i) => (
-              <div
-                key={`${file.path}-${i}`}
-                title={file.path}
-                onClick={() => void window.piBridge?.showItemInFolder?.(file.path)}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  maxWidth: 260,
-                  padding: "4px 6px 4px 8px",
-                  borderRadius: 6,
-                  border: "1px solid var(--border)",
-                  background: "var(--bg-panel)",
-                  cursor: "pointer",
-                  fontSize: 12,
-                }}
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ flexShrink: 0, color: "var(--text-muted)" }}
-                >
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                </svg>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
-                <button
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    removeFile(i);
+          <div style={{ marginBottom: 6 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {attachedFiles.map((file, i) => (
+                <div
+                  key={`${file.path}-${i}`}
+                  title={`${file.path}${
+                    fileInspectionByPath.get(localFilePathKey(file.path))?.insideCwd === false
+                      ? ` — ${t("outsideProject", "Outside project")}`
+                      : ""
+                  }`}
+                  onClick={() => void window.piBridge?.showItemInFolder?.(file.path)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    const request = window.piBridge.showFileContextMenu({
+                      href: file.path,
+                      cwd: cwd ?? undefined,
+                      source: "local-file-reference",
+                      language,
+                    });
+                    void request
+                      .then((result) => {
+                        if (!result.shown) {
+                          setSubmissionNotice(t("fileContextMenuUnavailable", "The file menu could not be opened."));
+                        }
+                      })
+                      .catch(() => {
+                        setSubmissionNotice(t("fileContextMenuUnavailable", "The file menu could not be opened."));
+                      });
                   }}
-                  title="Remove"
                   style={{
-                    width: 16,
-                    height: 16,
-                    borderRadius: "50%",
-                    background: "transparent",
-                    border: "none",
-                    display: "flex",
+                    display: "inline-flex",
                     alignItems: "center",
-                    justifyContent: "center",
+                    gap: 6,
+                    maxWidth: 260,
+                    padding: "4px 6px 4px 8px",
+                    borderRadius: 6,
+                    border: `1px solid ${
+                      fileInspectionByPath.get(localFilePathKey(file.path))?.exists === false
+                        ? "var(--danger)"
+                        : "var(--border)"
+                    }`,
+                    background: "var(--bg-panel)",
                     cursor: "pointer",
-                    padding: 0,
-                    color: "var(--text-muted)",
-                    flexShrink: 0,
+                    fontSize: 12,
                   }}
                 >
                   <svg
-                    width="8"
-                    height="8"
-                    viewBox="0 0 8 8"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="1.5"
+                    strokeWidth="2"
                     strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ flexShrink: 0, color: "var(--text-muted)" }}
                   >
-                    <line x1="1" y1="1" x2="7" y2="7" />
-                    <line x1="7" y1="1" x2="1" y2="7" />
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
                   </svg>
-                </button>
-              </div>
-            ))}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {file.name}
+                  </span>
+                  {fileInspectionByPath.get(localFilePathKey(file.path))?.insideCwd === false && (
+                    <span style={{ color: "var(--warning)", fontSize: 10, whiteSpace: "nowrap" }}>
+                      {t("outsideProject", "Outside project")}
+                    </span>
+                  )}
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeFile(i);
+                    }}
+                    title={t("remove", "Remove")}
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: "50%",
+                      background: "transparent",
+                      border: "none",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                      padding: 0,
+                      color: "var(--text-muted)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <svg
+                      width="8"
+                      height="8"
+                      viewBox="0 0 8 8"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    >
+                      <line x1="1" y1="1" x2="7" y2="7" />
+                      <line x1="7" y1="1" x2="1" y2="7" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 4, fontSize: 10.5, color: "var(--text-dim)" }}>
+              {t(
+                "localFileDraftPrivacy",
+                "Local file paths stay on this device and are saved with this session draft until it is sent or removed.",
+              )}
+            </div>
           </div>
         )}
 
@@ -1706,14 +1891,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 }}
               >
                 <span>
-                  {slashCommandsLoading ? "Loading commands..." : `Slash commands · ${slashCommandCountLabel}`}
+                  {slashCommandsLoading
+                    ? t("loadingCommands", "Loading commands…")
+                    : t("slashCommandsWithCount", "Slash commands · {count}").replace(
+                        "{count}",
+                        slashCommandCountLabel,
+                      )}
                 </span>
                 <span style={{ fontFamily: "var(--font-mono)" }}>Tab / Enter</span>
               </div>
               <div style={{ maxHeight: "calc(min(56vh, 460px) - 34px)", overflowY: "auto", padding: 10 }}>
                 {!slashCommandsLoading && filteredSlashCommands.length === 0 ? (
                   <div style={{ padding: "2px 2px 4px", fontSize: 12, color: "var(--text-dim)" }}>
-                    No extension, prompt, or skill commands found
+                    {t("noSlashCommandsFound", "No extension, prompt, or skill commands found")}
                   </div>
                 ) : (
                   groupedSlashCommands.map((group) => (
@@ -1818,14 +2008,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             atQuery !== null &&
             (() => {
               const indexLoading = fileIndexLoading && (!fileIndex || fileIndex.cwd !== cwd);
-              const matchCountLabel = atMatches.length === 1 ? "1 match" : `${atMatches.length} matches`;
+              const matchCountLabel =
+                atMatches.length === 1
+                  ? t("oneMatch", "1 match")
+                  : t("matchCount", "{count} matches").replace("{count}", String(atMatches.length));
               // With a truncated index, local results are provisional — the
               // debounced server search over the full listing replaces them.
               const truncatedHint =
                 fileIndex?.truncated && !serverResultInUse
                   ? atQuery.query
-                    ? " · searching all files…"
-                    : " · index truncated"
+                    ? ` · ${t("searchingAllFiles", "searching all files…")}`
+                    : ` · ${t("fileIndexTruncated", "index truncated")}`
                   : "";
               return (
                 <div
@@ -1855,13 +2048,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                       color: "var(--text-dim)",
                     }}
                   >
-                    <span>{indexLoading ? "Loading files..." : `Files · ${matchCountLabel}${truncatedHint}`}</span>
+                    <span>
+                      {indexLoading
+                        ? t("loadingProjectFiles", "Loading files…")
+                        : `${t("filesAndMatchCount", "Files · {count}").replace(
+                            "{count}",
+                            matchCountLabel,
+                          )}${truncatedHint}`}
+                    </span>
                     <span style={{ fontFamily: "var(--font-mono)" }}>Tab / Enter</span>
                   </div>
                   <div style={{ maxHeight: "calc(min(48vh, 400px) - 34px)", overflowY: "auto", padding: 4 }}>
                     {!indexLoading && atMatches.length === 0 ? (
                       <div style={{ padding: "6px 8px", fontSize: 12, color: "var(--text-dim)" }}>
-                        {needsServerSearch && !serverResultInUse ? "Searching…" : "No matching files"}
+                        {needsServerSearch && !serverResultInUse
+                          ? t("searching", "Searching…")
+                          : t("noMatchingProjectFiles", "No matching files")}
                       </div>
                     ) : (
                       atMatches.map((entry, index) => {
@@ -2127,7 +2329,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
           >
             <button
               onClick={() => fileInputRef.current?.click()}
-              title={t("attachImage", "Attach image")}
+              title={t(
+                "attachLocalFilesDescription",
+                "Add images or local file references. The agent reads absolute paths on this computer; moved files, remote agents, or sandboxes may not be able to access them.",
+              )}
+              aria-label={t("attachLocalFiles", "Add images or local file references")}
               style={{
                 flexShrink: 0,
                 display: "flex",
@@ -2136,22 +2342,24 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 width: 32,
                 height: 32,
                 padding: 0,
-                background: attachedImages.length ? "var(--accent-soft)" : "var(--bg-panel)",
+                background: attachedImages.length || attachedFiles.length ? "var(--accent-soft)" : "var(--bg-panel)",
                 border: "1px solid var(--border)",
                 borderRadius: 9,
-                color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
-                cursor: isStreaming ? "not-allowed" : "pointer",
-                opacity: isStreaming ? 0.5 : 1,
+                color: attachedImages.length || attachedFiles.length ? "var(--accent)" : "var(--text-muted)",
+                cursor: "pointer",
+                opacity: 1,
                 transition: "background 0.12s, color 0.12s",
               }}
               onMouseEnter={(e) => {
-                if (isStreaming) return;
                 e.currentTarget.style.background = "var(--bg-hover)";
-                e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text)";
+                e.currentTarget.style.color =
+                  attachedImages.length || attachedFiles.length ? "var(--accent)" : "var(--text)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = attachedImages.length ? "var(--accent-soft)" : "var(--bg-panel)";
-                e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text-muted)";
+                e.currentTarget.style.background =
+                  attachedImages.length || attachedFiles.length ? "var(--accent-soft)" : "var(--bg-panel)";
+                e.currentTarget.style.color =
+                  attachedImages.length || attachedFiles.length ? "var(--accent)" : "var(--text-muted)";
               }}
             >
               <svg

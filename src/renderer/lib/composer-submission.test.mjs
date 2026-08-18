@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   captureComposerSubmission,
   failedComposerSubmissionAction,
+  mergeFailedSubmissionFiles,
   mergeFailedSubmissionImages,
 } from "./composer-submission.ts";
 
@@ -31,6 +32,22 @@ test("failed attachments merge into a newer draft without duplicates", () => {
     image("same"),
     image("old", "data:image/png;base64,old"),
   ]);
+});
+
+test("failed local file references merge by normalized platform path", () => {
+  assert.deepEqual(
+    mergeFailedSubmissionFiles(
+      [{ name: "new", path: "C:\\Work\\new.txt" }],
+      [
+        { name: "same", path: "c:/work/new.txt" },
+        { name: "old", path: "/tmp/old.txt" },
+      ],
+    ),
+    [
+      { name: "new", path: "C:\\Work\\new.txt" },
+      { name: "old", path: "/tmp/old.txt" },
+    ],
+  );
 });
 
 test("ChatInput clears before awaiting and never settles by overwriting a newer revision", () => {
