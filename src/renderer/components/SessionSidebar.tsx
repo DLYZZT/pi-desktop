@@ -16,6 +16,7 @@ import {
 import { applySessionChangedEvent } from "@/lib/session-sidebar-state";
 import { abbreviateHomePath } from "@/lib/display-path";
 import { formatNumber, formatRelativeDateTime } from "@/lib/locale-format";
+import { worktreePathsEqual } from "@shared/worktree-path";
 
 interface Props {
   selectedSessionId: string | null;
@@ -854,17 +855,27 @@ export function SessionSidebar({
     ? recentProjects.filter((p) => p.toLowerCase().includes(projectFilter.trim().toLowerCase()))
     : recentProjects;
 
-  // Sessions of every worktree in the selected project are shown together
+  // Sessions of every worktree in the selected project are shown together.
+  // Paths come from mixed sources (session files, git output) and may differ
+  // in separators/casing on Windows, so compare with worktreePathsEqual.
   const selectedProject = projectRootFor(selectedCwd);
   const projectSessions = selectedProject
-    ? allSessions.filter((s) => (s.projectRoot ?? s.cwd) === selectedProject)
+    ? allSessions.filter((s) => worktreePathsEqual(s.projectRoot ?? s.cwd, selectedProject))
     : allSessions;
   const filteredSessions = filterSessionsForQuery(projectSessions, sessionFilter);
   const showWorktreeSwitcher = Boolean(
-    worktreeState?.isGit && worktreeState.isTopLevel && selectedCwd && selectedProject === worktreeState.projectRoot,
+    worktreeState?.isGit &&
+    worktreeState.isTopLevel &&
+    selectedCwd &&
+    selectedProject &&
+    worktreePathsEqual(selectedProject, worktreeState.projectRoot),
   );
   const worktreeGuide =
-    selectedCwd && worktreeState && selectedProject === worktreeState.projectRoot && !showWorktreeSwitcher
+    selectedCwd &&
+    worktreeState &&
+    selectedProject &&
+    worktreePathsEqual(selectedProject, worktreeState.projectRoot) &&
+    !showWorktreeSwitcher
       ? worktreeState.isGit
         ? {
             label: t("worktreeOpenRepoRoot", "Open repo root"),

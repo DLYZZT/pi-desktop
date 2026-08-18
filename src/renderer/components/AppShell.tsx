@@ -46,6 +46,7 @@ import type { SessionInfo } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { ChannelsSnapshot } from "@shared/channel-types";
+import { worktreePathsEqual } from "@shared/worktree-path";
 import type { BrowserAgentAuthorizationRequest, BrowserAgentAuthorizationDecision } from "../../contract/browser";
 
 type SessionCopyField = "file" | "id";
@@ -460,8 +461,10 @@ export function AppShell() {
       // Worktrees of one repo share a project root. Moving the effective cwd
       // within the same project (e.g. switching worktree, or clicking a session
       // that lives in another worktree) must not close the open session.
+      // Path strings may differ in separators/casing depending on their source
+      // (session file vs git output), so compare with worktreePathsEqual.
       const newProject = projectRoot ?? cwd;
-      if (selectedSession && (selectedSession.projectRoot ?? selectedSession.cwd) === newProject) {
+      if (selectedSession && worktreePathsEqual(selectedSession.projectRoot ?? selectedSession.cwd, newProject)) {
         return;
       }
       // Close any session that belongs to a different project — it no longer
