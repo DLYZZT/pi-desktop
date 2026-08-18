@@ -100,6 +100,7 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
   const [authorizationSettingsSessionId, setAuthorizationSettingsSessionId] = useState<string | null>(null);
   const [browserAuthorization, setBrowserAuthorization] = useState<BrowserAgentAuthorizationRequest | null>(null);
   const [channelSnapshot, setChannelSnapshot] = useState<ChannelsSnapshot>(EMPTY_CHANNELS);
+  const [worktreeSlot, setWorktreeSlot] = useState<HTMLDivElement | null>(null);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
@@ -686,6 +687,7 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}
         onSessionRelocated={handleSessionRelocated}
+        worktreeSlot={role === "cockpit" ? worktreeSlot : null}
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
         onCwdChange={handleCwdChange}
       />
@@ -1557,9 +1559,22 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
           </div>
 
           {/* Chat content */}
-          <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+          <div
+            style={{
+              flex: 1,
+              overflow: "hidden",
+              position: "relative",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
             {role === "cockpit" ? (
-              <EmbeddedPiTerminal session={selectedSession} theme={isDark ? "dark" : "light"} />
+              <>
+                <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+                  <EmbeddedPiTerminal session={selectedSession} theme={isDark ? "dark" : "light"} />
+                </div>
+                <div ref={setWorktreeSlot} />
+              </>
             ) : showChat ? (
               <SessionProfiler key={sessionKey} id="ChatWindow">
                 <ChatWindow
