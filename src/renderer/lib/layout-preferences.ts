@@ -84,3 +84,90 @@ export function getKeyboardAdjustedRightPanelWidth(
   const nextWidth = key === "ArrowLeft" ? currentWidth + step : currentWidth - step;
   return clampRightPanelWidth(nextWidth, viewportWidth, sidebarOpen);
 }
+
+/* ── Codex-style sidebar: workspace folders, pinned items, project expand state ── */
+
+export const WORKSPACE_FOLDERS_STORAGE_KEY = "pi-desktop:workspace-folders:v1";
+export const PINNED_ITEMS_STORAGE_KEY = "pi-desktop:pinned-items:v1";
+export const PROJECTS_EXPANDED_STORAGE_KEY = "pi-desktop:projects-expanded:v1";
+export const PINNED_SECTION_OPEN_STORAGE_KEY = "pi-desktop:pinned-section-open:v1";
+export const RECENT_SECTION_OPEN_STORAGE_KEY = "pi-desktop:recent-section-open:v1";
+
+export interface PinnedItem {
+  type: "session" | "project";
+  id: string;
+}
+
+function safeParse(raw: string | null): unknown {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function loadWorkspaceFolders(storage?: StorageLike | null): string[] {
+  const raw = safeParse(storage?.getItem(WORKSPACE_FOLDERS_STORAGE_KEY) ?? null);
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+export function saveWorkspaceFolders(storage: StorageLike | null | undefined, folders: string[]): void {
+  if (!storage) return;
+  try {
+    storage.setItem(WORKSPACE_FOLDERS_STORAGE_KEY, JSON.stringify(folders));
+  } catch {
+    // ignore storage quota / privacy-mode errors
+  }
+}
+
+export function loadPinnedItems(storage?: StorageLike | null): PinnedItem[] {
+  const raw = safeParse(storage?.getItem(PINNED_ITEMS_STORAGE_KEY) ?? null);
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (item): item is PinnedItem =>
+      !!item &&
+      typeof item === "object" &&
+      (item.type === "session" || item.type === "project") &&
+      typeof item.id === "string",
+  );
+}
+
+export function savePinnedItems(storage: StorageLike | null | undefined, items: PinnedItem[]): void {
+  if (!storage) return;
+  try {
+    storage.setItem(PINNED_ITEMS_STORAGE_KEY, JSON.stringify(items));
+  } catch {
+    // ignore storage quota / privacy-mode errors
+  }
+}
+
+export function loadExpandedProjects(storage?: StorageLike | null): string[] {
+  const raw = safeParse(storage?.getItem(PROJECTS_EXPANDED_STORAGE_KEY) ?? null);
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+export function saveExpandedProjects(storage: StorageLike | null | undefined, projects: string[]): void {
+  if (!storage) return;
+  try {
+    storage.setItem(PROJECTS_EXPANDED_STORAGE_KEY, JSON.stringify(projects));
+  } catch {
+    // ignore storage quota / privacy-mode errors
+  }
+}
+
+export function loadSectionOpen(storage?: StorageLike | null, key?: string): boolean {
+  if (!storage || !key) return false;
+  return storage.getItem(key) === "1";
+}
+
+export function saveSectionOpen(storage: StorageLike | null | undefined, key: string | undefined, open: boolean): void {
+  if (!storage || !key) return;
+  try {
+    storage.setItem(key, open ? "1" : "0");
+  } catch {
+    // ignore storage quota / privacy-mode errors
+  }
+}

@@ -14,6 +14,7 @@ import type { DesktopUpdateState } from "../../contract/desktop";
 import { APP_AUTHOR, APP_DISPLAY_NAME, APP_GITHUB_URL, APP_VERSION, PI_VERSION } from "@/lib/app-version";
 import appIconUrl from "../../../build/icon.png";
 import { isAutoSessionTitleEnabled, setAutoSessionTitleEnabled } from "../lib/auto-session-title";
+import { loadWorkspaceFolders, saveWorkspaceFolders } from "../lib/layout-preferences";
 
 export type SettingsTab = "general" | "browser" | "channels" | "models" | "tools" | "skills" | "plugins" | "about";
 
@@ -955,6 +956,85 @@ function GeneralSettings({
   const backgroundModeControlId = useId();
   const autoSessionTitleControlId = useId();
   const themeControlId = useId();
+  const workspaceFoldersInputId = useId();
+  const [workspaceFolders, setWorkspaceFolders] = useState<string[]>(() => loadWorkspaceFolders(window.localStorage));
+  const [workspaceFolderInputOpen, setWorkspaceFolderInputOpen] = useState(false);
+  const [workspaceFolderValue, setWorkspaceFolderValue] = useState("");
+  const [workspaceFolderAdding, setWorkspaceFolderAdding] = useState(false);
+  const [workspaceFolderError, setWorkspaceFolderError] = useState<string | null>(null);
+  const workspaceFolderInputRef = useRef<HTMLInputElement>(null);
+
+  const persistWorkspaceFolders = (next: string[]) => {
+    setWorkspaceFolders(next);
+    saveWorkspaceFolders(window.localStorage, next);
+    // Same-window sidebar: localStorage events don't fire in the tab that
+    // wrote them, so notify the sidebar explicitly.
+    window.dispatchEvent(new Event("pi:workspace-folders-changed"));
+  };
+
+  const handleAddWorkspaceFolder = async () => {
+    try {
+      const dir = await window.piBridge?.selectDirectory?.();
+      if (!dir) return;
+      const trimmed = dir.trim();
+      if (trimmed && !workspaceFolders.includes(trimmed)) {
+        persistWorkspaceFolders([...workspaceFolders, trimmed]);
+      }
+    } catch {
+      setWorkspaceFolderError(t("invalidDirectory", "Invalid directory"));
+    }
+  };
+
+  const handleCommitWorkspaceFolder = async () => {
+    const path = workspaceFolderValue.trim();
+    if (!path || workspaceFolderAdding) return;
+    setWorkspaceFolderAdding(true);
+    setWorkspaceFolderError(null);
+    try {
+      const res = await fetch("/api/cwd/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: path }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { cwd?: string; error?: string };
+      if (!res.ok || data.error) {
+        setWorkspaceFolderError(data.error ?? t("invalidDirectory", "Invalid directory"));
+        return;
+      }
+      const resolved = data.cwd ?? path;
+      if (!workspaceFolders.includes(resolved)) {
+        persistWorkspaceFolders([...workspaceFolders, resolved]);
+      }
+      setWorkspaceFolderInputOpen(false);
+      setWorkspaceFolderValue("");
+    } catch (e) {
+      setWorkspaceFolderError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWorkspaceFolderAdding(false);
+    }
+  };
+
+  const handleUseDefaultDirectory = async () => {
+    try {
+      const res = await fetch("/api/default-cwd", { method: "POST" });
+      const data = (await res.json()) as { cwd?: string; error?: string };
+      if (data.cwd && !workspaceFolders.includes(data.cwd)) {
+        persistWorkspaceFolders([...workspaceFolders, data.cwd]);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleRemoveWorkspaceFolder = (folder: string) => {
+    persistWorkspaceFolders(workspaceFolders.filter((f) => f !== folder));
+  };
+
+  useEffect(() => {
+    if (workspaceFolderInputOpen) {
+      workspaceFolderInputRef.current?.focus();
+    }
+  }, [workspaceFolderInputOpen]);
   useEffect(() => {
     let disposed = false;
     void window.piBridge
@@ -1096,6 +1176,222 @@ function GeneralSettings({
             />
           </label>
         </SettingRow>
+      </section>
+
+      <div style={{ height: 1, background: "var(--border)", maxWidth: 620, margin: "28px 0" }} />
+
+      <section style={{ maxWidth: 620 }}>
+        <h2 style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>{t("workspaceFolders", "Workspace folders")}</h2>
+        <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
+          {t(
+            "workspaceFoldersDescription",
+            "Folders shown in the sidebar Projects section. Projects that have sessions are added automatically.",
+          )}
+        </p>
+        {workspaceFolders.length === 0 && (
+          <div
+            style={{
+              padding: "12px 14px",
+              marginBottom: 12,
+              border: "1px dashed var(--border)",
+              borderRadius: 8,
+              color: "var(--text-dim)",
+              fontSize: 12,
+            }}
+          >
+            {t("noWorkspaceFolders", "No workspace folders yet")}
+          </div>
+        )}
+        {workspaceFolders.map((folder) => (
+          <div
+            key={folder}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              minHeight: 44,
+              padding: "6px 10px",
+              marginBottom: 8,
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              background: "var(--bg-panel)",
+            }}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--text-muted)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              style={{ flexShrink: 0 }}
+            >
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            </svg>
+            <span
+              title={folder}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontSize: 12,
+                fontFamily: "var(--font-mono)",
+                color: "var(--text)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {folder}
+            </span>
+            <button
+              type="button"
+              onClick={() => handleRemoveWorkspaceFolder(folder)}
+              title={t("removeWorkspaceFolderHint", "Remove {folder} from workspace folders").replace(
+                "{folder}",
+                folder,
+              )}
+              style={{
+                flexShrink: 0,
+                padding: "5px 10px",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                background: "transparent",
+                color: "var(--text-muted)",
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              {t("removeWorkspaceFolder", "Remove")}
+            </button>
+          </div>
+        ))}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <button
+            type="button"
+            onClick={() => void handleAddWorkspaceFolder()}
+            style={{
+              flexShrink: 0,
+              padding: "7px 12px",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              background: "var(--bg)",
+              color: "var(--text)",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            {t("browseFolder", "Browse folder…")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setWorkspaceFolderInputOpen((v) => !v)}
+            style={{
+              flexShrink: 0,
+              padding: "7px 12px",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              background: "var(--bg)",
+              color: "var(--text)",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            {t("customPath", "Custom path…")}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleUseDefaultDirectory()}
+            style={{
+              flexShrink: 0,
+              padding: "7px 12px",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              background: "var(--bg)",
+              color: "var(--text)",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            {t("useDefaultDirectory", "Use default directory")}
+          </button>
+        </div>
+        {workspaceFolderInputOpen && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                ref={workspaceFolderInputRef}
+                id={workspaceFoldersInputId}
+                type="text"
+                value={workspaceFolderValue}
+                onChange={(event) => setWorkspaceFolderValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void handleCommitWorkspaceFolder();
+                }}
+                placeholder={t("workspaceFolderPathPlaceholder", "/path/to/project")}
+                aria-label={t("workspaceFolders", "Workspace folders")}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  height: 36,
+                  padding: "0 10px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  background: "var(--bg)",
+                  color: "var(--text)",
+                  fontSize: 12,
+                  fontFamily: "var(--font-mono)",
+                  outline: "none",
+                }}
+              />
+              <button
+                type="button"
+                disabled={workspaceFolderAdding}
+                onClick={() => void handleCommitWorkspaceFolder()}
+                style={{
+                  flexShrink: 0,
+                  padding: "7px 12px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  background: "var(--bg)",
+                  color: "var(--text)",
+                  fontSize: 12,
+                  cursor: workspaceFolderAdding ? "not-allowed" : "pointer",
+                  opacity: workspaceFolderAdding ? 0.7 : 1,
+                }}
+              >
+                {workspaceFolderAdding ? t("checking", "Checking…") : t("open", "Open")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setWorkspaceFolderInputOpen(false);
+                  setWorkspaceFolderValue("");
+                  setWorkspaceFolderError(null);
+                }}
+                style={{
+                  flexShrink: 0,
+                  padding: "7px 12px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  background: "transparent",
+                  color: "var(--text-muted)",
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                {t("cancel", "Cancel")}
+              </button>
+            </div>
+            {workspaceFolderError && (
+              <p role="alert" style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.55, color: "#f87171" }}>
+                {workspaceFolderError}
+              </p>
+            )}
+          </div>
+        )}
       </section>
 
       <div style={{ height: 1, background: "var(--border)", maxWidth: 620, margin: "28px 0" }} />

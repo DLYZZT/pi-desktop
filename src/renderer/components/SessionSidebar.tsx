@@ -1,4 +1,13 @@
-import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import type { SessionInfo } from "@/lib/types";
 import { APP_VERSION, PI_VERSION } from "@/lib/app-version";
 import { useI18n } from "@/i18n";
@@ -16,6 +25,19 @@ import {
 import { applySessionChangedEvent } from "@/lib/session-sidebar-state";
 import { abbreviateHomePath } from "@/lib/display-path";
 import { formatNumber, formatRelativeDateTime } from "@/lib/locale-format";
+import {
+  loadWorkspaceFolders,
+  saveWorkspaceFolders,
+  loadPinnedItems,
+  savePinnedItems,
+  loadExpandedProjects,
+  saveExpandedProjects,
+  loadSectionOpen,
+  saveSectionOpen,
+  PINNED_SECTION_OPEN_STORAGE_KEY,
+  RECENT_SECTION_OPEN_STORAGE_KEY,
+  type PinnedItem,
+} from "@/lib/layout-preferences";
 
 interface Props {
   selectedSessionId: string | null;
@@ -352,15 +374,19 @@ export function SessionSidebar({
   const [error, setError] = useState<string | null>(null);
   const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
   const [homeDir, setHomeDir] = useState<string>("");
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [projectFilter, setProjectFilter] = useState("");
   const [sessionFilter, setSessionFilter] = useState("");
-  const [customPathOpen, setCustomPathOpen] = useState(false);
-  const [customPathValue, setCustomPathValue] = useState("");
-  const [customPathError, setCustomPathError] = useState<string | null>(null);
-  const [customPathValidating, setCustomPathValidating] = useState(false);
-  const customPathInputRef = useRef<HTMLInputElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [workspaceFolders, setWorkspaceFolders] = useState<string[]>(() => loadWorkspaceFolders(window.localStorage));
+  const [pinnedItems, setPinnedItems] = useState<PinnedItem[]>(() => loadPinnedItems(window.localStorage));
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
+    () => new Set(loadExpandedProjects(window.localStorage)),
+  );
+  const [pinnedSectionOpen, setPinnedSectionOpen] = useState(() =>
+    loadSectionOpen(window.localStorage, PINNED_SECTION_OPEN_STORAGE_KEY),
+  );
+  const [recentSectionOpen, setRecentSectionOpen] = useState(() =>
+    loadSectionOpen(window.localStorage, RECENT_SECTION_OPEN_STORAGE_KEY),
+  );
+  const [focusedProject, setFocusedProject] = useState<string | null>(null);
   // Worktree switcher state
   const [worktreeState, setWorktreeState] = useState<WorktreeState | null>(null);
   const [wtDropdownOpen, setWtDropdownOpen] = useState(false);
@@ -670,75 +696,6 @@ export function SessionSidebar({
     }
   }, [allSessions, error, initialSessionId, loading, onInitialRestoreDone, onSelectSession, selectedCwd]);
 
-  const commitCustomPath = useCallback(async () => {
-    const path = customPathValue.trim();
-    if (!path || customPathValidating) return;
-
-    setCustomPathValidating(true);
-    setCustomPathError(null);
-    try {
-      const res = await fetch("/api/cwd/validate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: path }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { cwd?: string; error?: string };
-      if (!res.ok || data.error) {
-        setCustomPathError(data.error ?? `HTTP ${res.status}`);
-        return;
-      }
-      setSelectedCwd(data.cwd ?? path);
-      setCustomPathOpen(false);
-      setCustomPathValue("");
-      setDropdownOpen(false);
-    } catch (e) {
-      setCustomPathError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setCustomPathValidating(false);
-    }
-  }, [customPathValue, customPathValidating]);
-
-  const handleDefaultCwd = useCallback(async () => {
-    try {
-      const res = await fetch("/api/default-cwd", { method: "POST" });
-      const data = (await res.json()) as { cwd?: string; error?: string };
-      if (data.cwd) {
-        setSelectedCwd(data.cwd);
-        setCustomPathOpen(false);
-        setCustomPathValue("");
-        setCustomPathError(null);
-        setDropdownOpen(false);
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  /** Desktop-native directory picker (design §6.1). Falls back to path input. */
-  const handlePickDirectory = useCallback(async () => {
-    try {
-      const dir = await window.piBridge?.selectDirectory?.();
-      if (!dir) return;
-      const res = await fetch("/api/cwd/validate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: dir }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { cwd?: string; error?: string };
-      if (!res.ok || data.error) {
-        setCustomPathError(data.error ?? t("invalidDirectory", "Invalid directory"));
-        return;
-      }
-      setSelectedCwd(data.cwd ?? dir);
-      setCustomPathOpen(false);
-      setCustomPathValue("");
-      setCustomPathError(null);
-      setDropdownOpen(false);
-    } catch (e) {
-      setCustomPathError(e instanceof Error ? e.message : String(e));
-    }
-  }, [t]);
-
   const handleCreateWorktree = useCallback(async () => {
     const branch = wtNewBranch.trim();
     if (!branch || wtBusy || !worktreeState) return;
@@ -806,13 +763,6 @@ export function SessionSidebar({
   // Close dropdowns on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setDropdownOpen(false);
-        setProjectFilter("");
-        setCustomPathOpen(false);
-        setCustomPathValue("");
-        setCustomPathError(null);
-      }
       if (wtDropdownRef.current && !wtDropdownRef.current.contains(e.target as Node)) {
         setWtDropdownOpen(false);
         setWtNewOpen(false);
@@ -837,29 +787,145 @@ export function SessionSidebar({
     [onSelectSession],
   );
 
-  const handleNewSession = useCallback(() => {
-    if (!selectedCwd) return;
+  const recentProjects = getRecentProjects(allSessions);
+
+  // Merge Settings workspace folders (primary) with projects that have
+  // sessions but are not listed yet (most recent activity first).
+  const projectFolders = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const folder of workspaceFolders) {
+      if (!seen.has(folder)) {
+        seen.add(folder);
+        out.push(folder);
+      }
+    }
+    for (const project of recentProjects) {
+      if (!seen.has(project)) {
+        seen.add(project);
+        out.push(project);
+      }
+    }
+    return out;
+  }, [workspaceFolders, recentProjects]);
+
+  // Sessions of every worktree in the selected project are shown together
+  const selectedProject = projectRootFor(selectedCwd);
+  const focusProject = focusedProject ?? selectedProject ?? selectedCwd;
+  const sessionById = useMemo(() => new Map(allSessions.map((s) => [s.id, s])), [allSessions]);
+  const projectSessionsFor = useCallback(
+    (root: string) => allSessions.filter((s) => (s.projectRoot ?? s.cwd) === root),
+    [allSessions],
+  );
+  const recentSessions = useMemo(
+    () => [...allSessions].sort((a, b) => b.modified.localeCompare(a.modified)).slice(0, 30),
+    [allSessions],
+  );
+  const pinnedSessionIds = useMemo(
+    () => new Set(pinnedItems.filter((item) => item.type === "session").map((item) => item.id)),
+    [pinnedItems],
+  );
+  const pinnedSessions = useMemo(
+    () =>
+      pinnedItems
+        .filter((item): item is PinnedItem & { type: "session" } => item.type === "session")
+        .map((item) => sessionById.get(item.id))
+        .filter((session): session is SessionInfo => !!session),
+    [pinnedItems, sessionById],
+  );
+  const pinnedProjects = useMemo(
+    () => pinnedItems.filter((item): item is PinnedItem & { type: "project" } => item.type === "project"),
+    [pinnedItems],
+  );
+  const searchResults = filterSessionsForQuery(allSessions, sessionFilter);
+
+  // Focus-based new session: expanded/selected project wins, otherwise the
+  // app default directory is used directly (no picker).
+  const handleNewSession = useCallback(async () => {
+    let cwd = focusProject;
+    if (!cwd) {
+      try {
+        const res = await fetch("/api/default-cwd", { method: "POST" });
+        const data = (await res.json()) as { cwd?: string; error?: string };
+        if (data.cwd) cwd = data.cwd;
+      } catch {
+        // ignore — no default directory available
+      }
+    }
+    if (!cwd) return;
     // Generate a temporary UUID client-side — no backend call needed.
     // Pi will be spawned lazily when the user sends the first message.
     const tempId =
       typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
         : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
-    onNewSession?.(tempId, selectedCwd);
-  }, [selectedCwd, onNewSession]);
+    onNewSession?.(tempId, cwd);
+  }, [focusProject, onNewSession]);
 
-  const recentProjects = getRecentProjects(allSessions);
-  const showProjectFilter = recentProjects.length > 8;
-  const visibleProjects = projectFilter.trim()
-    ? recentProjects.filter((p) => p.toLowerCase().includes(projectFilter.trim().toLowerCase()))
-    : recentProjects;
+  const handleNewSessionIn = useCallback(
+    (project: string) => {
+      const tempId =
+        typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+      onNewSession?.(tempId, project);
+    },
+    [onNewSession],
+  );
 
-  // Sessions of every worktree in the selected project are shown together
-  const selectedProject = projectRootFor(selectedCwd);
-  const projectSessions = selectedProject
-    ? allSessions.filter((s) => (s.projectRoot ?? s.cwd) === selectedProject)
-    : allSessions;
-  const filteredSessions = filterSessionsForQuery(projectSessions, sessionFilter);
+  const toggleProjectExpanded = useCallback((project: string) => {
+    setExpandedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(project)) {
+        next.delete(project);
+      } else {
+        next.add(project);
+      }
+      return next;
+    });
+    setFocusedProject(project);
+  }, []);
+
+  const toggleSessionPin = useCallback((sessionId: string) => {
+    setPinnedItems((prev) =>
+      prev.some((item) => item.type === "session" && item.id === sessionId)
+        ? prev.filter((item) => !(item.type === "session" && item.id === sessionId))
+        : [...prev, { type: "session", id: sessionId }],
+    );
+  }, []);
+
+  const toggleProjectPin = useCallback((project: string) => {
+    setPinnedItems((prev) =>
+      prev.some((item) => item.type === "project" && item.id === project)
+        ? prev.filter((item) => !(item.type === "project" && item.id === project))
+        : [...prev, { type: "project", id: project }],
+    );
+  }, []);
+
+  // Persist sidebar layout state (restored on next launch).
+  useEffect(() => {
+    saveWorkspaceFolders(window.localStorage, workspaceFolders);
+  }, [workspaceFolders]);
+  useEffect(() => {
+    savePinnedItems(window.localStorage, pinnedItems);
+  }, [pinnedItems]);
+  useEffect(() => {
+    saveExpandedProjects(window.localStorage, [...expandedProjects]);
+  }, [expandedProjects]);
+  useEffect(() => {
+    saveSectionOpen(window.localStorage, PINNED_SECTION_OPEN_STORAGE_KEY, pinnedSectionOpen);
+  }, [pinnedSectionOpen]);
+  useEffect(() => {
+    saveSectionOpen(window.localStorage, RECENT_SECTION_OPEN_STORAGE_KEY, recentSectionOpen);
+  }, [recentSectionOpen]);
+  // Workspace folders edited in Settings (same window) — localStorage events
+  // don't fire in the same tab, so Settings dispatches a custom event.
+  useEffect(() => {
+    const handler = () => setWorkspaceFolders(loadWorkspaceFolders(window.localStorage));
+    window.addEventListener("pi:workspace-folders-changed", handler);
+    return () => window.removeEventListener("pi:workspace-folders-changed", handler);
+  }, []);
+
   const showWorktreeSwitcher = Boolean(
     worktreeState?.isGit && worktreeState.isTopLevel && selectedCwd && selectedProject === worktreeState.projectRoot,
   );
@@ -885,16 +951,98 @@ export function SessionSidebar({
         }
       : null);
 
-  // Build parent-child tree within the filtered set
-  const sessionTree = buildSessionTree(filteredSessions);
-  const sessionGroups: { id: SessionDateGroup; label: string; nodes: SessionTreeNode[] }[] = [
-    { id: "today", label: t("sessionsToday", "Today"), nodes: [] },
-    { id: "recent", label: t("sessionsRecent", "Last 7 days"), nodes: [] },
-    { id: "older", label: t("sessionsOlder", "Older"), nodes: [] },
-  ];
-  for (const node of sessionTree) {
-    sessionGroups.find((group) => group.id === sessionDateGroup(node.session.modified))?.nodes.push(node);
-  }
+  const dateHeaderStyle: CSSProperties = {
+    padding: "14px 14px 6px",
+    fontFamily: "var(--font-mono)",
+    fontSize: 12,
+    color: "var(--text-dim)",
+    letterSpacing: "0.5px",
+    textTransform: "uppercase",
+  };
+  const sectionHeaderStyle: CSSProperties = {
+    padding: "7px 8px 4px",
+    color: "var(--text-dim)",
+    fontSize: 12,
+    fontWeight: 650,
+  };
+
+  // Build the parent-child tree for an arbitrary session list and render it
+  // grouped by date (today / last 7 days / older).
+  const renderSessionGroups = (sessions: SessionInfo[]) => {
+    const tree = buildSessionTree(sessions);
+    const groups: { id: SessionDateGroup; label: string; nodes: SessionTreeNode[] }[] = [
+      { id: "today", label: t("sessionsToday", "Today"), nodes: [] },
+      { id: "recent", label: t("sessionsRecent", "Last 7 days"), nodes: [] },
+      { id: "older", label: t("sessionsOlder", "Older"), nodes: [] },
+    ];
+    for (const node of tree) {
+      groups.find((group) => group.id === sessionDateGroup(node.session.modified))?.nodes.push(node);
+    }
+    return groups
+      .filter((group) => group.nodes.length > 0)
+      .map((group) => (
+        <section key={group.id} aria-labelledby={`session-group-${group.id}`}>
+          <div id={`session-group-${group.id}`} style={dateHeaderStyle}>
+            {group.label}
+          </div>
+          <div role="list" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {group.nodes.map((node) => (
+              <SessionTreeItem
+                key={node.session.id}
+                node={node}
+                selectedSessionId={selectedSessionId}
+                runningSessionIds={runningSessionIds}
+                unreadSessionIds={unreadSessionIds}
+                onSelectSession={handleSelectSessionFromList}
+                onRenamed={loadSessions}
+                onSessionDeleted={(id) => {
+                  onSessionDeleted?.(id);
+                  void loadSessions();
+                }}
+                onTogglePin={(sessionId) => toggleSessionPin(sessionId)}
+                pinnedSessionIds={pinnedSessionIds}
+                depth={0}
+              />
+            ))}
+          </div>
+        </section>
+      ));
+  };
+
+  // One project folder row + (when expanded) its session list.
+  const renderProjectRow = (project: string, pinned: boolean) => {
+    const expanded = expandedProjects.has(project);
+    const sessions = projectSessionsFor(project);
+    return (
+      <div key={project}>
+        <ProjectFolderRow
+          project={project}
+          homeDir={homeDir}
+          isActive={project === selectedProject}
+          isExpanded={expanded}
+          sessionCount={sessions.length}
+          isPinned={pinned}
+          onToggleExpand={() => toggleProjectExpanded(project)}
+          onSelect={() => {
+            setSelectedCwd(project);
+            setFocusedProject(project);
+          }}
+          onNewSession={() => handleNewSessionIn(project)}
+          onTogglePin={() => toggleProjectPin(project)}
+        />
+        {expanded &&
+          (sessions.length === 0 ? (
+            <div style={{ padding: "4px 14px 8px", color: "var(--text-dim)", fontSize: 12 }}>
+              {t("noSessionsInProject", "No sessions yet")}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "2px 0 6px" }}>
+              {renderSessionGroups(sessions)}
+            </div>
+          ))}
+      </div>
+    );
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -976,8 +1124,7 @@ export function SessionSidebar({
         </div>
 
         <button
-          onClick={handleNewSession}
-          disabled={!selectedCwd}
+          onClick={() => void handleNewSession()}
           style={{
             display: "flex",
             alignItems: "center",
@@ -985,388 +1132,33 @@ export function SessionSidebar({
             gap: 6,
             width: "100%",
             padding: "8px 10px",
-            background: selectedCwd ? "var(--text)" : "var(--bg-hover)",
+            background: "var(--text)",
             border: "none",
-            color: selectedCwd ? "var(--bg)" : "var(--text-dim)",
-            cursor: selectedCwd ? "pointer" : "not-allowed",
+            color: "var(--bg)",
+            cursor: "pointer",
             borderRadius: 7,
             fontSize: 12.5,
             fontWeight: 600,
             fontFamily: "var(--font-mono)",
             flexShrink: 0,
             transition: "opacity 0.12s",
-            opacity: selectedCwd ? 1 : 0.7,
+            opacity: 1,
           }}
           title={
-            selectedCwd
-              ? `${t("newSessionIn", "New session in selected project")}: ${selectedCwd}`
-              : t("selectProjectFirst", "Select a project first")
+            focusProject
+              ? `${t("newSessionIn", "New session in {path}")}`.replace("{path}", focusProject)
+              : t("newSessionInDefaultDirectory", "New session in default directory")
           }
           onMouseEnter={(e) => {
-            if (!selectedCwd) return;
             e.currentTarget.style.opacity = "0.9";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.opacity = selectedCwd ? "1" : "0.7";
+            e.currentTarget.style.opacity = "1";
           }}
         >
           <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
           {t("newSession", "new session")}
         </button>
-
-        {/* CWD picker */}
-        <div ref={dropdownRef} style={{ position: "relative" }}>
-          <button
-            onClick={() => setDropdownOpen((v) => !v)}
-            title={selectedProject ?? selectedCwd ?? ""}
-            style={{
-              width: "100%",
-              display: "flex",
-              alignItems: "center",
-              padding: "6px 10px",
-              background: selectedCwd ? "var(--bg-hover)" : "var(--accent-soft)",
-              border: selectedCwd ? "1px solid var(--border)" : "1px solid var(--accent-soft-border)",
-              borderRadius: 7,
-              cursor: "pointer",
-              fontSize: 12,
-              color: "var(--text)",
-              textAlign: "left",
-              transition: "border-color 0.15s, background 0.15s",
-            }}
-          >
-            {selectedCwd ? (
-              <PathLabel
-                text={abbreviateHomePath(selectedProject ?? selectedCwd, homeDir)}
-                style={{
-                  flex: 1,
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  color: "var(--text)",
-                }}
-              />
-            ) : (
-              <span
-                style={{
-                  flex: 1,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  color: "var(--text-dim)",
-                }}
-              >
-                {initialSessionId && !restoredRef.current ? "" : t("selectProjectEllipsis", "Select project…")}
-              </span>
-            )}
-          </button>
-
-          <AnimatedDropdown
-            open={dropdownOpen}
-            style={{
-              position: "absolute",
-              top: "calc(100% + 4px)",
-              left: 0,
-              right: 0,
-              zIndex: 100,
-              background: "var(--bg)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              boxShadow: "0 6px 20px rgba(0,0,0,0.10)",
-              overflow: "hidden",
-            }}
-          >
-            {showProjectFilter && (
-              <div style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)" }}>
-                <input
-                  value={projectFilter}
-                  onChange={(e) => setProjectFilter(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      setProjectFilter("");
-                      setDropdownOpen(false);
-                    }
-                  }}
-                  placeholder={t("filterProjects", "Filter projects…")}
-                  autoFocus
-                  style={{
-                    width: "100%",
-                    fontSize: 11,
-                    fontFamily: "var(--font-mono)",
-                    padding: "5px 8px",
-                    border: "1px solid var(--border)",
-                    borderRadius: 5,
-                    outline: "none",
-                    background: "var(--bg)",
-                    color: "var(--text)",
-                    boxSizing: "border-box",
-                  }}
-                />
-              </div>
-            )}
-            <div style={{ maxHeight: "min(50vh, 380px)", overflowY: "auto" }}>
-              {visibleProjects.map((project) => (
-                <button
-                  key={project}
-                  onClick={() => {
-                    setSelectedCwd(project);
-                    setProjectFilter("");
-                    setCustomPathOpen(false);
-                    setCustomPathValue("");
-                    setCustomPathError(null);
-                    setDropdownOpen(false);
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 7,
-                    width: "100%",
-                    padding: "8px 10px",
-                    background: "var(--bg)",
-                    border: "none",
-                    borderBottom: "1px solid var(--border)",
-                    color: project === selectedProject ? "var(--text)" : "var(--text-muted)",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    fontSize: 11,
-                    fontFamily: "var(--font-mono)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  title={project}
-                >
-                  {project === selectedProject && (
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 10 10"
-                      fill="none"
-                      stroke="var(--accent)"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      style={{ flexShrink: 0 }}
-                    >
-                      <polyline points="1.5 5 4 7.5 8.5 2.5" />
-                    </svg>
-                  )}
-                  {project !== selectedProject && <span style={{ width: 10, flexShrink: 0 }} />}
-                  <PathLabel text={abbreviateHomePath(project, homeDir)} style={{ flex: 1 }} />
-                </button>
-              ))}
-              {visibleProjects.length === 0 && projectFilter.trim() && (
-                <div style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-dim)" }}>
-                  {t("noMatchingProjects", "No matching projects")}
-                </div>
-              )}
-            </div>
-
-            {/* Default cwd shortcut */}
-            {!customPathOpen && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void handleDefaultCwd();
-                }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 7,
-                  width: "100%",
-                  padding: "8px 10px",
-                  background: "none",
-                  border: "none",
-                  borderTop: visibleProjects.length > 0 ? "1px solid var(--border)" : "none",
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  fontSize: 11,
-                }}
-              >
-                <svg
-                  width="10"
-                  height="10"
-                  viewBox="0 0 10 10"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.1"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ flexShrink: 0 }}
-                >
-                  <path d="M1 3A1 1 0 0 1 2 2H4L5 3.5H8.5a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 1 8V3Z" />
-                </svg>
-                <span>{t("useDefaultDirectory", "Use default directory")}</span>
-              </button>
-            )}
-
-            {/* Native directory picker (desktop) */}
-            {!customPathOpen && typeof window !== "undefined" && !!window.piBridge && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void handlePickDirectory();
-                }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 7,
-                  width: "100%",
-                  padding: "8px 10px",
-                  background: "none",
-                  border: "none",
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  fontSize: 11,
-                }}
-              >
-                <svg
-                  width="10"
-                  height="10"
-                  viewBox="0 0 10 10"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.1"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ flexShrink: 0 }}
-                >
-                  <path d="M1 3A1 1 0 0 1 2 2H4L5 3.5H8.5a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 1 8V3Z" />
-                </svg>
-                <span>{t("browseFolder", "Browse folder…")}</span>
-              </button>
-            )}
-
-            {/* Custom path entry */}
-            {!customPathOpen ? (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setCustomPathOpen(true);
-                  setCustomPathError(null);
-                  deferFocus(() => customPathInputRef.current?.focus());
-                }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 7,
-                  width: "100%",
-                  padding: "8px 10px",
-                  background: "none",
-                  border: "none",
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  fontSize: 11,
-                }}
-              >
-                <svg
-                  width="10"
-                  height="10"
-                  viewBox="0 0 10 10"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.1"
-                  strokeLinecap="round"
-                  style={{ flexShrink: 0 }}
-                >
-                  <line x1="5" y1="1" x2="5" y2="9" />
-                  <line x1="1" y1="5" x2="9" y2="5" />
-                </svg>
-                <span>{t("customPath", "Custom path…")}</span>
-              </button>
-            ) : (
-              <div style={{ padding: "6px 8px", borderTop: visibleProjects.length > 0 ? "none" : undefined }}>
-                <input
-                  ref={customPathInputRef}
-                  value={customPathValue}
-                  onChange={(e) => {
-                    setCustomPathValue(e.target.value);
-                    setCustomPathError(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void commitCustomPath();
-                    }
-                    if (e.key === "Escape") {
-                      setCustomPathOpen(false);
-                      setCustomPathValue("");
-                      setCustomPathError(null);
-                    }
-                  }}
-                  placeholder="/path/to/project"
-                  style={{
-                    width: "100%",
-                    fontSize: 11,
-                    fontFamily: "var(--font-mono)",
-                    padding: "5px 8px",
-                    border: "1px solid var(--accent)",
-                    borderRadius: 5,
-                    outline: "none",
-                    background: "var(--bg)",
-                    color: "var(--text)",
-                    boxSizing: "border-box",
-                  }}
-                />
-                {customPathError && (
-                  <div
-                    style={{
-                      marginTop: 5,
-                      color: "#dc2626",
-                      fontSize: 11,
-                      lineHeight: 1.35,
-                      overflowWrap: "anywhere",
-                    }}
-                  >
-                    {customPathError}
-                  </div>
-                )}
-                <div style={{ display: "flex", gap: 5, marginTop: 5 }}>
-                  <button
-                    onClick={() => void commitCustomPath()}
-                    disabled={customPathValidating || !customPathValue.trim()}
-                    style={{
-                      flex: 1,
-                      padding: "4px 0",
-                      background: "var(--accent)",
-                      border: "none",
-                      borderRadius: 5,
-                      color: "#fff",
-                      fontSize: 11,
-                      fontWeight: 600,
-                      cursor: customPathValidating || !customPathValue.trim() ? "not-allowed" : "pointer",
-                      opacity: customPathValidating || !customPathValue.trim() ? 0.65 : 1,
-                    }}
-                  >
-                    {customPathValidating ? t("checking", "Checking…") : t("open", "Open")}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCustomPathOpen(false);
-                      setCustomPathValue("");
-                      setCustomPathError(null);
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: "4px 0",
-                      background: "var(--bg-hover)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 5,
-                      color: "var(--text-muted)",
-                      fontSize: 11,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {t("cancel", "Cancel")}
-                  </button>
-                </div>
-              </div>
-            )}
-          </AnimatedDropdown>
-        </div>
 
         {/* Worktree switcher — shown only for git projects at a checkout top
             level (repo subdirs keep their own project identity, so switching
@@ -1855,27 +1647,6 @@ export function SessionSidebar({
         style={{ flex: "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}
       >
         <div style={{ padding: "10px 10px 6px" }}>
-          <div
-            style={{
-              padding: "0 4px 7px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
-              fontFamily: "var(--font-mono)",
-              fontSize: 12,
-              color: "var(--text-dim)",
-              letterSpacing: "0.5px",
-              textTransform: "uppercase",
-            }}
-          >
-            <span>{t("sessions", "Sessions")}</span>
-            <span
-              aria-label={t("sessionCount", "{count} sessions").replace("{count}", String(filteredSessions.length))}
-            >
-              {filteredSessions.length}
-            </span>
-          </div>
           <div style={{ position: "relative" }}>
             <svg
               width="14"
@@ -1948,52 +1719,361 @@ export function SessionSidebar({
           </div>
         )}
         {error && <div style={{ padding: "12px 14px", color: "var(--danger)", fontSize: 12 }}>{error}</div>}
-        {!loading && !error && filteredSessions.length === 0 && (
+        {!loading && !error && allSessions.length === 0 && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 13 }}>
             {sessionFilter.trim()
               ? t("noMatchingSessions", "No matching sessions")
               : t("noSessionsFound", "No sessions found")}
           </div>
         )}
-        <div style={{ padding: "0 6px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
-          {sessionGroups.map(
-            (group) =>
-              group.nodes.length > 0 && (
-                <section key={group.id} aria-labelledby={`session-group-${group.id}`}>
-                  <div
-                    id={`session-group-${group.id}`}
-                    style={{
-                      padding: "7px 8px 4px",
-                      color: "var(--text-dim)",
-                      fontSize: 12,
-                      fontWeight: 650,
-                    }}
-                  >
-                    {group.label}
+        {!loading &&
+          !error &&
+          allSessions.length > 0 &&
+          (sessionFilter.trim() ? (
+            /* Flat cross-project search results replace the sections */
+            <div style={{ padding: "0 6px 10px" }}>
+              <div style={sectionHeaderStyle}>{t("searchResults", "Search results")}</div>
+              {searchResults.length === 0 ? (
+                <div style={{ padding: "12px 14px", color: "var(--text-muted)", fontSize: 12 }}>
+                  {t("noMatchingSessions", "No matching sessions")}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {renderSessionGroups(searchResults)}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ padding: "2px 0 10px", display: "flex", flexDirection: "column", gap: 6 }}>
+              {/* Pinned */}
+              <section aria-label={t("pinned", "Pinned")}>
+                <SectionHeader
+                  label={t("pinned", "Pinned")}
+                  open={pinnedSectionOpen}
+                  onToggle={() => setPinnedSectionOpen((v) => !v)}
+                  count={pinnedItems.length}
+                />
+                {pinnedSectionOpen &&
+                  (pinnedItems.length === 0 ? (
+                    <div style={{ padding: "4px 12px 10px", color: "var(--text-dim)", fontSize: 12 }}>
+                      {t("pinnedSectionEmpty", "Pin sessions or projects to keep them at hand")}
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                      {pinnedProjects.map((item) => renderProjectRow(item.id, true))}
+                      {pinnedSessions.length > 0 && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          {renderSessionGroups(pinnedSessions)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+              </section>
+
+              {/* Projects — fixed category header, per-folder expand/collapse */}
+              <section aria-label={t("projectsSection", "Projects")}>
+                <SectionHeader label={t("projectsSection", "Projects")} count={projectFolders.length} />
+                {projectFolders.length === 0 ? (
+                  <div style={{ padding: "4px 12px 10px", color: "var(--text-dim)", fontSize: 12 }}>
+                    {t("noProjectsFound", "No projects yet")}
                   </div>
-                  <div role="list" style={{ display: "flex", flexDirection: "column" }}>
-                    {group.nodes.map((node) => (
-                      <SessionTreeItem
-                        key={node.session.id}
-                        node={node}
-                        selectedSessionId={selectedSessionId}
-                        runningSessionIds={runningSessionIds}
-                        unreadSessionIds={unreadSessionIds}
-                        onSelectSession={handleSelectSessionFromList}
-                        onRenamed={loadSessions}
-                        onSessionDeleted={(id) => {
-                          onSessionDeleted?.(id);
-                          void loadSessions();
-                        }}
-                        depth={0}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ),
-          )}
-        </div>
+                ) : (
+                  projectFolders.map((project) => renderProjectRow(project, false))
+                )}
+              </section>
+
+              {/* Recent — cross-project recent sessions, collapsed by default */}
+              <section aria-label={t("recentSection", "Recent")}>
+                <SectionHeader
+                  label={t("recentSection", "Recent")}
+                  open={recentSectionOpen}
+                  onToggle={() => setRecentSectionOpen((v) => !v)}
+                  count={recentSessions.length}
+                />
+                {recentSectionOpen &&
+                  (recentSessions.length === 0 ? (
+                    <div style={{ padding: "4px 12px 10px", color: "var(--text-dim)", fontSize: 12 }}>
+                      {t("recentSectionEmpty", "No recent sessions")}
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {renderSessionGroups(recentSessions)}
+                    </div>
+                  ))}
+              </section>
+            </div>
+          ))}
       </nav>
+    </div>
+  );
+}
+
+function SectionHeader({
+  label,
+  open,
+  onToggle,
+  count,
+}: {
+  label: string;
+  open?: boolean;
+  onToggle?: () => void;
+  count?: number;
+}) {
+  const clickable = typeof open === "boolean" && typeof onToggle === "function";
+  const { t } = useI18n();
+  return (
+    <div
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      aria-expanded={clickable ? open : undefined}
+      onClick={clickable ? onToggle : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onToggle();
+              }
+            }
+          : undefined
+      }
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "8px 10px 5px",
+        cursor: clickable ? "pointer" : "default",
+        fontFamily: "var(--font-mono)",
+        fontSize: 12,
+        color: "var(--text-dim)",
+        letterSpacing: "0.5px",
+        textTransform: "uppercase",
+        userSelect: "none",
+      }}
+    >
+      {clickable && (
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          style={{
+            flexShrink: 0,
+            transform: open ? "rotate(90deg)" : "rotate(0deg)",
+            transition: "transform 0.15s",
+          }}
+        >
+          <polyline points="3 2 7 5 3 8" />
+        </svg>
+      )}
+      <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
+      {typeof count === "number" && (
+        <span
+          aria-label={t("sessionCount", "{count} sessions").replace("{count}", String(count))}
+          style={{ fontSize: 11, color: "var(--text-muted)" }}
+        >
+          {count}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ProjectFolderRow({
+  project,
+  homeDir,
+  isActive,
+  isExpanded,
+  sessionCount,
+  isPinned,
+  onToggleExpand,
+  onSelect,
+  onNewSession,
+  onTogglePin,
+}: {
+  project: string;
+  homeDir: string | undefined;
+  isActive: boolean;
+  isExpanded: boolean;
+  sessionCount: number;
+  isPinned: boolean;
+  onToggleExpand: () => void;
+  onSelect: () => void;
+  onNewSession: () => void;
+  onTogglePin: () => void;
+}) {
+  const { t } = useI18n();
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        margin: "0 4px",
+        padding: "2px",
+        borderRadius: 7,
+        background: isActive ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
+        border: isActive ? "1px solid var(--accent-soft-border)" : "1px solid transparent",
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggleExpand}
+        title={isExpanded ? t("collapseProject", "Collapse project") : t("expandProject", "Expand project")}
+        aria-label={isExpanded ? t("collapseProject", "Collapse project") : t("expandProject", "Expand project")}
+        aria-expanded={isExpanded}
+        style={{
+          width: 26,
+          height: 26,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "transparent",
+          border: "none",
+          color: "var(--text-muted)",
+          cursor: "pointer",
+          borderRadius: 6,
+          flexShrink: 0,
+        }}
+      >
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          style={{
+            transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+            transition: "transform 0.15s",
+          }}
+        >
+          <polyline points="3 2 7 5 3 8" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        onClick={onSelect}
+        title={project}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "4px 2px",
+          background: "transparent",
+          border: "none",
+          color: "var(--text)",
+          cursor: "pointer",
+          textAlign: "left",
+          fontSize: 12,
+        }}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          style={{ flexShrink: 0, color: "var(--text-muted)" }}
+        >
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+        </svg>
+        <PathLabel text={abbreviateHomePath(project, homeDir)} style={{ flex: 1, minWidth: 0 }} />
+        {sessionCount > 0 && (
+          <span
+            aria-label={t("sessionCount", "{count} sessions").replace("{count}", String(sessionCount))}
+            style={{
+              flexShrink: 0,
+              fontSize: 10,
+              lineHeight: 1,
+              padding: "2px 5px",
+              borderRadius: 8,
+              background: "var(--bg-panel)",
+              color: "var(--text-muted)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            {sessionCount}
+          </span>
+        )}
+      </button>
+      {(hovered || isActive) && (
+        <button
+          type="button"
+          onClick={onNewSession}
+          title={t("newSessionIn", "New session in {path}").replace("{path}", project)}
+          aria-label={t("newSessionIn", "New session in {path}").replace("{path}", project)}
+          style={{
+            width: 26,
+            height: 26,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "transparent",
+            border: "none",
+            color: "var(--text-muted)",
+            cursor: "pointer",
+            borderRadius: 6,
+            fontSize: 15,
+            lineHeight: 1,
+            flexShrink: 0,
+          }}
+        >
+          +
+        </button>
+      )}
+      {(hovered || isPinned) && (
+        <button
+          type="button"
+          onClick={onTogglePin}
+          title={isPinned ? t("unpinProject", "Unpin project") : t("pinProject", "Pin project")}
+          aria-label={isPinned ? t("unpinProject", "Unpin project") : t("pinProject", "Pin project")}
+          style={{
+            width: 26,
+            height: 26,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "transparent",
+            border: "none",
+            color: isPinned ? "var(--accent)" : "var(--text-muted)",
+            cursor: "pointer",
+            borderRadius: 6,
+            flexShrink: 0,
+          }}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill={isPinned ? "currentColor" : "none"}
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 17v5" />
+            <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
@@ -2006,6 +2086,8 @@ function SessionTreeItem({
   onSelectSession,
   onRenamed,
   onSessionDeleted,
+  onTogglePin,
+  pinnedSessionIds,
   depth,
 }: {
   node: SessionTreeNode;
@@ -2015,6 +2097,8 @@ function SessionTreeItem({
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
   onSessionDeleted?: (id: string) => void;
+  onTogglePin?: (sessionId: string) => void;
+  pinnedSessionIds?: Set<string>;
   depth: number;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -2045,6 +2129,8 @@ function SessionTreeItem({
           onClick={() => onSelectSession(node.session)}
           onRenamed={onRenamed}
           onDeleted={(id) => onSessionDeleted?.(id)}
+          isPinned={pinnedSessionIds?.has(node.session.id) ?? false}
+          onTogglePin={() => onTogglePin?.(node.session.id)}
           depth={depth}
           hasChildren={hasChildren}
           collapsed={collapsed}
@@ -2063,6 +2149,8 @@ function SessionTreeItem({
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
+              onTogglePin={onTogglePin}
+              pinnedSessionIds={pinnedSessionIds}
               depth={depth + 1}
             />
           ))}
@@ -2156,6 +2244,8 @@ function SessionItem({
   onClick,
   onRenamed,
   onDeleted,
+  isPinned = false,
+  onTogglePin,
   depth = 0,
   hasChildren = false,
   collapsed = false,
@@ -2168,6 +2258,8 @@ function SessionItem({
   onClick: () => void;
   onRenamed?: () => void;
   onDeleted?: (id: string) => void;
+  isPinned?: boolean;
+  onTogglePin?: () => void;
   depth?: number;
   hasChildren?: boolean;
   collapsed?: boolean;
@@ -2720,6 +2812,32 @@ function SessionItem({
                     <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                   </svg>
                   {t("rename", "Rename")}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="session-menu-item"
+                  onClick={() => {
+                    onTogglePin?.();
+                    closeActionsMenu();
+                  }}
+                  style={sessionMenuItemStyle}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill={isPinned ? "currentColor" : "none"}
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 17v5" />
+                    <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" />
+                  </svg>
+                  {isPinned ? t("unpin", "Unpin") : t("pin", "Pin")}
                 </button>
                 <button
                   type="button"
