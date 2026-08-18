@@ -69,12 +69,12 @@ test("embedded terminal packages the TUI dock as a Fluent GUI composer", () => {
   assert.match(source, /terminalPane/);
   assert.match(source, /onSessionRelocated/);
   assert.match(source, /scheduleDockChrome/);
-  assert.match(source, /DOCK_COVER_ROWS/);
-  assert.match(source, /IDLE_BLANK_ROWS/);
-  assert.match(source, /applySessionClip/);
+  assert.match(source, /COVER_MIN_ROWS/);
+  assert.match(source, /applySessionLayout/);
+  assert.match(source, /applySessionLayout/);
   assert.match(source, /coverOn/);
   assert.match(source, /onHideCover/);
-  assert.match(source, /minHeight: dockClipPx/);
+  assert.doesNotMatch(source, /minHeight: dockClipPx/);
   assert.match(source, /scheduleDockChromeRef/);
   assert.doesNotMatch(source, /measureDockCoverPx/);
   assert.doesNotMatch(source, /dockRect/);

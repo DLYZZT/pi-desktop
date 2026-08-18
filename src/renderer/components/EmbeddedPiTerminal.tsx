@@ -7,7 +7,6 @@ import type { SessionInfo } from "@/lib/types";
 import { TuiDockComposer } from "./TuiDockComposer";
 import {
   EMPTY_DOCK_CHROME,
-  lineLooksLikeLiveStatus,
   parseDockChrome,
   sameDockChrome,
   type DockChrome,
@@ -66,8 +65,7 @@ function readLiveScreenLines(terminal: Terminal): string[] {
   return lines;
 }
 
-const DOCK_COVER_ROWS = 6;
-const IDLE_BLANK_ROWS = 0;
+const COVER_MIN_ROWS = 6;
 
 function cellHeightPx(terminal: Terminal): number {
   const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen");
@@ -75,23 +73,10 @@ function cellHeightPx(terminal: Terminal): number {
   return screen.getBoundingClientRect().height / terminal.rows;
 }
 
-function tuiIsRunning(lines: string[]): boolean {
-  return lines.some((line) => lineLooksLikeLiveStatus(line));
-}
-
-function coverHeightPx(terminal: Terminal): number {
-  return DOCK_COVER_ROWS * cellHeightPx(terminal);
-}
-
-function idleBlankPx(terminal: Terminal, lines?: string[]): number {
-  const running = tuiIsRunning(lines ?? readLiveScreenLines(terminal));
-  return running ? 0 : IDLE_BLANK_ROWS * cellHeightPx(terminal);
-}
-
-function applySessionClip(element: HTMLDivElement, clipPx: number): void {
+function applySessionLayout(element: HTMLDivElement): void {
   element.style.position = "absolute";
-  element.style.inset = "0 0 auto 0";
-  element.style.height = `calc(100% + ${Math.max(0, clipPx)}px)`;
+  element.style.inset = "0";
+  element.style.height = "100%";
 }
 
 function findImeAnchorCell(terminal: Terminal): { x: number; y: number } {
@@ -217,13 +202,10 @@ export function EmbeddedPiTerminal({
   const terminals = useRef(new Map<string, TerminalEntry>());
   const selectedSessionId = useRef<string | null>(session?.id ?? null);
   const [dockChrome, setDockChrome] = useState<DockChrome>(EMPTY_DOCK_CHROME);
-  const [dockClipPx, setDockClipPx] = useState(DOCK_COVER_ROWS * 18);
-  const [blankClipPx, setBlankClipPx] = useState(IDLE_BLANK_ROWS * 18);
+  const [cellPx, setCellPx] = useState(18);
   const [coverOn, setCoverOn] = useState(true);
   const setDockChromeRef = useRef(setDockChrome);
   const chromeTimer = useRef(0);
-  const dockClipHeld = useRef(DOCK_COVER_ROWS * 18);
-  const blankClipHeld = useRef(IDLE_BLANK_ROWS * 18);
   setDockChromeRef.current = setDockChrome;
 
   const publishDockChrome = (terminal: Terminal | null) => {
@@ -234,31 +216,15 @@ export function EmbeddedPiTerminal({
     const lines = readLiveScreenLines(terminal);
     const nextChrome = parseDockChrome(lines);
     setDockChromeRef.current((prev) => (sameDockChrome(prev, nextChrome) ? prev : nextChrome));
-    const nextBlank = idleBlankPx(terminal, lines);
-    const blankFlip = nextBlank === 0 || blankClipHeld.current === 0;
-    if (blankFlip ? nextBlank !== blankClipHeld.current : Math.abs(nextBlank - blankClipHeld.current) >= 8) {
-      blankClipHeld.current = nextBlank;
-      setBlankClipPx(nextBlank);
-    }
+    const nextCell = cellHeightPx(terminal);
+    if (Math.abs(nextCell - cellPx) >= 0.5) setCellPx(nextCell);
   };
-
-  const syncFixedClip = (terminal: Terminal) => {
-    const nextCover = coverHeightPx(terminal);
-    if (Math.abs(nextCover - dockClipHeld.current) >= 1) {
-      dockClipHeld.current = nextCover;
-      setDockClipPx(nextCover);
-    }
-    const nextBlank = idleBlankPx(terminal);
-    const blankFlip = nextBlank === 0 || blankClipHeld.current === 0;
-    if (blankFlip ? nextBlank !== blankClipHeld.current : Math.abs(nextBlank - blankClipHeld.current) >= 8) {
-      blankClipHeld.current = nextBlank;
-      setBlankClipPx(nextBlank);
-    }
-  };
+  const publishDockChromeRef = useRef(publishDockChrome);
+  publishDockChromeRef.current = publishDockChrome;
 
   const scheduleDockChrome = (terminal: Terminal | null) => {
     window.clearTimeout(chromeTimer.current);
-    chromeTimer.current = window.setTimeout(() => publishDockChrome(terminal), 200);
+    chromeTimer.current = window.setTimeout(() => publishDockChromeRef.current(terminal), 200);
   };
   const scheduleDockChromeRef = useRef(scheduleDockChrome);
   scheduleDockChromeRef.current = scheduleDockChrome;
@@ -295,7 +261,7 @@ export function EmbeddedPiTerminal({
       const element = document.createElement("div");
       element.className = "embedded-pi-terminal-session";
       element.setAttribute("aria-label", `Pi terminal ${session.id}`);
-      applySessionClip(element, blankClipHeld.current);
+      applySessionLayout(element);
       host.appendChild(element);
 
       const terminal = new Terminal({
@@ -387,7 +353,7 @@ export function EmbeddedPiTerminal({
 
     for (const [sessionId, terminalEntry] of terminals.current) {
       if (terminalEntry.element.parentElement !== host) host.appendChild(terminalEntry.element);
-      applySessionClip(terminalEntry.element, blankClipHeld.current);
+      applySessionLayout(terminalEntry.element);
       terminalEntry.element.hidden = sessionId !== session.id;
     }
     const selectedEntry = entry;
@@ -396,8 +362,7 @@ export function EmbeddedPiTerminal({
       selectedEntry.fitAddon.fit();
       window.piBridge.resizeSessionTui(session.id, selectedEntry.terminal.cols, selectedEntry.terminal.rows);
       selectedEntry.terminal.focus();
-      syncFixedClip(selectedEntry.terminal);
-      publishDockChrome(selectedEntry.terminal);
+      publishDockChromeRef.current(selectedEntry.terminal);
     });
     return () => cancelAnimationFrame(frame);
   }, [session]);
@@ -415,7 +380,7 @@ export function EmbeddedPiTerminal({
         if (!entry || entry.element.hidden) return;
         entry.fitAddon.fit();
         window.piBridge.resizeSessionTui(sessionId, entry.terminal.cols, entry.terminal.rows);
-        syncFixedClip(entry.terminal);
+        publishDockChromeRef.current(entry.terminal);
       });
     });
     observer.observe(host);
@@ -424,16 +389,6 @@ export function EmbeddedPiTerminal({
       cancelAnimationFrame(frame);
     };
   }, []);
-
-  useEffect(() => {
-    for (const entry of terminals.current.values()) applySessionClip(entry.element, blankClipPx);
-    const sessionId = selectedSessionId.current;
-    if (!sessionId) return;
-    const entry = terminals.current.get(sessionId);
-    if (!entry || entry.element.hidden) return;
-    entry.fitAddon.fit();
-    window.piBridge.resizeSessionTui(sessionId, entry.terminal.cols, entry.terminal.rows);
-  }, [blankClipPx]);
 
   useEffect(() => {
     const host = root.current;
@@ -480,7 +435,7 @@ export function EmbeddedPiTerminal({
         background: "var(--bg)",
       }}
     >
-      <div ref={terminalPane} style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+      <div ref={terminalPane} style={{ position: "absolute", inset: 0, overflow: "hidden", zIndex: 0 }}>
         {!session && (
           <div
             style={{
@@ -502,12 +457,12 @@ export function EmbeddedPiTerminal({
             left: 0,
             right: 0,
             bottom: 0,
-            minHeight: dockClipPx,
-            height: "auto",
+            minHeight: COVER_MIN_ROWS * cellPx,
             display: "flex",
             overflow: "visible",
             background: "var(--bg-panel)",
             zIndex: 20,
+            pointerEvents: "auto",
           }}
         >
           <TuiDockComposer

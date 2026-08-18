@@ -1025,7 +1025,6 @@ span.linenumber {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;
   width: 100%;
   background: var(--bg-panel);
   border: none;
@@ -1184,6 +1183,8 @@ span.linenumber {
 }
 
 .tui-dock-bar {
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-wrap: nowrap;
   flex-shrink: 0;
@@ -1193,7 +1194,7 @@ span.linenumber {
   padding: 4px 8px 6px;
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
-  overflow-x: auto;
+  overflow: visible;
 }
 
 .tui-dock-worktree {
@@ -1270,6 +1271,7 @@ span.linenumber {
 .embedded-pi-terminal .xterm-helper-textarea {
   opacity: 0.01 !important;
   z-index: 10 !important;
+  pointer-events: none;
   color: transparent;
   caret-color: transparent;
 }

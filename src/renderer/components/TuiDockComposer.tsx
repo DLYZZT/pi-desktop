@@ -181,9 +181,9 @@ export function TuiDockComposer({
         pointerEvents: "auto",
         background: "var(--bg-panel)",
         zIndex: 20,
-        flex: 1,
         display: "flex",
-        minHeight: 0,
+        flex: 1,
+        width: "100%",
         ...style,
       }}
     >
