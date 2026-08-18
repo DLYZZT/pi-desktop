@@ -11,9 +11,9 @@ test("session clipboard rejection is consumed and exposed as local alert feedbac
   assert.match(source, /<div role="alert"/);
 });
 
-test("cockpit shows the current worktree under the terminal input, not the sidebar header", () => {
+test("cockpit shows the current worktree in the terminal composer, not the sidebar header", () => {
   assert.match(source, /worktreeSlot=\{role === "cockpit" \? worktreeSlot : null\}/);
-  assert.match(source, /ref=\{setWorktreeSlot\}/);
+  assert.match(source, /worktreeAnchorRef=\{setWorktreeSlot\}/);
 });
 
 test("relocating a session restarts the cockpit TUI and refreshes the sidebar", () => {

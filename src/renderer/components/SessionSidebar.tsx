@@ -1416,11 +1416,10 @@ export function SessionSidebar({
                 worktreeSlot
                   ? {
                       display: "flex",
-                      flexDirection: "column",
-                      gap: 6,
-                      padding: "6px 10px",
-                      borderTop: "1px solid var(--border)",
-                      background: "var(--bg-panel)",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      minWidth: 0,
+                      flex: 1,
                     }
                   : undefined
               }
@@ -1432,7 +1431,10 @@ export function SessionSidebar({
                     worktreeState.worktrees.find((w) => w.path === selectedCwd) ??
                     worktreeState.worktrees.find((w) => w.isMain);
                   return (
-                    <div ref={wtDropdownRef} style={{ position: "relative", marginTop: worktreeSlot ? 0 : 6 }}>
+                    <div
+                      ref={wtDropdownRef}
+                      style={{ position: "relative", marginTop: worktreeSlot ? 0 : 6, minWidth: 0, flex: 1 }}
+                    >
                       <button
                         onClick={() => setWtDropdownOpen((v) => !v)}
                         title={
@@ -1441,16 +1443,17 @@ export function SessionSidebar({
                             : t("switchWorktree", "Switch worktree")
                         }
                         style={{
-                          width: "100%",
+                          width: worktreeSlot ? "auto" : "100%",
+                          maxWidth: "100%",
                           height: 29,
                           boxSizing: "border-box",
                           display: "flex",
                           alignItems: "center",
                           gap: 6,
-                          padding: "0 10px",
-                          background: "var(--bg-hover)",
-                          border: "1px solid var(--border)",
-                          borderRadius: 7,
+                          padding: worktreeSlot ? "0 10px" : "0 10px",
+                          background: worktreeSlot ? "var(--colorNeutralBackground1, var(--bg))" : "var(--bg-hover)",
+                          border: worktreeSlot ? "none" : "1px solid var(--border)",
+                          borderRadius: worktreeSlot ? 999 : 7,
                           cursor: "pointer",
                           fontSize: 11,
                           lineHeight: 1.35,
@@ -1477,15 +1480,15 @@ export function SessionSidebar({
                           <circle cx="6" cy="18" r="3" />
                           <path d="M18 9a9 9 0 0 1-9 9" />
                         </svg>
-                        <PathLabel
-                          text={currentWt ? (currentWt.branch ?? abbreviateHomePath(currentWt.path, homeDir)) : "…"}
-                          style={{ flex: 1, fontFamily: "var(--font-mono)", color: "var(--text)" }}
-                        />
                         {currentWt?.isMain && (
                           <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>
                             {t("mainBranch", "main")}
                           </span>
                         )}
+                        <PathLabel
+                          text={currentWt ? (currentWt.branch ?? abbreviateHomePath(currentWt.path, homeDir)) : "…"}
+                          style={{ flex: 1, fontFamily: "var(--font-mono)", color: "var(--text)" }}
+                        />
                         {worktreeState.worktrees.length > 1 && (
                           <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>
                             {worktreeState.worktrees.length}

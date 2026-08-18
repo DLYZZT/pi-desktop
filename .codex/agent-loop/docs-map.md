@@ -14,6 +14,7 @@
 | Desktop IPC / host lifecycle | `src/main/`, `src/agent-host/`                  | chat recap            |
 | Hang / abort decisions       | `docs/decisions/2026-08-17-session-hang.md`     | this chat             |
 | Session relocate decisions   | `docs/decisions/2026-08-18-session-relocate.md` | this chat             |
+| TUI input chrome / UI kit    | `docs/decisions/2026-08-18-tui-input-chrome.md` | this chat             |
 
 ## Drift debt
 

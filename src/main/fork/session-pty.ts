@@ -92,7 +92,7 @@ export function createSessionPtyManager(options: {
     const cols = validDimension(requestedSize.cols) ?? DEFAULT_SIZE.cols;
     const rows = validDimension(requestedSize.rows) ?? DEFAULT_SIZE.rows;
     const sessionArgs = request.sessionPath ? ["--session", request.sessionPath] : ["--session-id", request.sessionId];
-    const pty = options.spawn(request.nodeExecutable, [request.program, ...sessionArgs], {
+    const pty = options.spawn(request.nodeExecutable, [request.program, ...sessionArgs, "--tui-mode", "fullscreen"], {
       cwd: request.cwd,
       cols,
       rows,

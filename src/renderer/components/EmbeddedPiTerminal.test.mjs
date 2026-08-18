@@ -59,3 +59,29 @@ test("embedded terminal opens detected web links only on Ctrl+click", () => {
   assert.match(source, /event\.ctrlKey/);
   assert.match(source, /window\.piBridge\.openExternal\(url\)/);
 });
+
+test("embedded terminal packages the TUI dock as a Fluent GUI composer", () => {
+  assert.match(source, /TuiDockComposer/);
+  assert.match(source, /worktreeAnchorRef/);
+  assert.match(source, /parseDockChrome/);
+  assert.match(source, /readLiveScreenLines/);
+  assert.match(source, /buffer\.baseY/);
+  assert.match(source, /terminalPane/);
+  assert.match(source, /onSessionRelocated/);
+  assert.match(source, /scheduleDockChrome/);
+  assert.match(source, /DOCK_COVER_ROWS/);
+  assert.match(source, /IDLE_BLANK_ROWS/);
+  assert.match(source, /applySessionClip/);
+  assert.match(source, /coverOn/);
+  assert.match(source, /onHideCover/);
+  assert.match(source, /minHeight: dockClipPx/);
+  assert.match(source, /scheduleDockChromeRef/);
+  assert.doesNotMatch(source, /measureDockCoverPx/);
+  assert.doesNotMatch(source, /dockRect/);
+  assert.match(source, /addEventListener\("wheel"/);
+  assert.match(source, /\\x1b\[<\$\{button\};\$\{col\};\$\{row\}M/);
+  assert.match(source, /onSelectModel/);
+  assert.match(source, /onSelectThinking/);
+  assert.match(source, /\/model \$\{provider\}\/\$\{id\}/);
+  assert.match(source, /writeSessionTui\(session\.id, text \+ "\\r"\)/);
+});

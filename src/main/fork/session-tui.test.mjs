@@ -71,9 +71,15 @@ test("existing sessions resume by path while new sessions create an exact id in 
   assert.equal(first.action, "spawn");
   assert.equal(firstAgain.action, "focus");
   assert.equal(spawned.length, 2);
-  assert.deepEqual(spawned[0].args, ["F:/bundled/pi-cli.js", "--session", "F:/PiData/session-1.jsonl"]);
+  assert.deepEqual(spawned[0].args, [
+    "F:/bundled/pi-cli.js",
+    "--session",
+    "F:/PiData/session-1.jsonl",
+    "--tui-mode",
+    "fullscreen",
+  ]);
   assert.equal(spawned[0].options.cwd, "F:/project-one");
-  assert.deepEqual(spawned[1].args, ["F:/bundled/pi-cli.js", "--session-id", "sess-2"]);
+  assert.deepEqual(spawned[1].args, ["F:/bundled/pi-cli.js", "--session-id", "sess-2", "--tui-mode", "fullscreen"]);
   assert.equal(spawned[1].options.cwd, "F:/project-two");
   assert.equal(spawned[0].options.name, "xterm-256color");
   assert.equal(manager.snapshotMarks()["sess-1"], "running");
@@ -106,7 +112,13 @@ test("start with a new cwd or session path restarts the live PTY", () => {
   assert.equal(spawned[0].pty.killed, true);
   assert.equal(spawned.length, 2);
   assert.equal(spawned[1].options.cwd, "F:/project-two");
-  assert.deepEqual(spawned[1].args, ["F:/bundled/pi-cli.js", "--session", "F:/PiData/moved.jsonl"]);
+  assert.deepEqual(spawned[1].args, [
+    "F:/bundled/pi-cli.js",
+    "--session",
+    "F:/PiData/moved.jsonl",
+    "--tui-mode",
+    "fullscreen",
+  ]);
 });
 
 test("PTY output, input and resize stay scoped to the matching session", () => {

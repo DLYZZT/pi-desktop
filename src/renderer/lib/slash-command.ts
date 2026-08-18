@@ -24,6 +24,14 @@ export function extractSlashQuery(textBeforeCursor: string): SlashQueryMatch | n
  * the draft as command args. Commands must start the message to run, so the
  * result is always prefixed.
  */
+export function filterSlashItems<T extends { name: string; description?: string }>(items: T[], query: string): T[] {
+  const q = query.toLowerCase();
+  if (!q) return items;
+  return items.filter(
+    (item) => item.name.toLowerCase().includes(q) || (item.description ?? "").toLowerCase().includes(q),
+  );
+}
+
 export function applySlashPrefix(value: string, match: SlashQueryMatch, commandName: string): string {
   const before = value.slice(0, match.start).trim();
   const after = value.slice(match.start + 1 + match.query.length).trim();

@@ -56,6 +56,7 @@
     "@earendil-works/pi-ai": "0.84.2",
     "@earendil-works/pi-coding-agent": "0.84.2",
     "@earendil-works/pi-telemetry": "0.84.2",
+    "@fluentui/react-components": "^9.74.6",
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "@lobehub/icons": "^5.6.0",
     "@rc-component/qrcode": "^2.0.0",

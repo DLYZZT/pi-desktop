@@ -1,13 +1,23 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import { copyText } from "@/lib/clipboard";
+import type { SessionInfo } from "@/lib/types";
+import { TuiDockComposer } from "./TuiDockComposer";
+import {
+  EMPTY_DOCK_CHROME,
+  lineLooksLikeLiveStatus,
+  parseDockChrome,
+  sameDockChrome,
+  type DockChrome,
+} from "./tui-dock-rect";
 import "@xterm/xterm/css/xterm.css";
 
 type TerminalSession = {
   id: string;
   cwd: string;
+  path?: string;
 };
 
 type TerminalEntry = {
@@ -44,6 +54,44 @@ function lineLooksLikeBorder(text: string): boolean {
     if (ch === "\u2500" || ch === "\u2501" || ch === "\u2550" || ch === "-" || ch === "=") box += 1;
   }
   return box / trimmed.length >= 0.6;
+}
+
+function readLiveScreenLines(terminal: Terminal): string[] {
+  const lines: string[] = [];
+  const buffer = terminal.buffer.active;
+  const origin = buffer.baseY;
+  for (let y = 0; y < terminal.rows; y += 1) {
+    lines.push(buffer.getLine(origin + y)?.translateToString(true) ?? "");
+  }
+  return lines;
+}
+
+const DOCK_COVER_ROWS = 6;
+const IDLE_BLANK_ROWS = 0;
+
+function cellHeightPx(terminal: Terminal): number {
+  const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen");
+  if (!screen || terminal.rows <= 0) return 18;
+  return screen.getBoundingClientRect().height / terminal.rows;
+}
+
+function tuiIsRunning(lines: string[]): boolean {
+  return lines.some((line) => lineLooksLikeLiveStatus(line));
+}
+
+function coverHeightPx(terminal: Terminal): number {
+  return DOCK_COVER_ROWS * cellHeightPx(terminal);
+}
+
+function idleBlankPx(terminal: Terminal, lines?: string[]): number {
+  const running = tuiIsRunning(lines ?? readLiveScreenLines(terminal));
+  return running ? 0 : IDLE_BLANK_ROWS * cellHeightPx(terminal);
+}
+
+function applySessionClip(element: HTMLDivElement, clipPx: number): void {
+  element.style.position = "absolute";
+  element.style.inset = "0 0 auto 0";
+  element.style.height = `calc(100% + ${Math.max(0, clipPx)}px)`;
 }
 
 function findImeAnchorCell(terminal: Terminal): { x: number; y: number } {
@@ -153,14 +201,73 @@ function terminalTheme(): {
   };
 }
 
-export function EmbeddedPiTerminal({ session, theme }: { session: TerminalSession | null; theme: "light" | "dark" }) {
+export function EmbeddedPiTerminal({
+  session,
+  theme,
+  worktreeAnchorRef,
+  onSessionRelocated,
+}: {
+  session: TerminalSession | null;
+  theme: "light" | "dark";
+  worktreeAnchorRef?: (node: HTMLDivElement | null) => void;
+  onSessionRelocated?: (session: SessionInfo) => void;
+}) {
   const root = useRef<HTMLDivElement | null>(null);
+  const terminalPane = useRef<HTMLDivElement | null>(null);
   const terminals = useRef(new Map<string, TerminalEntry>());
   const selectedSessionId = useRef<string | null>(session?.id ?? null);
+  const [dockChrome, setDockChrome] = useState<DockChrome>(EMPTY_DOCK_CHROME);
+  const [dockClipPx, setDockClipPx] = useState(DOCK_COVER_ROWS * 18);
+  const [blankClipPx, setBlankClipPx] = useState(IDLE_BLANK_ROWS * 18);
+  const [coverOn, setCoverOn] = useState(true);
+  const setDockChromeRef = useRef(setDockChrome);
+  const chromeTimer = useRef(0);
+  const dockClipHeld = useRef(DOCK_COVER_ROWS * 18);
+  const blankClipHeld = useRef(IDLE_BLANK_ROWS * 18);
+  setDockChromeRef.current = setDockChrome;
+
+  const publishDockChrome = (terminal: Terminal | null) => {
+    if (!terminal || !selectedSessionId.current) {
+      setDockChromeRef.current(EMPTY_DOCK_CHROME);
+      return;
+    }
+    const lines = readLiveScreenLines(terminal);
+    const nextChrome = parseDockChrome(lines);
+    setDockChromeRef.current((prev) => (sameDockChrome(prev, nextChrome) ? prev : nextChrome));
+    const nextBlank = idleBlankPx(terminal, lines);
+    const blankFlip = nextBlank === 0 || blankClipHeld.current === 0;
+    if (blankFlip ? nextBlank !== blankClipHeld.current : Math.abs(nextBlank - blankClipHeld.current) >= 8) {
+      blankClipHeld.current = nextBlank;
+      setBlankClipPx(nextBlank);
+    }
+  };
+
+  const syncFixedClip = (terminal: Terminal) => {
+    const nextCover = coverHeightPx(terminal);
+    if (Math.abs(nextCover - dockClipHeld.current) >= 1) {
+      dockClipHeld.current = nextCover;
+      setDockClipPx(nextCover);
+    }
+    const nextBlank = idleBlankPx(terminal);
+    const blankFlip = nextBlank === 0 || blankClipHeld.current === 0;
+    if (blankFlip ? nextBlank !== blankClipHeld.current : Math.abs(nextBlank - blankClipHeld.current) >= 8) {
+      blankClipHeld.current = nextBlank;
+      setBlankClipPx(nextBlank);
+    }
+  };
+
+  const scheduleDockChrome = (terminal: Terminal | null) => {
+    window.clearTimeout(chromeTimer.current);
+    chromeTimer.current = window.setTimeout(() => publishDockChrome(terminal), 200);
+  };
+  const scheduleDockChromeRef = useRef(scheduleDockChrome);
+  scheduleDockChromeRef.current = scheduleDockChrome;
 
   useEffect(() => {
     return window.piBridge.onSessionTuiData((payload) => {
-      terminals.current.get(payload.sessionId)?.terminal.write(payload.data);
+      const entry = terminals.current.get(payload.sessionId);
+      entry?.terminal.write(payload.data);
+      if (payload.sessionId === selectedSessionId.current) scheduleDockChromeRef.current(entry?.terminal ?? null);
     });
   }, []);
 
@@ -172,8 +279,11 @@ export function EmbeddedPiTerminal({ session, theme }: { session: TerminalSessio
 
   useEffect(() => {
     selectedSessionId.current = session?.id ?? null;
-    const host = root.current;
-    if (!host || !session) return;
+    const host = terminalPane.current;
+    if (!host || !session) {
+      setDockChrome(EMPTY_DOCK_CHROME);
+      return;
+    }
 
     let entry = terminals.current.get(session.id);
     if (entry && entry.cwd !== session.cwd) {
@@ -185,6 +295,7 @@ export function EmbeddedPiTerminal({ session, theme }: { session: TerminalSessio
       const element = document.createElement("div");
       element.className = "embedded-pi-terminal-session";
       element.setAttribute("aria-label", `Pi terminal ${session.id}`);
+      applySessionClip(element, blankClipHeld.current);
       host.appendChild(element);
 
       const terminal = new Terminal({
@@ -275,6 +386,8 @@ export function EmbeddedPiTerminal({ session, theme }: { session: TerminalSessio
     }
 
     for (const [sessionId, terminalEntry] of terminals.current) {
+      if (terminalEntry.element.parentElement !== host) host.appendChild(terminalEntry.element);
+      applySessionClip(terminalEntry.element, blankClipHeld.current);
       terminalEntry.element.hidden = sessionId !== session.id;
     }
     const selectedEntry = entry;
@@ -283,12 +396,14 @@ export function EmbeddedPiTerminal({ session, theme }: { session: TerminalSessio
       selectedEntry.fitAddon.fit();
       window.piBridge.resizeSessionTui(session.id, selectedEntry.terminal.cols, selectedEntry.terminal.rows);
       selectedEntry.terminal.focus();
+      syncFixedClip(selectedEntry.terminal);
+      publishDockChrome(selectedEntry.terminal);
     });
     return () => cancelAnimationFrame(frame);
   }, [session]);
 
   useEffect(() => {
-    const host = root.current;
+    const host = terminalPane.current;
     if (!host) return;
     let frame = 0;
     const observer = new ResizeObserver(() => {
@@ -300,6 +415,7 @@ export function EmbeddedPiTerminal({ session, theme }: { session: TerminalSessio
         if (!entry || entry.element.hidden) return;
         entry.fitAddon.fit();
         window.piBridge.resizeSessionTui(sessionId, entry.terminal.cols, entry.terminal.rows);
+        syncFixedClip(entry.terminal);
       });
     });
     observer.observe(host);
@@ -307,6 +423,42 @@ export function EmbeddedPiTerminal({ session, theme }: { session: TerminalSessio
       observer.disconnect();
       cancelAnimationFrame(frame);
     };
+  }, []);
+
+  useEffect(() => {
+    for (const entry of terminals.current.values()) applySessionClip(entry.element, blankClipPx);
+    const sessionId = selectedSessionId.current;
+    if (!sessionId) return;
+    const entry = terminals.current.get(sessionId);
+    if (!entry || entry.element.hidden) return;
+    entry.fitAddon.fit();
+    window.piBridge.resizeSessionTui(sessionId, entry.terminal.cols, entry.terminal.rows);
+  }, [blankClipPx]);
+
+  useEffect(() => {
+    const host = root.current;
+    if (!host) return;
+    const onWheel = (event: WheelEvent) => {
+      const sessionId = selectedSessionId.current;
+      if (!sessionId || event.deltaY === 0) return;
+      const entry = terminals.current.get(sessionId);
+      if (!entry || entry.element.hidden) return;
+      const screen = entry.terminal.element?.querySelector<HTMLElement>(".xterm-screen");
+      if (!screen || entry.terminal.cols <= 0 || entry.terminal.rows <= 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const bounds = screen.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) return;
+      const cellWidth = bounds.width / entry.terminal.cols;
+      const cellHeight = bounds.height / entry.terminal.rows;
+      const col = Math.max(1, Math.min(entry.terminal.cols, Math.floor((event.clientX - bounds.left) / cellWidth) + 1));
+      const row = Math.max(1, Math.min(entry.terminal.rows, Math.floor((event.clientY - bounds.top) / cellHeight) + 1));
+      const button = event.deltaY < 0 ? 64 : 65;
+      const lines = Math.max(1, Math.min(6, Math.round(Math.abs(event.deltaY) / Math.max(cellHeight, 16))));
+      window.piBridge.writeSessionTui(sessionId, `\x1b[<${button};${col};${row}M`.repeat(lines));
+    };
+    host.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    return () => host.removeEventListener("wheel", onWheel, true);
   }, []);
 
   useEffect(() => {
@@ -321,20 +473,67 @@ export function EmbeddedPiTerminal({ session, theme }: { session: TerminalSessio
     <div
       ref={root}
       className="embedded-pi-terminal"
-      style={{ position: "absolute", inset: 0, overflow: "hidden", background: "var(--bg)" }}
+      style={{
+        position: "absolute",
+        inset: 0,
+        overflow: "hidden",
+        background: "var(--bg)",
+      }}
     >
-      {!session && (
+      <div ref={terminalPane} style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+        {!session && (
+          <div
+            style={{
+              height: "100%",
+              display: "grid",
+              placeItems: "center",
+              color: "var(--text-muted)",
+              fontSize: 14,
+            }}
+          >
+            Select a session to open Pi
+          </div>
+        )}
+      </div>
+      {session && coverOn && (
         <div
           style={{
-            height: "100%",
-            display: "grid",
-            placeItems: "center",
-            color: "var(--text-muted)",
-            fontSize: 14,
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            minHeight: dockClipPx,
+            height: "auto",
+            display: "flex",
+            overflow: "visible",
+            background: "var(--bg-panel)",
+            zIndex: 20,
           }}
         >
-          Select a session to open Pi
+          <TuiDockComposer
+            theme={theme}
+            cwd={session.cwd}
+            sessionId={session.id}
+            sessionPath={session.path}
+            onRelocated={onSessionRelocated}
+            chrome={dockChrome}
+            worktreeAnchorRef={worktreeAnchorRef}
+            onSend={(text) => window.piBridge.writeSessionTui(session.id, text + "\r")}
+            onSelectModel={(provider, id) => window.piBridge.writeSessionTui(session.id, `/model ${provider}/${id}\r`)}
+            onSelectThinking={(steps) => window.piBridge.writeSessionTui(session.id, "\u001b[Z".repeat(steps))}
+            onHideCover={() => setCoverOn(false)}
+          />
         </div>
+      )}
+      {session && !coverOn && (
+        <button
+          type="button"
+          className="tui-dock-pill"
+          style={{ position: "absolute", right: 12, bottom: 10, zIndex: 20 }}
+          onClick={() => setCoverOn(true)}
+        >
+          卡片
+        </button>
       )}
     </div>
   );

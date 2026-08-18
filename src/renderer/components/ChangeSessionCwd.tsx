@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getHome, listSessions, relocateSession, subscribeRunning, validateCwd } from "@/lib/api-client";
 import { useI18n } from "@/i18n";
 import { abbreviateHomePath } from "@/lib/display-path";
+import { folderLabel } from "./tui-dock-rect";
 import type { SessionInfo } from "@/lib/types";
 
 function recentProjectRoots(sessions: SessionInfo[]): string[] {
@@ -20,11 +21,15 @@ export function ChangeSessionCwd({
   sessionId,
   sessionPath,
   onRelocated,
+  appearance = "default",
+  menuPlacement = "down",
 }: {
   cwd: string;
   sessionId: string;
   sessionPath?: string;
   onRelocated: (session: SessionInfo) => void;
+  appearance?: "default" | "pill";
+  menuPlacement?: "down" | "up";
 }) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -135,29 +140,57 @@ export function ChangeSessionCwd({
         aria-label={t("changeWorkingDirectory", "Change working directory")}
         aria-expanded={open}
         onClick={() => void openPicker()}
-        style={{
-          minWidth: 48,
-          height: 22,
-          padding: "0 7px",
-          color: disabled ? "var(--text-dim)" : "var(--text-muted)",
-          background: open ? "var(--bg-selected)" : "transparent",
-          border: "1px solid var(--border)",
-          borderRadius: 4,
-          cursor: disabled ? "not-allowed" : "pointer",
-          fontSize: 11,
-        }}
+        className={appearance === "pill" ? "tui-dock-pill" : undefined}
+        style={
+          appearance === "pill"
+            ? { cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }
+            : {
+                minWidth: 48,
+                height: 22,
+                padding: "0 7px",
+                color: disabled ? "var(--text-dim)" : "var(--text-muted)",
+                background: open ? "var(--bg-selected)" : "transparent",
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                cursor: disabled ? "not-allowed" : "pointer",
+                fontSize: 11,
+              }
+        }
       >
-        {t("changeWorkingDirectoryShort", "Change")}
+        {appearance === "pill" ? (
+          <>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M3 7h6l2 2h10v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z" />
+            </svg>
+            <span className="tui-dock-pill-label">{folderLabel(cwd)}</span>
+            <svg
+              className="tui-dock-pill-chev"
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+            >
+              <path d="M2 3.5 5 6.5 8 3.5" />
+            </svg>
+          </>
+        ) : (
+          t("changeWorkingDirectoryShort", "Change")
+        )}
       </button>
       {open && (
         <div
           style={{
             position: "absolute",
-            top: "100%",
-            right: 0,
+            top: menuPlacement === "down" ? "100%" : undefined,
+            bottom: menuPlacement === "up" ? "100%" : undefined,
+            left: appearance === "pill" ? 0 : undefined,
+            right: appearance === "pill" ? undefined : 0,
             zIndex: 60,
             width: 320,
-            marginTop: 4,
+            marginTop: menuPlacement === "down" ? 4 : undefined,
+            marginBottom: menuPlacement === "up" ? 4 : undefined,
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             borderRadius: 6,
