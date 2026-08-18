@@ -10,8 +10,10 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { forkOnNewSession, shouldCollapseSidebarAfterSessionPick, type CockpitRole } from "@/fork";
+import { ChangeSessionCwd } from "./ChangeSessionCwd";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
+import { EmbeddedPiTerminal } from "./EmbeddedPiTerminal";
 import { FileExplorer } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
@@ -48,7 +50,7 @@ import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { ChannelsSnapshot } from "@shared/channel-types";
 import type { BrowserAgentAuthorizationRequest, BrowserAgentAuthorizationDecision } from "../../contract/browser";
 
-type SessionCopyField = "file" | "id";
+type SessionCopyField = "file" | "id" | "cwd";
 type SessionCopyFeedback = { field: SessionCopyField; status: "copied" | "error" };
 const EXPLORER_TAB_ID = "explorer";
 const BROWSER_TAB_ID = "browser";
@@ -107,7 +109,11 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
   // sidebar, so it must stay open even though its narrow window matches the
   // mobile breakpoint.
   useEffect(() => {
-    if (role === "left") {
+    if (role === "cockpit") {
+      setSidebarOpen(true);
+      setRightPanelOpen(true);
+      setRightPanelWidth(420);
+    } else if (role === "left") {
       setSidebarOpen(true);
     } else if (isMobile) {
       setSidebarOpen(false);
@@ -521,6 +527,16 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
     [router, isMobile, role],
   );
 
+  const handleSessionRelocated = useCallback((session: SessionInfo) => {
+    setSelectedSession(session);
+    setActiveCwd(session.cwd);
+    setNewSessionCwd(session.path ? null : session.cwd);
+    setSessionKey((k) => k + 1);
+    setRefreshKey((k) => k + 1);
+    setExplorerRefreshKey((k) => k + 1);
+    setActiveTopPanel(null);
+  }, []);
+
   const handleNewSession = useCallback(
     (sessionId: string, cwd: string) => {
       setActiveCwd(cwd);
@@ -639,7 +655,8 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
-  const showChat = role === "full" && (selectedSession !== null || effectiveNewSessionCwd !== null);
+  const showChat =
+    (role === "full" || role === "cockpit") && (selectedSession !== null || effectiveNewSessionCwd !== null);
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
 
@@ -787,7 +804,10 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
         }
       }
     `}</style>
-      <div style={{ display: "flex", height: "100dvh", overflow: "hidden", background: "var(--bg)" }}>
+      <div
+        className={role === "cockpit" ? "pi-cockpit-shell" : undefined}
+        style={{ display: "flex", height: "100dvh", overflow: "hidden", background: "var(--bg)" }}
+      >
         {/* Mobile overlay backdrop */}
         <div
           className={`sidebar-overlay-backdrop${mobileSidebarReady ? "" : " sidebar-mobile-pending"}`}
@@ -823,7 +843,7 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
         <div
           style={{
             flex: 1,
-            display: role === "full" ? "flex" : "none",
+            display: role === "full" || role === "cockpit" ? "flex" : "none",
             flexDirection: "column",
             overflow: "hidden",
             minWidth: 0,
@@ -997,7 +1017,7 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
             )}
             {/* Session stats — right-aligned in top bar */}
             {showChat &&
-              (sessionStats || contextUsage) &&
+              (selectedSession || sessionStats || contextUsage) &&
               (() => {
                 const tokenStats = sessionStats?.tokens;
                 const c = sessionStats?.cost ?? 0;
@@ -1148,6 +1168,15 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
                             copyField: "file" as const,
                           },
                           { label: t("sessionId", "ID"), value: sessionStats.sessionId, copyField: "id" as const },
+                          ...(selectedSession?.cwd
+                            ? [
+                                {
+                                  label: t("workingDirectory", "Working directory"),
+                                  value: selectedSession.cwd,
+                                  copyField: "cwd" as const,
+                                },
+                              ]
+                            : []),
                         ];
                         const messageRows = [
                           [t("user", "User"), sessionStats.userMessages.toLocaleString(language)],
@@ -1231,7 +1260,9 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
                           const defaultLabel =
                             field === "file"
                               ? t("copyFilePath", "Copy file path")
-                              : t("copySessionId", "Copy session ID");
+                              : field === "cwd"
+                                ? t("copyWorkingDirectory", "Copy working directory")
+                                : t("copySessionId", "Copy session ID");
                           const label = copied
                             ? t("copied", "Copied")
                             : failed
@@ -1350,7 +1381,17 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
                                   >
                                     {row.value}
                                   </div>
-                                  <div>{row.copyField ? copyButton(row.copyField, row.value) : null}</div>
+                                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                                    {row.copyField ? copyButton(row.copyField, row.value) : null}
+                                    {row.copyField === "cwd" && selectedSession && (
+                                      <ChangeSessionCwd
+                                        cwd={selectedSession.cwd}
+                                        sessionId={selectedSession.id}
+                                        sessionPath={selectedSession.path}
+                                        onRelocated={handleSessionRelocated}
+                                      />
+                                    )}
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -1382,6 +1423,120 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
                           </div>
                         );
                       })()
+                    ) : selectedSession ? (
+                      (() => {
+                        const sessionRows = [
+                          ...(selectedSession.path
+                            ? [
+                                {
+                                  label: t("sessionFile", "File"),
+                                  value: selectedSession.path,
+                                  copyField: "file" as const,
+                                },
+                              ]
+                            : []),
+                          { label: t("sessionId", "ID"), value: selectedSession.id, copyField: "id" as const },
+                          {
+                            label: t("workingDirectory", "Working directory"),
+                            value: selectedSession.cwd,
+                            copyField: "cwd" as const,
+                          },
+                        ];
+
+                        return (
+                          <div
+                            style={{
+                              minWidth: 0,
+                              fontSize: 12,
+                              lineHeight: 1.5,
+                              fontFamily: "var(--font-mono)",
+                            }}
+                          >
+                            <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
+                              {t("sessionInfo", "Session info")}
+                            </div>
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "auto minmax(0, 1fr) auto",
+                                columnGap: 12,
+                                rowGap: 8,
+                                alignItems: "start",
+                              }}
+                            >
+                              {sessionRows.map((row) => {
+                                const feedback =
+                                  sessionCopyFeedback?.field === row.copyField ? sessionCopyFeedback.status : null;
+                                const label =
+                                  feedback === "copied"
+                                    ? t("copied", "Copied")
+                                    : feedback === "error"
+                                      ? t("copyFailed", "Copy failed")
+                                      : row.copyField === "file"
+                                        ? t("copyFilePath", "Copy file path")
+                                        : row.copyField === "cwd"
+                                          ? t("copyWorkingDirectory", "Copy working directory")
+                                          : t("copySessionId", "Copy session ID");
+                                return (
+                                  <div key={`cockpit-session-info:${row.label}`} style={{ display: "contents" }}>
+                                    <div style={{ color: "var(--text-dim)", whiteSpace: "nowrap" }}>{row.label}</div>
+                                    <div
+                                      style={{
+                                        color: "var(--text-muted)",
+                                        minWidth: 0,
+                                        overflowWrap: "anywhere",
+                                        wordBreak: "break-word",
+                                      }}
+                                    >
+                                      {row.value}
+                                    </div>
+                                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                                      <button
+                                        type="button"
+                                        title={label}
+                                        aria-label={label}
+                                        onClick={() => handleCopySessionField(row.copyField, row.value)}
+                                        style={{
+                                          minWidth: 48,
+                                          height: 22,
+                                          padding: "0 7px",
+                                          color:
+                                            feedback === "error"
+                                              ? "var(--error, #ef4444)"
+                                              : feedback === "copied"
+                                                ? "var(--accent)"
+                                                : "var(--text-dim)",
+                                          background: "transparent",
+                                          border: "1px solid var(--border)",
+                                          borderRadius: 4,
+                                          cursor: "pointer",
+                                          fontSize: 11,
+                                        }}
+                                      >
+                                        {feedback === "copied" ? t("copied", "Copied") : t("copy", "Copy")}
+                                      </button>
+                                      {row.copyField === "cwd" && (
+                                        <ChangeSessionCwd
+                                          cwd={selectedSession.cwd}
+                                          sessionId={selectedSession.id}
+                                          sessionPath={selectedSession.path}
+                                          onRelocated={handleSessionRelocated}
+                                        />
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {sessionCopyFeedback?.status === "error" && (
+                              <div role="alert" style={{ marginTop: 8, color: "var(--error, #ef4444)" }}>
+                                {t("copyFailed", "Copy failed")}.{" "}
+                                {t("checkClipboardPermission", "Check clipboard permission and retry.")}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()
                     ) : (
                       <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
                         {t("loadSessionInfoHint", "Send a message or run /session to load session info")}
@@ -1395,7 +1550,9 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
 
           {/* Chat content */}
           <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-            {showChat ? (
+            {role === "cockpit" ? (
+              <EmbeddedPiTerminal session={selectedSession} theme={isDark ? "dark" : "light"} />
+            ) : showChat ? (
               <SessionProfiler key={sessionKey} id="ChatWindow">
                 <ChatWindow
                   session={selectedSession}
@@ -1481,13 +1638,14 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
               background: "var(--bg)",
               flex: role === "right" ? 1 : undefined,
               width: role === "right" ? "100%" : undefined,
-              "--right-panel-width": role === "right" ? "100%" : `${rightPanelWidth}px`,
-              "--right-panel-min-width": `${rightPanelBounds.minWidth}px`,
+              "--right-panel-width": role === "right" ? "100%" : role === "cockpit" ? "420px" : `${rightPanelWidth}px`,
+              "--right-panel-min-width": role === "cockpit" ? "420px" : `${rightPanelBounds.minWidth}px`,
             } as CSSProperties
           }
         >
           <div
             className="right-panel-resizer"
+            hidden={role === "cockpit"}
             role="separator"
             aria-label={t("resizeRightPanel", "Resize right panel")}
             aria-orientation="vertical"

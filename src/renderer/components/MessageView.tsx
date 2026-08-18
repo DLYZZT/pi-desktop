@@ -1642,6 +1642,7 @@ function CustomMessageView({
   onOpenFile?: (filePath: string) => void;
   onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
 }) {
+  const { t } = useI18n();
   const isHiddenDisplay = message.display === false;
   const [contentExpanded, setContentExpanded] = useState(!isHiddenDisplay);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
@@ -1650,7 +1651,10 @@ function CustomMessageView({
   const images = getMessageImages(message.content);
   const hasDetails = message.details !== undefined;
   const detailsText = hasDetails ? safeJson(message.details) : "";
-  const title = formatCustomType(message.customType);
+  const title =
+    message.customType === "desktop.cwdChanged"
+      ? t("workingDirectoryChanged", "Working directory")
+      : formatCustomType(message.customType);
   const time = formatTime(message.timestamp);
 
   const copyContent = () => void copy(text || detailsText);

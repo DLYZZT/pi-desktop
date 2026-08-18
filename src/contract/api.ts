@@ -89,6 +89,10 @@ export interface Api {
     params: { id: string; archived: boolean };
     result: { ok: true };
   };
+  "sessions.relocate": {
+    params: { id: string; cwd: string };
+    result: { session: SessionInfo };
+  };
 
   "worktrees.list": {
     params: { projectRoot: string };

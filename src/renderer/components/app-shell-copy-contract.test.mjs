@@ -10,3 +10,10 @@ test("session clipboard rejection is consumed and exposed as local alert feedbac
   assert.match(source, /sessionCopyFeedback\?\.status === "error"/);
   assert.match(source, /<div role="alert"/);
 });
+
+test("cockpit keeps the original session info dropdown available without ChatWindow stats", () => {
+  assert.match(source, /showChat\s*&&\s*\(selectedSession\s*\|\|\s*sessionStats\s*\|\|\s*contextUsage\)/);
+  assert.match(source, /sessionStats\s*\?\s*\([\s\S]*?\)\s*:\s*selectedSession\s*\?/);
+  assert.match(source, /label:\s*t\("sessionId",\s*"ID"\),\s*value:\s*selectedSession\.id/);
+  assert.match(source, /label:\s*t\("workingDirectory",\s*"Working directory"\),\s*value:\s*selectedSession\.cwd/);
+});
