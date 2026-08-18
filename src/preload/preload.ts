@@ -78,11 +78,26 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
         ipcRenderer.send("desktop:kill-session-tui", sessionId.trim());
       }
     },
+    writeSessionTui: (sessionId, data) => {
+      if (typeof sessionId === "string" && sessionId.trim() && typeof data === "string" && data) {
+        ipcRenderer.send("desktop:write-session-tui", sessionId.trim(), data);
+      }
+    },
+    resizeSessionTui: (sessionId, cols, rows) => {
+      if (typeof sessionId === "string" && sessionId.trim() && Number.isFinite(cols) && Number.isFinite(rows)) {
+        ipcRenderer.send("desktop:resize-session-tui", sessionId.trim(), cols, rows);
+      }
+    },
     getSessionTuiMarks: () => ipcRenderer.invoke("desktop:get-session-tui-marks"),
     onSessionTuiMarks: (cb) => {
       const handler = (_: Electron.IpcRendererEvent, marks: Record<string, "running" | "dead">) => cb(marks);
       ipcRenderer.on("desktop:session-tui-marks", handler);
       return () => ipcRenderer.removeListener("desktop:session-tui-marks", handler);
+    },
+    onSessionTuiData: (cb) => {
+      const handler = (_: Electron.IpcRendererEvent, payload: { sessionId: string; data: string }) => cb(payload);
+      ipcRenderer.on("desktop:session-tui-data", handler);
+      return () => ipcRenderer.removeListener("desktop:session-tui-data", handler);
     },
     onCockpitSelection: (cb) => {
       const handler = (

@@ -20,20 +20,13 @@ import {
 import { ToolchainError } from "../shared/toolchains/errors";
 import type { BrowserService } from "./browser/browser-service";
 import { BrowserError } from "./browser/browser-error";
-import {
-  applySessionTuiKill,
-  applySessionTuiSelect,
-  reconcileSessionTuiMarks,
-  sessionTuiMarks,
-  snapshotSessionTuiMarks,
-} from "./fork/session-tui";
+import { spawn as spawnPty } from "node-pty";
 import {
   bundledPiCliPath,
-  focusExternalPi,
-  killExternalPiSessions,
-  listAliveSessionTuiIds,
-  spawnExternalPi,
-} from "./fork/session-tui-spawn";
+  createSessionPtyManager,
+  type SessionPtyManager,
+  type SessionPtySpawn,
+} from "./fork/session-pty";
 import { isTrustedDesktopIpcSender } from "./ipc-trust";
 import type {
   BrowserConfirmationKind,
@@ -64,7 +57,6 @@ export type DesktopIpcOptions = {
     executable: string,
   ) => Promise<PublicToolchainState>;
   resolveNodeExecutable: (cwd: string) => Promise<string>;
-  linkCockpitToSession?: (sessionId: string, cwd: string) => Promise<boolean>;
   setChannelCredential: (payload: ChannelCredentialWrite) => void;
   getBrowserService: () => BrowserService | null;
   updateManager: {
@@ -76,7 +68,7 @@ export type DesktopIpcOptions = {
   };
 };
 
-export function installDesktopIpc(options: DesktopIpcOptions): void {
+export function installDesktopIpc(options: DesktopIpcOptions): SessionPtyManager {
   const {
     getHostManager,
     getMainWindow,
@@ -88,7 +80,6 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     performToolchainAction,
     chooseCustomTool,
     resolveNodeExecutable,
-    linkCockpitToSession,
     setChannelCredential,
     getBrowserService,
     updateManager,
@@ -200,25 +191,28 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   });
 
   const emitSessionTuiMarks = (): void => {
-    const marks = snapshotSessionTuiMarks(sessionTuiMarks);
+    const marks = sessionPtyManager.snapshotMarks();
     for (const win of trustedWindows()) {
       if (win && !win.isDestroyed()) win.webContents.send("desktop:session-tui-marks", marks);
     }
   };
-  const sessionTuiPort = {
-    spawn(request: Parameters<typeof spawnExternalPi>[0]) {
-      spawnExternalPi(request);
-      emitSessionTuiMarks();
-    },
-    focus(request: Parameters<typeof focusExternalPi>[0]) {
-      focusExternalPi(request);
-      emitSessionTuiMarks();
-    },
-    kill(sessionIds: string[]) {
-      killExternalPiSessions(sessionIds);
-      emitSessionTuiMarks();
-    },
+  const emitSessionTuiData = (sessionId: string, data: string): void => {
+    for (const win of trustedWindows()) {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("desktop:session-tui-data", { sessionId, data });
+      }
+    }
   };
+  const sessionPtyManager = createSessionPtyManager({
+    spawn: spawnPty as SessionPtySpawn,
+    onData(sessionId, data) {
+      emitSessionTuiData(sessionId, data);
+    },
+    onExit(sessionId, exitCode) {
+      appendMainLog(`embedded Pi exited session=${sessionId} code=${exitCode}`);
+      emitSessionTuiMarks();
+    },
+  });
 
   trustedOn("desktop:start-session-tui", (_event, payload: unknown) => {
     if (!payload || typeof payload !== "object") return;
@@ -237,33 +231,40 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     }
     void resolveNodeExecutable(selected.cwd)
       .then((nodeExecutable) => {
-        applySessionTuiSelect(
-          selected,
-          { bundledPi: bundledPiCliPath(), nodeExecutable },
-          sessionTuiPort,
-          sessionTuiMarks,
-        );
-        if (linkCockpitToSession) {
-          void linkCockpitToSession(selected.sessionId, selected.cwd).then((linked) => {
-            if (!linked) appendMainLog(`session TUI window link timed out session=${selected.sessionId}`);
-          });
-        }
+        sessionPtyManager.start({
+          ...selected,
+          nodeExecutable,
+          program: bundledPiCliPath(),
+        });
+        emitSessionTuiMarks();
       })
       .catch((error) => {
-        appendMainLog(`session TUI start failed: ${error instanceof Error ? error.message : String(error)}`);
+        const message = error instanceof Error ? error.message : String(error);
+        sessionPtyManager.markDead(selected.sessionId);
+        emitSessionTuiMarks();
+        emitSessionTuiData(selected.sessionId, `\r\nPi failed to start: ${message}\r\n`);
+        appendMainLog(`embedded Pi start failed session=${selected.sessionId}: ${message}`);
       });
   });
 
   trustedOn("desktop:kill-session-tui", (_event, sessionId: unknown) => {
     if (typeof sessionId !== "string" || !sessionId.trim()) return;
-    applySessionTuiKill(sessionId.trim(), sessionTuiMarks, sessionTuiPort);
+    sessionPtyManager.kill(sessionId.trim());
+    emitSessionTuiMarks();
   });
 
-  trustedHandle("desktop:get-session-tui-marks", async () => {
-    const alive = await listAliveSessionTuiIds();
-    if (alive) reconcileSessionTuiMarks(sessionTuiMarks, alive);
-    return snapshotSessionTuiMarks(sessionTuiMarks);
+  trustedOn("desktop:write-session-tui", (_event, sessionId: unknown, data: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId.trim() || typeof data !== "string") return;
+    sessionPtyManager.write(sessionId.trim(), data);
   });
+
+  trustedOn("desktop:resize-session-tui", (_event, sessionId: unknown, cols: unknown, rows: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId.trim()) return;
+    if (typeof cols !== "number" || typeof rows !== "number") return;
+    sessionPtyManager.resize(sessionId.trim(), cols, rows);
+  });
+
+  trustedHandle("desktop:get-session-tui-marks", () => sessionPtyManager.snapshotMarks());
 
   trustedHandle("desktop:open-external", async (_event, url: string) => {
     if (typeof url !== "string") return;
@@ -466,6 +467,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   );
   browserHandler("desktop:browser:choose-upload-files", (browser, tabId: string) => browser.chooseUploadFiles(tabId));
   browserHandler("desktop:browser:reset", (browser) => browser.reset());
+  return sessionPtyManager;
 }
 
 function toolchainActionConfirmation(request: ToolchainActionRequest): Electron.MessageBoxOptions | undefined {

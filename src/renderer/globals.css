@@ -1002,6 +1002,29 @@ span.linenumber {
     width: 280px;
     min-width: 280px;
   }
+  .pi-cockpit-shell .sidebar-container.sidebar-open,
+  .pi-cockpit-shell .sidebar-container > * {
+    width: 320px;
+    min-width: 320px;
+  }
+}
+
+.embedded-pi-terminal {
+  padding: 8px 6px 6px 10px;
+  box-sizing: border-box;
+}
+
+.embedded-pi-terminal-session,
+.embedded-pi-terminal-session .xterm {
+  width: 100%;
+  height: 100%;
+}
+
+.embedded-pi-terminal .xterm-helper-textarea {
+  opacity: 0.01 !important;
+  z-index: 10 !important;
+  color: transparent;
+  caret-color: transparent;
 }
 
 /* Right panel: animate width */

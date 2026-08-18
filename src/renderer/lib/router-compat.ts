@@ -6,7 +6,9 @@ export const routerCompat: RouterCompat = Object.freeze({
   replace(url: string, _options?: { scroll?: boolean }) {
     const next = url.startsWith("?") || url.startsWith("/") ? url : `?${url}`;
     const full = next.startsWith("?") ? `${window.location.pathname}${next}` : next;
-    window.history.replaceState(null, "", full === "/" ? "/" : full);
+    const destination = full === "/" ? "/" : full;
+    const hash = destination.includes("#") ? "" : window.location.hash;
+    window.history.replaceState(null, "", `${destination}${hash}`);
     window.dispatchEvent(new Event("popstate"));
   },
 });

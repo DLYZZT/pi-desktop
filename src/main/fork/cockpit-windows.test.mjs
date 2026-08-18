@@ -2,19 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { layoutCockpitBounds } from "./cockpit-windows.ts";
+const mainSource = readFileSync(new URL("../main.ts", import.meta.url), "utf8");
 
-test("cockpit windows sit on the left and right edges and leave the middle empty", () => {
-  const layout = layoutCockpitBounds({ x: 0, y: 0, width: 1920, height: 1080 });
-  assert.equal(layout.left.x, 0);
-  assert.equal(layout.right.x + layout.right.width, 1920);
-  assert.ok(layout.left.width + layout.right.width < 1920);
-  assert.ok(layout.left.x + layout.left.width <= layout.right.x);
+test("cockpit is one normal Electron window filling the current display work area", () => {
+  assert.match(mainSource, /getDisplayNearestPoint\(screen\.getCursorScreenPoint\(\)\)\.workArea/);
+  assert.match(mainSource, /hash: "#cockpit"/);
+  assert.equal(mainSource.match(/createMainWindow\(\{/g)?.length, 1);
+  assert.doesNotMatch(mainSource, /leftCockpitWindow|rightCockpitWindow|alwaysOnTop: true/);
 });
 
-test("cockpit windows become native owned windows of the Pi terminal", () => {
-  const source = readFileSync(new URL("./cockpit-window-owner.ts", import.meta.url), "utf8");
-  assert.match(source, /GWLP_HWNDPARENT/);
-  assert.match(source, /FindExactTitle/);
-  assert.match(source, /SetOwner/);
+test("cockpit no longer links side windows to Windows Terminal through PowerShell", () => {
+  assert.doesNotMatch(mainSource, /cockpit-window-owner|session-tui-spawn|linkCockpitWindowsToSession/);
 });
