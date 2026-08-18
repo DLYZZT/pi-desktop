@@ -1,5 +1,14 @@
 # Learnings
 
+## 2026-08-18
+
+- **Trap:** Sidebar spinner used `sessionTuiMarks === "running"`. Cockpit PTY stays alive → every open session spins and never looks done.
+- **Do instead:** Spinner = host `runningSessionIds` (agent turn). Stop TUI / dead mark stay on PTY marks.
+- **Trap:** Session relocate lived only in the session-info popover. Cockpit users never opened it, so the feature looked unimplemented.
+- **Do instead:** Put 更换工作目录 on the session row `…` menu.
+- **Trap:** Embedded Pi PTY and xterm are keyed by session id. Relocate updated the jsonl cwd, then `start()` focused the old folder.
+- **Do instead:** Restart the PTY when cwd or session path changes. Remount that session's xterm.
+
 ## 2026-08-17
 
 - **Trap:** Stop via `agent.command` waits on the same 120s RPC as prompts. Host reload / wedged port → `RPC call timed out: agent.command`. Abort handler never runs.

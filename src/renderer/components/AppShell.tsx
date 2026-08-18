@@ -9,7 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { forkOnNewSession, shouldCollapseSidebarAfterSessionPick, type CockpitRole } from "@/fork";
+import { forkOnNewSession, forkOnSelectSession, shouldCollapseSidebarAfterSessionPick, type CockpitRole } from "@/fork";
 import { ChangeSessionCwd } from "./ChangeSessionCwd";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
@@ -527,15 +527,22 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
     [router, isMobile, role],
   );
 
-  const handleSessionRelocated = useCallback((session: SessionInfo) => {
-    setSelectedSession(session);
-    setActiveCwd(session.cwd);
-    setNewSessionCwd(session.path ? null : session.cwd);
-    setSessionKey((k) => k + 1);
-    setRefreshKey((k) => k + 1);
-    setExplorerRefreshKey((k) => k + 1);
-    setActiveTopPanel(null);
-  }, []);
+  const handleSessionRelocated = useCallback(
+    (session: SessionInfo) => {
+      const isCurrent = selectedSession?.id === session.id;
+      if (isCurrent) {
+        setSelectedSession(session);
+        setActiveCwd(session.cwd);
+        setNewSessionCwd(session.path ? null : session.cwd);
+        setSessionKey((k) => k + 1);
+        forkOnSelectSession(session);
+      }
+      setRefreshKey((k) => k + 1);
+      setExplorerRefreshKey((k) => k + 1);
+      setActiveTopPanel(null);
+    },
+    [selectedSession?.id],
+  );
 
   const handleNewSession = useCallback(
     (sessionId: string, cwd: string) => {
@@ -678,6 +685,7 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
         onInitialRestoreDone={handleInitialRestoreDone}
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}
+        onSessionRelocated={handleSessionRelocated}
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
         onCwdChange={handleCwdChange}
       />

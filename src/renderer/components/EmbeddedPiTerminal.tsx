@@ -11,6 +11,7 @@ type TerminalSession = {
 };
 
 type TerminalEntry = {
+  cwd: string;
   terminal: Terminal;
   fitAddon: FitAddon;
   element: HTMLDivElement;
@@ -22,6 +23,18 @@ type TerminalEntry = {
   pinImeOnKey: (event: Event) => void;
   imeStyleObserver: MutationObserver;
 };
+
+function disposeTerminalEntry(entry: TerminalEntry): void {
+  entry.terminal.textarea?.removeEventListener("keydown", entry.pinImeOnKey, true);
+  entry.terminal.textarea?.removeEventListener("compositionstart", entry.startImeComposition, true);
+  entry.terminal.textarea?.removeEventListener("compositionupdate", entry.updateImeComposition, true);
+  entry.terminal.textarea?.removeEventListener("compositionend", entry.endImeComposition);
+  entry.imeStyleObserver.disconnect();
+  entry.imeRenderDisposable.dispose();
+  entry.inputDisposable.dispose();
+  entry.terminal.dispose();
+  entry.element.remove();
+}
 
 function lineLooksLikeBorder(text: string): boolean {
   const trimmed = text.trim();
@@ -163,6 +176,11 @@ export function EmbeddedPiTerminal({ session, theme }: { session: TerminalSessio
     if (!host || !session) return;
 
     let entry = terminals.current.get(session.id);
+    if (entry && entry.cwd !== session.cwd) {
+      disposeTerminalEntry(entry);
+      terminals.current.delete(session.id);
+      entry = undefined;
+    }
     if (!entry) {
       const element = document.createElement("div");
       element.className = "embedded-pi-terminal-session";
@@ -241,6 +259,7 @@ export function EmbeddedPiTerminal({ session, theme }: { session: TerminalSessio
         window.piBridge.writeSessionTui(session.id, data);
       });
       entry = {
+        cwd: session.cwd,
         terminal,
         fitAddon,
         element,
@@ -293,17 +312,7 @@ export function EmbeddedPiTerminal({ session, theme }: { session: TerminalSessio
   useEffect(() => {
     const terminalEntries = terminals.current;
     return () => {
-      for (const entry of terminalEntries.values()) {
-        entry.terminal.textarea?.removeEventListener("keydown", entry.pinImeOnKey, true);
-        entry.terminal.textarea?.removeEventListener("compositionstart", entry.startImeComposition, true);
-        entry.terminal.textarea?.removeEventListener("compositionupdate", entry.updateImeComposition, true);
-        entry.terminal.textarea?.removeEventListener("compositionend", entry.endImeComposition);
-        entry.imeStyleObserver.disconnect();
-        entry.imeRenderDisposable.dispose();
-        entry.inputDisposable.dispose();
-        entry.terminal.dispose();
-        entry.element.remove();
-      }
+      for (const entry of terminalEntries.values()) disposeTerminalEntry(entry);
       terminalEntries.clear();
     };
   }, []);

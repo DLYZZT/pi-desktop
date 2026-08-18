@@ -26,6 +26,7 @@ import {
   useSessionTuiMarks,
 } from "@/fork";
 import { applySessionChangedEvent } from "@/lib/session-sidebar-state";
+import { getHome, listSessions, relocateSession, validateCwd } from "@/lib/api-client";
 import { abbreviateHomePath } from "@/lib/display-path";
 import { formatNumber, formatRelativeDateTime } from "@/lib/locale-format";
 
@@ -37,6 +38,7 @@ interface Props {
   onInitialRestoreDone?: () => void;
   refreshKey?: number;
   onSessionDeleted?: (sessionId: string) => void;
+  onSessionRelocated?: (session: SessionInfo) => void;
   selectedCwd?: string | null;
   onCwdChange?: (cwd: string | null, projectRoot?: string | null) => void;
 }
@@ -355,6 +357,7 @@ export function SessionSidebar({
   onInitialRestoreDone,
   refreshKey,
   onSessionDeleted,
+  onSessionRelocated,
   selectedCwd: selectedCwdProp,
   onCwdChange,
 }: Props) {
@@ -2019,6 +2022,7 @@ export function SessionSidebar({
                       onSelectSession={handleSelectSessionFromList}
                       onRenamed={loadSessions}
                       onArchived={loadSessions}
+                      onRelocated={onSessionRelocated}
                       showProjectTag={false}
                       onSessionDeleted={(id) => {
                         onSessionDeleted?.(id);
@@ -2056,6 +2060,7 @@ export function SessionSidebar({
                             onSelectSession={handleSelectSessionFromList}
                             onRenamed={loadSessions}
                             onArchived={loadSessions}
+                            onRelocated={onSessionRelocated}
                             showProjectTag={showProjectTag}
                             onSessionDeleted={(id) => {
                               onSessionDeleted?.(id);
@@ -2083,12 +2088,14 @@ export function SessionSidebar({
             key={session.id}
             session={session}
             isSelected={session.id === selectedSessionId}
-            isRunning={sessionTuiMarks[session.id] === "running"}
+            isRunning={runningSessionIds.has(session.id)}
+            isTuiRunning={sessionTuiMarks[session.id] === "running"}
             isDead={sessionTuiMarks[session.id] === "dead"}
             isUnread={unreadSessionIds.has(session.id)}
             onClick={() => handleSelectSessionFromList(session)}
             onRenamed={loadSessions}
             onArchived={loadSessions}
+            onRelocated={onSessionRelocated}
             onStopTui={() => forkOnKillSession(session.id)}
             showProjectTag={showProjectTag}
             onDeleted={(id) => {
@@ -2111,6 +2118,7 @@ function SessionTreeItem({
   onSelectSession,
   onRenamed,
   onArchived,
+  onRelocated,
   showProjectTag,
   onSessionDeleted,
   depth,
@@ -2123,6 +2131,7 @@ function SessionTreeItem({
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
   onArchived?: () => void;
+  onRelocated?: (session: SessionInfo) => void;
   showProjectTag?: boolean;
   onSessionDeleted?: (id: string) => void;
   depth: number;
@@ -2150,12 +2159,14 @@ function SessionTreeItem({
         <SessionItem
           session={node.session}
           isSelected={node.session.id === selectedSessionId}
-          isRunning={sessionTuiMarks[node.session.id] === "running"}
+          isRunning={runningSessionIds.has(node.session.id)}
+          isTuiRunning={sessionTuiMarks[node.session.id] === "running"}
           isDead={sessionTuiMarks[node.session.id] === "dead"}
           isUnread={unreadSessionIds.has(node.session.id)}
           onClick={() => onSelectSession(node.session)}
           onRenamed={onRenamed}
           onArchived={onArchived}
+          onRelocated={onRelocated}
           onStopTui={() => forkOnKillSession(node.session.id)}
           showProjectTag={showProjectTag}
           onDeleted={(id) => onSessionDeleted?.(id)}
@@ -2178,6 +2189,7 @@ function SessionTreeItem({
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
               onArchived={onArchived}
+              onRelocated={onRelocated}
               showProjectTag={showProjectTag}
               onSessionDeleted={onSessionDeleted}
               depth={depth + 1}
@@ -2292,11 +2304,13 @@ function SessionItem({
   session,
   isSelected,
   isRunning,
+  isTuiRunning,
   isDead,
   isUnread,
   onClick,
   onRenamed,
   onArchived,
+  onRelocated,
   onStopTui,
   showProjectTag = false,
   onDeleted,
@@ -2308,11 +2322,13 @@ function SessionItem({
   session: SessionInfo;
   isSelected: boolean;
   isRunning?: boolean;
+  isTuiRunning?: boolean;
   isDead?: boolean;
   isUnread?: boolean;
   onClick: () => void;
   onRenamed?: () => void;
   onArchived?: () => void;
+  onRelocated?: (session: SessionInfo) => void;
   onStopTui?: () => void;
   showProjectTag?: boolean;
   onDeleted?: (id: string) => void;
@@ -2328,6 +2344,11 @@ function SessionItem({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [relocating, setRelocating] = useState(false);
+  const [relocateBusy, setRelocateBusy] = useState(false);
+  const [relocateError, setRelocateError] = useState<string | null>(null);
+  const [relocateProjects, setRelocateProjects] = useState<string[]>([]);
+  const [relocateHome, setRelocateHome] = useState<string | undefined>();
   const inputRef = useRef<HTMLInputElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const actionsSummaryRef = useRef<HTMLButtonElement>(null);
@@ -2336,6 +2357,8 @@ function SessionItem({
 
   const closeActionsMenu = useCallback((restoreFocus = false) => {
     setActionsOpen(false);
+    setRelocating(false);
+    setRelocateError(null);
     if (restoreFocus) {
       if (restoreFocusFrameRef.current !== null) window.cancelAnimationFrame(restoreFocusFrameRef.current);
       restoreFocusFrameRef.current = window.requestAnimationFrame(() => {
@@ -2463,6 +2486,62 @@ function SessionItem({
       }
     },
     [closeActionsMenu, onArchived, session.archived, session.id],
+  );
+
+  const startRelocate = useCallback(
+    async (event: React.MouseEvent) => {
+      event.stopPropagation();
+      setRelocateError(null);
+      setRelocating(true);
+      try {
+        const result = await listSessions();
+        setRelocateProjects(getRecentProjects(result.sessions).filter((project) => project !== session.cwd));
+        const home = await getHome().catch(() => ({ home: "" }));
+        if (home.home) setRelocateHome(home.home);
+      } catch (err) {
+        setRelocateError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [session.cwd],
+  );
+
+  const applyRelocate = useCallback(
+    async (nextCwd: string) => {
+      if (relocateBusy) return;
+      setRelocateBusy(true);
+      setRelocateError(null);
+      try {
+        const validated = await validateCwd(nextCwd);
+        if (!validated.ok || !validated.path) {
+          setRelocateError(validated.error ?? t("invalidDirectory", "Invalid directory"));
+          return;
+        }
+        const dest = validated.path;
+        if (!session.path) {
+          onRelocated?.({ ...session, cwd: dest, projectRoot: dest });
+          closeActionsMenu();
+          return;
+        }
+        const { session: next } = await relocateSession(session.id, dest);
+        onRelocated?.(next);
+        onRenamed?.();
+        closeActionsMenu();
+      } catch (err) {
+        setRelocateError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setRelocateBusy(false);
+      }
+    },
+    [closeActionsMenu, onRelocated, onRenamed, relocateBusy, session, t],
+  );
+
+  const browseRelocate = useCallback(
+    async (event: React.MouseEvent) => {
+      event.stopPropagation();
+      const dir = await window.piBridge?.selectDirectory?.();
+      if (dir) await applyRelocate(dir);
+    },
+    [applyRelocate],
   );
 
   // Fixed-height outer wrapper — content swaps in place so the list never reflows
@@ -2867,7 +2946,7 @@ function SessionItem({
                   top: 36,
                   right: 0,
                   zIndex: 50,
-                  minWidth: 132,
+                  minWidth: relocating ? 240 : 132,
                   padding: 4,
                   border: "1px solid var(--border)",
                   borderRadius: 8,
@@ -2875,75 +2954,143 @@ function SessionItem({
                   boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
                 }}
               >
-                {isRunning && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="session-menu-item"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      closeActionsMenu();
-                      onStopTui?.();
-                    }}
-                    style={sessionMenuItemStyle}
-                  >
-                    {t("stopSessionTui", "Stop TUI")}
-                  </button>
+                {relocating ? (
+                  <>
+                    <div style={{ maxHeight: 220, overflowY: "auto" }}>
+                      {relocateProjects.map((project) => (
+                        <button
+                          key={project}
+                          type="button"
+                          role="menuitem"
+                          className="session-menu-item"
+                          disabled={relocateBusy}
+                          title={project}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void applyRelocate(project);
+                          }}
+                          style={sessionMenuItemStyle}
+                        >
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {abbreviateHomePath(project, relocateHome)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    {typeof window !== "undefined" && !!window.piBridge?.selectDirectory && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="session-menu-item"
+                        disabled={relocateBusy}
+                        onClick={(event) => void browseRelocate(event)}
+                        style={sessionMenuItemStyle}
+                      >
+                        {t("browseFolder", "Browse folder…")}
+                      </button>
+                    )}
+                    {relocateError && (
+                      <div role="alert" style={{ padding: "6px 9px", color: "var(--danger)", fontSize: 12 }}>
+                        {relocateError}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {isTuiRunning && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="session-menu-item"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          closeActionsMenu();
+                          onStopTui?.();
+                        }}
+                        style={sessionMenuItemStyle}
+                      >
+                        {t("stopSessionTui", "Stop TUI")}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="session-menu-item"
+                      onClick={(event) => void startRelocate(event)}
+                      style={sessionMenuItemStyle}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        <path d="M12 11v6M9 14h6" />
+                      </svg>
+                      {t("changeWorkingDirectory", "Change working directory")}
+                    </button>
+                    <ForkArchiveMenuItem
+                      archived={session.archived}
+                      archiveLabel={t("archiveSession", "Archive")}
+                      unarchiveLabel={t("unarchiveSession", "Unarchive")}
+                      style={sessionMenuItemStyle}
+                      onClick={handleArchiveClick}
+                    />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="session-menu-item"
+                      onClick={startRename}
+                      style={sessionMenuItemStyle}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                      </svg>
+                      {t("rename", "Rename")}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="session-menu-item"
+                      onClick={handleDeleteClick}
+                      style={{ ...sessionMenuItemStyle, color: "var(--danger)" }}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                        <path d="M10 11v6M14 11v6" />
+                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                      </svg>
+                      {t("delete", "Delete")}
+                    </button>
+                  </>
                 )}
-                <ForkArchiveMenuItem
-                  archived={session.archived}
-                  archiveLabel={t("archiveSession", "Archive")}
-                  unarchiveLabel={t("unarchiveSession", "Unarchive")}
-                  style={sessionMenuItemStyle}
-                  onClick={handleArchiveClick}
-                />
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="session-menu-item"
-                  onClick={startRename}
-                  style={sessionMenuItemStyle}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-                  </svg>
-                  {t("rename", "Rename")}
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="session-menu-item"
-                  onClick={handleDeleteClick}
-                  style={{ ...sessionMenuItemStyle, color: "var(--danger)" }}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                    <path d="M10 11v6M14 11v6" />
-                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                  </svg>
-                  {t("delete", "Delete")}
-                </button>
               </div>
             )}
           </div>

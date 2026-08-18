@@ -80,6 +80,35 @@ test("existing sessions resume by path while new sessions create an exact id in 
   assert.equal(manager.snapshotMarks()["sess-2"], "running");
 });
 
+test("start with a new cwd or session path restarts the live PTY", () => {
+  const spawned = [];
+  const manager = createSessionPtyManager({
+    spawn(file, args, options) {
+      const pty = createFakePty(spawned.length + 1);
+      spawned.push({ args, options, pty });
+      return pty;
+    },
+  });
+  const base = {
+    sessionId: "sess-1",
+    nodeExecutable: "C:/Node/node.exe",
+    program: "F:/bundled/pi-cli.js",
+  };
+
+  manager.start({ ...base, cwd: "F:/project-one" });
+  const restarted = manager.start({
+    ...base,
+    sessionPath: "F:/PiData/moved.jsonl",
+    cwd: "F:/project-two",
+  });
+
+  assert.equal(restarted.action, "spawn");
+  assert.equal(spawned[0].pty.killed, true);
+  assert.equal(spawned.length, 2);
+  assert.equal(spawned[1].options.cwd, "F:/project-two");
+  assert.deepEqual(spawned[1].args, ["F:/bundled/pi-cli.js", "--session", "F:/PiData/moved.jsonl"]);
+});
+
 test("PTY output, input and resize stay scoped to the matching session", () => {
   const spawned = [];
   const output = [];

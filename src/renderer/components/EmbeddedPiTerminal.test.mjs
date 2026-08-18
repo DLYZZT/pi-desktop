@@ -11,6 +11,12 @@ test("embedded terminal keeps one xterm instance per selected Pi session", () =>
   assert.match(source, /terminalEntry\.element\.hidden = sessionId !== session\.id/);
 });
 
+test("embedded terminal remounts when the same session moves to a new cwd", () => {
+  assert.match(source, /entry\.cwd !== session\.cwd/);
+  assert.match(source, /disposeTerminalEntry\(entry\)/);
+  assert.match(source, /cwd: session\.cwd/);
+});
+
 test("embedded terminal connects xterm input, output and fit dimensions to the PTY bridge", () => {
   assert.match(source, /onSessionTuiData/);
   assert.match(source, /writeSessionTui/);

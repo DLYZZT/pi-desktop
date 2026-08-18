@@ -10,9 +10,9 @@ Decisions from the cwd/workspace grill. Not a spec.
 
 ## Decision: where to trigger it
 
-- **Chosen:** Dedicated control on the open chat (session-info working directory row → Change).
-- **Why:** Sidebar project picker is a filter + new-session cwd. Reusing it would relocate when the user only wanted to look at another project.
-- **Rejected:** Reuse the sidebar project dropdown. Both entry points.
+- **Chosen:** Session row `…` menu → 更换工作目录. Recent projects + Browse folder.
+- **Why:** Session-info popover was invisible. Session actions already live in the left-sidebar overflow menu.
+- **Rejected:** Sidebar project dropdown (filter + new-session cwd). Session-info row only.
 
 ## Decision: while the agent is running
 
@@ -32,6 +32,8 @@ Decisions from the cwd/workspace grill. Not a spec.
 - **Why:** Later reads need to see when the chat jumped folders.
 - **Rejected:** Toast only. Silent remount.
 
-## Still open
+## Decision: cockpit after a move
 
-- Cockpit / embedded Pi TUI restart after relocate (Desktop chat remounts; TUI is keyed by session id).
+- **Chosen:** Restart the live PTY when cwd or session path changes. Remount that session's xterm.
+- **Why:** Same session id used to focus the old folder's TUI, so the move looked unimplemented.
+- **Rejected:** Leave the old PTY running. Kill-then-start from the renderer over two IPC messages.
