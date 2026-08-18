@@ -38,6 +38,8 @@ test("all desktop IPC registrations pass through the trusted wrappers", () => {
   assert.match(source, /trustedOn\("desktop:abort-session"/);
   assert.match(source, /trustedOn\("desktop:start-session-tui"/);
   assert.match(source, /trustedOn\("desktop:kill-session-tui"/);
+  assert.match(source, /trustedOn\("desktop:write-session-tui"/);
+  assert.match(source, /trustedOn\("desktop:resize-session-tui"/);
   assert.match(source, /trustedHandle\("desktop:get-session-tui-marks"/);
   assert.doesNotMatch(source, /trustedHandle\("desktop:abort-session"/);
   assert.doesNotMatch(source, /trustedHandle\("desktop:start-session-tui"/);

@@ -1,0 +1,16 @@
+{
+  "default_profile": "ui",
+  "profiles": {
+    "ui": {
+      "source_root": "F:\\Project\\dlyzzt-pi-desktop",
+      "cwd": "F:\\Project\\dlyzzt-pi-desktop",
+      "start_cmd": "npm run dev",
+      "build_cmd": "npm run build",
+      "output_path": "out",
+      "port": 5173,
+      "health_url": "http://localhost:5173",
+      "page_url": "http://localhost:5173",
+      "prefer_dev": true
+    }
+  }
+}

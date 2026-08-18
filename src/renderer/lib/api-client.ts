@@ -210,6 +210,10 @@ export async function setSessionArchived(id: string, archived: boolean) {
   return call("sessions.setArchived", { id, archived });
 }
 
+export async function relocateSession(id: string, cwd: string) {
+  return call("sessions.relocate", { id, cwd });
+}
+
 export async function newAgent(params: ApiParams<"agent.new">) {
   return call("agent.new", params);
 }

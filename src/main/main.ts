@@ -14,14 +14,11 @@ import { acquireSingleInstanceLock } from "./single-instance";
 import { loadUiState } from "./window-state";
 import { createTray, destroyTray, setTrayRunningCount } from "./tray";
 import { createMainWindow } from "./window";
-import { layoutCockpitBounds } from "./fork/cockpit-windows";
-import { linkCockpitWindowsToSession } from "./fork/cockpit-window-owner";
 import { installDesktopIpc } from "./ipc";
 import { createCredentialRequestHandler, CredentialVault } from "./credential-vault";
 import { createProductionUpdateAdapter, isProductionUpdatePlatformEnabled } from "./update-adapter";
 import { createUpdateManager, redactUpdateError, type UpdateManager } from "./update-manager";
-import { applySessionTuiQuit, sessionTuiMarks } from "./fork/session-tui";
-import { killExternalPiSessions } from "./fork/session-tui-spawn";
+import type { SessionPtyManager } from "./fork/session-pty";
 import { forkAllowOfficialUpdater } from "./fork/updates";
 import { ToolchainManager } from "./toolchains/manager";
 import { resolveRuntimeCatalogPath } from "./toolchains/catalog";
@@ -47,8 +44,7 @@ const expectedPiVersion = process.env.PI_DESKTOP_EXPECTED_PI_VERSION;
 const TOOLCHAIN_FOCUS_RESCAN_TTL_MS = 60_000;
 
 let mainWindow: BrowserWindow | null = null;
-let leftCockpitWindow: BrowserWindow | null = null;
-let rightCockpitWindow: BrowserWindow | null = null;
+let sessionPtyManager: SessionPtyManager | null = null;
 let hostManager: HostManager | null = null;
 let updateManager: UpdateManager | null = null;
 let toolchainManager: ToolchainManager | null = null;
@@ -126,15 +122,15 @@ function finishPackagedStartupValidation(error?: string): void {
 }
 
 function getMainWindow(): BrowserWindow | null {
-  return leftCockpitWindow ?? mainWindow;
+  return mainWindow;
 }
 
 function getBrowserWindow(): BrowserWindow | null {
-  return rightCockpitWindow ?? getMainWindow();
+  return getMainWindow();
 }
 
 function getTrustedWindows(): Array<BrowserWindow | null> {
-  return [leftCockpitWindow, rightCockpitWindow, mainWindow];
+  return [mainWindow];
 }
 
 function applyBadgeCount(count: number): void {
@@ -193,12 +189,16 @@ function startMainProcess(): void {
   });
 
   function createWindow(): BrowserWindow {
-    const bounds = layoutCockpitBounds(screen.getPrimaryDisplay().workArea);
-    const shared = {
+    const bounds = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+    const win = createMainWindow({
       isDev,
       persistBounds: false,
       alwaysOnTop: false,
+      ...bounds,
+      minWidth: 900,
       minHeight: 400,
+      hash: "#cockpit",
+      title: "Pi Cockpit",
       consumePendingDeepLink: () => {
         const sessionId = pendingDeepLink;
         pendingDeepLink = null;
@@ -206,40 +206,18 @@ function startMainProcess(): void {
       },
       shouldHideOnClose: () => !isQuitting && loadUiState().backgroundMode !== false,
       onRendererUnavailable: () => browserService?.handleRendererUnavailable(),
-    } as const;
-    const left = createMainWindow({
-      ...shared,
-      ...bounds.left,
-      minWidth: 260,
-      hash: "#cockpit-left",
-      title: "Pi sessions",
       onClosed: (closedWindow) => {
-        if (leftCockpitWindow === closedWindow) leftCockpitWindow = null;
-        if (!isQuitting) rightCockpitWindow?.close();
-      },
-    });
-    const right = createMainWindow({
-      ...shared,
-      ...bounds.right,
-      minWidth: 320,
-      hash: "#cockpit-right",
-      title: "Pi files",
-      onClosed: (closedWindow) => {
-        if (rightCockpitWindow === closedWindow) {
-          rightCockpitWindow = null;
+        if (mainWindow === closedWindow) {
+          mainWindow = null;
           browserService?.handleWindowClosed();
         }
-        if (!isQuitting) leftCockpitWindow?.close();
       },
     });
-    leftCockpitWindow = left;
-    rightCockpitWindow = right;
-    mainWindow = left;
-    const win = left;
-    right.on("hide", () => browserService?.handleWindowVisibility(false));
-    right.on("minimize", () => browserService?.handleWindowVisibility(false));
-    right.on("show", () => browserService?.handleWindowVisibility(true));
-    right.on("restore", () => browserService?.handleWindowVisibility(true));
+    mainWindow = win;
+    win.on("hide", () => browserService?.handleWindowVisibility(false));
+    win.on("minimize", () => browserService?.handleWindowVisibility(false));
+    win.on("show", () => browserService?.handleWindowVisibility(true));
+    win.on("restore", () => browserService?.handleWindowVisibility(true));
     win.on("focus", () => {
       const manager = toolchainManager;
       const now = Date.now();
@@ -399,7 +377,7 @@ function startMainProcess(): void {
     // (npm start after build, or dev fallback when VITE_DEV_SERVER_URL is unset).
     handleAppProtocol(rendererRootPath());
 
-    installDesktopIpc({
+    sessionPtyManager = installDesktopIpc({
       getHostManager: () => hostManager,
       getMainWindow,
       getTrustedWindows,
@@ -413,17 +391,11 @@ function startMainProcess(): void {
       },
       performToolchainAction: (request) => toolchainManager!.performAction(request),
       chooseCustomTool: (capability, executable) => toolchainManager!.registerCustomTool(capability, executable),
-      resolveNodeExecutable: async (cwd) => {
-        const resolution = await toolchainManager!.resolveForProject(cwd, {
-          intent: "project-command",
-          trusted: false,
-        });
-        const executable = resolution.commands["js.node"]?.executable;
+      resolveNodeExecutable: async () => {
+        const executable = toolchainManager!.getSnapshot().defaults["js.node"]?.executable;
         if (!executable) throw new Error("Node.js is required to open Pi CLI");
         return executable;
       },
-      linkCockpitToSession: (sessionId, cwd) =>
-        linkCockpitWindowsToSession(sessionId, cwd, [leftCockpitWindow, rightCockpitWindow]),
       setChannelCredential: (payload) =>
         credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
       getBrowserService: () => browserService,
@@ -540,7 +512,7 @@ function startMainProcess(): void {
 
   app.on("before-quit", () => {
     isQuitting = true;
-    applySessionTuiQuit(sessionTuiMarks, { killAll: killExternalPiSessions });
+    sessionPtyManager?.killAll();
     updateManager?.stopAutomaticChecks();
     destroyTray();
     void hostManager?.stop();

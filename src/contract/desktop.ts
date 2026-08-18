@@ -111,8 +111,11 @@ export interface PiBridge {
   abortSession: (sessionId: string) => void;
   startSessionTui: (session: { sessionId: string; sessionPath?: string; cwd: string }) => void;
   killSessionTui: (sessionId: string) => void;
+  writeSessionTui: (sessionId: string, data: string) => void;
+  resizeSessionTui: (sessionId: string, cols: number, rows: number) => void;
   getSessionTuiMarks: () => Promise<Record<string, "running" | "dead">>;
   onSessionTuiMarks: (cb: (marks: Record<string, "running" | "dead">) => void) => () => void;
+  onSessionTuiData: (cb: (payload: { sessionId: string; data: string }) => void) => () => void;
   onCockpitSelection: (cb: (session: { sessionId: string; sessionPath?: string; cwd: string }) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
   showItemInFolder: (fsPath: string) => Promise<void>;

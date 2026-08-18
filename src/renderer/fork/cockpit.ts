@@ -1,6 +1,7 @@
-export type CockpitRole = "left" | "right" | "full";
+export type CockpitRole = "cockpit" | "left" | "right" | "full";
 
 export function readCockpitRole(hash: string): CockpitRole {
+  if (hash === "" || hash === "#cockpit") return "cockpit";
   if (hash === "#cockpit-left") return "left";
   if (hash === "#cockpit-right") return "right";
   return "full";
@@ -11,5 +12,5 @@ export function shouldCollapseSidebarAfterSessionPick(
   isMobile: boolean,
   isRestore: boolean,
 ): boolean {
-  return role !== "left" && isMobile && !isRestore;
+  return role !== "left" && role !== "cockpit" && isMobile && !isRestore;
 }

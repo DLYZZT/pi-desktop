@@ -1,266 +1,211 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import {
-  bundledPiCliPath,
-  parseAliveSessionIds,
-  sessionTuiFocusArgs,
-  sessionTuiSpawnArgs,
-  sessionTuiWindowTitle,
-} from "./session-tui-spawn.ts";
-import {
-  applySessionTuiExited,
-  applySessionTuiKill,
-  applySessionTuiQuit,
-  applySessionTuiSelect,
-  reconcileSessionTuiMarks,
-  sessionTuiMarkOf,
-} from "./session-tui.ts";
+import { createSessionPtyManager, bundledPiCliPath } from "./session-pty.ts";
 
-test("selecting a session with no live process spawns bundled pi --session in that cwd", () => {
+function createFakePty(pid) {
+  let onData = () => {};
+  let onExit = () => {};
+  return {
+    pid,
+    writes: [],
+    resizes: [],
+    killed: false,
+    onData(listener) {
+      onData = listener;
+      return { dispose() {} };
+    },
+    onExit(listener) {
+      onExit = listener;
+      return { dispose() {} };
+    },
+    write(data) {
+      this.writes.push(data);
+    },
+    resize(cols, rows) {
+      this.resizes.push([cols, rows]);
+    },
+    kill() {
+      this.killed = true;
+    },
+    emitData(data) {
+      onData(data);
+    },
+    emitExit(exitCode = 0) {
+      onExit({ exitCode, signal: 0 });
+    },
+  };
+}
+
+test("existing sessions resume by path while new sessions create an exact id in their cwd", () => {
   const spawned = [];
-  const result = applySessionTuiSelect(
-    {
-      sessionId: "sess-1",
-      sessionPath: "F:/PiData/agent/sessions/project/session.jsonl",
-      cwd: "F:/Project/claude/skills",
+  const manager = createSessionPtyManager({
+    spawn(file, args, options) {
+      const pty = createFakePty(spawned.length + 1);
+      spawned.push({ file, args, options, pty });
+      return pty;
     },
-    { bundledPi: "F:/bundled/pi-cli.js", nodeExecutable: "C:/Node/node.exe" },
-    {
-      spawn(request) {
-        spawned.push(request);
-      },
-    },
-  );
+  });
 
-  assert.deepEqual(result, {
-    action: "spawn",
+  const first = manager.start({
     sessionId: "sess-1",
-    cwd: "F:/Project/claude/skills",
+    sessionPath: "F:/PiData/session-1.jsonl",
+    cwd: "F:/project-one",
     nodeExecutable: "C:/Node/node.exe",
     program: "F:/bundled/pi-cli.js",
-    args: ["--session", "F:/PiData/agent/sessions/project/session.jsonl"],
   });
-  assert.deepEqual(spawned, [result]);
-  assert.notEqual(result.program, "pi");
-  assert.equal(spawned.length, 1);
-});
-
-test("bundled pi is the packaged cli, not PATH pi", () => {
-  assert.match(bundledPiCliPath().replaceAll("\\", "/"), /@earendil-works\/pi-coding-agent\/dist\/cli\.js$/);
-});
-
-test("selecting a live session focuses its terminal and does not spawn again", () => {
-  const spawned = [];
-  const focused = [];
-  const marks = new Map();
-  const port = {
-    spawn(request) {
-      spawned.push(request);
-    },
-    focus(request) {
-      focused.push(request);
-    },
-  };
-  const bundled = { bundledPi: "F:/bundled/pi-cli.js", nodeExecutable: "C:/Node/node.exe" };
-  const session = { sessionId: "sess-1", cwd: "F:/Project/claude/skills" };
-
-  applySessionTuiSelect(session, bundled, port, marks);
-  const second = applySessionTuiSelect(session, bundled, port, marks);
-
-  assert.deepEqual(second, { action: "focus", sessionId: "sess-1" });
-  assert.equal(spawned.length, 1);
-  assert.deepEqual(focused, [second]);
-  assert.equal(sessionTuiMarkOf(marks, "sess-1"), "running");
-});
-
-test("switching sessions keeps the previous pi live and only spawns the new one", () => {
-  const spawned = [];
-  const focused = [];
-  const marks = new Map();
-  const port = {
-    spawn(request) {
-      spawned.push(request.sessionId);
-    },
-    focus(request) {
-      focused.push(request.sessionId);
-    },
-  };
-  const bundled = { bundledPi: "F:/bundled/pi-cli.js", nodeExecutable: "C:/Node/node.exe" };
-
-  applySessionTuiSelect({ sessionId: "sess-1", cwd: "F:/a" }, bundled, port, marks);
-  applySessionTuiSelect({ sessionId: "sess-2", cwd: "F:/b" }, bundled, port, marks);
-  const back = applySessionTuiSelect({ sessionId: "sess-1", cwd: "F:/a" }, bundled, port, marks);
-
-  assert.deepEqual(spawned, ["sess-1", "sess-2"]);
-  assert.deepEqual(back, { action: "focus", sessionId: "sess-1" });
-  assert.deepEqual(focused, ["sess-1"]);
-  assert.equal(sessionTuiMarkOf(marks, "sess-1"), "running");
-  assert.equal(sessionTuiMarkOf(marks, "sess-2"), "running");
-});
-
-test("quit kills every live session and leaves an empty process map", () => {
-  const killed = [];
-  const marks = new Map([
-    ["sess-1", "running"],
-    ["sess-2", "running"],
-  ]);
-  applySessionTuiQuit(marks, {
-    killAll(sessionIds) {
-      killed.push(...sessionIds);
-    },
-  });
-  assert.deepEqual(killed.sort(), ["sess-1", "sess-2"]);
-  assert.equal(marks.size, 0);
-});
-
-test("kill marks the session dead without spawning and a later select respawns", () => {
-  const spawned = [];
-  const killed = [];
-  const marks = new Map();
-  const port = {
-    spawn(request) {
-      spawned.push(request.sessionId);
-    },
-    focus() {},
-    kill(sessionIds) {
-      killed.push(...sessionIds);
-    },
-  };
-  const bundled = { bundledPi: "F:/bundled/pi-cli.js", nodeExecutable: "C:/Node/node.exe" };
-  const session = { sessionId: "sess-1", cwd: "F:/a" };
-
-  applySessionTuiSelect(session, bundled, port, marks);
-  applySessionTuiKill("sess-1", marks, port);
-
-  assert.deepEqual(killed, ["sess-1"]);
-  assert.equal(sessionTuiMarkOf(marks, "sess-1"), "dead");
-  assert.equal(spawned.length, 1);
-
-  const again = applySessionTuiSelect(session, bundled, port, marks);
-  assert.equal(again.action, "spawn");
-  assert.equal(sessionTuiMarkOf(marks, "sess-1"), "running");
-  assert.deepEqual(spawned, ["sess-1", "sess-1"]);
-});
-
-test("child exit marks running dead without spawning", () => {
-  const marks = new Map([["sess-1", "running"]]);
-  applySessionTuiExited("sess-1", marks);
-  assert.equal(sessionTuiMarkOf(marks, "sess-1"), "dead");
-});
-
-test("reconcile marks missing processes dead and leaves unknown sessions unmarked", () => {
-  const marks = new Map([
-    ["alive", "running"],
-    ["gone", "running"],
-  ]);
-  reconcileSessionTuiMarks(marks, ["alive"]);
-  assert.equal(sessionTuiMarkOf(marks, "alive"), "running");
-  assert.equal(sessionTuiMarkOf(marks, "gone"), "dead");
-  assert.equal(sessionTuiMarkOf(marks, "never"), null);
-});
-
-test("reconcile imports Pi processes that were already running before Desktop", () => {
-  const marks = new Map();
-  reconcileSessionTuiMarks(marks, ["external-session"]);
-  assert.equal(sessionTuiMarkOf(marks, "external-session"), "running");
-});
-
-test("parseAliveSessionIds reads --session ids from process listings", () => {
-  assert.deepEqual(
-    parseAliveSessionIds(
-      'electron.exe --session abc\r\nwt.exe\r\n"F:\\bundled\\pi-cli.js" --session abc --session def',
-    ).sort(),
-    ["abc", "def"],
-  );
-});
-
-test("parseAliveSessionIds extracts the session id from Pi's quoted session path", () => {
-  assert.deepEqual(
-    parseAliveSessionIds(
-      'node.exe cli.js --session "F:\\Pi Data\\sessions\\2026-08-17T14-19-08-698Z_01a01017-2a19-7fd9-94a5-031bafcf1215.jsonl"',
-    ),
-    ["01a01017-2a19-7fd9-94a5-031bafcf1215"],
-  );
-});
-
-test("TUI liveness scan never blocks the Electron main thread", () => {
-  const source = readFileSync(new URL("./session-tui-spawn.ts", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /execFileSync/);
-});
-
-test("external Pi uses a real Node executable instead of Electron's Node mode", () => {
-  const source = readFileSync(new URL("./session-tui-spawn.ts", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /ELECTRON_RUN_AS_NODE/);
-  assert.match(source, /request\.nodeExecutable/);
-});
-
-test("external Pi receives a stable native window title for cockpit ownership", () => {
-  const request = {
-    action: "spawn",
-    sessionId: "01a01017-2a19-7fd9-94a5-031bafcf1215",
-    cwd: "F:/Project/claude/skills",
+  manager.start({
+    sessionId: "sess-2",
+    cwd: "F:/project-two",
     nodeExecutable: "C:/Node/node.exe",
     program: "F:/bundled/pi-cli.js",
-    args: ["--session", "F:/session.jsonl"],
-  };
-  assert.equal(sessionTuiWindowTitle(request.sessionId), "π · 01a01017");
-  assert.deepEqual(sessionTuiSpawnArgs(request).slice(0, 7), [
-    "-w",
-    "pi-01a01017-2a19-7fd9-94a5-031bafcf1215",
-    "new-tab",
-    "--title",
-    "π · 01a01017",
-    "--suppressApplicationTitle",
-    "-d",
-  ]);
-});
+  });
+  const firstAgain = manager.start({
+    sessionId: "sess-1",
+    sessionPath: "F:/PiData/session-1.jsonl",
+    cwd: "F:/project-one",
+    nodeExecutable: "C:/Node/node.exe",
+    program: "F:/bundled/pi-cli.js",
+  });
 
-test("focusing an existing Pi selects its first tab instead of opening PowerShell", () => {
-  assert.deepEqual(sessionTuiFocusArgs({ action: "focus", sessionId: "sess-1" }), [
-    "-w",
-    "pi-sess-1",
-    "focus-tab",
-    "--target",
-    "0",
-  ]);
-});
-
-test("bundled pi resolution works in the CommonJS Electron main bundle", () => {
-  const source = readFileSync(new URL("./session-tui-spawn.ts", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /import\.meta\.resolve/);
-  assert.match(source, /findPackageJSON/);
-});
-
-test("selecting an archived session still spawn or focus; archive itself is not a process action", () => {
-  const spawned = [];
-  const killed = [];
-  const marks = new Map();
-  const port = {
-    spawn(request) {
-      spawned.push(request.sessionId);
-    },
-    focus() {},
-    kill(sessionIds) {
-      killed.push(...sessionIds);
-    },
-  };
-  assert.equal(marks.size, 0);
-  assert.deepEqual(killed, []);
-  const first = applySessionTuiSelect(
-    { sessionId: "archived-1", cwd: "F:/old" },
-    { bundledPi: "F:/bundled/pi-cli.js", nodeExecutable: "C:/Node/node.exe" },
-    port,
-    marks,
-  );
-  const second = applySessionTuiSelect(
-    { sessionId: "archived-1", cwd: "F:/old" },
-    { bundledPi: "F:/bundled/pi-cli.js", nodeExecutable: "C:/Node/node.exe" },
-    port,
-    marks,
-  );
   assert.equal(first.action, "spawn");
-  assert.equal(second.action, "focus");
-  assert.deepEqual(killed, []);
+  assert.equal(firstAgain.action, "focus");
+  assert.equal(spawned.length, 2);
+  assert.deepEqual(spawned[0].args, [
+    "F:/bundled/pi-cli.js",
+    "--session",
+    "F:/PiData/session-1.jsonl",
+    "--tui-mode",
+    "fullscreen",
+  ]);
+  assert.equal(spawned[0].options.cwd, "F:/project-one");
+  assert.deepEqual(spawned[1].args, ["F:/bundled/pi-cli.js", "--session-id", "sess-2", "--tui-mode", "fullscreen"]);
+  assert.equal(spawned[1].options.cwd, "F:/project-two");
+  assert.equal(spawned[0].options.name, "xterm-256color");
+  assert.equal(manager.snapshotMarks()["sess-1"], "running");
+  assert.equal(manager.snapshotMarks()["sess-2"], "running");
+});
+
+test("start with a new cwd or session path restarts the live PTY", () => {
+  const spawned = [];
+  const manager = createSessionPtyManager({
+    spawn(file, args, options) {
+      const pty = createFakePty(spawned.length + 1);
+      spawned.push({ args, options, pty });
+      return pty;
+    },
+  });
+  const base = {
+    sessionId: "sess-1",
+    nodeExecutable: "C:/Node/node.exe",
+    program: "F:/bundled/pi-cli.js",
+  };
+
+  manager.start({ ...base, cwd: "F:/project-one" });
+  const restarted = manager.start({
+    ...base,
+    sessionPath: "F:/PiData/moved.jsonl",
+    cwd: "F:/project-two",
+  });
+
+  assert.equal(restarted.action, "spawn");
+  assert.equal(spawned[0].pty.killed, true);
+  assert.equal(spawned.length, 2);
+  assert.equal(spawned[1].options.cwd, "F:/project-two");
+  assert.deepEqual(spawned[1].args, [
+    "F:/bundled/pi-cli.js",
+    "--session",
+    "F:/PiData/moved.jsonl",
+    "--tui-mode",
+    "fullscreen",
+  ]);
+});
+
+test("PTY output, input and resize stay scoped to the matching session", () => {
+  const spawned = [];
+  const output = [];
+  const manager = createSessionPtyManager({
+    spawn() {
+      const pty = createFakePty(1);
+      spawned.push(pty);
+      return pty;
+    },
+    onData(sessionId, data) {
+      output.push([sessionId, data]);
+    },
+  });
+  const request = {
+    sessionId: "sess-1",
+    cwd: "F:/project",
+    nodeExecutable: "C:/Node/node.exe",
+    program: "F:/bundled/pi-cli.js",
+  };
+
+  manager.start(request, { cols: 100, rows: 40 });
+  spawned[0].emitData("hello");
+  manager.write("sess-1", "input");
+  manager.resize("sess-1", 120, 50);
+  manager.write("unknown", "ignored");
+
+  assert.deepEqual(output, [["sess-1", "hello"]]);
+  assert.deepEqual(spawned[0].writes, ["input"]);
+  assert.deepEqual(spawned[0].resizes, [[120, 50]]);
+});
+
+test("exited sessions become dead and can be restarted", () => {
+  const spawned = [];
+  const exits = [];
+  const manager = createSessionPtyManager({
+    spawn() {
+      const pty = createFakePty(spawned.length + 1);
+      spawned.push(pty);
+      return pty;
+    },
+    onExit(sessionId, exitCode) {
+      exits.push([sessionId, exitCode]);
+    },
+  });
+  const request = {
+    sessionId: "sess-1",
+    cwd: "F:/project",
+    nodeExecutable: "C:/Node/node.exe",
+    program: "F:/bundled/pi-cli.js",
+  };
+
+  manager.start(request);
+  spawned[0].emitExit(7);
+  assert.equal(manager.snapshotMarks()["sess-1"], "dead");
+  manager.start(request);
+  assert.equal(spawned.length, 2);
+  assert.deepEqual(exits, [["sess-1", 7]]);
+});
+
+test("real app quit kills every embedded PTY", () => {
+  const spawned = [];
+  const manager = createSessionPtyManager({
+    spawn() {
+      const pty = createFakePty(spawned.length + 1);
+      spawned.push(pty);
+      return pty;
+    },
+  });
+  const base = {
+    cwd: "F:/project",
+    nodeExecutable: "C:/Node/node.exe",
+    program: "F:/bundled/pi-cli.js",
+  };
+  manager.start({ ...base, sessionId: "sess-1" });
+  manager.start({ ...base, sessionId: "sess-2" });
+
+  manager.killAll();
+
+  assert.equal(
+    spawned.every((pty) => pty.killed),
+    true,
+  );
+  assert.deepEqual(manager.snapshotMarks(), {});
+});
+
+test("bundled Pi resolves to the packaged CLI instead of PATH pi", () => {
+  assert.match(bundledPiCliPath().replaceAll("\\", "/"), /@earendil-works\/pi-coding-agent\/dist\/cli\.js$/);
 });
