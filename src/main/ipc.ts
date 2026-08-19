@@ -9,9 +9,12 @@ import type {
 import { exportDiagnostics } from "./diagnostics";
 import type { HostManager } from "./host-manager";
 import { appendMainLog, getMainLogPath } from "./logger";
+import { showFileContextMenu } from "./file-context-menu";
+import { inspectLocalFiles } from "./file-context-policy";
 import { createHtmlPreviewUrl, releaseHtmlPreviewUrl } from "./protocol";
 import { loadUiState, saveUiState } from "./window-state";
 import path from "node:path";
+import { realpath } from "node:fs/promises";
 import {
   isToolchainActionRequest,
   type PublicToolchainState,
@@ -273,8 +276,24 @@ export function installDesktopIpc(options: DesktopIpcOptions): SessionPtyManager
   });
 
   trustedHandle("desktop:show-item-in-folder", async (_event, fsPath: string) => {
-    if (typeof fsPath === "string") shell.showItemInFolder(fsPath);
+    if (typeof fsPath !== "string" || !path.isAbsolute(fsPath) || fsPath.includes("\0")) return;
+    try {
+      shell.showItemInFolder(await realpath(fsPath));
+    } catch {
+      // Missing paths are not revealed.
+    }
   });
+
+  // Rich file context menu, built in main from a real path (Chromium does not
+  // reliably fill params.linkURL for file: links in Electron 43, so the renderer
+  // resolves the path itself and hands it over here).
+  trustedHandle("desktop:file-context-menu", async (event, request: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return { shown: false, code: "UNAVAILABLE" };
+    return showFileContextMenu(win, request);
+  });
+
+  trustedHandle("desktop:inspect-local-files", async (_event, request: unknown) => inspectLocalFiles(request));
 
   trustedHandle("desktop:select-directory", async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);

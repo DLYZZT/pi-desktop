@@ -1,5 +1,6 @@
 import type { SessionInfo } from "../lib/types.ts";
 import { filterSessionsForQuery } from "../lib/session-list.ts";
+import { worktreePathsEqual } from "../../shared/worktree-path.ts";
 
 export function sessionProjectRoot(session: SessionInfo): string {
   return session.projectRoot ?? session.cwd ?? "";
@@ -57,7 +58,7 @@ export function filterSessionsForSidebar(
 ): SessionInfo[] {
   const scoped = sessions.filter((session) => Boolean(session.archived) === options.archived);
   const byProject = options.projectRoot
-    ? scoped.filter((session) => sessionProjectRoot(session) === options.projectRoot)
+    ? scoped.filter((session) => worktreePathsEqual(sessionProjectRoot(session), options.projectRoot!))
     : scoped;
   return filterSessionsForQuery(byProject, options.query ?? "");
 }

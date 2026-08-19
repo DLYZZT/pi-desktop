@@ -1,3 +1,5 @@
+import { fileUrlToLocalPath, isLocalFilePathWithin, normalizeLocalFilePath } from "./file-url.ts";
+
 function safeDecode(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -17,7 +19,7 @@ function stripLineSuffix(filePath: string): string {
   return filePath.replace(/:\d+(?::\d+)?$/, "");
 }
 
-function normalizeLocalPath(filePath: string): string {
+function normalizeRelativeOrAbsolutePath(filePath: string): string {
   const normalized = normalizeFilePathSlashes(filePath);
   const isWindowsDrive = /^[a-zA-Z]:\//.test(normalized);
   const isUnc = normalized.startsWith("//");
@@ -43,35 +45,11 @@ function normalizeLocalPath(filePath: string): string {
   return leadingSlash ? `/${joined}` : joined;
 }
 
-function isPathInside(candidate: string, root: string): boolean {
-  const normalizedCandidate = normalizeLocalPath(candidate).replace(/\/+$/, "");
-  const normalizedRoot = normalizeLocalPath(root).replace(/\/+$/, "");
-  const useCaseInsensitive = /^[a-zA-Z]:\//.test(normalizedCandidate) || /^[a-zA-Z]:\//.test(normalizedRoot);
-  const filePath = useCaseInsensitive ? normalizedCandidate.toLowerCase() : normalizedCandidate;
-  const rootPath = useCaseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
-  return filePath === rootPath || filePath.startsWith(`${rootPath}/`);
-}
-
 function looksLikeRelativeFileHref(href: string): boolean {
   if (href.startsWith("#") || href.startsWith("?")) return false;
   if (href.startsWith("./") || href.startsWith("../")) return true;
   if (href.includes("/")) return true;
   return /(^|\/)\.?[^/]+\.[^/.]+$/.test(href);
-}
-
-function fileUrlToPath(href: string): string | null {
-  try {
-    const url = new URL(href);
-    if (url.protocol !== "file:") return null;
-    const pathname = safeDecode(url.pathname);
-    if (url.hostname) {
-      return `//${url.hostname}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
-    }
-    if (/^\/[a-zA-Z]:\//.test(pathname)) return pathname.slice(1);
-    return pathname;
-  } catch {
-    return null;
-  }
 }
 
 export function resolveLocalFileHref(href: string | undefined, cwd?: string, relativeBase = cwd): string | null {
@@ -98,7 +76,7 @@ export function resolveLocalFileHref(href: string | undefined, cwd?: string, rel
   }
 
   if (lowerHref.startsWith("file:")) {
-    candidate = fileUrlToPath(normalizedHref);
+    candidate = fileUrlToLocalPath(normalizedHref);
     candidateKind = candidate ? "absolute" : null;
   } else if (/^[a-zA-Z]:\//.test(normalizedHref)) {
     candidate = normalizedHref;
@@ -113,7 +91,7 @@ export function resolveLocalFileHref(href: string | undefined, cwd?: string, rel
 
   if (!candidate) return null;
 
-  const filePath = stripLineSuffix(normalizeLocalPath(candidate));
-  if (candidateKind === "relative" && cwd && !isPathInside(filePath, cwd)) return null;
+  const filePath = stripLineSuffix(normalizeLocalFilePath(candidate) ?? normalizeRelativeOrAbsolutePath(candidate));
+  if (candidateKind === "relative" && cwd && !isLocalFilePathWithin(filePath, cwd)) return null;
   return filePath;
 }

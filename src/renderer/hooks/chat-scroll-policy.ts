@@ -1,5 +1,15 @@
 export const CHAT_BOTTOM_PROXIMITY_PX = 96;
 export const USER_SCROLL_UP_MIN_PX = 1;
+export const TOUCH_SCROLL_UP_MIN_PX = 8;
+
+export function isUpwardScrollKey(key: string): boolean {
+  return key === "ArrowUp" || key === "PageUp" || key === "Home";
+}
+
+/** A downward finger movement reveals earlier content, equivalent to scrolling the viewport upward. */
+export function isUpwardTouchGesture(startClientY: number | null, currentClientY: number): boolean {
+  return startClientY !== null && currentClientY - startClientY >= TOUCH_SCROLL_UP_MIN_PX;
+}
 
 export interface ScrollMetrics {
   scrollTop: number;

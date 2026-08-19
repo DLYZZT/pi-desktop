@@ -37,7 +37,7 @@ test("sidebar list defaults to every live session and can filter by project", ()
   assert.deepEqual(
     filterSessionsForSidebar([skills, desk, archived], {
       archived: false,
-      projectRoot: "F:/Project/claude/skills",
+      projectRoot: "f:\\Project\\claude\\skills\\",
     }).map((item) => item.id),
     ["skills"],
   );

@@ -1,5 +1,6 @@
 import { BrowserWindow, nativeTheme, screen, shell } from "electron";
 import { appendMainLog } from "./logger";
+import { setupContextMenu } from "./file-context-menu";
 import { resolvePreloadPath, resolveRendererEntry } from "./host-manager";
 import { releaseHtmlPreviewsForOwner } from "./protocol";
 import { createLoadFailurePage, createRendererCrashPage, RENDERER_CRASH_RETRY_URL } from "./window-load-failure";
@@ -77,6 +78,8 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     trackWindowState(win);
     if (shouldMaximize(ui) && !win.isDestroyed()) win.maximize();
   }
+
+  setupContextMenu(win);
 
   const showWin = () => {
     if (options.show === false) return;

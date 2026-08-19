@@ -4,7 +4,7 @@
  * MessagePort MUST NOT cross contextBridge via Promise resolve — that silently
  * breaks the port. Use window.postMessage transfer instead (Electron docs).
  */
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { DesktopMenuEvent, DesktopUpdateState, HostStatus, PiBridge } from "../contract/desktop";
 import type { BrowserEvent } from "../contract/browser";
 import { EarlyEventReplay } from "./early-event-replay";
@@ -126,6 +126,9 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
     },
     openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
     showItemInFolder: (fsPath) => ipcRenderer.invoke("desktop:show-item-in-folder", fsPath),
+    showFileContextMenu: (request) => ipcRenderer.invoke("desktop:file-context-menu", request),
+    inspectLocalFiles: (request) => ipcRenderer.invoke("desktop:inspect-local-files", request),
+    getPathForFile: (file: File) => (webUtils ? webUtils.getPathForFile(file) : null),
     selectDirectory: () => ipcRenderer.invoke("desktop:select-directory"),
     setChannelCredential: (payload) => ipcRenderer.invoke("desktop:set-channel-credential", payload),
     saveFile: (opts) => ipcRenderer.invoke("desktop:save-file", opts),

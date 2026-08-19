@@ -3,10 +3,16 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 
-const { didUserScrollUp, isNearChatBottom, shouldDisengageScrollMagnet, shouldStopChatAutoFollow } =
-  await importTestBundle("src/renderer/hooks/chat-scroll-policy", {
-    entryPoints: [path.join(import.meta.dirname, "chat-scroll-policy.ts")],
-  });
+const {
+  didUserScrollUp,
+  isNearChatBottom,
+  isUpwardScrollKey,
+  isUpwardTouchGesture,
+  shouldDisengageScrollMagnet,
+  shouldStopChatAutoFollow,
+} = await importTestBundle("src/renderer/hooks/chat-scroll-policy", {
+  entryPoints: [path.join(import.meta.dirname, "chat-scroll-policy.ts")],
+});
 
 test("external-turn follow starts near the bottom and stops only for a meaningful upward scroll", () => {
   assert.equal(isNearChatBottom({ scrollTop: 1_000, scrollHeight: 1_500, clientHeight: 500 }), true);
@@ -68,4 +74,15 @@ test("explicit upward input disengages the scroll magnet during a session transi
     "upward movement is trusted again after the transition",
   );
   assert.equal(shouldDisengageScrollMagnet({ ...decision, currentScrollTop: 950 }), false);
+});
+
+test("upward key and touch intent are classified without intercepting editor keys", () => {
+  assert.equal(isUpwardScrollKey("ArrowUp"), true);
+  assert.equal(isUpwardScrollKey("PageUp"), true);
+  assert.equal(isUpwardScrollKey("Home"), true);
+  assert.equal(isUpwardScrollKey("ArrowDown"), false);
+  assert.equal(isUpwardTouchGesture(100, 107), false);
+  assert.equal(isUpwardTouchGesture(100, 108), true);
+  assert.equal(isUpwardTouchGesture(100, 80), false);
+  assert.equal(isUpwardTouchGesture(null, 120), false);
 });

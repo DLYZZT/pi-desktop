@@ -2,10 +2,12 @@ import { execFile } from "child_process";
 import { existsSync, mkdirSync, realpathSync } from "fs";
 import { basename, dirname, join, resolve } from "path";
 import { promisify } from "util";
-import { allowFileRoot, normalizeSlashes } from "./allowed-roots.ts";
+import { allowFileRoot } from "./allowed-roots.ts";
 import type { GitStatusResult } from "./api-types";
 import { parseGitStatusPorcelain } from "./git-status.ts";
+import { worktreePathsEqual } from "./worktree-path.ts";
 export { parseGitStatusPorcelain } from "./git-status.ts";
+export { normalizeWorktreePathForComparison, worktreePathsEqual } from "./worktree-path.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -83,19 +85,6 @@ export function invalidateProjectCache(): void {
 
 export function getProjectCacheRevision(): number {
   return projectCacheRevision;
-}
-
-export function normalizeWorktreePathForComparison(
-  filePath: string,
-  platform: NodeJS.Platform = process.platform,
-): string {
-  let normalized = normalizeSlashes(filePath.trim());
-  if (normalized.length > 1 && !/^[A-Za-z]:\/$/.test(normalized)) normalized = normalized.replace(/\/+$/, "");
-  return platform === "win32" ? normalized.toLocaleLowerCase("en-US") : normalized;
-}
-
-export function worktreePathsEqual(left: string, right: string, platform: NodeJS.Platform = process.platform): boolean {
-  return normalizeWorktreePathForComparison(left, platform) === normalizeWorktreePathForComparison(right, platform);
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
@@ -204,7 +193,14 @@ export async function resolveProject(cwd: string): Promise<ProjectInfo> {
     const isTopLevel = worktreePathsEqual(toplevel, realCwd);
     const isWorktreeTopLevel = !worktreePathsEqual(gitDir, commonDir) && isTopLevel;
     info = {
-      projectRoot: isWorktreeTopLevel ? dirname(commonDir) : cwd,
+      // Every toplevel resolves to a git-reported path so the projectRoot
+      // format is identical regardless of how cwd was spelled (git prints
+      // forward slashes on Windows; a restored session cwd may use
+      // backslashes). Session filtering compares projectRoot strings, so a
+      // separator mismatch would hide a project's sessions. For the main
+      // checkout use toplevel rather than dirname(commonDir): in a submodule
+      // commonDir lives under the superproject's .git/modules.
+      projectRoot: isWorktreeTopLevel ? dirname(commonDir) : isTopLevel ? toplevel : cwd,
       branch: ref && ref !== "HEAD" ? ref : null,
       isWorktree: isWorktreeTopLevel,
       isTopLevel,

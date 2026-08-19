@@ -30,6 +30,7 @@ import { applySessionChangedEvent, isSessionWorking } from "@/lib/session-sideba
 import { getHome, listSessions, relocateSession, validateCwd } from "@/lib/api-client";
 import { abbreviateHomePath } from "@/lib/display-path";
 import { formatNumber, formatRelativeDateTime } from "@/lib/locale-format";
+import { worktreePathsEqual } from "@shared/worktree-path";
 
 const EMPTY_TUI_WORKING_IDS = new Set<string>();
 
@@ -906,10 +907,18 @@ export function SessionSidebar({
   // New session still lands in selectedCwd. The list itself is all projects unless filtered.
   const selectedProject = projectRootFor(selectedCwd);
   const showWorktreeSwitcher = Boolean(
-    worktreeState?.isGit && worktreeState.isTopLevel && selectedCwd && selectedProject === worktreeState.projectRoot,
+    worktreeState?.isGit &&
+    worktreeState.isTopLevel &&
+    selectedCwd &&
+    selectedProject &&
+    worktreePathsEqual(selectedProject, worktreeState.projectRoot),
   );
   const worktreeGuide =
-    selectedCwd && worktreeState && selectedProject === worktreeState.projectRoot && !showWorktreeSwitcher
+    selectedCwd &&
+    worktreeState &&
+    selectedProject &&
+    worktreePathsEqual(selectedProject, worktreeState.projectRoot) &&
+    !showWorktreeSwitcher
       ? worktreeState.isGit
         ? {
             label: t("worktreeOpenRepoRoot", "Open repo root"),

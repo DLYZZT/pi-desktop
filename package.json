@@ -1,6 +1,6 @@
 {
   "name": "@dlyzzt/pi-desktop",
-  "version": "0.1.9",
+  "version": "0.1.12",
   "private": true,
   "description": "Pi Agent Desktop — pure Electron desktop app for the pi coding agent",
   "homepage": "https://github.com/DLYZZT/pi-desktop#readme",
@@ -95,6 +95,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "@types/react-test-renderer": "^19.1.0",
     "@types/semver": "7.7.1",
     "@types/yauzl": "3.4.0",
     "@vitejs/plugin-react": "^4.7.0",
@@ -108,6 +109,7 @@
     "lint-staged": "^17.0.8",
     "postcss": "^8",
     "prettier": "^3.9.5",
+    "react-test-renderer": "^19.2.7",
     "tailwindcss": "^4.2.2",
     "tsup": "8.5.1",
     "typescript": "^5",

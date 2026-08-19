@@ -35,7 +35,14 @@ import {
   clearToolExecutionPartial,
 } from "@/lib/tool-execution-partials";
 import { subscribeActiveSessionLiveSync } from "./active-session-live-sync";
-import { isNearChatBottom, shouldDisengageScrollMagnet, shouldStopChatAutoFollow } from "./chat-scroll-policy";
+import {
+  isNearChatBottom,
+  isUpwardScrollKey,
+  isUpwardTouchGesture,
+  shouldDisengageScrollMagnet,
+  shouldStopChatAutoFollow,
+} from "./chat-scroll-policy";
+import { requestAutoSessionTitle, shouldAutoTitleMessage } from "../lib/auto-session-title";
 
 // Module-level scroll magnet: survives ChatWindow remounts (each session switch
 // uses key={sessionKey} in AppShell, which would otherwise wipe every useRef).
@@ -275,7 +282,7 @@ export interface ChatInputHandle {
   insertText: (text: string) => void;
   insertIfEmpty: (content: string) => void;
   prependText: (text: string) => void;
-  addImages: (files: File[]) => void;
+  addFiles: (files: File[]) => void;
 }
 
 export interface AttachedImage {
@@ -383,6 +390,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const liveContentEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const lastScrollTopRef = useRef(0);
+  const touchStartClientYRef = useRef<number | null>(null);
   const externalTurnAutoFollowRef = useRef(false);
   // Set when the user explicitly re-attaches the viewport to the newest
   // content (clicks "scroll to bottom"); live-follow then stays engaged until
@@ -1285,6 +1293,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               ...(piImages?.length ? { images: piImages } : {}),
             });
             promoteNewSession(1, message);
+            // Auto-title the brand-new session from its first message. Fire and
+            // forget: generation is a silent background LLM request and the Host
+            // applies it with a rename guard (a manual rename always wins).
+            const titleModel = newSessionModel ?? newSessionDefaultModel;
+            if (shouldAutoTitleMessage(trimmedMessage)) {
+              void requestAutoSessionTitle({
+                sessionId: sid,
+                message: trimmedMessage,
+                ...(titleModel ? { provider: titleModel.provider, modelId: titleModel.modelId } : {}),
+              });
+            }
           }
         } else if (session) {
           sentSessionId = session.id;
@@ -1331,6 +1350,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       isNew,
       newSessionCwd,
       newSessionModel,
+      newSessionDefaultModel,
       session,
       t,
       agentRunning,
@@ -1865,14 +1885,60 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     scrollToBottom("auto");
   }, [scrollToBottom]);
 
-  const markUserScrollIntent = useCallback((event: Event) => {
-    if (event instanceof KeyboardEvent) {
-      if (!SCROLL_KEYS.has(event.key)) return;
-      if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable='true']")) return;
-    }
-    const container = scrollContainerRef.current;
-    if (container) lastScrollTopRef.current = container.scrollTop;
-    userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
+  const disengageAutoFollowForExplicitUpwardGesture = useCallback(() => {
+    completionScrollAllowedRef.current = false;
+    externalTurnAutoFollowRef.current = false;
+    autoFollowMagnetRef.current = false;
+    setScrollMagnetEngaged(false);
+  }, []);
+
+  const markUserScrollIntent = useCallback(
+    (event: Event) => {
+      if (event instanceof KeyboardEvent) {
+        if (!SCROLL_KEYS.has(event.key)) return;
+        if (
+          event.target instanceof Element &&
+          event.target.closest("input, textarea, [contenteditable]:not([contenteditable='false'])")
+        )
+          return;
+      }
+      const container = scrollContainerRef.current;
+      if (container) lastScrollTopRef.current = container.scrollTop;
+      userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
+
+      // Explicit upward gestures release the follow magnet immediately. Waiting
+      // for scroll-position deltas loses during streaming: every follow frame
+      // refreshes the programmatic-scroll guard, so a small user scroll-up gets
+      // swallowed and the view snaps back down.
+      const isUpwardGesture =
+        (event instanceof WheelEvent && event.deltaY < 0 && !event.ctrlKey) || // ctrl+wheel = pinch-zoom, not scroll
+        (event instanceof KeyboardEvent && isUpwardScrollKey(event.key));
+      if (isUpwardGesture) disengageAutoFollowForExplicitUpwardGesture();
+    },
+    [disengageAutoFollowForExplicitUpwardGesture],
+  );
+
+  const handleTouchStart = useCallback(
+    (event: TouchEvent) => {
+      touchStartClientYRef.current = event.touches[0]?.clientY ?? null;
+      markUserScrollIntent(event);
+    },
+    [markUserScrollIntent],
+  );
+
+  const handleTouchMove = useCallback(
+    (event: TouchEvent) => {
+      const currentClientY = event.touches[0]?.clientY;
+      if (currentClientY === undefined || !isUpwardTouchGesture(touchStartClientYRef.current, currentClientY)) return;
+      markUserScrollIntent(event);
+      disengageAutoFollowForExplicitUpwardGesture();
+      touchStartClientYRef.current = currentClientY;
+    },
+    [disengageAutoFollowForExplicitUpwardGesture, markUserScrollIntent],
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    touchStartClientYRef.current = null;
   }, []);
 
   const handleScrollPositionChange = useCallback(() => {
@@ -2044,14 +2110,28 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const container = scrollContainerRef.current;
     if (!container) return;
     container.addEventListener("wheel", markUserScrollIntent, { passive: true });
-    container.addEventListener("touchstart", markUserScrollIntent, { passive: true });
+    container.addEventListener("touchstart", handleTouchStart, { passive: true });
+    container.addEventListener("touchmove", handleTouchMove, { passive: true });
+    container.addEventListener("touchend", handleTouchEnd, { passive: true });
+    container.addEventListener("touchcancel", handleTouchEnd, { passive: true });
     container.addEventListener("scroll", handleScrollPositionChange, { passive: true });
     return () => {
       container.removeEventListener("wheel", markUserScrollIntent);
-      container.removeEventListener("touchstart", markUserScrollIntent);
+      container.removeEventListener("touchstart", handleTouchStart);
+      container.removeEventListener("touchmove", handleTouchMove);
+      container.removeEventListener("touchend", handleTouchEnd);
+      container.removeEventListener("touchcancel", handleTouchEnd);
       container.removeEventListener("scroll", handleScrollPositionChange);
     };
-  }, [messages.length, loading, handleScrollPositionChange, markUserScrollIntent]);
+  }, [
+    messages.length,
+    loading,
+    handleScrollPositionChange,
+    markUserScrollIntent,
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
+  ]);
 
   useEffect(() => {
     if (messages.length > 0) {

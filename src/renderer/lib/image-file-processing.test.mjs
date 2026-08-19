@@ -49,8 +49,12 @@ test("ChatInput preserves successes, reports failures, and owns pending previews
   const source = fs.readFileSync(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
 
   assert.match(source, /const \{ images, failures \} = await processImageFileBatch\(imageFiles\)/);
-  assert.match(source, /setAttachedImages\(\(prev\) => \[\.\.\.prev, \.\.\.images\]\)/);
+  assert.match(source, /selectDraftImageAdditions\(attachedImagesRef\.current, images\)/);
+  assert.match(source, /selection\.rejected\.forEach\(\(\{ image \}\) => revokeImagePreview\(image\)\)/);
   assert.match(source, /role="alert"/);
-  assert.match(source, /pendingImagePreviewsRef\.current\.add\(image\.previewUrl\)/);
+  assert.match(
+    source,
+    /selection\.accepted\.forEach\(\(image\) => pendingImagePreviewsRef\.current\.add\(image\.previewUrl\)\)/,
+  );
   assert.match(source, /for \(const previewUrl of pendingPreviews\) URL\.revokeObjectURL\(previewUrl\)/);
 });

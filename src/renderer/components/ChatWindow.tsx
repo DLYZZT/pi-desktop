@@ -15,6 +15,7 @@ import {
   splitFinalAssistantBlocks,
 } from "@/lib/message-display";
 import { MessageView } from "./MessageView";
+import { ProcessDetailsGroup } from "./ProcessDetailsGroup";
 import { SessionProfiler } from "./SessionProfiler";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs, type ChatMinimapMessage } from "./ChatMinimap";
@@ -29,6 +30,7 @@ import { mergeToolResults } from "@/lib/tool-execution-partials";
 import { buildToolMessageIndex } from "@/lib/tool-message-index";
 import { useI18n } from "@/i18n";
 import { forkNoticeItemStyle, forkNoticeMessageStyle, forkStatusBarStatuses, forkUsageChips } from "@/fork";
+import type { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
 
 interface Props {
   session: SessionInfo | null;
@@ -50,6 +52,8 @@ interface Props {
     usage: { percent: number | null; contextWindow: number; tokens: number | null } | null,
   ) => void;
   onOpenFile?: (filePath: string) => void;
+  thinkingExpansionStore: ThinkingExpansionStore;
+  processDetailsExpansionStore: ThinkingExpansionStore;
 }
 
 function phaseLabel(phase: AgentPhase, t: (key: string, fallback: string) => string): string {
@@ -171,79 +175,6 @@ function getAssistantRenderParts(
   return created;
 }
 
-function ProcessDetailsGroup({
-  messageCount,
-  toolCallCount,
-  children,
-}: {
-  messageCount: number;
-  toolCallCount: number;
-  children: ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const { language, t } = useI18n();
-  const parts = [
-    t("processDetails", "Process details"),
-    language === "zh-CN"
-      ? `${messageCount} ${t("messagesCount", "messages")}`
-      : `${messageCount} ${messageCount === 1 ? "message" : "messages"}`,
-  ];
-  if (toolCallCount > 0) {
-    parts.push(
-      language === "zh-CN"
-        ? `${toolCallCount} ${t("toolCallsCount", "tool calls")}`
-        : `${toolCallCount} ${toolCallCount === 1 ? "tool call" : "tool calls"}`,
-    );
-  }
-
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((v) => !v)}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          width: "auto",
-          minHeight: 24,
-          padding: "2px 0",
-          border: "none",
-          background: "transparent",
-          color: "var(--text-muted)",
-          cursor: "pointer",
-          fontSize: 12,
-          textAlign: "left",
-        }}
-        title={
-          expanded
-            ? t("collapseProcessDetails", "Collapse process details")
-            : t("expandProcessDetails", "Expand process details")
-        }
-      >
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 12 12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}
-        >
-          <polyline points="4 2.5 7.5 6 4 9.5" />
-        </svg>
-        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {parts.join(" · ")}
-        </span>
-      </button>
-      {expanded && <div style={{ marginTop: 8 }}>{children}</div>}
-    </div>
-  );
-}
-
 export function ChatWindow({
   session,
   newSessionCwd,
@@ -258,6 +189,8 @@ export function ChatWindow({
   onSessionStatsPanelOpen,
   onContextUsageChange,
   onOpenFile,
+  thinkingExpansionStore,
+  processDetailsExpansionStore,
 }: Props) {
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
@@ -407,10 +340,10 @@ export function ChatWindow({
 
   const onDrop = useCallback(
     (files: File[]) => {
-      if (agentRunning) return;
-      chatInputRef?.current?.addImages(files);
+      // Attaching while the agent runs is fine — send stays gated separately.
+      chatInputRef?.current?.addFiles(files);
     },
-    [agentRunning, chatInputRef],
+    [chatInputRef],
   );
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
@@ -537,7 +470,7 @@ export function ChatWindow({
       <div className="chat-corner-tick chat-corner-tick-bl" aria-hidden="true" />
       <div className="chat-corner-tick chat-corner-tick-br" aria-hidden="true" />
 
-      {isDragOver && !agentRunning && (
+      {isDragOver && (
         <div
           className="pointer-events-none absolute inset-0 z-50 flex animate-[drop-zone-in_0.15s_ease_both] items-center justify-center backdrop-blur-[1px]"
           style={{ background: "color-mix(in srgb, var(--accent) 6%, transparent)" }}
@@ -796,6 +729,7 @@ export function ChatWindow({
                                 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp
                                 : undefined
                             }
+                            thinkingExpansionStore={thinkingExpansionStore}
                           />
                         </SessionProfiler>
                       );
@@ -858,6 +792,15 @@ export function ChatWindow({
 
                       const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
                       if (processCount > 0) {
+                        const processGroupKey = `process-group:${messageRenderKeys.keyFor(
+                          messages[userIdx],
+                          entryIds[userIdx],
+                          "message",
+                        )}:${messageRenderKeys.keyFor(
+                          messages[finalAssistantIdx],
+                          entryIds[finalAssistantIdx],
+                          "final",
+                        )}`;
                         const processRefIdx =
                           visibleProcessIndices
                             .map((processIdx) => visibleRefIndexByMessage.get(processIdx))
@@ -865,6 +808,8 @@ export function ChatWindow({
                           (finalAnswerMessage ? undefined : visibleRefIndexByMessage.get(finalAssistantIdx));
                         const processGroup = (
                           <ProcessDetailsGroup
+                            stateKey={processGroupKey}
+                            expansionStore={processDetailsExpansionStore}
                             messageCount={processCount}
                             toolCallCount={
                               countToolCalls(messages, visibleProcessIndices) +
@@ -885,15 +830,7 @@ export function ChatWindow({
                         );
                         rendered.push(
                           <div
-                            key={`process-group:${messageRenderKeys.keyFor(
-                              messages[userIdx],
-                              entryIds[userIdx],
-                              "message",
-                            )}:${messageRenderKeys.keyFor(
-                              messages[finalAssistantIdx],
-                              entryIds[finalAssistantIdx],
-                              "final",
-                            )}`}
+                            key={processGroupKey}
                             ref={
                               processRefIdx === undefined
                                 ? undefined
@@ -931,6 +868,8 @@ export function ChatWindow({
                         modelNames={modelNames}
                         cwd={messageCwd}
                         onOpenFile={onOpenFile}
+                        entryId="streaming"
+                        thinkingExpansionStore={thinkingExpansionStore}
                       />
                     </SessionProfiler>
                   )}
