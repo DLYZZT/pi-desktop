@@ -26,10 +26,12 @@ import {
   useForkSessionList,
   useSessionTuiMarks,
 } from "@/fork";
-import { applySessionChangedEvent } from "@/lib/session-sidebar-state";
+import { applySessionChangedEvent, isSessionWorking } from "@/lib/session-sidebar-state";
 import { getHome, listSessions, relocateSession, validateCwd } from "@/lib/api-client";
 import { abbreviateHomePath } from "@/lib/display-path";
 import { formatNumber, formatRelativeDateTime } from "@/lib/locale-format";
+
+const EMPTY_TUI_WORKING_IDS = new Set<string>();
 
 interface Props {
   selectedSessionId: string | null;
@@ -43,6 +45,7 @@ interface Props {
   worktreeSlot?: HTMLElement | null;
   selectedCwd?: string | null;
   onCwdChange?: (cwd: string | null, projectRoot?: string | null) => void;
+  tuiWorkingSessionIds?: Set<string>;
 }
 
 interface WorktreeEntry {
@@ -363,9 +366,11 @@ export function SessionSidebar({
   worktreeSlot,
   selectedCwd: selectedCwdProp,
   onCwdChange,
+  tuiWorkingSessionIds,
 }: Props) {
   const { t } = useI18n();
   const sessionTuiMarks = useSessionTuiMarks();
+  const tuiWorkingIds = tuiWorkingSessionIds ?? EMPTY_TUI_WORKING_IDS;
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2053,6 +2058,7 @@ export function SessionSidebar({
                       node={node}
                       selectedSessionId={selectedSessionId}
                       runningSessionIds={runningSessionIds}
+                      tuiWorkingSessionIds={tuiWorkingIds}
                       sessionTuiMarks={sessionTuiMarks}
                       unreadSessionIds={unreadSessionIds}
                       onSelectSession={handleSelectSessionFromList}
@@ -2091,6 +2097,7 @@ export function SessionSidebar({
                             node={node}
                             selectedSessionId={selectedSessionId}
                             runningSessionIds={runningSessionIds}
+                            tuiWorkingSessionIds={tuiWorkingIds}
                             sessionTuiMarks={sessionTuiMarks}
                             unreadSessionIds={unreadSessionIds}
                             onSelectSession={handleSelectSessionFromList}
@@ -2124,7 +2131,7 @@ export function SessionSidebar({
             key={session.id}
             session={session}
             isSelected={session.id === selectedSessionId}
-            isRunning={runningSessionIds.has(session.id)}
+            isRunning={isSessionWorking(session.id, runningSessionIds, tuiWorkingIds, sessionTuiMarks[session.id])}
             isTuiRunning={sessionTuiMarks[session.id] === "running"}
             isDead={sessionTuiMarks[session.id] === "dead"}
             isUnread={unreadSessionIds.has(session.id)}
@@ -2149,6 +2156,7 @@ function SessionTreeItem({
   node,
   selectedSessionId,
   runningSessionIds,
+  tuiWorkingSessionIds,
   sessionTuiMarks,
   unreadSessionIds,
   onSelectSession,
@@ -2162,6 +2170,7 @@ function SessionTreeItem({
   node: SessionTreeNode;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
+  tuiWorkingSessionIds: Set<string>;
   sessionTuiMarks: Record<string, "running" | "dead">;
   unreadSessionIds: Set<string>;
   onSelectSession: (s: SessionInfo) => void;
@@ -2195,7 +2204,12 @@ function SessionTreeItem({
         <SessionItem
           session={node.session}
           isSelected={node.session.id === selectedSessionId}
-          isRunning={runningSessionIds.has(node.session.id)}
+          isRunning={isSessionWorking(
+            node.session.id,
+            runningSessionIds,
+            tuiWorkingSessionIds,
+            sessionTuiMarks[node.session.id],
+          )}
           isTuiRunning={sessionTuiMarks[node.session.id] === "running"}
           isDead={sessionTuiMarks[node.session.id] === "dead"}
           isUnread={unreadSessionIds.has(node.session.id)}
@@ -2220,6 +2234,7 @@ function SessionTreeItem({
               node={child}
               selectedSessionId={selectedSessionId}
               runningSessionIds={runningSessionIds}
+              tuiWorkingSessionIds={tuiWorkingSessionIds}
               sessionTuiMarks={sessionTuiMarks}
               unreadSessionIds={unreadSessionIds}
               onSelectSession={onSelectSession}

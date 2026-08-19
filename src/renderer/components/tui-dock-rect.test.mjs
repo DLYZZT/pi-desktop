@@ -7,6 +7,7 @@ import {
   folderLabel,
   parseChromeModel,
   parseDockChrome,
+  screenHasLiveStatus,
   thinkingCycleSteps,
 } from "./tui-dock-rect.ts";
 
@@ -46,6 +47,17 @@ test("dock range without borders still takes the bottom chrome cluster plus the 
     "↑139k ↓9.5k $0.746 (sub)",
   ]);
   assert.deepEqual(range, { start: 3, end: 4 });
+});
+
+test("live status is Working/Thinking/Compacting or a spinner, not an idle PTY footer", () => {
+  assert.equal(screenHasLiveStatus(["assistant output", "\u2826 Working", "MCP: 2 connected"]), true);
+  assert.equal(screenHasLiveStatus(["Thinking", "F:\\repo"]), true);
+  assert.equal(screenHasLiveStatus(["Compacting context"]), true);
+  assert.equal(
+    screenHasLiveStatus(["F:\\Project\\dlyzzt-pi-desktop", "\u2191139k \u21939.5k $0.746 (sub)", "MCP: 2 connected"]),
+    false,
+  );
+  assert.equal(screenHasLiveStatus([]), false);
 });
 
 test("dock range stays below the Working spinner", () => {

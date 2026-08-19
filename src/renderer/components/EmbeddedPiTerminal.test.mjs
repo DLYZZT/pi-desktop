@@ -60,6 +60,13 @@ test("embedded terminal opens detected web links only on Ctrl+click", () => {
   assert.match(source, /window\.piBridge\.openExternal\(url\)/);
 });
 
+test("embedded terminal publishes TUI live-status to the sidebar working set", () => {
+  assert.match(source, /onTuiWorkingChange/);
+  assert.match(source, /onWriteParsed/);
+  assert.match(source, /screenHasLiveStatus/);
+  assert.match(source, /nextTuiWorkingSessionIds/);
+});
+
 test("embedded terminal packages the TUI dock as a Fluent GUI composer", () => {
   assert.match(source, /TuiDockComposer/);
   assert.match(source, /worktreeAnchorRef/);

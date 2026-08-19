@@ -5,7 +5,7 @@ import test from "node:test";
 const source = readFileSync(new URL("./SessionSidebar.tsx", import.meta.url), "utf8");
 
 test("sidebar spinner is agent-turn running, not a live TUI process", () => {
-  assert.match(source, /isRunning=\{runningSessionIds\.has\((?:session|node\.session)\.id\)\}/);
+  assert.match(source, /isRunning=\{isSessionWorking\(/);
   assert.match(source, /isTuiRunning=\{sessionTuiMarks\[(?:session|node\.session)\.id\] === "running"\}/);
   assert.match(source, /\{isTuiRunning && \(/);
   assert.match(source, /\{isRunning \? \(\s*<RunningSessionIndicator/);

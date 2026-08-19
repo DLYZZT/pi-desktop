@@ -66,6 +66,10 @@ export function lineLooksLikeLiveStatus(text: string): boolean {
   return /^(Working|Thinking|Compacting)\b/i.test(trimmed);
 }
 
+export function screenHasLiveStatus(lines: string[]): boolean {
+  return lines.some((line) => lineLooksLikeLiveStatus(line));
+}
+
 export function lineLooksLikeDockChrome(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed || lineLooksLikeLiveStatus(trimmed)) return false;

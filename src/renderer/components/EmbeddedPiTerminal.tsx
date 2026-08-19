@@ -5,10 +5,12 @@ import { Terminal } from "@xterm/xterm";
 import { copyText } from "@/lib/clipboard";
 import type { SessionInfo } from "@/lib/types";
 import { TuiDockComposer } from "./TuiDockComposer";
+import { nextTuiWorkingSessionIds } from "@/lib/session-sidebar-state";
 import {
   EMPTY_DOCK_CHROME,
   parseDockChrome,
   sameDockChrome,
+  screenHasLiveStatus,
   type DockChrome,
 } from "./tui-dock-rect";
 import "@xterm/xterm/css/xterm.css";
@@ -25,6 +27,7 @@ type TerminalEntry = {
   fitAddon: FitAddon;
   element: HTMLDivElement;
   inputDisposable: { dispose: () => void };
+  writeParsedDisposable: { dispose: () => void };
   imeRenderDisposable: { dispose: () => void };
   startImeComposition: () => void;
   updateImeComposition: () => void;
@@ -40,6 +43,7 @@ function disposeTerminalEntry(entry: TerminalEntry): void {
   entry.terminal.textarea?.removeEventListener("compositionend", entry.endImeComposition);
   entry.imeStyleObserver.disconnect();
   entry.imeRenderDisposable.dispose();
+  entry.writeParsedDisposable.dispose();
   entry.inputDisposable.dispose();
   entry.terminal.dispose();
   entry.element.remove();
@@ -191,16 +195,29 @@ export function EmbeddedPiTerminal({
   theme,
   worktreeAnchorRef,
   onSessionRelocated,
+  onTuiWorkingChange,
 }: {
   session: TerminalSession | null;
   theme: "light" | "dark";
   worktreeAnchorRef?: (node: HTMLDivElement | null) => void;
   onSessionRelocated?: (session: SessionInfo) => void;
+  onTuiWorkingChange?: (sessionIds: Set<string>) => void;
 }) {
   const root = useRef<HTMLDivElement | null>(null);
   const terminalPane = useRef<HTMLDivElement | null>(null);
   const terminals = useRef(new Map<string, TerminalEntry>());
   const selectedSessionId = useRef<string | null>(session?.id ?? null);
+  const tuiWorkingRef = useRef(new Set<string>());
+  const onTuiWorkingChangeRef = useRef(onTuiWorkingChange);
+  onTuiWorkingChangeRef.current = onTuiWorkingChange;
+  const publishTuiWorking = (sessionId: string, live: boolean) => {
+    const next = nextTuiWorkingSessionIds(tuiWorkingRef.current, sessionId, live);
+    if (next === tuiWorkingRef.current) return;
+    tuiWorkingRef.current = next;
+    onTuiWorkingChangeRef.current?.(next);
+  };
+  const publishTuiWorkingRef = useRef(publishTuiWorking);
+  publishTuiWorkingRef.current = publishTuiWorking;
   const [dockChrome, setDockChrome] = useState<DockChrome>(EMPTY_DOCK_CHROME);
   const [cellPx, setCellPx] = useState(18);
   const [coverOn, setCoverOn] = useState(true);
@@ -255,6 +272,7 @@ export function EmbeddedPiTerminal({
     if (entry && entry.cwd !== session.cwd) {
       disposeTerminalEntry(entry);
       terminals.current.delete(session.id);
+      publishTuiWorking(session.id, false);
       entry = undefined;
     }
     if (!entry) {
@@ -332,6 +350,9 @@ export function EmbeddedPiTerminal({
         imeStyleObserver.observe(compositionView, { attributes: true, attributeFilter: ["style"] });
       }
       const imeRenderDisposable = terminal.onRender(syncImeAnchor);
+      const writeParsedDisposable = terminal.onWriteParsed(() => {
+        publishTuiWorkingRef.current(session.id, screenHasLiveStatus(readLiveScreenLines(terminal)));
+      });
       const inputDisposable = terminal.onData((data) => {
         window.piBridge.writeSessionTui(session.id, data);
       });
@@ -341,6 +362,7 @@ export function EmbeddedPiTerminal({
         fitAddon,
         element,
         inputDisposable,
+        writeParsedDisposable,
         imeRenderDisposable,
         startImeComposition,
         updateImeComposition,
@@ -421,6 +443,10 @@ export function EmbeddedPiTerminal({
     return () => {
       for (const entry of terminalEntries.values()) disposeTerminalEntry(entry);
       terminalEntries.clear();
+      if (tuiWorkingRef.current.size > 0) {
+        tuiWorkingRef.current = new Set();
+        onTuiWorkingChangeRef.current?.(tuiWorkingRef.current);
+      }
     };
   }, []);
 

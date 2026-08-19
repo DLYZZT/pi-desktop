@@ -101,6 +101,7 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
   const [browserAuthorization, setBrowserAuthorization] = useState<BrowserAgentAuthorizationRequest | null>(null);
   const [channelSnapshot, setChannelSnapshot] = useState<ChannelsSnapshot>(EMPTY_CHANNELS);
   const [worktreeSlot, setWorktreeSlot] = useState<HTMLDivElement | null>(null);
+  const [tuiWorkingSessionIds, setTuiWorkingSessionIds] = useState(() => new Set<string>());
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
@@ -690,6 +691,7 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
         worktreeSlot={role === "cockpit" ? worktreeSlot : null}
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
         onCwdChange={handleCwdChange}
+        tuiWorkingSessionIds={tuiWorkingSessionIds}
       />
       <div style={{ padding: "8px", flexShrink: 0 }}>
         <button
@@ -1576,6 +1578,7 @@ export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
                     theme={isDark ? "dark" : "light"}
                     worktreeAnchorRef={setWorktreeSlot}
                     onSessionRelocated={handleSessionRelocated}
+                    onTuiWorkingChange={setTuiWorkingSessionIds}
                   />
                 </div>
               </>
