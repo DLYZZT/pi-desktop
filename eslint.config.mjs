@@ -8,7 +8,16 @@ const sourceFiles = ["src/**/*.{ts,tsx}"];
 
 export default tseslint.config(
   {
-    ignores: ["**/.artifacts/**", "**/build/**", "**/dist/**", "**/node_modules/**", "**/out/**"],
+    ignores: [
+      "**/.artifacts/**",
+      "**/build/**",
+      "**/dist/**",
+      "**/node_modules/**",
+      "**/out/**",
+      ".pi/extensions/herdr-agent-state.ts",
+    ],
+  },
+  {
     linterOptions: {
       reportUnusedDisableDirectives: "error",
     },
