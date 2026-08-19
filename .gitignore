@@ -9,5 +9,6 @@ temp/
 .env
 .env.*
 .artifacts/
+.pi/extensions/
 build/toolchains/.core-cache/
 build/toolchains/core/
