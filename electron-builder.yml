@@ -96,6 +96,11 @@ files:
       - "dist/**/*.d.ts"
 
 asar: true
+# node-pty 1.1 ships Electron-compatible Windows/macOS prebuilds. Rebuilding
+# them would needlessly require a locally supported Visual Studio toolset.
+npmRebuild: false
+asarUnpack:
+  - node_modules/node-pty/**/*
 
 # Signed runtime catalogs plus the current target's small core search tools.
 # Managed Node/Python/Git archives remain download-on-consent and are never shipped.

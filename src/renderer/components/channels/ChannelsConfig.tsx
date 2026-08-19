@@ -358,6 +358,12 @@ export function ChannelsConfig({ onSnapshotChange }: { onSnapshotChange?: (snaps
             <p style={{ margin: "6px 0 0", color: "var(--text-dim)", fontSize: 12, lineHeight: 1.6 }}>
               {t("channelsDescription", "Connect IM accounts, control access, and bind conversations to Pi sessions.")}
             </p>
+            <p style={{ margin: "10px 0 0", color: "var(--accent)", fontSize: 12, lineHeight: 1.6 }}>
+              {t(
+                "channelInboundDisabledForTui",
+                "Inbound IM turns are off in this cut. The live agent is the external pi TUI, not the Desktop host.",
+              )}
+            </p>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 7 }}>
             <button

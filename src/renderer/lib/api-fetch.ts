@@ -18,6 +18,7 @@ import {
   listWorktrees,
   newAgent,
   readFile,
+  setSessionArchived,
   renameSession,
   subscribe,
   subscribeAgentEvents,
@@ -84,11 +85,15 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       }
       if (method === "PATCH" || method === "PUT") {
         const body = await parseBody(init);
+        if (typeof body.archived === "boolean") {
+          await setSessionArchived(id, body.archived);
+          return jsonResponse({ ok: true });
+        }
         if (typeof body.name === "string") {
           await renameSession(id, body.name);
           return jsonResponse({ ok: true });
         }
-        return errorResponse("name is required", 400);
+        return errorResponse("name or archived is required", 400);
       }
     }
     if (segs[0] === "sessions" && segs[2] === "context" && method === "GET") {

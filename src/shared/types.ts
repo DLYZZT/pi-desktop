@@ -316,6 +316,8 @@ export interface SessionInfo {
   projectRoot?: string;
   /** Branch name when cwd is a linked git worktree (not the main checkout) */
   worktreeBranch?: string;
+  /** Hidden from the default sidebar list; file stays on disk. */
+  archived?: boolean;
 }
 
 export interface SessionContext {

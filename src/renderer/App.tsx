@@ -1,5 +1,6 @@
 import { Component, type CSSProperties, type ErrorInfo, type ReactNode, useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { readCockpitRole, type CockpitRole } from "@/fork";
 import { ensureRpc, resetRpc } from "@/lib/api-client";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -33,6 +34,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 }
 
 export function App() {
+  const [cockpitRole, setCockpitRole] = useState<CockpitRole>(() =>
+    typeof window === "undefined" ? "full" : readCockpitRole(window.location.hash),
+  );
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("Connecting…");
@@ -81,6 +85,8 @@ export function App() {
     // Clear dock badge when user focuses the app
     const onFocus = () => window.piBridge?.clearBadge?.();
     window.addEventListener("focus", onFocus);
+    const onHash = () => setCockpitRole(readCockpitRole(window.location.hash));
+    window.addEventListener("hashchange", onHash);
 
     return () => {
       cancelled = true;
@@ -88,6 +94,7 @@ export function App() {
       offCrash?.();
       offMenuDiag?.();
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("hashchange", onHash);
     };
   }, []);
 
@@ -124,7 +131,7 @@ export function App() {
 
   return (
     <ErrorBoundary>
-      <AppShell />
+      <AppShell role={cockpitRole} />
     </ErrorBoundary>
   );
 }

@@ -13,12 +13,12 @@ test("router object and replace method retain module-level identity", () => {
   assert.equal(Object.isFrozen(routerCompat), true);
 });
 
-test("router replacement preserves pathname query navigation semantics", () => {
+test("router replacement preserves pathname, query and cockpit role", () => {
   const originalWindow = globalThis.window;
   const replacements = [];
   const events = [];
   globalThis.window = {
-    location: { pathname: "/desktop" },
+    location: { pathname: "/desktop", hash: "#cockpit" },
     history: {
       replaceState(_state, _title, url) {
         replacements.push(url);
@@ -36,7 +36,7 @@ test("router replacement preserves pathname query navigation semantics", () => {
     globalThis.window = originalWindow;
   }
 
-  assert.deepEqual(replacements, ["/desktop?session=abc", "/"]);
+  assert.deepEqual(replacements, ["/desktop?session=abc#cockpit", "/#cockpit"]);
   assert.deepEqual(events, ["popstate", "popstate"]);
 });
 

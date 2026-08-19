@@ -20,6 +20,13 @@ import {
 import { ToolchainError } from "../shared/toolchains/errors";
 import type { BrowserService } from "./browser/browser-service";
 import { BrowserError } from "./browser/browser-error";
+import { spawn as spawnPty } from "node-pty";
+import {
+  bundledPiCliPath,
+  createSessionPtyManager,
+  type SessionPtyManager,
+  type SessionPtySpawn,
+} from "./fork/session-pty";
 import { isTrustedDesktopIpcSender } from "./ipc-trust";
 import type {
   BrowserConfirmationKind,
@@ -39,6 +46,7 @@ import type {
 export type DesktopIpcOptions = {
   getHostManager: () => HostManager | null;
   getMainWindow: () => BrowserWindow | null;
+  getTrustedWindows?: () => Array<BrowserWindow | null>;
   getUnreadBadge: () => number;
   applyBadgeCount: (count: number) => void;
   getToolchainState: (cwd?: string) => PublicToolchainState | Promise<PublicToolchainState>;
@@ -48,6 +56,7 @@ export type DesktopIpcOptions = {
     capability: Extract<ToolchainActionRequest, { action: "choose-custom-tool" }>["capability"],
     executable: string,
   ) => Promise<PublicToolchainState>;
+  resolveNodeExecutable: (cwd: string) => Promise<string>;
   setChannelCredential: (payload: ChannelCredentialWrite) => void;
   getBrowserService: () => BrowserService | null;
   updateManager: {
@@ -59,23 +68,25 @@ export type DesktopIpcOptions = {
   };
 };
 
-export function installDesktopIpc(options: DesktopIpcOptions): void {
+export function installDesktopIpc(options: DesktopIpcOptions): SessionPtyManager {
   const {
     getHostManager,
     getMainWindow,
+    getTrustedWindows,
     getUnreadBadge,
     applyBadgeCount,
     getToolchainState,
     rescanToolchains,
     performToolchainAction,
     chooseCustomTool,
+    resolveNodeExecutable,
     setChannelCredential,
     getBrowserService,
     updateManager,
   } = options;
+  const trustedWindows = (): Array<BrowserWindow | null> => getTrustedWindows?.() ?? [getMainWindow()];
   const assertTrustedSender = (event: IpcMainInvokeEvent): void => {
-    const win = getMainWindow();
-    if (!isTrustedDesktopIpcSender(win, event)) throw new Error("Untrusted desktop IPC sender");
+    if (!isTrustedDesktopIpcSender(trustedWindows(), event)) throw new Error("Untrusted desktop IPC sender");
   };
   const trustedHandle = <T extends unknown[], R>(
     channel: string,
@@ -91,7 +102,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     listener: (event: IpcMainEvent, ...args: T) => void,
   ): void => {
     ipcMain.on(channel, (event, ...args) => {
-      if (!isTrustedDesktopIpcSender(getMainWindow(), event)) return;
+      if (!isTrustedDesktopIpcSender(trustedWindows(), event)) return;
       listener(event, ...(args as T));
     });
   };
@@ -173,6 +184,87 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     const { port1 } = manager.createRendererChannel();
     event.sender.postMessage("desktop:host-port", null, [port1]);
   });
+
+  trustedOn("desktop:abort-session", (_event, sessionId: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId.trim()) return;
+    getHostManager()?.abortSession(sessionId.trim());
+  });
+
+  const emitSessionTuiMarks = (): void => {
+    const marks = sessionPtyManager.snapshotMarks();
+    for (const win of trustedWindows()) {
+      if (win && !win.isDestroyed()) win.webContents.send("desktop:session-tui-marks", marks);
+    }
+  };
+  const emitSessionTuiData = (sessionId: string, data: string): void => {
+    for (const win of trustedWindows()) {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("desktop:session-tui-data", { sessionId, data });
+      }
+    }
+  };
+  const sessionPtyManager = createSessionPtyManager({
+    spawn: spawnPty as SessionPtySpawn,
+    onData(sessionId, data) {
+      emitSessionTuiData(sessionId, data);
+    },
+    onExit(sessionId, exitCode) {
+      appendMainLog(`embedded Pi exited session=${sessionId} code=${exitCode}`);
+      emitSessionTuiMarks();
+    },
+  });
+
+  trustedOn("desktop:start-session-tui", (_event, payload: unknown) => {
+    if (!payload || typeof payload !== "object") return;
+    const sessionId = "sessionId" in payload ? payload.sessionId : undefined;
+    const sessionPath = "sessionPath" in payload ? payload.sessionPath : undefined;
+    const cwd = "cwd" in payload ? payload.cwd : undefined;
+    if (typeof sessionId !== "string" || !sessionId.trim()) return;
+    if (typeof cwd !== "string" || !cwd.trim()) return;
+    const selected = {
+      sessionId: sessionId.trim(),
+      ...(typeof sessionPath === "string" && sessionPath.trim() ? { sessionPath: sessionPath.trim() } : {}),
+      cwd: cwd.trim(),
+    };
+    for (const win of trustedWindows()) {
+      if (win && !win.isDestroyed()) win.webContents.send("desktop:cockpit-selection", selected);
+    }
+    void resolveNodeExecutable(selected.cwd)
+      .then((nodeExecutable) => {
+        sessionPtyManager.start({
+          ...selected,
+          nodeExecutable,
+          program: bundledPiCliPath(),
+        });
+        emitSessionTuiMarks();
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        sessionPtyManager.markDead(selected.sessionId);
+        emitSessionTuiMarks();
+        emitSessionTuiData(selected.sessionId, `\r\nPi failed to start: ${message}\r\n`);
+        appendMainLog(`embedded Pi start failed session=${selected.sessionId}: ${message}`);
+      });
+  });
+
+  trustedOn("desktop:kill-session-tui", (_event, sessionId: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId.trim()) return;
+    sessionPtyManager.kill(sessionId.trim());
+    emitSessionTuiMarks();
+  });
+
+  trustedOn("desktop:write-session-tui", (_event, sessionId: unknown, data: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId.trim() || typeof data !== "string") return;
+    sessionPtyManager.write(sessionId.trim(), data);
+  });
+
+  trustedOn("desktop:resize-session-tui", (_event, sessionId: unknown, cols: unknown, rows: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId.trim()) return;
+    if (typeof cols !== "number" || typeof rows !== "number") return;
+    sessionPtyManager.resize(sessionId.trim(), cols, rows);
+  });
+
+  trustedHandle("desktop:get-session-tui-marks", () => sessionPtyManager.snapshotMarks());
 
   trustedHandle("desktop:open-external", async (_event, url: string) => {
     if (typeof url !== "string") return;
@@ -375,6 +467,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   );
   browserHandler("desktop:browser:choose-upload-files", (browser, tabId: string) => browser.chooseUploadFiles(tabId));
   browserHandler("desktop:browser:reset", (browser) => browser.reset());
+  return sessionPtyManager;
 }
 
 function toolchainActionConfirmation(request: ToolchainActionRequest): Electron.MessageBoxOptions | undefined {

@@ -30,12 +30,14 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import type { ModelCatalogStatus } from "@contract/types";
 import { processImageFileBatch } from "@/lib/image-file-processing";
+import { ForkUsageChips } from "@/fork";
 import {
   captureComposerSubmission,
   failedComposerSubmissionAction,
   mergeFailedSubmissionImages,
   type ComposerSubmissionSnapshot,
 } from "@/lib/composer-submission";
+import { applySlashPrefix, extractSlashQuery, type SlashQueryMatch } from "@/lib/slash-command";
 
 export interface AttachedImage {
   data: string; // base64, no prefix
@@ -278,6 +280,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   );
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [slashMatch, setSlashMatch] = useState<SlashQueryMatch | null>(null);
   const [atQuery, setAtQuery] = useState<AtQueryMatch | null>(null);
   const [atMenuOpen, setAtMenuOpen] = useState(false);
   const [atActiveIndex, setAtActiveIndex] = useState(0);
@@ -342,6 +345,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       if (current.trim()) return;
       setValue(text);
       setAtQuery(null);
+      setSlashMatch(null);
       requestAnimationFrame(() => {
         if (!ta) return;
         ta.focus();
@@ -358,6 +362,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       const combined = [text, current].filter((t) => t.trim()).join("\n\n");
       setValue(combined);
       setAtQuery(null);
+      setSlashMatch(null);
       requestAnimationFrame(() => {
         if (!ta) return;
         ta.focus();
@@ -380,6 +385,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       const newVal = before + sep + text + after;
       setValue(newVal);
       setAtQuery(null);
+      setSlashMatch(null);
       requestAnimationFrame(() => {
         if (!ta) return;
         const pos = start + sep.length + text.length;
@@ -444,6 +450,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const clearInput = useCallback(() => {
     setValue("");
     setAtQuery(null);
+    setSlashMatch(null);
     if (draftKey) draftPersistenceRef.current?.clear(draftKey);
     if (draftKeyRef.current && draftKeyRef.current !== draftKey) {
       draftPersistenceRef.current?.clear(draftKeyRef.current);
@@ -508,6 +515,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     draftKeyRef.current = draftKey;
     setValue(draft?.value ?? "");
     setAtQuery(null);
+    setSlashMatch(null);
     setAttachedImages((prev) => {
       prev.forEach(revokeImagePreview);
       return draft?.images.map(draftImageToAttachedImage) ?? [];
@@ -578,7 +586,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     value,
   ]);
 
-  const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1)) ? value.slice(1).toLowerCase() : null;
+  const slashQuery = slashMatch ? slashMatch.query.toLowerCase() : null;
 
   const filteredSlashCommands = (() => {
     if (slashQuery === null) return [];
@@ -623,15 +631,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
   // ── @ file autocomplete ──────────────────────────────────────────────────
   // Recomputed from the text before the caret on every change/caret move.
-  // Disabled entirely when there is no cwd (new session without a directory).
-  const updateAtQuery = useCallback(
+  // @ is disabled entirely when there is no cwd (new session without a directory).
+  const updateComposerTokens = useCallback(
     (text: string, cursor: number | null) => {
+      const pos = cursor ?? text.length;
+      const beforeCursor = text.slice(0, pos);
+      setSlashMatch(extractSlashQuery(beforeCursor));
       if (!cwd) {
         setAtQuery(null);
         return;
       }
-      const pos = cursor ?? text.length;
-      setAtQuery(extractAtQuery(text.slice(0, pos)));
+      setAtQuery(extractAtQuery(beforeCursor));
     },
     [cwd],
   );
@@ -783,8 +793,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
   const applySlashCommand = useCallback(
     (command: SlashCommandPaletteItem) => {
-      const nextValue = `/${command.name} `;
+      if (!slashMatch) return;
+      const nextValue = applySlashPrefix(value, slashMatch, command.name);
       setValue(nextValue);
+      setSlashMatch(null);
       setSlashMenuOpen(false);
       setSlashActiveIndex(0);
       requestAnimationFrame(() => {
@@ -796,7 +808,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
       });
     },
-    [setValue],
+    [setValue, slashMatch, value],
   );
 
   const sendQueued = useCallback(
@@ -949,12 +961,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         }
       }
 
+      if (e.key === "Escape" && isStreaming && !isComposing) {
+        e.preventDefault();
+        onAbort();
+        return;
+      }
+
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         if (isStreaming && (onSteer || onFollowUp)) {
-          // Default Enter sends as steer if available, else followup
-          void sendQueued(onSteer ? "steer" : "followup");
-        } else {
+          // Grok-style: Ctrl+Enter interrupts and sends now; Enter queues.
+          if (e.ctrlKey && onSteer) void sendQueued("steer");
+          else if (!e.ctrlKey && onFollowUp) void sendQueued("followup");
+          else if (!e.ctrlKey && onSteer) void sendQueued("steer");
+        } else if (!e.ctrlKey) {
           void handleSend();
         }
       }
@@ -976,6 +996,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       atMatches,
       atActiveIndex,
       applyAtCompletion,
+      onAbort,
     ],
   );
 
@@ -1761,11 +1782,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
               value={value}
               onChange={(e) => {
                 setValue(e.target.value);
-                updateAtQuery(e.target.value, e.target.selectionStart);
+                updateComposerTokens(e.target.value, e.target.selectionStart);
               }}
               onSelect={(e) => {
                 const el = e.currentTarget;
-                updateAtQuery(el.value, el.selectionStart);
+                updateComposerTokens(el.value, el.selectionStart);
               }}
               onKeyDown={handleKeyDown}
               onCompositionStart={() => {
@@ -1775,13 +1796,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 isComposingRef.current = false;
                 lastCompositionEndAtRef.current = Date.now();
                 const el = e.currentTarget;
-                updateAtQuery(el.value, el.selectionStart);
+                updateComposerTokens(el.value, el.selectionStart);
               }}
               onInput={handleInput}
               onPaste={handlePaste}
               placeholder={
                 isStreaming && (onSteer || onFollowUp)
-                  ? t("steerOrQueue", "Steer now / queue follow-up…")
+                  ? t("steerOrQueue", "Enter queues · Ctrl+Enter sends now")
                   : isStreaming
                     ? t("agentRunning", "Agent is running…")
                     : t("messagePlaceholder", "Message… Type / for commands, @ for files")
@@ -1812,7 +1833,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     title={
                       attachedImages.length
                         ? t("imageQueueUnavailable", "Image attachments cannot be queued while the agent is running")
-                        : t("steerDescription", "Interrupt the current run and inject this message now")
+                        : t("steerDescription", "Ctrl+Enter: stop this turn and send now")
                     }
                     style={{
                       display: "flex",
@@ -1853,7 +1874,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     title={
                       attachedImages.length
                         ? t("imageQueueUnavailable", "Image attachments cannot be queued while the agent is running")
-                        : t("followUpDescription", "Queue this message after the agent finishes")
+                        : t("followUpDescription", "Enter: queue until the agent finishes")
                     }
                     style={{
                       display: "flex",
@@ -2206,30 +2227,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                   )}
               </div>
             )}
-            {(statusChips ?? [])
-              .filter((chip) => chip.text.trim().length > 0)
-              .map((chip) => (
-                <span
-                  key={chip.key}
-                  title={`${chip.key}: ${chip.text}`}
-                  style={{
-                    maxWidth: 220,
-                    padding: "4px 8px",
-                    borderRadius: 999,
-                    border: "1px solid var(--border)",
-                    background: "var(--bg-panel)",
-                    color: "var(--text-muted)",
-                    fontSize: 11,
-                    lineHeight: "20px",
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    flexShrink: 1,
-                  }}
-                >
-                  {chip.text}
-                </span>
-              ))}
+            <ForkUsageChips chips={statusChips} />
           </div>
 
           {/* spacer */}
@@ -2251,6 +2249,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             {isStreaming && (
               <button
                 type="button"
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return;
+                  event.preventDefault();
+                  closeControlDropdowns();
+                  onAbort();
+                }}
                 onClick={() => {
                   closeControlDropdowns();
                   onAbort();

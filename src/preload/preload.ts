@@ -68,6 +68,62 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
     requestHostPort: () => {
       ipcRenderer.send("desktop:connect-host");
     },
+    abortSession: (sessionId) => {
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        ipcRenderer.send("desktop:abort-session", sessionId.trim());
+      }
+    },
+    killSessionTui: (sessionId) => {
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        ipcRenderer.send("desktop:kill-session-tui", sessionId.trim());
+      }
+    },
+    writeSessionTui: (sessionId, data) => {
+      if (typeof sessionId === "string" && sessionId.trim() && typeof data === "string" && data) {
+        ipcRenderer.send("desktop:write-session-tui", sessionId.trim(), data);
+      }
+    },
+    resizeSessionTui: (sessionId, cols, rows) => {
+      if (typeof sessionId === "string" && sessionId.trim() && Number.isFinite(cols) && Number.isFinite(rows)) {
+        ipcRenderer.send("desktop:resize-session-tui", sessionId.trim(), cols, rows);
+      }
+    },
+    getSessionTuiMarks: () => ipcRenderer.invoke("desktop:get-session-tui-marks"),
+    onSessionTuiMarks: (cb) => {
+      const handler = (_: Electron.IpcRendererEvent, marks: Record<string, "running" | "dead">) => cb(marks);
+      ipcRenderer.on("desktop:session-tui-marks", handler);
+      return () => ipcRenderer.removeListener("desktop:session-tui-marks", handler);
+    },
+    onSessionTuiData: (cb) => {
+      const handler = (_: Electron.IpcRendererEvent, payload: { sessionId: string; data: string }) => cb(payload);
+      ipcRenderer.on("desktop:session-tui-data", handler);
+      return () => ipcRenderer.removeListener("desktop:session-tui-data", handler);
+    },
+    onCockpitSelection: (cb) => {
+      const handler = (
+        _: Electron.IpcRendererEvent,
+        session: { sessionId: string; sessionPath?: string; cwd: string },
+      ) => cb(session);
+      ipcRenderer.on("desktop:cockpit-selection", handler);
+      return () => ipcRenderer.removeListener("desktop:cockpit-selection", handler);
+    },
+    startSessionTui: (session) => {
+      if (
+        session &&
+        typeof session.sessionId === "string" &&
+        session.sessionId.trim() &&
+        typeof session.cwd === "string" &&
+        session.cwd.trim()
+      ) {
+        ipcRenderer.send("desktop:start-session-tui", {
+          sessionId: session.sessionId.trim(),
+          ...(typeof session.sessionPath === "string" && session.sessionPath.trim()
+            ? { sessionPath: session.sessionPath.trim() }
+            : {}),
+          cwd: session.cwd.trim(),
+        });
+      }
+    },
     openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
     showItemInFolder: (fsPath) => ipcRenderer.invoke("desktop:show-item-in-folder", fsPath),
     selectDirectory: () => ipcRenderer.invoke("desktop:select-directory"),

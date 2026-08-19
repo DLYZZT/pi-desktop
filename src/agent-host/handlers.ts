@@ -53,11 +53,14 @@ import {
   buildSessionContext,
   buildSessionInfoFromManager,
   getSessionIndexMetrics,
+  cacheSessionPath,
   invalidateSessionPathCache,
   listAllSessions,
   resolveSessionPath,
 } from "./session-reader";
 import { isFilePathReferencedBySession } from "./session-file-references";
+import { forkAppendArchived } from "./fork/archive";
+import { relocateSessionFile } from "./session-relocate";
 import {
   addWorktree,
   getGitStatus,
@@ -830,6 +833,77 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       }
       await emitIndexedSessionChange(server, id, null);
       return { ok: true as const };
+    },
+
+    "sessions.setArchived": async (params) => {
+      const { id, archived } = params as { id: string; archived: boolean };
+      if (typeof archived !== "boolean") {
+        throw new RpcError({ code: "BAD_REQUEST", message: "archived is required" });
+      }
+      const existing = getRpcSession(id);
+      if (existing?.isAlive()) {
+        forkAppendArchived(existing.inner.sessionManager, archived);
+      } else {
+        const filePath = await resolveSessionPath(id);
+        if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+        forkAppendArchived(SessionManager.open(filePath), archived);
+        invalidateSessionContent(filePath);
+      }
+      await emitIndexedSessionChange(server, id, null);
+      return { ok: true as const };
+    },
+
+    "sessions.relocate": async (params) => {
+      const { id, cwd } = params as { id: string; cwd: string };
+      const validation = validateExistingDirectory(cwd);
+      if (!validation.ok) {
+        throw new RpcError({ code: "BAD_REQUEST", message: validation.error });
+      }
+      const toCwd = validation.canonicalPath;
+      allowFileRoot(toCwd);
+
+      const existing = getRpcSession(id);
+      if (existing?.isAlive()) {
+        if (existing.isRunning()) {
+          throw new RpcError({
+            code: "CONFLICT",
+            message: "Session is still running. Stop it before changing the working directory.",
+          });
+        }
+        await existing.abortAndDispose();
+        clearSessionEventBinding(existing.sessionId || id);
+      }
+
+      const filePath = await resolveSessionPath(id);
+      if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+      const current = sessionIndex.getByPath(filePath) ?? (await sessionIndex.refreshPath(filePath));
+      const fromCwd = current?.cwd ?? SessionManager.open(filePath).getCwd();
+      if (canonicalPathForComparison(fromCwd) === canonicalPathForComparison(toCwd)) {
+        if (current) return { session: current };
+        const session = await sessionIndex.refreshPath(filePath);
+        if (!session) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+        return { session };
+      }
+
+      let destPath: string;
+      try {
+        destPath = relocateSessionFile(filePath, fromCwd, toCwd);
+      } catch (e) {
+        throw new RpcError({
+          code: "INTERNAL",
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+
+      invalidateSessionContent(filePath);
+      invalidateSessionContent(destPath);
+      sessionIndex.removePath(filePath);
+      invalidateSessionPathCache(id);
+      cacheSessionPath(id, destPath);
+      const session = await sessionIndex.refreshPath(destPath);
+      if (!session) throw new RpcError({ code: "INTERNAL", message: "Session index missed relocated file" });
+      server.emit("sessions.changed", session.id, { cwd: session.cwd, sessionId: session.id, session });
+      return { session };
     },
 
     "worktrees.list": async (params) => {

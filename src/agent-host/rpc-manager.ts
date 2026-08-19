@@ -180,6 +180,10 @@ export class AgentSessionWrapper {
   private unsupportedExtensionFeatures = new Set<string>();
   private promptRunning = false;
   private queuedTurnCount = 0;
+  private pendingAbort = false;
+  private turnSeq = 0;
+  private abortedTurnSeq = 0;
+  private promptInFlight = false;
   private turnTail: Promise<void> = Promise.resolve();
   private externalTurnActive = false;
   private externalTurnChannel: ChannelId | null = null;
@@ -239,6 +243,11 @@ export class AgentSessionWrapper {
 
   start(): void {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
+      if (event.type === "agent_start" && this.pendingAbort) {
+        // activeRun exists now. Do not await: waitForIdle would deadlock inside emit.
+        void this.inner.abort();
+      }
+      if (event.type === "agent_end") this.pendingAbort = false;
       this.resetIdleTimer();
       const displayEvent = this.withExternalChannelSource(event);
       this.emit(displayEvent);
@@ -572,20 +581,45 @@ export class AgentSessionWrapper {
   async send(command: Record<string, unknown>): Promise<unknown> {
     this.resetIdleTimer();
     const type = command.type as string;
-    if (this.shouldWaitForExtensions(type)) await this.waitForExtensionsBound();
+    const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
+    if (type === "prompt" && !streamingBehavior) {
+      this.promptInFlight = true;
+      this.turnSeq += 1;
+    }
+    const promptTurnSeq = this.turnSeq;
+    try {
+      if (this.shouldWaitForExtensions(type)) await this.waitForExtensionsBound();
+    } catch (error) {
+      if (type === "prompt" && !streamingBehavior) this.promptInFlight = false;
+      throw error;
+    }
 
     switch (type) {
       case "prompt": {
         // Fire and forget — events come via subscribe
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
-        const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
         if (!streamingBehavior) browserAgentRuntime.beginTurn(this.sessionId, "local");
-        const invokePrompt = () =>
-          this.inner.prompt(command.message as string, {
-            ...(promptImages?.length ? { images: promptImages } : {}),
-            ...(streamingBehavior ? { streamingBehavior } : {}),
-            source: "rpc",
-          });
+        const invokePrompt = async () => {
+          if (this.pendingAbort && promptTurnSeq <= this.abortedTurnSeq) {
+            if (!streamingBehavior) {
+              this.pendingAbort = false;
+              this.promptInFlight = false;
+              return;
+            }
+            this.pendingAbort = false;
+          }
+          this.pendingAbort = false;
+          try {
+            await this.inner.prompt(command.message as string, {
+              ...(promptImages?.length ? { images: promptImages } : {}),
+              ...(streamingBehavior ? { streamingBehavior } : {}),
+              source: "rpc",
+            });
+            if (streamingBehavior === "steer") this.inner.agent.abort();
+          } finally {
+            if (!streamingBehavior) this.promptInFlight = false;
+          }
+        };
         const operation = streamingBehavior ? invokePrompt() : this.enqueueTurn(invokePrompt);
         operation
           .then(() => {
@@ -601,9 +635,25 @@ export class AgentSessionWrapper {
         return null;
       }
 
-      case "abort":
-        await this.withFinalRunningNotification(() => this.inner.abort());
+      case "abort": {
+        if (this.promptInFlight || this.promptRunning || this.queuedTurnCount > 0 || this.inner.isStreaming) {
+          this.pendingAbort = true;
+          this.abortedTurnSeq = this.turnSeq;
+        }
+        const abortable = this.inner as AgentSessionLike & {
+          abortBash?: () => void;
+          agent?: { abort?: () => void };
+        };
+        abortable.abortBash?.();
+        abortable.agent?.abort?.();
+        // Do not await waitForIdle. Hung bash/HTTP would pin this RPC, and later
+        // Stop clicks queue behind it looking dead.
+        void this.withFinalRunningNotification(() => this.inner.abort());
+        this.emit({ type: "agent_end", messages: [] });
+        this.emit({ type: "prompt_done" });
+        notifyRunningChange();
         return null;
+      }
 
       case "get_state": {
         const model = this.inner.model;
@@ -733,12 +783,15 @@ export class AgentSessionWrapper {
       }
 
       case "steer": {
+        this.pendingAbort = false;
         const steerImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         await this.inner.steer(command.message as string, steerImages?.length ? steerImages : undefined);
+        this.inner.agent.abort();
         return null;
       }
 
       case "follow_up": {
+        this.pendingAbort = false;
         const followImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         await this.inner.followUp(command.message as string, followImages?.length ? followImages : undefined);
         return null;
@@ -1335,6 +1388,14 @@ function getLocks(): Map<string, Promise<{ session: AgentSessionWrapper; realSes
 
 export function getRpcSession(sessionId: string): AgentSessionWrapper | undefined {
   return getRegistry().get(sessionId);
+}
+
+/** Abort a live session only. Never starts or reloads a session. */
+export function abortLiveRpcSession(sessionId: string): boolean {
+  const session = getRpcSession(sessionId);
+  if (!session?.isAlive()) return false;
+  void session.send({ type: "abort" });
+  return true;
 }
 
 export async function disposeAllRpcSessions(reason = "host-shutdown"): Promise<void> {

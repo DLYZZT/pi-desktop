@@ -25,8 +25,10 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useObservedElementHeight } from "@/hooks/useObservedElementHeight";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { MessageRenderKeyRegistry, type MessageRenderRole } from "@/lib/message-render-key";
+import { mergeToolResults } from "@/lib/tool-execution-partials";
 import { buildToolMessageIndex } from "@/lib/tool-message-index";
 import { useI18n } from "@/i18n";
+import { forkNoticeItemStyle, forkNoticeMessageStyle, forkStatusBarStatuses, forkUsageChips } from "@/fork";
 
 interface Props {
   session: SessionInfo | null;
@@ -315,6 +317,7 @@ export function ChatWindow({
     sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
+    toolPartials,
     isNew,
     messagesEndRef,
     liveContentEndRef,
@@ -339,6 +342,8 @@ export function ChatWindow({
     loadSlashCommands,
     loadOlder,
     loadDeferredContent,
+    isAwayFromBottom,
+    reattachAutoFollow,
   } = useAgentSession({
     session,
     newSessionCwd,
@@ -498,7 +503,7 @@ export function ChatWindow({
       onAudioUnlock={unlockAudio}
       draftKey={session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined)}
       cwd={session?.cwd ?? newSessionCwd}
-      statusChips={extensionStatuses.filter((status) => /grok|usage/i.test(`${status.key} ${status.text}`))}
+      statusChips={forkUsageChips(extensionStatuses)}
     />
   );
 
@@ -701,9 +706,7 @@ export function ChatWindow({
                       </button>
                     </div>
                   )}
-                  <ExtensionStatusBar
-                    statuses={extensionStatuses.filter((status) => !/grok|usage/i.test(status.key))}
-                  />
+                  <ExtensionStatusBar statuses={forkStatusBarStatuses(extensionStatuses)} />
                   <ExtensionWidgets widgets={aboveEditorWidgets} />
 
                   {(() => {
@@ -773,7 +776,7 @@ export function ChatWindow({
                         <SessionProfiler key={renderKey} id="MessageView">
                           <MessageView
                             message={msg}
-                            toolResults={toolData?.results}
+                            toolResults={mergeToolResults(toolData?.results, toolPartials)}
                             toolCallDurations={toolData?.durations}
                             modelNames={modelNames}
                             cwd={messageCwd}
@@ -940,7 +943,7 @@ export function ChatWindow({
 
                   <div ref={liveContentEndRef} />
 
-                  {agentRunning && <div style={{ height: chatViewportHeight }} />}
+                  {agentRunning && <div data-run-spacer style={{ height: chatViewportHeight }} />}
 
                   <div ref={messagesEndRef} />
                 </div>
@@ -956,6 +959,53 @@ export function ChatWindow({
                   historyTruncated={hasOlder}
                 />
               </SessionProfiler>
+            )}
+
+            {/* Floating "scroll to bottom" badge: appears when the chat has
+                scrolled away from the newest content. Clicking it snaps to the
+                bottom and re-magnets the viewport so streaming thinking/tool
+                output keeps the view attached until the user scrolls away. */}
+            {isAwayFromBottom && (
+              <button
+                type="button"
+                className="chat-scroll-to-bottom"
+                onClick={reattachAutoFollow}
+                aria-label={t("scrollToBottom", "Scroll to bottom")}
+                title={agentRunning ? t("jumpToLatest", "Jump to latest") : t("scrollToBottom", "Scroll to bottom")}
+                style={{
+                  bottom: 12,
+                  right: isMobile ? 12 : CHAT_MINIMAP_WIDTH + 12,
+                }}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="3.5 6 8 10.5 12.5 6" />
+                </svg>
+                {agentRunning && (
+                  <span
+                    aria-hidden="true"
+                    className="chat-scroll-to-bottom-live-dot"
+                    style={{
+                      position: "absolute",
+                      top: 2,
+                      right: 2,
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      background: "var(--accent)",
+                    }}
+                  />
+                )}
+              </button>
             )}
           </div>
         </>
@@ -1095,9 +1145,10 @@ function NoticeShelf({
               display: "flex",
               alignItems: "center",
               gap: 10,
-              minHeight: 40,
-              maxHeight: 240,
-              alignItems: "flex-start" as const,
+              minHeight: 60,
+              height: 60,
+              maxHeight: 60,
+              ...forkNoticeItemStyle(),
               marginBottom: index === notices.length - 1 ? 0 : 6,
               overflow: "hidden",
               borderRadius: 14,
@@ -1129,14 +1180,13 @@ function NoticeShelf({
             />
             <span
               style={{
-                padding: "10px 0",
+                padding: "14px 0",
                 minWidth: 0,
                 maxWidth: "100%",
-                overflow: "auto",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                fontSize: 13,
-                lineHeight: 1.4,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                ...forkNoticeMessageStyle(),
               }}
             >
               {notice.message}

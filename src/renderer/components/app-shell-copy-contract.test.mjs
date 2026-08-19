@@ -10,3 +10,20 @@ test("session clipboard rejection is consumed and exposed as local alert feedbac
   assert.match(source, /sessionCopyFeedback\?\.status === "error"/);
   assert.match(source, /<div role="alert"/);
 });
+
+test("cockpit shows the current worktree in the terminal composer, not the sidebar header", () => {
+  assert.match(source, /worktreeSlot=\{role === "cockpit" \? worktreeSlot : null\}/);
+  assert.match(source, /worktreeAnchorRef=\{setWorktreeSlot\}/);
+});
+
+test("relocating a session restarts the cockpit TUI and refreshes the sidebar", () => {
+  assert.match(source, /onSessionRelocated=\{handleSessionRelocated\}/);
+  assert.match(source, /forkOnSelectSession\(session\)/);
+});
+
+test("cockpit keeps the original session info dropdown available without ChatWindow stats", () => {
+  assert.match(source, /showChat\s*&&\s*\(selectedSession\s*\|\|\s*sessionStats\s*\|\|\s*contextUsage\)/);
+  assert.match(source, /sessionStats\s*\?\s*\([\s\S]*?\)\s*:\s*selectedSession\s*\?/);
+  assert.match(source, /label:\s*t\("sessionId",\s*"ID"\),\s*value:\s*selectedSession\.id/);
+  assert.match(source, /label:\s*t\("workingDirectory",\s*"Working directory"\),\s*value:\s*selectedSession\.cwd/);
+});

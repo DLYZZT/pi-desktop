@@ -5,16 +5,37 @@ export interface ScrollMetrics {
   scrollTop: number;
   scrollHeight: number;
   clientHeight: number;
+  /** Height of the trailing full-viewport run spacer, if present. */
+  spacerHeight?: number;
 }
 
 export function isNearChatBottom(metrics: ScrollMetrics, threshold = CHAT_BOTTOM_PROXIMITY_PX): boolean {
   if (metrics.clientHeight <= 0) return true;
-  const distance = metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop;
+  // The active-run spacer inflates scrollHeight by one viewport; the real
+  // content ends spacerHeight above the raw scroll bottom.
+  const contentHeight = metrics.scrollHeight - Math.max(0, metrics.spacerHeight ?? 0);
+  const distance = contentHeight - metrics.clientHeight - metrics.scrollTop;
   return distance <= Math.max(0, threshold);
 }
 
 export function didUserScrollUp(previousScrollTop: number, currentScrollTop: number): boolean {
   return currentScrollTop < previousScrollTop - USER_SCROLL_UP_MIN_PX;
+}
+
+export interface ScrollMagnetDisengageInput {
+  previousScrollTop: number;
+  currentScrollTop: number;
+  now: number;
+  userIntentUntil: number;
+  sessionChangeIgnoreUntil: number;
+}
+
+export function shouldDisengageScrollMagnet(input: ScrollMagnetDisengageInput): boolean {
+  if (!didUserScrollUp(input.previousScrollTop, input.currentScrollTop)) return false;
+  // Session changes can produce synthetic upward scroll events while content
+  // is replaced. Ignore those, but never ignore an explicit wheel/touch/key
+  // gesture from the user during the same transition window.
+  return input.now >= input.sessionChangeIgnoreUntil || input.now <= input.userIntentUntil;
 }
 
 export interface AutoFollowStopInput {

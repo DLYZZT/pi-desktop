@@ -3,6 +3,8 @@
  * Runs pi-coding-agent in-process; serves Api/Streams over MessagePort.
  */
 import { createRpcServer } from "../contract/rpc";
+import { installFetchBodyAbort } from "./fetch-abort";
+import { installHttpIdleTimeout } from "./http-idle-timeout";
 import { registerHandlers } from "./handlers";
 import { startSessionWatcher } from "./session-watcher";
 import { toolchainRuntime } from "./toolchain-runtime";
@@ -10,15 +12,11 @@ import type { ToolchainSnapshot } from "../shared/toolchains/types";
 import { installToolchainGitRunner } from "./toolchain-git";
 import type { BrowserCapabilitySnapshot } from "../contract/browser";
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
-import { syncBrowserToolsForAllSessions } from "./rpc-manager";
+import { setBashChildListener } from "./desktop-bash-exec";
+import { abortLiveRpcSession, syncBrowserToolsForAllSessions } from "./rpc-manager";
 import { readPiRuntimeVersion } from "./runtime-version";
 
 const piRuntimeVersion = readPiRuntimeVersion();
-
-const server = createRpcServer();
-const restoreGitRunner = installToolchainGitRunner();
-const stopHandlers = registerHandlers(server);
-const stopWatcher = startSessionWatcher(server);
 
 function log(message: string): void {
   try {
@@ -28,13 +26,40 @@ function log(message: string): void {
   }
 }
 
+const httpIdleTimeoutMs = await installHttpIdleTimeout();
+installFetchBodyAbort();
+setBashChildListener((pid, alive) => {
+  try {
+    process.parentPort?.postMessage({ type: "bash-child", pid, alive });
+  } catch {
+    /* parent gone */
+  }
+});
+log(`HTTP idle timeout ${httpIdleTimeoutMs}ms`);
+
+const server = createRpcServer();
+const restoreGitRunner = installToolchainGitRunner();
+const stopHandlers = registerHandlers(server);
+const stopWatcher = startSessionWatcher(server);
+
 // Electron utilityProcess parent messaging
 const parentPort = process.parentPort;
 if (parentPort) {
   parentPort.on("message", (event) => {
-    const msg = event.data as { type?: string; snapshot?: ToolchainSnapshot | BrowserCapabilitySnapshot };
+    const msg = event.data as {
+      type?: string;
+      sessionId?: string;
+      snapshot?: ToolchainSnapshot | BrowserCapabilitySnapshot;
+    };
     if (msg?.type === "ping") {
       parentPort.postMessage({ type: "pong", ts: Date.now() });
+      return;
+    }
+    if (msg?.type === "session-abort") {
+      const sessionId = typeof msg.sessionId === "string" ? msg.sessionId.trim() : "";
+      if (!sessionId) return;
+      const hit = abortLiveRpcSession(sessionId);
+      log(`session-abort ${sessionId} ${hit ? "delivered" : "no-live-session"}`);
       return;
     }
     if (msg?.type === "attach-port") {

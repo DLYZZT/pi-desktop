@@ -10,6 +10,8 @@ import {
 } from "@/lib/message-display";
 import { getUserBubbleStyle } from "@/lib/channel-message-style";
 import { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelAttachmentCopyText } from "@shared/channel-message";
+import { SubagentTrailView } from "@/fork/SubagentTrail";
+import { parseSubagentTrail } from "@/fork/subagent-trail";
 import { useI18n } from "@/i18n";
 import { useTheme } from "@/hooks/useTheme";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
@@ -995,6 +997,7 @@ function ToolCallBlock({
   const inputStr = JSON.stringify(block.input, null, 2);
   const isEditTool = isEditToolName(block.toolName);
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
+  const subagentTrail = result ? parseSubagentTrail(result.details, result.timestamp === undefined) : null;
 
   // Result display
   const resultText = result
@@ -1094,7 +1097,10 @@ function ToolCallBlock({
       )}
 
       {/* ── Paired result — always show summary; expand for full detail ── */}
-      {result &&
+      {subagentTrail ? (
+        <SubagentTrailView trail={subagentTrail} expanded={expanded} />
+      ) : (
+        result &&
         (resultDiff ? (
           expanded ? (
             <PairedDiffResult diff={resultDiff} />
@@ -1120,7 +1126,8 @@ function ToolCallBlock({
             isError={isError}
             collapsed={!expanded}
           />
-        ))}
+        ))
+      )}
       {result && <DeferredContentActions content={result.content} onLoad={onLoadDeferredContent} />}
       {browserTabId && (
         <button
@@ -1635,6 +1642,7 @@ function CustomMessageView({
   onOpenFile?: (filePath: string) => void;
   onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
 }) {
+  const { t } = useI18n();
   const isHiddenDisplay = message.display === false;
   const [contentExpanded, setContentExpanded] = useState(!isHiddenDisplay);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
@@ -1643,7 +1651,10 @@ function CustomMessageView({
   const images = getMessageImages(message.content);
   const hasDetails = message.details !== undefined;
   const detailsText = hasDetails ? safeJson(message.details) : "";
-  const title = formatCustomType(message.customType);
+  const title =
+    message.customType === "desktop.cwdChanged"
+      ? t("workingDirectoryChanged", "Working directory")
+      : formatCustomType(message.customType);
   const time = formatTime(message.timestamp);
 
   const copyContent = () => void copy(text || detailsText);

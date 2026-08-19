@@ -9,8 +9,11 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { forkOnNewSession, forkOnSelectSession, shouldCollapseSidebarAfterSessionPick, type CockpitRole } from "@/fork";
+import { ChangeSessionCwd } from "./ChangeSessionCwd";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
+import { EmbeddedPiTerminal } from "./EmbeddedPiTerminal";
 import { FileExplorer } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
@@ -47,7 +50,7 @@ import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { ChannelsSnapshot } from "@shared/channel-types";
 import type { BrowserAgentAuthorizationRequest, BrowserAgentAuthorizationDecision } from "../../contract/browser";
 
-type SessionCopyField = "file" | "id";
+type SessionCopyField = "file" | "id" | "cwd";
 type SessionCopyFeedback = { field: SessionCopyField; status: "copied" | "error" };
 const EXPLORER_TAB_ID = "explorer";
 const BROWSER_TAB_ID = "browser";
@@ -80,7 +83,7 @@ function loadBrowserPanelPreferredWidth(): number {
   }
 }
 
-export function AppShell() {
+export function AppShell({ role = "full" }: { role?: CockpitRole } = {}) {
   const router = routerCompat;
   const { isDark, toggleTheme } = useTheme();
   const { language, t } = useI18n();
@@ -97,15 +100,26 @@ export function AppShell() {
   const [authorizationSettingsSessionId, setAuthorizationSettingsSessionId] = useState<string | null>(null);
   const [browserAuthorization, setBrowserAuthorization] = useState<BrowserAgentAuthorizationRequest | null>(null);
   const [channelSnapshot, setChannelSnapshot] = useState<ChannelsSnapshot>(EMPTY_CHANNELS);
+  const [worktreeSlot, setWorktreeSlot] = useState<HTMLDivElement | null>(null);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
 
-  // On mobile the sidebar is an overlay drawer; hide it by default so the chat
-  // is visible on load. Runs once the breakpoint resolves after hydration.
+  // In the full shell, the mobile sidebar is an overlay drawer; hide it by
+  // default so the chat is visible. The left cockpit only contains this
+  // sidebar, so it must stay open even though its narrow window matches the
+  // mobile breakpoint.
   useEffect(() => {
-    if (isMobile) setSidebarOpen(false);
-  }, [isMobile]);
+    if (role === "cockpit") {
+      setSidebarOpen(true);
+      setRightPanelOpen(true);
+      setRightPanelWidth(420);
+    } else if (role === "left") {
+      setSidebarOpen(true);
+    } else if (isMobile) {
+      setSidebarOpen(false);
+    }
+  }, [isMobile, role]);
   useEffect(() => {
     setMobileSidebarReady(true);
   }, []);
@@ -430,6 +444,21 @@ export function AppShell() {
       setSettingsOpen(true);
     });
     // ISSUE-016: Switch Session palette — focus sidebar / open project list
+    const offCockpit = window.piBridge?.onCockpitSelection?.((session) => {
+      setActiveCwd(session.cwd);
+      setSelectedSession((current) => {
+        if (current?.id === session.sessionId) return { ...current, cwd: session.cwd };
+        return {
+          id: session.sessionId,
+          cwd: session.cwd,
+          path: "",
+          created: "",
+          modified: "",
+          messageCount: 0,
+          firstMessage: "",
+        };
+      });
+    });
     const offSwitch = window.piBridge?.onMenu?.("switch-session", () => {
       setSidebarOpen(true);
       // Nudge sidebar to refresh sessions
@@ -442,6 +471,7 @@ export function AppShell() {
       offCheckForUpdates?.();
       offShowUpdate?.();
       offSwitch?.();
+      offCockpit?.();
     };
   }, [activeCwd, router]);
 
@@ -483,7 +513,7 @@ export function AppShell() {
       setSessionKey((k) => k + 1);
       setInitialSessionRestored(true);
       // On mobile, collapse the overlay drawer so the chat is revealed after pick.
-      if (isMobile && !isRestore) setSidebarOpen(false);
+      if (shouldCollapseSidebarAfterSessionPick(role, isMobile, isRestore)) setSidebarOpen(false);
       if (isRestore) {
         // Suppress the redundant sessionKey bump that would come from the
         // onCwdChange effect firing after setSelectedCwd in the sidebar
@@ -495,19 +525,46 @@ export function AppShell() {
         router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
       }
     },
-    [router, isMobile],
+    [router, isMobile, role],
+  );
+
+  const handleSessionRelocated = useCallback(
+    (session: SessionInfo) => {
+      const isCurrent = selectedSession?.id === session.id;
+      if (isCurrent) {
+        setSelectedSession(session);
+        setActiveCwd(session.cwd);
+        setNewSessionCwd(session.path ? null : session.cwd);
+        setSessionKey((k) => k + 1);
+        forkOnSelectSession(session);
+      }
+      setRefreshKey((k) => k + 1);
+      setExplorerRefreshKey((k) => k + 1);
+      setActiveTopPanel(null);
+    },
+    [selectedSession?.id],
   );
 
   const handleNewSession = useCallback(
-    (_sessionId: string, cwd: string) => {
-      setSelectedSession(null);
+    (sessionId: string, cwd: string) => {
+      setActiveCwd(cwd);
       setNewSessionCwd(cwd);
+      setSelectedSession({
+        id: sessionId,
+        cwd,
+        path: "",
+        created: new Date().toISOString(),
+        modified: new Date().toISOString(),
+        messageCount: 0,
+        firstMessage: "",
+      });
       setSessionKey((k) => k + 1);
       setActiveTopPanel(null);
-      if (isMobile) setSidebarOpen(false);
-      router.replace("/", { scroll: false });
+      if (shouldCollapseSidebarAfterSessionPick(role, isMobile, false)) setSidebarOpen(false);
+      forkOnNewSession(sessionId, cwd);
+      router.replace(`?session=${encodeURIComponent(sessionId)}`, { scroll: false });
     },
-    [router, isMobile],
+    [router, isMobile, role],
   );
 
   // Client-built transient SessionInfo (new session / fork) lacks the
@@ -606,7 +663,8 @@ export function AppShell() {
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
-  const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
+  const showChat =
+    (role === "full" || role === "cockpit") && (selectedSession !== null || effectiveNewSessionCwd !== null);
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
 
@@ -628,6 +686,8 @@ export function AppShell() {
         onInitialRestoreDone={handleInitialRestoreDone}
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}
+        onSessionRelocated={handleSessionRelocated}
+        worktreeSlot={role === "cockpit" ? worktreeSlot : null}
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
         onCwdChange={handleCwdChange}
       />
@@ -754,7 +814,10 @@ export function AppShell() {
         }
       }
     `}</style>
-      <div style={{ display: "flex", height: "100dvh", overflow: "hidden", background: "var(--bg)" }}>
+      <div
+        className={role === "cockpit" ? "pi-cockpit-shell" : undefined}
+        style={{ display: "flex", height: "100dvh", overflow: "hidden", background: "var(--bg)" }}
+      >
         {/* Mobile overlay backdrop */}
         <div
           className={`sidebar-overlay-backdrop${mobileSidebarReady ? "" : " sidebar-mobile-pending"}`}
@@ -776,10 +839,11 @@ export function AppShell() {
           style={{
             background: "var(--bg-panel)",
             borderRight: "1px solid var(--border)",
-            display: "flex",
+            display: role === "right" ? "none" : "flex",
             flexDirection: "column",
             flexShrink: 0,
             zIndex: 200,
+            width: role === "left" ? "100%" : undefined,
           }}
         >
           {sidebarContent}
@@ -789,7 +853,7 @@ export function AppShell() {
         <div
           style={{
             flex: 1,
-            display: "flex",
+            display: role === "full" || role === "cockpit" ? "flex" : "none",
             flexDirection: "column",
             overflow: "hidden",
             minWidth: 0,
@@ -963,7 +1027,7 @@ export function AppShell() {
             )}
             {/* Session stats — right-aligned in top bar */}
             {showChat &&
-              (sessionStats || contextUsage) &&
+              (selectedSession || sessionStats || contextUsage) &&
               (() => {
                 const tokenStats = sessionStats?.tokens;
                 const c = sessionStats?.cost ?? 0;
@@ -1114,6 +1178,15 @@ export function AppShell() {
                             copyField: "file" as const,
                           },
                           { label: t("sessionId", "ID"), value: sessionStats.sessionId, copyField: "id" as const },
+                          ...(selectedSession?.cwd
+                            ? [
+                                {
+                                  label: t("workingDirectory", "Working directory"),
+                                  value: selectedSession.cwd,
+                                  copyField: "cwd" as const,
+                                },
+                              ]
+                            : []),
                         ];
                         const messageRows = [
                           [t("user", "User"), sessionStats.userMessages.toLocaleString(language)],
@@ -1197,7 +1270,9 @@ export function AppShell() {
                           const defaultLabel =
                             field === "file"
                               ? t("copyFilePath", "Copy file path")
-                              : t("copySessionId", "Copy session ID");
+                              : field === "cwd"
+                                ? t("copyWorkingDirectory", "Copy working directory")
+                                : t("copySessionId", "Copy session ID");
                           const label = copied
                             ? t("copied", "Copied")
                             : failed
@@ -1316,7 +1391,17 @@ export function AppShell() {
                                   >
                                     {row.value}
                                   </div>
-                                  <div>{row.copyField ? copyButton(row.copyField, row.value) : null}</div>
+                                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                                    {row.copyField ? copyButton(row.copyField, row.value) : null}
+                                    {row.copyField === "cwd" && selectedSession && (
+                                      <ChangeSessionCwd
+                                        cwd={selectedSession.cwd}
+                                        sessionId={selectedSession.id}
+                                        sessionPath={selectedSession.path}
+                                        onRelocated={handleSessionRelocated}
+                                      />
+                                    )}
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -1348,6 +1433,120 @@ export function AppShell() {
                           </div>
                         );
                       })()
+                    ) : selectedSession ? (
+                      (() => {
+                        const sessionRows = [
+                          ...(selectedSession.path
+                            ? [
+                                {
+                                  label: t("sessionFile", "File"),
+                                  value: selectedSession.path,
+                                  copyField: "file" as const,
+                                },
+                              ]
+                            : []),
+                          { label: t("sessionId", "ID"), value: selectedSession.id, copyField: "id" as const },
+                          {
+                            label: t("workingDirectory", "Working directory"),
+                            value: selectedSession.cwd,
+                            copyField: "cwd" as const,
+                          },
+                        ];
+
+                        return (
+                          <div
+                            style={{
+                              minWidth: 0,
+                              fontSize: 12,
+                              lineHeight: 1.5,
+                              fontFamily: "var(--font-mono)",
+                            }}
+                          >
+                            <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
+                              {t("sessionInfo", "Session info")}
+                            </div>
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "auto minmax(0, 1fr) auto",
+                                columnGap: 12,
+                                rowGap: 8,
+                                alignItems: "start",
+                              }}
+                            >
+                              {sessionRows.map((row) => {
+                                const feedback =
+                                  sessionCopyFeedback?.field === row.copyField ? sessionCopyFeedback.status : null;
+                                const label =
+                                  feedback === "copied"
+                                    ? t("copied", "Copied")
+                                    : feedback === "error"
+                                      ? t("copyFailed", "Copy failed")
+                                      : row.copyField === "file"
+                                        ? t("copyFilePath", "Copy file path")
+                                        : row.copyField === "cwd"
+                                          ? t("copyWorkingDirectory", "Copy working directory")
+                                          : t("copySessionId", "Copy session ID");
+                                return (
+                                  <div key={`cockpit-session-info:${row.label}`} style={{ display: "contents" }}>
+                                    <div style={{ color: "var(--text-dim)", whiteSpace: "nowrap" }}>{row.label}</div>
+                                    <div
+                                      style={{
+                                        color: "var(--text-muted)",
+                                        minWidth: 0,
+                                        overflowWrap: "anywhere",
+                                        wordBreak: "break-word",
+                                      }}
+                                    >
+                                      {row.value}
+                                    </div>
+                                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                                      <button
+                                        type="button"
+                                        title={label}
+                                        aria-label={label}
+                                        onClick={() => handleCopySessionField(row.copyField, row.value)}
+                                        style={{
+                                          minWidth: 48,
+                                          height: 22,
+                                          padding: "0 7px",
+                                          color:
+                                            feedback === "error"
+                                              ? "var(--error, #ef4444)"
+                                              : feedback === "copied"
+                                                ? "var(--accent)"
+                                                : "var(--text-dim)",
+                                          background: "transparent",
+                                          border: "1px solid var(--border)",
+                                          borderRadius: 4,
+                                          cursor: "pointer",
+                                          fontSize: 11,
+                                        }}
+                                      >
+                                        {feedback === "copied" ? t("copied", "Copied") : t("copy", "Copy")}
+                                      </button>
+                                      {row.copyField === "cwd" && (
+                                        <ChangeSessionCwd
+                                          cwd={selectedSession.cwd}
+                                          sessionId={selectedSession.id}
+                                          sessionPath={selectedSession.path}
+                                          onRelocated={handleSessionRelocated}
+                                        />
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {sessionCopyFeedback?.status === "error" && (
+                              <div role="alert" style={{ marginTop: 8, color: "var(--error, #ef4444)" }}>
+                                {t("copyFailed", "Copy failed")}.{" "}
+                                {t("checkClipboardPermission", "Check clipboard permission and retry.")}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()
                     ) : (
                       <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
                         {t("loadSessionInfoHint", "Send a message or run /session to load session info")}
@@ -1360,8 +1559,27 @@ export function AppShell() {
           </div>
 
           {/* Chat content */}
-          <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-            {showChat ? (
+          <div
+            style={{
+              flex: 1,
+              overflow: "hidden",
+              position: "relative",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {role === "cockpit" ? (
+              <>
+                <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+                  <EmbeddedPiTerminal
+                    session={selectedSession}
+                    theme={isDark ? "dark" : "light"}
+                    worktreeAnchorRef={setWorktreeSlot}
+                    onSessionRelocated={handleSessionRelocated}
+                  />
+                </div>
+              </>
+            ) : showChat ? (
               <SessionProfiler key={sessionKey} id="ChatWindow">
                 <ChatWindow
                   session={selectedSession}
@@ -1438,20 +1656,23 @@ export function AppShell() {
 
         {/* Right panel: Browser, Explorer and file previews — always mounted, width animated via CSS */}
         <div
-          className={`right-panel-container${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}${rightPanelResizing ? " right-panel-resizing" : ""}`}
+          className={`right-panel-container${rightPanelOpen || role === "right" ? " right-panel-open" : " right-panel-closed"}${rightPanelResizing ? " right-panel-resizing" : ""}`}
           style={
             {
-              display: "flex",
+              display: role === "left" ? "none" : "flex",
               flexDirection: "column",
               borderLeft: "1px solid var(--border)",
               background: "var(--bg)",
-              "--right-panel-width": `${rightPanelWidth}px`,
-              "--right-panel-min-width": `${rightPanelBounds.minWidth}px`,
+              flex: role === "right" ? 1 : undefined,
+              width: role === "right" ? "100%" : undefined,
+              "--right-panel-width": role === "right" ? "100%" : role === "cockpit" ? "420px" : `${rightPanelWidth}px`,
+              "--right-panel-min-width": role === "cockpit" ? "420px" : `${rightPanelBounds.minWidth}px`,
             } as CSSProperties
           }
         >
           <div
             className="right-panel-resizer"
+            hidden={role === "cockpit"}
             role="separator"
             aria-label={t("resizeRightPanel", "Resize right panel")}
             aria-orientation="vertical"

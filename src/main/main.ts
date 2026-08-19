@@ -3,7 +3,7 @@
  * Responsibilities: window lifecycle, menus, tray/badge, deep link,
  * Host supervision, system IPC. No business logic.
  */
-import { app, BrowserWindow, crashReporter, nativeTheme, nativeImage, net, Notification } from "electron";
+import { app, BrowserWindow, crashReporter, nativeTheme, nativeImage, net, Notification, screen } from "electron";
 import fs from "node:fs";
 import path from "path";
 import { HostManager, getUserDataPath, resolveHostEntry } from "./host-manager";
@@ -18,6 +18,8 @@ import { installDesktopIpc } from "./ipc";
 import { createCredentialRequestHandler, CredentialVault } from "./credential-vault";
 import { createProductionUpdateAdapter, isProductionUpdatePlatformEnabled } from "./update-adapter";
 import { createUpdateManager, redactUpdateError, type UpdateManager } from "./update-manager";
+import type { SessionPtyManager } from "./fork/session-pty";
+import { forkAllowOfficialUpdater } from "./fork/updates";
 import { ToolchainManager } from "./toolchains/manager";
 import { resolveRuntimeCatalogPath } from "./toolchains/catalog";
 import { resolveBundledCorePaths } from "./toolchains/bundled-core";
@@ -42,6 +44,7 @@ const expectedPiVersion = process.env.PI_DESKTOP_EXPECTED_PI_VERSION;
 const TOOLCHAIN_FOCUS_RESCAN_TTL_MS = 60_000;
 
 let mainWindow: BrowserWindow | null = null;
+let sessionPtyManager: SessionPtyManager | null = null;
 let hostManager: HostManager | null = null;
 let updateManager: UpdateManager | null = null;
 let toolchainManager: ToolchainManager | null = null;
@@ -122,6 +125,14 @@ function getMainWindow(): BrowserWindow | null {
   return mainWindow;
 }
 
+function getBrowserWindow(): BrowserWindow | null {
+  return getMainWindow();
+}
+
+function getTrustedWindows(): Array<BrowserWindow | null> {
+  return [mainWindow];
+}
+
 function applyBadgeCount(count: number): void {
   unreadBadge = Math.max(0, Number(count) || 0);
   if (process.platform === "win32") {
@@ -178,21 +189,29 @@ function startMainProcess(): void {
   });
 
   function createWindow(): BrowserWindow {
+    const bounds = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     const win = createMainWindow({
       isDev,
+      persistBounds: false,
+      alwaysOnTop: false,
+      ...bounds,
+      minWidth: 900,
+      minHeight: 400,
+      hash: "#cockpit",
+      title: "Pi Cockpit",
       consumePendingDeepLink: () => {
         const sessionId = pendingDeepLink;
         pendingDeepLink = null;
         return sessionId;
       },
       shouldHideOnClose: () => !isQuitting && loadUiState().backgroundMode !== false,
+      onRendererUnavailable: () => browserService?.handleRendererUnavailable(),
       onClosed: (closedWindow) => {
         if (mainWindow === closedWindow) {
           mainWindow = null;
           browserService?.handleWindowClosed();
         }
       },
-      onRendererUnavailable: () => browserService?.handleRendererUnavailable(),
     });
     mainWindow = win;
     win.on("hide", () => browserService?.handleWindowVisibility(false));
@@ -250,10 +269,11 @@ function startMainProcess(): void {
     const credentialVault = new CredentialVault(getUserDataPath("channels.secrets.json"));
     browserService = new BrowserService({
       userDataDir: app.getPath("userData"),
-      getWindow: getMainWindow,
+      getWindow: getBrowserWindow,
       emit: (event) => {
-        const win = getMainWindow();
-        if (win && !win.isDestroyed()) win.webContents.send("browser:event", event);
+        for (const win of getTrustedWindows()) {
+          if (win && !win.isDestroyed()) win.webContents.send("browser:event", event);
+        }
       },
       onCapabilitySnapshot: (snapshot) => hostManager?.setBrowserCapabilitySnapshot(snapshot),
     });
@@ -264,7 +284,7 @@ function startMainProcess(): void {
       (updaterTestMode && (process.platform === "darwin" || process.platform === "win32"));
     const updaterRequested = app.isPackaged || updaterTestMode;
     let updateAdapter = null;
-    if (updaterSupported && updaterRequested) {
+    if (forkAllowOfficialUpdater() && updaterSupported && updaterRequested) {
       try {
         updateAdapter = await createProductionUpdateAdapter({
           useDevelopmentConfig: updaterTestMode,
@@ -277,7 +297,7 @@ function startMainProcess(): void {
       adapter: updateAdapter,
       currentVersion: app.getVersion(),
       isPackaged: app.isPackaged,
-      automaticChecksEnabled: ui.automaticUpdateChecks !== false,
+      automaticChecksEnabled: forkAllowOfficialUpdater() && ui.automaticUpdateChecks !== false,
       prepareToInstall: async () => {
         isQuitting = true;
         destroyTray();
@@ -357,9 +377,10 @@ function startMainProcess(): void {
     // (npm start after build, or dev fallback when VITE_DEV_SERVER_URL is unset).
     handleAppProtocol(rendererRootPath());
 
-    installDesktopIpc({
+    sessionPtyManager = installDesktopIpc({
       getHostManager: () => hostManager,
       getMainWindow,
+      getTrustedWindows,
       getUnreadBadge: () => unreadBadge,
       applyBadgeCount,
       getToolchainState: (cwd) =>
@@ -370,6 +391,11 @@ function startMainProcess(): void {
       },
       performToolchainAction: (request) => toolchainManager!.performAction(request),
       chooseCustomTool: (capability, executable) => toolchainManager!.registerCustomTool(capability, executable),
+      resolveNodeExecutable: async () => {
+        const executable = toolchainManager!.getSnapshot().defaults["js.node"]?.executable;
+        if (!executable) throw new Error("Node.js is required to open Pi CLI");
+        return executable;
+      },
       setChannelCredential: (payload) =>
         credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
       getBrowserService: () => browserService,
@@ -486,6 +512,7 @@ function startMainProcess(): void {
 
   app.on("before-quit", () => {
     isQuitting = true;
+    sessionPtyManager?.killAll();
     updateManager?.stopAutomaticChecks();
     destroyTray();
     void hostManager?.stop();

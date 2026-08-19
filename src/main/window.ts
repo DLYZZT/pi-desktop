@@ -24,24 +24,39 @@ export type CreateMainWindowOptions = {
   onClosed?: (window: BrowserWindow) => void;
   onRendererUnavailable?: (reason: string) => void;
   onConsoleError?: (message: string) => void;
+  hash?: string;
+  title?: string;
+  alwaysOnTop?: boolean;
+  persistBounds?: boolean;
+  width?: number;
+  height?: number;
+  minWidth?: number;
+  minHeight?: number;
+  x?: number;
+  y?: number;
 };
 
 export function createMainWindow(options: CreateMainWindowOptions): BrowserWindow {
   const ui = loadUiState();
   const primaryWorkArea = screen.getPrimaryDisplay().workArea;
-  const bounds = applyWindowBounds({ width: 1280, height: 840 }, ui, {
-    primary: primaryWorkArea,
-    all: screen.getAllDisplays().map((display) => display.workArea),
-  });
+  const bounds = applyWindowBounds(
+    { width: options.width ?? 1280, height: options.height ?? 840, x: options.x, y: options.y },
+    options.hash ? {} : ui,
+    {
+      primary: primaryWorkArea,
+      all: screen.getAllDisplays().map((display) => display.workArea),
+    },
+  );
 
   const win = new BrowserWindow({
     width: bounds.width,
     height: bounds.height,
     x: bounds.x,
     y: bounds.y,
-    minWidth: 900,
-    minHeight: 600,
-    title: "Pi Agent Desktop",
+    minWidth: options.minWidth ?? 900,
+    minHeight: options.minHeight ?? 600,
+    title: options.title ?? "Pi Agent Desktop",
+    alwaysOnTop: options.alwaysOnTop ?? false,
     backgroundColor: nativeTheme.shouldUseDarkColors ? DARK_BACKGROUND : LIGHT_BACKGROUND,
     show: false,
     webPreferences: {
@@ -58,8 +73,10 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
   let rendererReloadTimer: ReturnType<typeof setTimeout> | undefined;
   let showingCrashPage = false;
 
-  trackWindowState(win);
-  if (shouldMaximize(ui) && !win.isDestroyed()) win.maximize();
+  if (options.persistBounds !== false) {
+    trackWindowState(win);
+    if (shouldMaximize(ui) && !win.isDestroyed()) win.maximize();
+  }
 
   const showWin = () => {
     if (options.show === false) return;
@@ -160,8 +177,9 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     if (level >= 2) options.onConsoleError?.(message);
   });
 
-  appendMainLog(`loadURL ${rendererUrl}`);
-  void win.loadURL(rendererUrl);
+  const targetUrl = options.hash ? `${rendererUrl}${options.hash}` : rendererUrl;
+  appendMainLog(`loadURL ${targetUrl}`);
+  void win.loadURL(targetUrl);
 
   return win;
 }

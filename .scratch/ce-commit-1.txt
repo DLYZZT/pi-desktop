@@ -1,0 +1,4 @@
+feat(desktop): embed Pi TUI in one window with Windows IME pin
+
+Keep one Electron window and one ConPTY per session. Pin the Chinese
+IME candidate window to the Pi editor caret instead of the footer.
