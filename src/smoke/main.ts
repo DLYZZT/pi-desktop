@@ -14,6 +14,12 @@ import { ToolchainManager } from "../main/toolchains/manager";
 import { resolveRuntimeCatalogPath } from "../main/toolchains/catalog";
 import { isExecutionIntent } from "../shared/toolchains/types";
 
+const smokeUserData = process.env.PI_DESKTOP_SMOKE_USER_DATA;
+if (!smokeUserData || !path.isAbsolute(smokeUserData)) {
+  throw new Error("PI_DESKTOP_SMOKE_USER_DATA must be an absolute temporary directory");
+}
+app.setPath("userData", smokeUserData);
+
 registerAppProtocol();
 crashReporter.start({
   productName: "Pi Agent Desktop Smoke",

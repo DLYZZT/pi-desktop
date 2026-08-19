@@ -1,4 +1,5 @@
 import type { ChannelId } from "../shared/channel-types";
+import type { ChatAppearancePreferences } from "../shared/chat-appearance";
 import type { PublicToolchainState, ToolchainActionRequest } from "../shared/toolchains/types";
 import type {
   BrowserBoundsInput,
@@ -117,6 +118,13 @@ export interface LocalFileInspection {
   insideCwd: boolean;
 }
 
+export interface DesktopUiState {
+  backgroundMode?: boolean;
+  chatAppearance?: ChatAppearancePreferences;
+}
+
+export type DesktopUiStatePatch = Partial<DesktopUiState>;
+
 /** The complete, shared preload surface exposed to the sandboxed renderer. */
 export interface PiBridge {
   platform: NodeJS.Platform;
@@ -147,8 +155,8 @@ export interface PiBridge {
   releaseHtmlPreview: (previewUrl: string) => Promise<void>;
   notifyAgentEnd: (payload: { sessionId: string; title?: string }) => void;
   setBadgeCount: (n: number) => void;
-  getUiState: () => Promise<Record<string, unknown>>;
-  setUiState: (patch: Record<string, unknown>) => Promise<void>;
+  getUiState: () => Promise<DesktopUiState>;
+  setUiState: (patch: DesktopUiStatePatch) => Promise<void>;
   getThemeSource: () => Promise<"system" | "light" | "dark">;
   setThemeSource: (source: "system" | "light" | "dark") => Promise<void>;
   openLogs: () => Promise<void>;

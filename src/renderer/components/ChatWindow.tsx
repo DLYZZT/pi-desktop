@@ -8,6 +8,7 @@ import type {
   SessionTreeNode,
 } from "@/lib/types";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
+import { scaledChatFont } from "@/lib/chat-appearance";
 import {
   countToolCallBlocks,
   getDisplayableAssistantBlocks,
@@ -449,7 +450,7 @@ export function ChatWindow({
 
   return (
     <div
-      className="relative flex h-full flex-col overflow-hidden"
+      className="chat-appearance-scope relative flex h-full flex-col overflow-hidden"
       style={{ background: "var(--bg)" }}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
@@ -537,7 +538,7 @@ export function ChatWindow({
 
       {isEmptyNew ? (
         <div className="relative z-[1] flex min-h-0 flex-[1_1_0] flex-col items-center justify-end overflow-y-auto px-4 pt-8">
-          <div className="w-full" style={{ maxWidth: "var(--chat-content-max-width)" }}>
+          <div className="chat-content-column">
             <div
               className="mb-3"
               style={{
@@ -576,7 +577,7 @@ export function ChatWindow({
                 </span>
                 <span
                   style={{
-                    fontSize: 22,
+                    fontSize: scaledChatFont(22),
                     color: "var(--text)",
                     fontWeight: 700,
                     letterSpacing: "-0.2px",
@@ -605,13 +606,18 @@ export function ChatWindow({
                 pointerEvents: "none",
               }}
             >
-              <div style={{ maxWidth: "var(--chat-content-max-width)", margin: "0 auto" }}>
+              <div className="chat-content-column">
                 <NoticeShelf notices={notices} floating align="right" />
               </div>
             </div>
             <div ref={scrollContainerRef} className="relative z-[1] flex-1 overflow-y-auto pt-4 [scrollbar-width:none]">
-              <div style={{ padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
-                <div style={{ maxWidth: "var(--chat-content-max-width)", margin: "0 auto" }}>
+              <div
+                style={{
+                  paddingLeft: CHAT_COLUMN_PADDING,
+                  paddingRight: CHAT_COLUMN_PADDING,
+                }}
+              >
+                <div className="chat-content-column">
                   {(hasOlder || loadingOlder) && (
                     <div
                       ref={olderHistorySentinelRef}
@@ -627,7 +633,7 @@ export function ChatWindow({
                           background: "var(--bg-panel)",
                           color: "var(--text-muted)",
                           cursor: loadingOlder ? "default" : "pointer",
-                          fontSize: 11,
+                          fontSize: scaledChatFont(11),
                           padding: "5px 10px",
                         }}
                       >
@@ -948,7 +954,6 @@ export function ChatWindow({
 
       <div
         className="chat-input-transition-dock relative z-[2] w-full flex-shrink-0 self-center"
-        style={{ maxWidth: "var(--chat-content-max-width)" }}
         data-position={isEmptyNew ? "welcome" : "conversation"}
       >
         {!isEmptyNew && belowEditorWidgets.length > 0 && (
@@ -958,7 +963,9 @@ export function ChatWindow({
               paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
             }}
           >
-            <ExtensionWidgets widgets={belowEditorWidgets} />
+            <div className="chat-content-column">
+              <ExtensionWidgets widgets={belowEditorWidgets} />
+            </div>
           </div>
         )}
         {chatInputElement}
@@ -986,10 +993,12 @@ function ExtensionStatusBar({ statuses }: { statuses: Array<{ key: string; text:
             borderRadius: 6,
             background: "color-mix(in srgb, var(--accent) 7%, var(--bg))",
             color: "var(--text-muted)",
-            fontSize: 12,
+            fontSize: scaledChatFont(12),
           }}
         >
-          <span style={{ color: "var(--accent)", fontFamily: "var(--font-mono)", fontSize: 11 }}>{status.key}</span>
+          <span style={{ color: "var(--accent)", fontFamily: "var(--font-mono)", fontSize: scaledChatFont(11) }}>
+            {status.key}
+          </span>
           <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {status.text}
           </span>
@@ -1018,7 +1027,7 @@ function ExtensionWidgets({ widgets }: { widgets: Array<{ key: string; lines: st
               padding: "5px 9px",
               borderBottom: "1px solid var(--border)",
               color: "var(--text-dim)",
-              fontSize: 11,
+              fontSize: scaledChatFont(11),
               fontFamily: "var(--font-mono)",
             }}
           >
@@ -1029,7 +1038,7 @@ function ExtensionWidgets({ widgets }: { widgets: Array<{ key: string; lines: st
               margin: 0,
               padding: "8px 9px",
               color: "var(--text-muted)",
-              fontSize: 12,
+              fontSize: scaledChatFont(12),
               lineHeight: 1.5,
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
@@ -1183,15 +1192,29 @@ function ExtensionDialog({
         }}
       >
         <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ color: "var(--text)", fontSize: 14, fontWeight: 650 }}>{request.title}</div>
-          <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+          <div style={{ color: "var(--text)", fontSize: scaledChatFont(14), fontWeight: 650 }}>{request.title}</div>
+          <div
+            style={{
+              marginTop: 3,
+              color: "var(--text-dim)",
+              fontSize: scaledChatFont(11),
+              fontFamily: "var(--font-mono)",
+            }}
+          >
             extension request
           </div>
         </div>
 
         <div style={{ padding: 14 }}>
           {request.method === "confirm" && (
-            <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+            <div
+              style={{
+                color: "var(--text-muted)",
+                fontSize: scaledChatFont(13),
+                lineHeight: 1.6,
+                whiteSpace: "pre-wrap",
+              }}
+            >
               {request.message}
             </div>
           )}
@@ -1210,7 +1233,7 @@ function ExtensionDialog({
                     color: "var(--text)",
                     cursor: "pointer",
                     textAlign: "left",
-                    fontSize: 13,
+                    fontSize: scaledChatFont(13),
                   }}
                 >
                   {option}
@@ -1236,7 +1259,7 @@ function ExtensionDialog({
                 background: "var(--bg-panel)",
                 color: "var(--text)",
                 outline: "none",
-                fontSize: 13,
+                fontSize: scaledChatFont(13),
               }}
             />
           )}
@@ -1259,7 +1282,7 @@ function ExtensionDialog({
                 color: "var(--text)",
                 outline: "none",
                 resize: "vertical",
-                fontSize: 13,
+                fontSize: scaledChatFont(13),
                 lineHeight: 1.55,
                 fontFamily: "var(--font-mono)",
               }}
@@ -1432,7 +1455,7 @@ function ExtensionCustomPanel({
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 650 }}>Extension panel</div>
+          <div style={{ color: "var(--text)", fontSize: scaledChatFont(13), fontWeight: 650 }}>Extension panel</div>
           <button
             onClick={() => onInput(request, "\x03")}
             style={{
@@ -1442,7 +1465,7 @@ function ExtensionCustomPanel({
               background: "var(--bg-panel)",
               color: "var(--text-muted)",
               cursor: "pointer",
-              fontSize: 12,
+              fontSize: scaledChatFont(12),
             }}
           >
             Close
@@ -1457,7 +1480,7 @@ function ExtensionCustomPanel({
             background: "var(--bg-panel)",
             color: "var(--text)",
             fontFamily: "var(--font-mono)",
-            fontSize: 13,
+            fontSize: scaledChatFont(13),
             lineHeight: 1.45,
             whiteSpace: "pre",
           }}

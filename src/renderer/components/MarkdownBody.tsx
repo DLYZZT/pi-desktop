@@ -19,6 +19,7 @@ import { shouldHighlightCode } from "@/lib/code-highlight-policy";
 import { mermaidCacheKey, renderMermaidSvg } from "@/lib/mermaid-renderer";
 import { SessionProfiler } from "./SessionProfiler";
 import { useI18n } from "@/i18n";
+import { scaledChatFont } from "@/lib/chat-appearance";
 
 interface MarkdownBodyProps {
   children: string;
@@ -388,7 +389,7 @@ function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; h
           customStyle={{
             margin: 0,
             padding: "11px 13px",
-            fontSize: 12.5,
+            fontSize: scaledChatFont(12.5),
             lineHeight: 1.62,
             borderRadius: 0,
             background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
@@ -402,7 +403,7 @@ function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; h
           style={{
             margin: 0,
             padding: "11px 13px",
-            fontSize: 12.5,
+            fontSize: scaledChatFont(12.5),
             lineHeight: 1.62,
             overflow: "auto",
             whiteSpace: "pre",

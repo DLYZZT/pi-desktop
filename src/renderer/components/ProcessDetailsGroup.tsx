@@ -1,6 +1,7 @@
 import { useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { useI18n } from "@/i18n";
 import type { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
+import { scaledChatFont } from "@/lib/chat-appearance";
 
 interface Props {
   messageCount: number;
@@ -45,7 +46,7 @@ export function ProcessDetailsGroup({ messageCount, toolCallCount, children, sta
           background: "transparent",
           color: "var(--text-muted)",
           cursor: "pointer",
-          fontSize: 12,
+          fontSize: scaledChatFont(12),
           textAlign: "left",
         }}
         title={

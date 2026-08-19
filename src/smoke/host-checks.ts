@@ -212,6 +212,7 @@ export async function runSmokeHostChecks(
     const smokeWindow = createWindow((message) => {
       if (/Content Security Policy/i.test(message)) rendererSecurityViolation = message;
     });
+    smokeWindow.setBounds({ x: 0, y: 0, width: 1440, height: 900 });
     try {
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("Renderer smoke load timed out")), 15_000);
@@ -239,11 +240,115 @@ export async function runSmokeHostChecks(
                 settingsButton.click();
                 const settingsDeadline = Date.now() + 3000;
                 let channelsButton;
-                while (!channelsButton && Date.now() < settingsDeadline) {
+                let chatFontSizeSelect;
+                let chatLayoutSelect;
+                while ((!channelsButton || !chatFontSizeSelect || !chatLayoutSelect) && Date.now() < settingsDeadline) {
                   channelsButton = findButton("Channels") || findButton("消息渠道");
-                  if (!channelsButton) await new Promise((wait) => setTimeout(wait, 25));
+                  const labels = Array.from(document.querySelectorAll("label"));
+                  const fontLabel = labels.find((label) => ["Chat text size", "聊天字号"].includes(label.textContent?.trim() || ""));
+                  const layoutLabel = labels.find((label) => ["Conversation width", "对话宽度"].includes(label.textContent?.trim() || ""));
+                  chatFontSizeSelect = fontLabel?.htmlFor ? document.getElementById(fontLabel.htmlFor) : undefined;
+                  chatLayoutSelect = layoutLabel?.htmlFor ? document.getElementById(layoutLabel.htmlFor) : undefined;
+                  if (!channelsButton || !chatFontSizeSelect || !chatLayoutSelect) {
+                    await new Promise((wait) => setTimeout(wait, 25));
+                  }
                 }
                 if (!channelsButton) throw new Error("Channels settings tab is unavailable");
+                if (!(chatFontSizeSelect instanceof HTMLSelectElement) || !(chatLayoutSelect instanceof HTMLSelectElement)) {
+                  throw new Error("Chat appearance settings are unavailable or unlabeled");
+                }
+                const expectedFontOptions = ["small", "standard", "large", "extra-large"];
+                const expectedLayoutOptions = ["fixed", "wide"];
+                if (JSON.stringify(Array.from(chatFontSizeSelect.options, (option) => option.value)) !== JSON.stringify(expectedFontOptions)) {
+                  throw new Error("Chat font-size options do not match the public contract");
+                }
+                if (JSON.stringify(Array.from(chatLayoutSelect.options, (option) => option.value)) !== JSON.stringify(expectedLayoutOptions)) {
+                  throw new Error("Chat layout options do not match the public contract");
+                }
+                let chatFixture;
+                let chatScope = document.querySelector(".chat-appearance-scope");
+                let chatColumn = document.querySelector(".chat-content-column");
+                let chatInput = document.querySelector("textarea");
+                if (!(chatScope instanceof HTMLElement) || !(chatColumn instanceof HTMLElement) || !(chatInput instanceof HTMLElement)) {
+                  chatFixture = document.createElement("div");
+                  chatFixture.className = "chat-appearance-scope";
+                  Object.assign(chatFixture.style, {
+                    position: "absolute",
+                    visibility: "hidden",
+                    width: "100%",
+                    pointerEvents: "none",
+                  });
+                  chatColumn = document.createElement("div");
+                  chatColumn.className = "chat-content-column";
+                  chatInput = document.createElement("textarea");
+                  chatInput.style.fontSize = "calc(14px * var(--chat-font-scale))";
+                  chatColumn.appendChild(chatInput);
+                  chatFixture.appendChild(chatColumn);
+                  document.body.appendChild(chatFixture);
+                  chatScope = chatFixture;
+                }
+                const changeSelect = (select, value) => {
+                  const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+                  valueSetter?.call(select, value);
+                  select.dispatchEvent(new Event("change", { bubbles: true }));
+                };
+                const waitForAppearance = async (fontSize, layout) => {
+                  const appearanceDeadline = Date.now() + 3000;
+                  while (Date.now() < appearanceDeadline) {
+                    const state = await window.piBridge.getUiState();
+                    if (
+                      document.documentElement.dataset.chatFontSize === fontSize &&
+                      document.documentElement.dataset.chatLayout === layout &&
+                      state.chatAppearance?.fontSize === fontSize &&
+                      state.chatAppearance?.layout === layout &&
+                      !chatFontSizeSelect.disabled &&
+                      !chatLayoutSelect.disabled
+                    ) {
+                      return;
+                    }
+                    await new Promise((wait) => setTimeout(wait, 25));
+                  }
+                  throw new Error("Chat appearance did not apply and persist before the deadline");
+                };
+                changeSelect(chatFontSizeSelect, "standard");
+                await waitForAppearance("standard", chatLayoutSelect.value);
+                changeSelect(chatLayoutSelect, "fixed");
+                await waitForAppearance("standard", "fixed");
+                const standardInputFontSize = Number.parseFloat(getComputedStyle(chatInput).fontSize);
+                const settingsFontSize = getComputedStyle(chatFontSizeSelect).fontSize;
+                const fixedColumnWidth = chatColumn.getBoundingClientRect().width;
+                changeSelect(chatFontSizeSelect, "extra-large");
+                await waitForAppearance("extra-large", "fixed");
+                changeSelect(chatLayoutSelect, "wide");
+                await waitForAppearance("extra-large", "wide");
+                const extraLargeInputFontSize = Number.parseFloat(getComputedStyle(chatInput).fontSize);
+                const wideColumnWidth = chatColumn.getBoundingClientRect().width;
+                const chatScopeStyle = getComputedStyle(chatScope);
+                window.resizeTo(900, 700);
+                await new Promise((wait) => setTimeout(wait, 50));
+                const narrowLayout =
+                  document.documentElement.clientWidth <= 900 &&
+                  document.documentElement.scrollWidth <= document.documentElement.clientWidth &&
+                  chatColumn.getBoundingClientRect().width <= chatScope.getBoundingClientRect().width;
+                window.resizeTo(1440, 900);
+                await new Promise((wait) => setTimeout(wait, 50));
+                const chatAppearance =
+                  Math.abs(extraLargeInputFontSize / standardInputFontSize - 1.3) < 0.01 &&
+                  chatScopeStyle.getPropertyValue("--chat-font-scale").trim() === "1.3" &&
+                  fixedColumnWidth <= 760.5 &&
+                  wideColumnWidth > 760.5 &&
+                  wideColumnWidth <= 960.5 &&
+                  wideColumnWidth > fixedColumnWidth &&
+                  narrowLayout &&
+                  getComputedStyle(chatFontSizeSelect).fontSize === settingsFontSize &&
+                  document.documentElement.scrollWidth <= document.documentElement.clientWidth &&
+                  (chatFixture ? chatFixture : document.querySelector(".chat-appearance-scope")) === chatScope &&
+                  (chatFixture ? chatFixture.querySelector("textarea") : document.querySelector("textarea")) === chatInput;
+                chatFixture?.remove();
+                changeSelect(chatFontSizeSelect, "standard");
+                await waitForAppearance("standard", "wide");
+                changeSelect(chatLayoutSelect, "fixed");
+                await waitForAppearance("standard", "fixed");
                 channelsButton.click();
                 const channelDeadline = Date.now() + 3000;
                 let weixinConnectButton;
@@ -301,6 +406,7 @@ export async function runSmokeHostChecks(
                   rendered: root.childElementCount > 0,
                   gitStatus: typeof status.isGit === "boolean",
                   htmlPreview: previewRendered,
+                  chatAppearance,
                   channelSettings: Boolean(weixinConnectButton && telegramConnectButton),
                   channelCredentialWrite: typeof window.piBridge.setChannelCredential === "function",
                 });
@@ -320,6 +426,7 @@ export async function runSmokeHostChecks(
         rendered?: boolean;
         gitStatus?: boolean;
         htmlPreview?: boolean;
+        chatAppearance?: boolean;
         channelSettings?: boolean;
         channelCredentialWrite?: boolean;
       };
@@ -328,6 +435,7 @@ export async function runSmokeHostChecks(
         !rendererResult.rendered ||
         !rendererResult.gitStatus ||
         !rendererResult.htmlPreview ||
+        !rendererResult.chatAppearance ||
         !rendererResult.channelSettings ||
         !rendererResult.channelCredentialWrite
       ) {
@@ -340,7 +448,7 @@ export async function runSmokeHostChecks(
       if (!smokeWindow.isDestroyed()) smokeWindow.destroy();
     }
     appendMainLog(
-      `smoke: renderer/RPC/session/worktree/git/watch/download/skills/channels/toolchain revision=${acknowledgedRevision} checks passed`,
+      `smoke: renderer/RPC/session/worktree/git/watch/download/skills/channels/chat-appearance/toolchain revision=${acknowledgedRevision} checks passed`,
     );
   } finally {
     for (const entry of pending.values()) {

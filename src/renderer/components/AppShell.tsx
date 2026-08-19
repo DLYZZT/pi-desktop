@@ -46,6 +46,7 @@ import type { SessionInfo } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { ChannelsSnapshot } from "@shared/channel-types";
+import type { ChatAppearancePreferences } from "@shared/chat-appearance";
 import { worktreePathsEqual } from "@shared/worktree-path";
 import type { BrowserAgentAuthorizationRequest, BrowserAgentAuthorizationDecision } from "../../contract/browser";
 
@@ -82,7 +83,15 @@ function loadBrowserPanelPreferredWidth(): number {
   }
 }
 
-export function AppShell() {
+export function AppShell({
+  chatAppearance,
+  chatAppearanceSaving,
+  onChatAppearanceChange,
+}: {
+  chatAppearance: ChatAppearancePreferences;
+  chatAppearanceSaving: boolean;
+  onChatAppearanceChange: (preferences: ChatAppearancePreferences) => Promise<void>;
+}) {
   const router = routerCompat;
   const { isDark, toggleTheme } = useTheme();
   const { language, t } = useI18n();
@@ -1733,6 +1742,9 @@ export function AppShell() {
           onModelsChanged={() => setModelsRefreshKey((key) => key + 1)}
           onPluginsReloaded={() => setSessionKey((key) => key + 1)}
           onChannelsChanged={setChannelSnapshot}
+          chatAppearance={chatAppearance}
+          chatAppearanceSaving={chatAppearanceSaving}
+          onChatAppearanceChange={onChatAppearanceChange}
         />
       )}
       {browserAuthorization && !settingsOpen && (

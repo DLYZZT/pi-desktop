@@ -61,6 +61,7 @@
   --selection: #fed7aa;
   --thinking-bg: #fbfaf8;
   --thinking-border: #d6d3cd;
+  --chat-font-scale: 1;
   --chat-content-max-width: 760px;
 }
 
@@ -104,6 +105,33 @@ html.dark {
   --selection: rgba(234, 88, 12, 0.38);
   --thinking-bg: #1a1815;
   --thinking-border: #4a453c;
+}
+
+.chat-appearance-scope {
+  --chat-font-scale: 1;
+  --chat-content-max-width: 760px;
+}
+
+html[data-chat-font-size="small"] .chat-appearance-scope {
+  --chat-font-scale: 0.9;
+}
+
+html[data-chat-font-size="large"] .chat-appearance-scope {
+  --chat-font-scale: 1.15;
+}
+
+html[data-chat-font-size="extra-large"] .chat-appearance-scope {
+  --chat-font-scale: 1.3;
+}
+
+html[data-chat-layout="wide"] .chat-appearance-scope {
+  --chat-content-max-width: clamp(760px, 74%, 960px);
+}
+
+.chat-content-column {
+  width: 100%;
+  max-width: var(--chat-content-max-width);
+  margin-inline: auto;
 }
 
 /* Theme toggle: circular wipe via View Transitions API.
@@ -309,7 +337,7 @@ code {
 
 /* react-markdown output styles */
 .markdown-body {
-  font-size: 14px;
+  font-size: calc(14px * var(--chat-font-scale, 1));
   line-height: 1.7;
   color: var(--text);
   word-break: break-word;
@@ -404,7 +432,7 @@ code {
   display: inline-block;
   margin: 6px 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--chat-font-scale, 1));
   font-family: var(--font-mono);
 }
 .markdown-body .markdown-inline-code {
@@ -473,7 +501,7 @@ code {
   border-collapse: separate;
   border-spacing: 0;
   min-width: 100%;
-  font-size: 13px;
+  font-size: calc(13px * var(--chat-font-scale, 1));
 }
 .markdown-body th,
 .markdown-body td {
@@ -614,7 +642,7 @@ code {
   padding-top: 8px;
   border-top: 1px solid var(--border);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--chat-font-scale, 1));
 }
 .compaction-file-details summary {
   cursor: pointer;
@@ -627,7 +655,7 @@ code {
 .compaction-file-title {
   margin-bottom: 4px;
   color: var(--text);
-  font-size: 11px;
+  font-size: calc(11px * var(--chat-font-scale, 1));
   font-weight: 650;
 }
 .compaction-file-list {
@@ -639,7 +667,7 @@ code {
   border-radius: 6px;
   background: var(--bg-panel);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--chat-font-scale, 1));
   line-height: 1.45;
   list-style: none;
 }
@@ -664,7 +692,7 @@ code {
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: calc(11px * var(--chat-font-scale, 1));
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -688,7 +716,7 @@ code {
   color: var(--text-muted);
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--chat-font-scale, 1));
   line-height: 1.25;
 }
 .markdown-code-action:hover:not(:disabled) {
@@ -720,7 +748,7 @@ code {
 .mermaid-block-error {
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--chat-font-scale, 1));
 }
 
 /* File viewer markdown preview — larger headings */

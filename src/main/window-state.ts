@@ -1,9 +1,11 @@
 import { app, type BrowserWindow } from "electron";
 import fs from "fs";
 import path from "path";
+import type { DesktopUiState } from "../contract/desktop";
+import { normalizeChatAppearance } from "../shared/chat-appearance.ts";
 import { persistableWindowState, resolveWindowBounds, type DisplayBounds } from "./window-state-core";
 
-export type UiState = {
+export type UiState = DesktopUiState & {
   window?: {
     x?: number;
     y?: number;
@@ -25,21 +27,29 @@ function statePath(): string {
 export function loadUiState(): UiState {
   try {
     const raw = fs.readFileSync(statePath(), "utf8");
-    return JSON.parse(raw) as UiState;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const state = parsed as UiState;
+    if ("chatAppearance" in state) state.chatAppearance = normalizeChatAppearance(state.chatAppearance);
+    return state;
   } catch {
     return {};
   }
 }
 
 export function saveUiState(patch: Partial<UiState>): void {
+  try {
+    saveUiStateStrict(patch);
+  } catch {
+    /* best-effort lifecycle persistence */
+  }
+}
+
+export function saveUiStateStrict(patch: Partial<UiState>): void {
   const current = loadUiState();
   const next = { ...current, ...patch };
-  try {
-    fs.mkdirSync(path.dirname(statePath()), { recursive: true });
-    fs.writeFileSync(statePath(), JSON.stringify(next, null, 2));
-  } catch {
-    /* ignore */
-  }
+  fs.mkdirSync(path.dirname(statePath()), { recursive: true });
+  fs.writeFileSync(statePath(), JSON.stringify(next, null, 2));
 }
 
 export function trackWindowState(win: BrowserWindow): void {

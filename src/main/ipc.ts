@@ -12,7 +12,7 @@ import { appendMainLog, getMainLogPath } from "./logger";
 import { showFileContextMenu } from "./file-context-menu";
 import { inspectLocalFiles } from "./file-context-policy";
 import { createHtmlPreviewUrl, releaseHtmlPreviewUrl } from "./protocol";
-import { loadUiState, saveUiState } from "./window-state";
+import { loadUiState, saveUiState, saveUiStateStrict } from "./window-state";
 import path from "node:path";
 import { realpath } from "node:fs/promises";
 import {
@@ -24,6 +24,7 @@ import { ToolchainError } from "../shared/toolchains/errors";
 import type { BrowserService } from "./browser/browser-service";
 import { BrowserError } from "./browser/browser-error";
 import { isTrustedDesktopIpcSender } from "./ipc-trust";
+import { validateDesktopUiStatePatch } from "./ui-state-patch";
 import type {
   BrowserConfirmationKind,
   BrowserConfirmationProof,
@@ -293,7 +294,9 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
 
   trustedOn("desktop:set-badge-count", (_event, count: number) => applyBadgeCount(count));
   trustedHandle("desktop:get-ui-state", () => loadUiState());
-  trustedHandle("desktop:set-ui-state", (_event, patch: Record<string, unknown>) => saveUiState(patch));
+  trustedHandle("desktop:set-ui-state", (_event, patch: unknown) =>
+    saveUiStateStrict(validateDesktopUiStatePatch(patch)),
+  );
   trustedHandle("desktop:get-theme-source", () => nativeTheme.themeSource);
   trustedHandle("desktop:set-theme-source", (_event, source: "system" | "light" | "dark") => {
     nativeTheme.themeSource = source;

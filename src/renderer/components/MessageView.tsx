@@ -1,5 +1,6 @@
 import { memo, useState, useRef, useEffect, useMemo, useSyncExternalStore } from "react";
 import { MarkdownBody } from "./MarkdownBody";
+import { scaledChatFont } from "@/lib/chat-appearance";
 import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import {
@@ -109,7 +110,7 @@ function DeferredContentActions({
               background: "var(--bg-panel)",
               color: "var(--accent)",
               cursor: loading ? "default" : "pointer",
-              fontSize: 11,
+              fontSize: scaledChatFont(11),
               padding: "4px 8px",
             }}
           >
@@ -117,7 +118,9 @@ function DeferredContentActions({
           </button>
         );
       })}
-      {loadError && <span style={{ color: "var(--danger)", fontSize: 11 }}>Failed to load full content</span>}
+      {loadError && (
+        <span style={{ color: "var(--danger)", fontSize: scaledChatFont(11) }}>Failed to load full content</span>
+      )}
     </div>
   );
 }
@@ -284,7 +287,7 @@ function UserMessageView({
             background: bubbleStyle.background,
             borderRadius: "10px 10px 2px 10px",
             padding: "9px 13px",
-            fontSize: 13.5,
+            fontSize: scaledChatFont(13.5),
             lineHeight: 1.55,
             color: bubbleStyle.foreground,
             wordBreak: "break-word",
@@ -367,7 +370,7 @@ function UserMessageView({
               color: copied ? "var(--accent)" : "var(--text-dim)",
               cursor: copyableContent ? "pointer" : "not-allowed",
               opacity: copyableContent ? 1 : 0.55,
-              fontSize: 12,
+              fontSize: scaledChatFont(12),
               fontWeight: 400,
               whiteSpace: "nowrap",
               transition: "color 0.12s",
@@ -440,7 +443,7 @@ function UserMessageView({
                   borderRadius: 5,
                   color: "var(--text-dim)",
                   cursor: "pointer",
-                  fontSize: 12,
+                  fontSize: scaledChatFont(12),
                   fontWeight: 400,
                   whiteSpace: "nowrap",
                   transition: "color 0.12s",
@@ -487,7 +490,7 @@ function UserMessageView({
                   borderRadius: 5,
                   color: forking ? "var(--accent)" : "var(--text-dim)",
                   cursor: forking ? "not-allowed" : "pointer",
-                  fontSize: 12,
+                  fontSize: scaledChatFont(12),
                   fontWeight: 400,
                   whiteSpace: "nowrap",
                   transition: "color 0.12s",
@@ -519,7 +522,7 @@ function UserMessageView({
             )}
           </div>
         )}
-        {time && <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{time}</span>}
+        {time && <span style={{ fontSize: scaledChatFont(12), color: "var(--text-dim)" }}>{time}</span>}
       </div>
     </div>
   );
@@ -659,7 +662,7 @@ function AssistantMessageView({
       {/* Model label */}
       <div
         style={{
-          fontSize: 12,
+          fontSize: scaledChatFont(12),
           color: "var(--text-dim)",
           marginBottom: 4,
           display: "flex",
@@ -689,7 +692,15 @@ function AssistantMessageView({
                     style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text)" }}
                     title="Estimated token count while streaming"
                   >
-                    <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 12, fontWeight: 400 }}>
+                    <span
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 2,
+                        fontSize: scaledChatFont(12),
+                        fontWeight: 400,
+                      }}
+                    >
                       <svg
                         width="10"
                         height="10"
@@ -716,7 +727,7 @@ function AssistantMessageView({
                               borderRadius: 4,
                               background: bg,
                               color: "#fff",
-                              fontSize: 11,
+                              fontSize: scaledChatFont(11),
                               fontWeight: 400,
                             }}
                           >
@@ -761,7 +772,7 @@ function AssistantMessageView({
               background: "color-mix(in srgb, var(--danger) 8%, var(--assistant-bg))",
               color: "var(--danger)",
               padding: "10px 12px",
-              fontSize: 13,
+              fontSize: scaledChatFont(13),
               lineHeight: 1.55,
               overflowWrap: "anywhere",
               whiteSpace: "pre-wrap",
@@ -782,7 +793,7 @@ function AssistantMessageView({
         }}
       >
         {message.usage && !isStreaming && (
-          <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{formatUsage(message.usage)}</div>
+          <div style={{ fontSize: scaledChatFont(12), color: "var(--text-dim)" }}>{formatUsage(message.usage)}</div>
         )}
         {textContent && !isStreaming && (
           <button
@@ -801,7 +812,7 @@ function AssistantMessageView({
               borderRadius: 5,
               color: copied ? "var(--accent)" : "var(--text-dim)",
               cursor: "pointer",
-              fontSize: 12,
+              fontSize: scaledChatFont(12),
               fontWeight: 400,
               whiteSpace: "nowrap",
               opacity: hovered ? 1 : 0,
@@ -847,7 +858,7 @@ function AssistantMessageView({
           </button>
         )}
         {time && !isStreaming && (
-          <span style={{ fontSize: 12, color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>
+          <span style={{ fontSize: scaledChatFont(12), color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>
         )}
       </div>
     </div>
@@ -925,7 +936,7 @@ function TextBlock({
         border: "1px solid var(--border)",
         padding: "10px 14px",
         borderRadius: "2px 10px 10px 10px",
-        fontSize: 13.5,
+        fontSize: scaledChatFont(13.5),
         lineHeight: 1.6,
       }}
     >
@@ -961,7 +972,7 @@ function ThinkingBlock({
         border: "1px dashed var(--thinking-border)",
         borderRadius: 9,
         overflow: "hidden",
-        fontSize: 13,
+        fontSize: scaledChatFont(13),
         background: "var(--thinking-bg)",
       }}
     >
@@ -977,7 +988,7 @@ function ThinkingBlock({
           border: "none",
           color: "var(--text-dim)",
           cursor: "pointer",
-          fontSize: 11.5,
+          fontSize: scaledChatFont(11.5),
           fontFamily: "var(--font-mono)",
           textAlign: "left",
         }}
@@ -986,13 +997,18 @@ function ThinkingBlock({
         <span>{t("thinkingLabel", "thinking")}</span>
         {duration !== undefined && (
           <span
-            style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}
+            style={{
+              marginLeft: "auto",
+              fontSize: scaledChatFont(11),
+              color: "var(--text-dim)",
+              fontVariantNumeric: "tabular-nums",
+            }}
           >
             {duration}s
           </span>
         )}
         {duration === undefined && !expanded && (
-          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)" }}>
+          <span style={{ marginLeft: "auto", fontSize: scaledChatFont(11), color: "var(--text-dim)" }}>
             {t("collapsed", "collapsed")}
           </span>
         )}
@@ -1002,7 +1018,7 @@ function ThinkingBlock({
           style={{
             padding: "0 12px 10px",
             color: "var(--text-muted)",
-            fontSize: 12.5,
+            fontSize: scaledChatFont(12.5),
             lineHeight: 1.6,
             whiteSpace: "pre-wrap",
             fontStyle: "italic",
@@ -1052,7 +1068,7 @@ function ToolCallBlock({
       style={{
         borderRadius: 9,
         overflow: "hidden",
-        fontSize: 12,
+        fontSize: scaledChatFont(12),
         fontFamily: "var(--font-mono)",
         background: "var(--tool-bg)",
         border: isError
@@ -1074,7 +1090,7 @@ function ToolCallBlock({
           borderBottom: expanded || result ? "1px solid var(--tool-border)" : "none",
           color: isError ? "var(--danger)" : "var(--accent)",
           cursor: "pointer",
-          fontSize: 12,
+          fontSize: scaledChatFont(12),
           textAlign: "left",
           minWidth: 0,
         }}
@@ -1095,7 +1111,14 @@ function ToolCallBlock({
           {preview}
         </span>
         {duration !== undefined && (
-          <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+          <span
+            style={{
+              fontSize: scaledChatFont(11),
+              color: "var(--text-dim)",
+              flexShrink: 0,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
             {duration}s
           </span>
         )}
@@ -1108,7 +1131,7 @@ function ToolCallBlock({
             margin: 0,
             padding: "8px 12px",
             color: "var(--tool-fg)",
-            fontSize: 12,
+            fontSize: scaledChatFont(12),
             lineHeight: 1.5,
             overflow: "auto",
             background: "transparent",
@@ -1172,7 +1195,7 @@ function ToolCallBlock({
             background: "transparent",
             color: "var(--accent)",
             cursor: "pointer",
-            fontSize: 11,
+            fontSize: scaledChatFont(11),
             textAlign: "left",
             padding: "0 12px",
           }}
@@ -1283,7 +1306,7 @@ function SplitPatchView({ text }: { text: string }) {
             minWidth: 0,
             borderTop: fileIndex === 0 ? "none" : "1px solid var(--border)",
             fontFamily: "var(--font-mono)",
-            fontSize: 12,
+            fontSize: scaledChatFont(12),
             lineHeight: 1.55,
           }}
         >
@@ -1416,7 +1439,7 @@ function PatchTextView({ text }: { text: string }) {
         overflowY: "auto",
         overflowX: "hidden",
         fontFamily: "var(--font-mono)",
-        fontSize: 12,
+        fontSize: scaledChatFont(12),
         lineHeight: 1.55,
         minWidth: 0,
       }}
@@ -1540,7 +1563,7 @@ function PairedResult({
           margin: 0,
           padding: "8px 12px",
           color: isError ? "var(--danger)" : isEmpty ? "var(--text-dim)" : "var(--tool-fg)",
-          fontSize: 12,
+          fontSize: scaledChatFont(12),
           lineHeight: 1.5,
           maxHeight: collapsed ? 180 : 400,
           overflow: "auto",
@@ -1607,20 +1630,26 @@ function CompactionMessageView({ message }: { message: CustomMessage }) {
           >
             <polyline points="4 2.5 7.5 6 4 9.5" />
           </svg>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 650 }}>compaction</span>
-          <span style={{ color: "var(--text)", fontSize: 12, fontWeight: 600 }}>Conversation compacted</span>
-          {time && <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 10 }}>{time}</span>}
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: scaledChatFont(11), fontWeight: 650 }}>
+            compaction
+          </span>
+          <span style={{ color: "var(--text)", fontSize: scaledChatFont(12), fontWeight: 600 }}>
+            Conversation compacted
+          </span>
+          {time && (
+            <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: scaledChatFont(10) }}>{time}</span>
+          )}
         </button>
 
         {expanded && (
           <div style={{ padding: "11px 13px 12px" }}>
-            <div style={{ marginBottom: 10, color: "var(--text)", fontSize: 14, lineHeight: 1.5 }}>
+            <div style={{ marginBottom: 10, color: "var(--text)", fontSize: scaledChatFont(14), lineHeight: 1.5 }}>
               The conversation history before this point was compacted into the following summary:
             </div>
             {parsedSummary.body ? (
               <MarkdownBody className="markdown-compaction-message">{parsedSummary.body}</MarkdownBody>
             ) : (
-              <span style={{ color: "var(--text-dim)", fontSize: 12 }}>(no summary)</span>
+              <span style={{ color: "var(--text-dim)", fontSize: scaledChatFont(12) }}>(no summary)</span>
             )}
             <CompactionFileMetadata readFiles={parsedSummary.readFiles} modifiedFiles={parsedSummary.modifiedFiles} />
           </div>
@@ -1704,14 +1733,25 @@ function CustomMessageView({
             borderBottom: "1px solid var(--border)",
             background: "var(--bg-panel)",
             color: "var(--text-muted)",
-            fontSize: 12,
+            fontSize: scaledChatFont(12),
           }}
         >
-          <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 650 }}>
+          <span
+            style={{
+              color: "var(--text-muted)",
+              fontFamily: "var(--font-mono)",
+              fontSize: scaledChatFont(11),
+              fontWeight: 650,
+            }}
+          >
             {title}
           </span>
-          {isHiddenDisplay && <span style={{ color: "var(--text-dim)", fontSize: 11 }}>hidden extension message</span>}
-          {time && <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 10 }}>{time}</span>}
+          {isHiddenDisplay && (
+            <span style={{ color: "var(--text-dim)", fontSize: scaledChatFont(11) }}>hidden extension message</span>
+          )}
+          {time && (
+            <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: scaledChatFont(10) }}>{time}</span>
+          )}
         </div>
 
         {contentExpanded ? (
@@ -1744,7 +1784,7 @@ function CustomMessageView({
                 {text}
               </MarkdownBody>
             ) : (
-              <span style={{ color: "var(--text-dim)", fontSize: 12 }}>(no message)</span>
+              <span style={{ color: "var(--text-dim)", fontSize: scaledChatFont(12) }}>(no message)</span>
             )}
             <DeferredContentActions content={message.content} onLoad={onLoadDeferredContent} />
           </div>
@@ -1759,7 +1799,7 @@ function CustomMessageView({
               background: "transparent",
               color: "var(--text-dim)",
               cursor: "pointer",
-              fontSize: 12,
+              fontSize: scaledChatFont(12),
               textAlign: "left",
             }}
           >
@@ -1786,7 +1826,7 @@ function CustomMessageView({
                 background: "none",
                 color: copied ? "var(--accent)" : "var(--text-dim)",
                 cursor: "pointer",
-                fontSize: 11,
+                fontSize: scaledChatFont(11),
               }}
             >
               {copied ? "Copied" : "Copy"}
@@ -1805,7 +1845,7 @@ function CustomMessageView({
                 background: "none",
                 color: "var(--text-dim)",
                 cursor: "pointer",
-                fontSize: 11,
+                fontSize: scaledChatFont(11),
               }}
             >
               {isHiddenDisplay
@@ -1827,7 +1867,7 @@ function CustomMessageView({
               borderTop: "1px solid var(--border)",
               background: "var(--bg)",
               color: "var(--text-muted)",
-              fontSize: 12,
+              fontSize: scaledChatFont(12),
               lineHeight: 1.5,
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",

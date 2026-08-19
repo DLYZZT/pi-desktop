@@ -28,13 +28,15 @@ const { getMarkdownComponentIdentityForTest } = await importTestBundle(
                       ? "export const markdownRehypePlugins = []; export const markdownRemarkPlugins = [];"
                       : args.path === "@/lib/code-highlight-policy"
                         ? "export const shouldHighlightCode = () => false;"
-                        : args.path === "@/lib/mermaid-renderer"
-                          ? "export const mermaidCacheKey = () => 'key'; export const renderMermaidSvg = async () => '<svg />';"
-                          : args.path === "@/hooks/useCopyFeedback"
-                            ? "export const useCopyFeedback = () => ({ copied: false, copy: async () => true });"
-                            : args.path === "@/lib/syntax-highlight"
-                              ? "export const SyntaxHighlighter = 'pre'; export const vs = {}; export const vscDarkPlus = {};"
-                              : "export const SessionProfiler = ({ children }) => children;",
+                        : args.path === "@/lib/chat-appearance"
+                          ? "export const scaledChatFont = (value) => `${value}px`;"
+                          : args.path === "@/lib/mermaid-renderer"
+                            ? "export const mermaidCacheKey = () => 'key'; export const renderMermaidSvg = async () => '<svg />';"
+                            : args.path === "@/hooks/useCopyFeedback"
+                              ? "export const useCopyFeedback = () => ({ copied: false, copy: async () => true });"
+                              : args.path === "@/lib/syntax-highlight"
+                                ? "export const SyntaxHighlighter = 'pre'; export const vs = {}; export const vscDarkPlus = {};"
+                                : "export const SessionProfiler = ({ children }) => children;",
           }));
         },
       },

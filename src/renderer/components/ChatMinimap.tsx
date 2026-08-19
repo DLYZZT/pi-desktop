@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo, RefObject } from "react";
+import { scaledChatFont } from "@/lib/chat-appearance";
 
 export interface ChatMinimapMessage {
   role: "user" | "assistant";
@@ -359,7 +360,7 @@ export function ChatMinimap({ messages, streamingMessage, scrollContainer, messa
             >
               <div
                 style={{
-                  fontSize: 11,
+                  fontSize: scaledChatFont(11),
                   color: isNearest ? "var(--text)" : "var(--text-muted)",
                   lineHeight: 1.4,
                   whiteSpace: "nowrap",
