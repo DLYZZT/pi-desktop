@@ -3,10 +3,54 @@
  * Stock /usage and /grok-usage only ctx.ui.notify — Desktop toasts are 1 line, 60px.
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { resolveOAuthCredential } from "../npm/node_modules/pi-grok-usage/extensions/auth.ts";
-import { fetchUsage, renderUsage } from "../npm/node_modules/pi-grok-usage/extensions/usage.ts";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+
+// pi-grok-usage ships TypeScript under node_modules, which native Node refuses to strip.
+// Reuse the Jiti copy bundled with the active Pi host instead of adding another runtime dependency.
+function findPiTypeScriptLoader(): string {
+	const starts = [process.argv[1], join(process.cwd(), "entry.js"), process.execPath].filter(Boolean);
+	for (const start of starts) {
+		let directory = dirname(start);
+		while (true) {
+			const candidate = join(
+				directory,
+				"node_modules",
+				"@earendil-works",
+				"pi-coding-agent",
+				"node_modules",
+				"jiti",
+				"lib",
+				"jiti-static.mjs",
+			);
+			if (existsSync(candidate)) return candidate;
+			const parent = dirname(directory);
+			if (parent === directory) break;
+			directory = parent;
+		}
+	}
+	throw new Error("Pi TypeScript loader was not found.");
+}
+
+async function loadGrokUsage() {
+	const agentDirectory = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), ".pi", "agent");
+	const extensionDirectory = join(agentDirectory, "npm", "node_modules", "pi-grok-usage", "extensions");
+	const { createJiti } = await import(pathToFileURL(findPiTypeScriptLoader()).href);
+	const jiti = createJiti(import.meta.url, { moduleCache: true });
+	const [auth, usage] = await Promise.all([
+		jiti.import(join(extensionDirectory, "auth.ts")),
+		jiti.import(join(extensionDirectory, "usage.ts")),
+	]);
+	return {
+		resolveOAuthCredential: auth.resolveOAuthCredential,
+		fetchUsage: usage.fetchUsage,
+		renderUsage: usage.renderUsage,
+	};
+}
 
 async function show(ctx: ExtensionCommandContext, title: string, body: string) {
 	const text = body.trim() || "(empty)";
@@ -27,6 +71,7 @@ function asError(error: unknown): string {
 }
 
 async function grokReport(ctx: ExtensionCommandContext): Promise<string> {
+	const { resolveOAuthCredential, fetchUsage, renderUsage } = await loadGrokUsage();
 	const credential = await resolveOAuthCredential(ctx);
 	if (!credential) {
 		return "No xAI OAuth token. Run /login xai, or check SuperGrok login.";
