@@ -45,3 +45,20 @@ test("enabling every known model collapses preferences back to all models", asyn
   const current = ["anthropic/claude-sonnet"];
   assert.equal(setProviderModelsEnabled(models, current, "openai", true), null);
 });
+
+test("enabling a custom provider adds its exact refs to enabled models", async () => {
+  const { setProviderModelsEnabled, isModelEnabled } = await loadModule();
+  const current = ["openrouter-jb/z-ai/glm-5.2"];
+  const withGlm = setProviderModelsEnabled(
+    [
+      { provider: "openai", id: "gpt-5", name: "GPT-5" },
+      { provider: "glm5.3", id: "z-ai/glm-5.3", name: "glm" },
+    ],
+    current,
+    "glm5.3",
+    true,
+  );
+  assert.ok(withGlm, "expected a concrete enabled-models list");
+  assert.ok(withGlm.includes("glm5.3/z-ai/glm-5.3"));
+  assert.ok(isModelEnabled({ provider: "glm5.3", id: "z-ai/glm-5.3", name: "glm" }, withGlm));
+});
