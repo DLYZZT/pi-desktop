@@ -1,0 +1,3 @@
+fix(desktop): keep dock menus visible without clipping the TUI
+
+Stop cropping the PTY under the composer. Let the overlay sit on top, and keep overflow visible so upward cwd/worktree/model/thinking menus are clickable.

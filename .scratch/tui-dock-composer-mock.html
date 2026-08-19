@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TUI dock composer — mock</title>
+    <style>
+      :root {
+        --bg: #141210;
+        --bg-panel: #1c1a17;
+        --bg-hover: #26231f;
+        --border: #33302a;
+        --text: #faf9f7;
+        --text-muted: #a19d92;
+        --text-dim: #8f8a81;
+        --accent: #f97316;
+        --field: #12100e;
+        font-family: "Segoe UI", "PingFang SC", sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #0e0d0b;
+        color: var(--text);
+      }
+      .stage {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      .transcript {
+        padding: 28px 20px 12px;
+        font:
+          13px/1.45 "Cascadia Mono",
+          Consolas,
+          monospace;
+        color: #d8d2c8;
+        overflow: auto;
+      }
+      .working {
+        color: var(--accent);
+        margin: 18px 0 8px;
+      }
+      .caption {
+        padding: 10px 20px 0;
+        color: var(--text-dim);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .sheet {
+        background: var(--bg-panel);
+        border: 1px solid var(--border);
+        border-bottom: none;
+        border-radius: 16px 16px 0 0;
+        box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.35);
+        overflow: visible;
+      }
+      .field {
+        display: block;
+        width: 100%;
+        min-height: 88px;
+        padding: 14px 16px 10px;
+        border: 0;
+        resize: vertical;
+        background: var(--field);
+        color: var(--text);
+        font:
+          15px/1.45 "Segoe UI",
+          sans-serif;
+        outline: none;
+      }
+      .field:focus {
+        box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+      }
+      .bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        padding: 8px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+        border-top: 1px solid var(--border);
+        background: var(--bg-panel);
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        max-width: 240px;
+        min-height: 30px;
+        padding: 6px 8px 7px 10px;
+        border: 0;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--text) 7%, var(--bg-panel));
+        color: var(--text);
+        font:
+          12.5px/1.35 "Segoe UI",
+          "PingFang SC",
+          sans-serif;
+        cursor: pointer;
+      }
+      .pill:hover {
+        background: color-mix(in srgb, var(--text) 12%, var(--bg-panel));
+      }
+      .pill:focus-visible {
+        outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+        outline-offset: 2px;
+      }
+      .pill svg {
+        flex: 0 0 auto;
+        opacity: 0.72;
+      }
+      .pill .label {
+        min-width: 0;
+        overflow-x: hidden;
+        overflow-y: visible;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        line-height: 1.35;
+      }
+      .pill .chev {
+        opacity: 0.45;
+      }
+      .pill.model {
+        max-width: 180px;
+      }
+      .usage {
+        flex: 1 1 160px;
+        min-width: 0;
+        overflow-x: hidden;
+        overflow-y: visible;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--text-dim);
+        font:
+          12px/1.4 "Cascadia Mono",
+          Consolas,
+          monospace;
+        padding: 0 6px;
+      }
+      .stat {
+        display: inline-flex;
+        align-items: center;
+        min-height: 30px;
+        padding: 6px 10px 7px;
+        border-radius: 999px;
+        line-height: 1.35;
+        background: color-mix(in srgb, var(--text) 5%, var(--bg-panel));
+        color: var(--text-muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage">
+      <div class="transcript">
+        <div>assistant output stays in the terminal</div>
+        <div class="working">⠴ Working</div>
+        <div class="caption">cover starts below Working — these TUI lines are hidden by the sheet</div>
+      </div>
+      <section class="sheet" aria-label="composer mock">
+        <textarea class="field" placeholder="">Ask about the current turn</textarea>
+        <div class="bar">
+          <button class="pill" type="button" title="Change working directory">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M3 7h6l2 2h10v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z" />
+            </svg>
+            <span class="label">dlyzzt-pi-desktop</span>
+            <svg
+              class="chev"
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+            >
+              <path d="M2 3.5 5 6.5 8 3.5" />
+            </svg>
+          </button>
+          <button class="pill" type="button" title="Switch worktree">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M6 3v12" />
+              <circle cx="18" cy="6" r="2.5" />
+              <circle cx="6" cy="18" r="2.5" />
+              <path d="M18 8.5A8 8 0 0 1 8.5 18" />
+            </svg>
+            <span class="label">feat/subagent-tool-card-status</span>
+            <svg
+              class="chev"
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+            >
+              <path d="M2 3.5 5 6.5 8 3.5" />
+            </svg>
+          </button>
+          <span class="usage" title="↑607k ↓97k R23M CH99.8% $18.975 (sub) 52.8%/500k"
+            >↑607k ↓97k R23M · $18.975 · 52.8%</span
+          >
+          <button class="pill model" type="button" title="Cycle model">
+            <span class="label">grok-4.6</span>
+            <svg
+              class="chev"
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+            >
+              <path d="M2 3.5 5 6.5 8 3.5" />
+            </svg>
+          </button>
+          <button class="pill" type="button" title="Cycle thinking">
+            <span class="label">high</span>
+            <svg
+              class="chev"
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+            >
+              <path d="M2 3.5 5 6.5 8 3.5" />
+            </svg>
+          </button>
+          <span class="stat">MCP 2/7</span>
+          <span class="stat">SuperGrok 18%</span>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

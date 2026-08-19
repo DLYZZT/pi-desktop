@@ -1,0 +1,4 @@
+feat(desktop): relocate a session working directory in place
+
+Move the session file with the new cwd and refresh the sidebar
+without creating a new session id.

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WezTerm HWND overlay spike</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font:
+          14px/1.4 ui-sans-serif,
+          "Segoe UI",
+          sans-serif;
+        color: #111;
+        background: #f4f1ea;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      #chrome {
+        flex: 0 0 auto;
+        padding: 10px 12px;
+        background: #fff8e1;
+        border-bottom: 2px solid #111;
+      }
+      #chrome h1 {
+        margin: 0 0 6px;
+        font-size: 16px;
+      }
+      #log {
+        margin: 8px 0 0;
+        max-height: 88px;
+        overflow: auto;
+        font:
+          12px/1.35 ui-monospace,
+          Consolas,
+          monospace;
+        white-space: pre-wrap;
+      }
+      #term {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+        background: #1a1a1a;
+      }
+      #overlay {
+        position: absolute;
+        left: 16px;
+        right: 16px;
+        bottom: 16px;
+        z-index: 50;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 10px;
+        background: #d13438;
+        color: #fff;
+        border: 3px solid #fff;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      }
+      #overlay button,
+      #overlay input {
+        font:
+          14px/1.2 ui-sans-serif,
+          "Segoe UI",
+          sans-serif;
+      }
+      #overlay button {
+        padding: 8px 12px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      #overlay input {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 8px;
+      }
+      #probe {
+        color: #444;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="chrome">
+      <h1 id="title">THROW AWAY — HTML over WezTerm HWND</h1>
+      <div id="help">
+        Judge: red bar sits on terminal cells? button click increments? input accepts type/IME? Top strip stays usable
+        even if the hole eats events.
+      </div>
+      <div id="probe">pointer: —</div>
+      <div id="log"></div>
+    </div>
+    <div id="term">
+      <div id="overlay">
+        <button id="hit" type="button">CLICK OVERLAY</button>
+        <input id="type" type="text" placeholder="type here / 拼音" />
+        <span id="hits">clicks=0 focus=no</span>
+      </div>
+    </div>
+    <script>
+      const logEl = document.getElementById("log");
+      const probeEl = document.getElementById("probe");
+      const overlay = document.getElementById("overlay");
+      const term = document.getElementById("term");
+      const hit = document.getElementById("hit");
+      const type = document.getElementById("type");
+      const hits = document.getElementById("hits");
+      let clickCount = 0;
+      let focused = false;
+
+      function line(text) {
+        const time = new Date().toISOString().slice(11, 23);
+        logEl.textContent = `[${time}] ${text}\n` + logEl.textContent;
+      }
+
+      function renderHits() {
+        hits.textContent = `clicks=${clickCount} focus=${focused ? "yes" : "no"}`;
+      }
+
+      function sendRect() {
+        const rect = term.getBoundingClientRect();
+        window.spike.sendRect({
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          w: Math.round(rect.width),
+          h: Math.round(rect.height),
+        });
+      }
+
+      const mode = new URLSearchParams(location.search).get("mode");
+      if (mode === "pty") {
+        document.getElementById("title").textContent = "试验 — WezTerm 画现有 node-pty";
+        document.getElementById("help").textContent =
+          "看黑块是不是 Pi（或大字 NODEPTY-SPIKE），不是普通 cmd。点黑块打几个字。红条仍要能点。";
+      }
+      if (mode === "own") {
+        document.getElementById("title").textContent = "试验 — WezTerm 自己启动 Pi";
+        document.getElementById("help").textContent = "黑块应是完整 Pi。点黑块打字应有反应。红条仍要能点。";
+      }
+
+      window.spike.onStatus((message) => line(message));
+
+      hit.addEventListener("click", (event) => {
+        event.stopPropagation();
+        clickCount += 1;
+        renderHits();
+        line("OVERLAY BUTTON click — HTML won this event");
+      });
+      type.addEventListener("focus", () => {
+        focused = true;
+        renderHits();
+        line("OVERLAY INPUT focus");
+      });
+      type.addEventListener("blur", () => {
+        focused = false;
+        renderHits();
+      });
+      type.addEventListener("input", () => {
+        line(`OVERLAY INPUT value=${JSON.stringify(type.value)}`);
+      });
+      overlay.addEventListener("mousedown", () => line("OVERLAY mousedown"));
+
+      document.addEventListener(
+        "mousemove",
+        (event) => {
+          const over = event.target.closest("#overlay");
+          probeEl.textContent = `pointer: ${event.clientX},${event.clientY} target=${over ? "OVERLAY" : event.target.id || event.target.tagName}`;
+        },
+        { passive: true },
+      );
+
+      const observer = new ResizeObserver(() => sendRect());
+      observer.observe(term);
+      window.addEventListener("resize", sendRect);
+      sendRect();
+      line("HTML ready. If red bar never increments, HWND ate the click.");
+    </script>
+  </body>
+</html>
