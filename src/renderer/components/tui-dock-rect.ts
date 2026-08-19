@@ -63,7 +63,7 @@ export function lineLooksLikeLiveStatus(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
   if (SPINNER.test(trimmed[0] ?? "")) return true;
-  return /^(Working|Thinking|Compacting)\b/i.test(trimmed);
+  return /^(Working|Compacting)\b/i.test(trimmed);
 }
 
 export function screenHasLiveStatus(lines: string[]): boolean {
