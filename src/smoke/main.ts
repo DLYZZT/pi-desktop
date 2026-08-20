@@ -12,6 +12,7 @@ import { createProductionUpdateAdapter } from "../main/update-adapter";
 import { createUpdateManager, type UpdateManager } from "../main/update-manager";
 import { ToolchainManager } from "../main/toolchains/manager";
 import { resolveRuntimeCatalogPath } from "../main/toolchains/catalog";
+import { resolveBundledCorePaths } from "../main/toolchains/bundled-core";
 import { isExecutionIntent } from "../shared/toolchains/types";
 
 const smokeUserData = process.env.PI_DESKTOP_SMOKE_USER_DATA;
@@ -54,6 +55,10 @@ void app.whenReady().then(async () => {
     currentVersion: app.getVersion(),
     isPackaged: false,
   });
+  const bundledCorePaths = resolveBundledCorePaths({
+    isPackaged: false,
+    resourcesRoot: process.resourcesPath,
+  });
   const toolchainManager = new ToolchainManager({
     homeDir: app.getPath("home"),
     tempRoot: app.getPath("temp"),
@@ -63,6 +68,8 @@ void app.whenReady().then(async () => {
       isPackaged: false,
       resourcesRoot: process.resourcesPath,
     }),
+    coreCatalogPath: bundledCorePaths.catalogPath,
+    bundledCoreRoot: bundledCorePaths.coreRoot,
   });
   await toolchainManager.initialize();
 
