@@ -151,12 +151,12 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: Prepare verified bundled search tools
+        run: npm run prepare:bundled-tools -- --target ${{ matrix.tool_target }}
+
       - name: Run Electron smoke on Windows
         if: runner.os == 'Windows'
         run: npm run smoke
-
-      - name: Prepare verified bundled search tools
-        run: npm run prepare:bundled-tools -- --target ${{ matrix.tool_target }}
 
       - name: Package ${{ matrix.name }}
         shell: bash

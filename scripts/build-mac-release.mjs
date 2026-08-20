@@ -93,8 +93,8 @@ function run(command, args, env = process.env) {
 
 if (shouldNotarize) requireNotarizationCredentials();
 
-run("npm", ["run", "verify"]);
 run("npm", ["run", "prepare:bundled-tools", "--", ...architectures.flatMap((arch) => ["--target", `darwin-${arch}`])]);
+run("npm", ["run", "verify"]);
 run(
   "npx",
   [

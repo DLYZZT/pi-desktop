@@ -57,6 +57,11 @@ test("Windows runs pure quality checks and Electron smoke without an Xvfb depend
   const smoke = stepByName("package", "Run Electron smoke on Windows");
   assert.equal(smoke.if, "runner.os == 'Windows'");
   assert.equal(smoke.run, "npm run smoke");
+  const packageSteps = workflow.jobs.package.steps;
+  assert.ok(
+    packageSteps.indexOf(stepByName("package", "Prepare verified bundled search tools")) < packageSteps.indexOf(smoke),
+    "bundled search tools must be prepared before Electron smoke",
+  );
 });
 
 test("package metadata is cross-checked against each platform artifact", () => {

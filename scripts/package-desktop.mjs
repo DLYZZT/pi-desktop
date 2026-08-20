@@ -15,11 +15,6 @@ export function createDesktopPackageSteps(mode, options = {}) {
   const release = mode === "--release";
   return [
     {
-      label: "verify",
-      command: nodeBinary,
-      args: [path.join(projectRoot, "scripts", "verify.mjs")],
-    },
-    {
       label: "prepare bundled tools",
       command: nodeBinary,
       args: [
@@ -28,6 +23,11 @@ export function createDesktopPackageSteps(mode, options = {}) {
         path.join(projectRoot, "scripts", "prepare-bundled-tools.mjs"),
         ...(release ? ["--release"] : []),
       ],
+    },
+    {
+      label: "verify",
+      command: nodeBinary,
+      args: [path.join(projectRoot, "scripts", "verify.mjs")],
     },
     {
       label: "electron-builder",

@@ -15,8 +15,10 @@ test("pack and release plans use Node JS entries and set signing discovery in th
   assert.deepEqual(release[2].args.slice(-2), ["--publish", "never"]);
   assert.equal(pack[2].env.CSC_IDENTITY_AUTO_DISCOVERY, "false");
   assert.equal(release[2].env.CSC_IDENTITY_AUTO_DISCOVERY, "false");
-  assert.equal(pack[1].args.includes("--release"), false);
-  assert.equal(release[1].args.includes("--release"), true);
+  assert.equal(pack[0].label, "prepare bundled tools");
+  assert.equal(pack[1].label, "verify");
+  assert.equal(pack[0].args.includes("--release"), false);
+  assert.equal(release[0].args.includes("--release"), true);
 });
 
 test("packaging rejects unknown modes and diagnoses spawn failures, signals, and missing statuses", () => {
