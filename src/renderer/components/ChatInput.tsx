@@ -26,14 +26,13 @@ import {
   type ChatDraftImage,
 } from "@/lib/draft-store";
 import { LatestAbortableRequest } from "@/lib/latest-abortable-request";
+import { buildAtInsertText, extractAtQuery, type AtQueryMatch, type FileIndexEntry } from "@/lib/file-fuzzy";
 import {
-  buildEntriesFromFiles,
-  buildAtInsertText,
-  extractAtQuery,
-  filterFileEntries,
-  type AtQueryMatch,
-  type FileIndexEntry,
-} from "@/lib/file-fuzzy";
+  FileSuggestionLruCache,
+  fileSuggestionCacheKey,
+  projectFileSuggestionResponse,
+  type FileSuggestionDegradedReason,
+} from "@/lib/file-suggestion-client";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
@@ -326,14 +325,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const [atQuery, setAtQuery] = useState<AtQueryMatch | null>(null);
   const [atMenuOpen, setAtMenuOpen] = useState(false);
   const [atActiveIndex, setAtActiveIndex] = useState(0);
-  const [fileIndex, setFileIndex] = useState<{ cwd: string; entries: FileIndexEntry[]; truncated: boolean } | null>(
-    null,
-  );
-  const [fileIndexLoading, setFileIndexLoading] = useState(false);
-  const [atServerResult, setAtServerResult] = useState<{
+  const [atSuggestionState, setAtSuggestionState] = useState<{
     cwd: string;
+    tokenKey: string;
     query: string;
     matches: FileIndexEntry[];
+    truncated: boolean;
+    degradedReason?: FileSuggestionDegradedReason;
+    status: "loading" | "ready" | "error";
   } | null>(null);
   const [imageAttachNotice, setImageAttachNotice] = useState<string | null>(null);
   const [submissionNotice, setSubmissionNotice] = useState<string | null>(null);
@@ -353,9 +352,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const slashCommandsRequestedRef = useRef(false);
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const atItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const fileIndexMetaRef = useRef<{ cwd: string; fetchedAt: number } | null>(null);
-  const fileIndexRequestRef = useRef(new LatestAbortableRequest());
-  const fileSearchRequestRef = useRef(new LatestAbortableRequest());
+  const fileSuggestionCacheRef = useRef(new FileSuggestionLruCache());
+  const fileSuggestionRequestRef = useRef(new LatestAbortableRequest());
   const draftKeyRef = useRef(draftKey);
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
@@ -869,55 +867,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   );
 
   const atQueryText = atQuery?.query ?? null;
-  const atLocalMatches: FileIndexEntry[] = React.useMemo(
-    () =>
-      atQueryText !== null && fileIndex && fileIndex.cwd === cwd
-        ? filterFileEntries(fileIndex.entries, atQueryText)
-        : [],
-    [atQueryText, fileIndex, cwd],
-  );
-
-  // When the client index is truncated (repo larger than the index cap),
-  // local filtering cannot see deep files, so queries are also ranked
-  // server-side against the full listing. Local matches render immediately
-  // and are replaced when the (debounced) server result for the current
-  // query arrives; stale responses are ignored via the query/cwd tag.
-  const needsServerSearch = Boolean(atQueryText && fileIndex?.truncated && fileIndex.cwd === cwd);
-  useEffect(() => {
-    if (!needsServerSearch || !cwd || !atQueryText) return;
-    const fetchCwd = cwd;
-    const query = atQueryText;
-    const fileSearchRequests = fileSearchRequestRef.current;
-    let generation: number | null = null;
-    const timer = setTimeout(() => {
-      const request = fileSearchRequests.begin();
-      generation = request.generation;
-      fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}&q=${encodeURIComponent(query)}`, {
-        signal: request.signal,
-      })
-        .then((res) => {
-          if (!res.ok) throw new Error(`file search failed: ${res.status}`);
-          return res.json() as Promise<{ matches?: FileIndexEntry[] }>;
-        })
-        .then((data) => {
-          if (!fileSearchRequests.isCurrent(request.generation)) return;
-          setAtServerResult({ cwd: fetchCwd, query, matches: data.matches ?? [] });
-        })
-        .catch(() => {
-          // Keep showing local matches; the next keystroke retries.
-        })
-        .finally(() => fileSearchRequests.finish(request.generation));
-    }, 150);
-    return () => {
-      clearTimeout(timer);
-      if (generation !== null) fileSearchRequests.cancel(generation);
-    };
-  }, [needsServerSearch, atQueryText, cwd]);
-
-  const serverResultInUse =
-    needsServerSearch && atServerResult !== null && atServerResult.cwd === cwd && atServerResult.query === atQueryText;
-  const atMatches: FileIndexEntry[] = serverResultInUse ? atServerResult.matches : atLocalMatches;
-
   // Open/reset the menu whenever the @token appears or changes (mirrors the
   // slash menu: Escape closes it, the next keystroke re-opens it).
   const atTokenKey = atQuery === null ? null : `${atQuery.start}:${atQuery.quoted ? 1 : 0}:${atQuery.query}`;
@@ -931,39 +880,79 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     setAtActiveIndex(0);
   }, [atTokenKey]);
 
-  // Fetch the file index when the menu opens. The server caches per cwd for
-  // ~10s, so re-opening refreshes cheaply; while typing nothing refetches.
-  const atTokenActive = atQuery !== null;
+  // Request candidates for the active token. Empty queries and directory
+  // drill-down browse immediately; non-empty searches debounce briefly. The
+  // request generation and token tag both prevent stale responses from
+  // replacing a newer query.
   useEffect(() => {
-    if (!atTokenActive || !cwd) return;
-    const meta = fileIndexMetaRef.current;
-    if (meta && meta.cwd === cwd && Date.now() - meta.fetchedAt < 10_000) return;
+    if (atTokenKey === null || atQueryText === null || !cwd) {
+      fileSuggestionRequestRef.current.cancel();
+      setAtSuggestionState(null);
+      return;
+    }
     const fetchCwd = cwd;
-    const fileIndexRequests = fileIndexRequestRef.current;
-    const { generation, signal } = fileIndexRequests.begin();
-    setFileIndexLoading(true);
-    fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}`, { signal })
-      .then((res) => {
-        if (!res.ok) throw new Error(`file index failed: ${res.status}`);
-        return res.json() as Promise<{ files?: string[]; truncated?: boolean }>;
-      })
-      .then((data) => {
-        if (!fileIndexRequests.isCurrent(generation)) return;
-        setFileIndex({ cwd: fetchCwd, entries: buildEntriesFromFiles(data.files ?? []), truncated: !!data.truncated });
-        fileIndexMetaRef.current = { cwd: fetchCwd, fetchedAt: Date.now() };
-      })
-      .catch(() => {
-        if (!fileIndexRequests.isCurrent(generation)) return;
-        // Leave any previous index in place; next open retries.
-        fileIndexMetaRef.current = null;
-      })
-      .finally(() => {
-        if (fileIndexRequests.finish(generation)) setFileIndexLoading(false);
-      });
+    const query = atQueryText;
+    const tokenKey = atTokenKey;
+    const platform = window.piBridge?.platform ?? "linux";
+    const cacheKey = fileSuggestionCacheKey(fetchCwd, query, platform);
+    const cached = fileSuggestionCacheRef.current.get(cacheKey);
+    if (cached) {
+      setAtSuggestionState({ cwd: fetchCwd, tokenKey, query, ...cached, status: "ready" });
+      return;
+    }
+
+    setAtSuggestionState({ cwd: fetchCwd, tokenKey, query, matches: [], truncated: false, status: "loading" });
+    const requests = fileSuggestionRequestRef.current;
+    let generation: number | null = null;
+    const timer = setTimeout(
+      () => {
+        const request = requests.begin();
+        generation = request.generation;
+        fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}&q=${encodeURIComponent(query)}`, {
+          signal: request.signal,
+        })
+          .then((res) => {
+            if (!res.ok) throw new Error(`file suggestions failed: ${res.status}`);
+            return res.json() as Promise<unknown>;
+          })
+          .then((data) => {
+            if (!requests.isCurrent(request.generation)) return;
+            const snapshot = projectFileSuggestionResponse(data, query);
+            fileSuggestionCacheRef.current.setWithTtl(
+              cacheKey,
+              snapshot,
+              query === "" || query.endsWith("/") ? 2_000 : 1_000,
+            );
+            setAtSuggestionState({ cwd: fetchCwd, tokenKey, query, ...snapshot, status: "ready" });
+          })
+          .catch((error) => {
+            if (!requests.isCurrent(request.generation) || (error as { name?: string })?.name === "AbortError") return;
+            setAtSuggestionState({
+              cwd: fetchCwd,
+              tokenKey,
+              query,
+              matches: [],
+              truncated: false,
+              status: "error",
+            });
+          })
+          .finally(() => requests.finish(request.generation));
+      },
+      query === "" || query.endsWith("/") ? 0 : 150,
+    );
     return () => {
-      if (fileIndexRequests.cancel(generation)) setFileIndexLoading(false);
+      clearTimeout(timer);
+      if (generation !== null) requests.cancel(generation);
     };
-  }, [atTokenActive, cwd]);
+  }, [atTokenKey, atQueryText, cwd]);
+
+  const suggestionStateInUse =
+    atSuggestionState !== null && atSuggestionState.cwd === cwd && atSuggestionState.tokenKey === atTokenKey;
+  const activeSuggestionState = suggestionStateInUse ? atSuggestionState : null;
+  const atMatches: FileIndexEntry[] = React.useMemo(
+    () => activeSuggestionState?.matches ?? [],
+    [activeSuggestionState],
+  );
 
   const applyAtCompletion = useCallback(
     (entry: FileIndexEntry) => {
@@ -2008,18 +1997,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
           {atMenuOpen &&
             atQuery !== null &&
             (() => {
-              const indexLoading = fileIndexLoading && (!fileIndex || fileIndex.cwd !== cwd);
+              const suggestionStatus = activeSuggestionState?.status ?? "loading";
+              const suggestionsLoading = suggestionStatus === "loading";
               const matchCountLabel =
                 atMatches.length === 1
                   ? t("oneMatch", "1 match")
                   : t("matchCount", "{count} matches").replace("{count}", String(atMatches.length));
-              // With a truncated index, local results are provisional — the
-              // debounced server search over the full listing replaces them.
-              const truncatedHint =
-                fileIndex?.truncated && !serverResultInUse
-                  ? atQuery.query
-                    ? ` · ${t("searchingAllFiles", "searching all files…")}`
-                    : ` · ${t("fileIndexTruncated", "index truncated")}`
+              const resultHint = activeSuggestionState?.degradedReason
+                ? ` · ${t("fileSearchDegraded", "limited to this folder")}`
+                : activeSuggestionState?.truncated
+                  ? ` · ${t("fileIndexTruncated", "index truncated")}`
                   : "";
               return (
                 <div
@@ -2038,6 +2025,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                   }}
                 >
                   <div
+                    aria-live="polite"
                     style={{
                       padding: "8px 10px",
                       borderBottom: "1px solid var(--border)",
@@ -2050,21 +2038,23 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     }}
                   >
                     <span>
-                      {indexLoading
+                      {suggestionsLoading
                         ? t("loadingProjectFiles", "Loading files…")
                         : `${t("filesAndMatchCount", "Files · {count}").replace(
                             "{count}",
                             matchCountLabel,
-                          )}${truncatedHint}`}
+                          )}${resultHint}`}
                     </span>
                     <span style={{ fontFamily: "var(--font-mono)" }}>Tab / Enter</span>
                   </div>
                   <div style={{ maxHeight: "calc(min(48vh, 400px) - 34px)", overflowY: "auto", padding: 4 }}>
-                    {!indexLoading && atMatches.length === 0 ? (
+                    {atMatches.length === 0 ? (
                       <div style={{ padding: "6px 8px", fontSize: scaledChatFont(12), color: "var(--text-dim)" }}>
-                        {needsServerSearch && !serverResultInUse
+                        {suggestionsLoading
                           ? t("searching", "Searching…")
-                          : t("noMatchingProjectFiles", "No matching files")}
+                          : suggestionStatus === "error"
+                            ? t("fileSuggestionsUnavailable", "File suggestions are temporarily unavailable")
+                            : t("noMatchingProjectFiles", "No matching files")}
                       </div>
                     ) : (
                       atMatches.map((entry, index) => {

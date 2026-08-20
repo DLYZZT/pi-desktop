@@ -36,12 +36,13 @@ test("exact cancellation aborts the signal and prevents stale finally ownership"
   assert.equal(requests.finish(current.generation), false);
 });
 
-test("ChatInput passes signals and gates index result, error, and loading settlement", () => {
+test("ChatInput passes signals and gates file suggestion result, error, and settlement", () => {
   const source = fs.readFileSync(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /fileSearchRequests\.begin\(\)/);
-  assert.match(source, /fileIndexRequests\.begin\(\)/);
-  assert.match(source, /fetch\([^;]+\{ signal \}\)/s);
-  assert.match(source, /fileIndexRequests\.isCurrent\(generation\)/);
-  assert.match(source, /fileIndexRequests\.finish\(generation\)/);
+  assert.match(source, /fileSuggestionRequestRef\.current/);
+  assert.match(source, /const request = requests\.begin\(\)/);
+  assert.match(source, /signal: request\.signal/);
+  assert.match(source, /requests\.isCurrent\(request\.generation\)/);
+  assert.match(source, /requests\.finish\(request\.generation\)/);
+  assert.match(source, /atSuggestionState\.tokenKey === atTokenKey/);
 });

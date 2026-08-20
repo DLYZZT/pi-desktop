@@ -303,6 +303,10 @@ test("file, git, worktree, skill, plugin, and system handlers return contract-sh
   const index = await handlers["files.index"]({ root: project, query: "hello" });
   assert.equal(Array.isArray(index.files), true);
   assert.equal(index.files.includes("hello.txt"), true);
+  await assert.rejects(
+    handlers["files.index"]({ root: project, query: "../outside" }),
+    (error) => error.code === "BAD_REQUEST" && /Parent traversal/.test(error.message),
+  );
 
   let deepDirectory = project;
   for (let depth = 0; depth < 9; depth += 1) {
@@ -310,15 +314,19 @@ test("file, git, worktree, skill, plugin, and system handlers return contract-sh
     mkdirSync(deepDirectory);
   }
   writeFileSync(path.join(deepDirectory, "beyond-depth.txt"), "too deep", "utf8");
-  const depthLimitedIndex = await handlers["files.index"]({ root: project });
+  const directIndex = await handlers["files.index"]({ root: project });
   assert.equal(
-    depthLimitedIndex.files.includes(
-      "depth-0/depth-1/depth-2/depth-3/depth-4/depth-5/depth-6/depth-7/depth-8/beyond-depth.txt",
+    directIndex.matches.some(
+      (entry) =>
+        entry.path === "depth-0/depth-1/depth-2/depth-3/depth-4/depth-5/depth-6/depth-7/depth-8/beyond-depth.txt",
     ),
     false,
   );
-  assert.equal(depthLimitedIndex.truncated, true);
-  assert.equal(depthLimitedIndex.truncatedReason, "depth");
+  assert.equal(
+    directIndex.matches.some((entry) => entry.path === "depth-0" && entry.isDir),
+    true,
+  );
+  assert.equal(directIndex.truncated, false);
 
   const git = await handlers["git.status"]({ path: project });
   assert.equal(git.isGit, false);

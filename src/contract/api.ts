@@ -225,6 +225,7 @@ export interface Api {
       truncated: boolean;
       truncatedReason?: "depth" | "count";
       matches?: Array<{ path: string; isDir?: boolean; score?: number }>;
+      degradedReason?: "search-unavailable" | "search-timeout" | "search-failed";
     };
   };
   "files.watchStart": {

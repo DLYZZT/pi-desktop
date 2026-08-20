@@ -69,12 +69,10 @@ import {
   addWorktree,
   getGitStatus,
   isDirtyWorktreeError,
-  listGitFiles,
   listWorktrees,
   removeWorktree,
   resolveProject,
 } from "../shared/worktree";
-import { buildEntriesFromFiles, filterFileEntries } from "../shared/file-fuzzy";
 import {
   DOCX_PREVIEW_MAX_BYTES,
   FILE_DOWNLOAD_MAX_BYTES,
@@ -113,6 +111,7 @@ import {
 import { getSessionContentSnapshot, invalidateSessionContent } from "./session-content-cache";
 import { sessionIndex } from "./session-index";
 import { credentialStateMatches, recoverCommittedCredential, type CredentialTarget } from "./credential-sync";
+import { FileSuggestionRequestError, fileSuggestionService } from "./file-suggestions";
 
 const IGNORED_NAMES = new Set([
   "node_modules",
@@ -1409,91 +1408,16 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     },
 
     "files.index": async (params) => {
-      // ISSUE-005: return relative POSIX paths + { files, truncated, matches }
       const { root, query } = params as { root: string; query?: string };
       await assertPathAllowed(root);
-      let relFiles: string[] = [];
-      let truncatedReason: "depth" | "count" | undefined;
-
       try {
-        const all = await listGitFiles(root);
-        if (all.length > 50_000) {
-          truncatedReason = "count";
-          relFiles = all.slice(0, 50_000);
-        } else {
-          relFiles = all;
+        return await fileSuggestionService.suggest(root, query);
+      } catch (error) {
+        if (error instanceof FileSuggestionRequestError) {
+          throw new RpcError({ code: "BAD_REQUEST", message: error.message });
         }
-      } catch {
-        const abs: string[] = [];
-        const walk = (dir: string, depth: number) => {
-          if (depth > 8) {
-            truncatedReason ??= "depth";
-            return;
-          }
-          if (abs.length >= 5000) {
-            truncatedReason = "count";
-            return;
-          }
-          let names: string[];
-          try {
-            names = readdirSync(dir);
-          } catch {
-            return;
-          }
-          for (const name of names) {
-            if (IGNORED_NAMES.has(name) || name.startsWith(".")) continue;
-            const full = path.join(dir, name);
-            try {
-              const st = statSync(full);
-              if (st.isDirectory()) walk(full, depth + 1);
-              else abs.push(full);
-            } catch {
-              /* skip */
-            }
-            if (abs.length >= 5000) {
-              truncatedReason = "count";
-              return;
-            }
-          }
-        };
-        walk(root, 0);
-        const rootNorm = root.replace(/\\/g, "/").replace(/\/$/, "");
-        relFiles = abs.map((f) => {
-          const n = f.replace(/\\/g, "/");
-          return n.startsWith(rootNorm + "/") ? n.slice(rootNorm.length + 1) : n;
-        });
+        throw error;
       }
-
-      const CLIENT_CAP = 5000;
-      const filesForClient = relFiles.slice(0, CLIENT_CAP);
-      if (relFiles.length > CLIENT_CAP) truncatedReason = "count";
-      const truncated = truncatedReason !== undefined;
-      const entries = buildEntriesFromFiles(filesForClient);
-
-      if (query?.trim()) {
-        const matches = filterFileEntries(entries, query.trim()).slice(0, 50);
-        return {
-          files: filesForClient,
-          truncated,
-          ...(truncatedReason ? { truncatedReason } : {}),
-          matches: matches.map((m) => ({
-            path: m.path,
-            isDir: m.isDir,
-            score: "score" in m ? Number((m as { score?: number }).score ?? 0) : 0,
-          })),
-        };
-      }
-
-      return {
-        files: filesForClient,
-        truncated,
-        ...(truncatedReason ? { truncatedReason } : {}),
-        matches: entries.slice(0, 100).map((m) => ({
-          path: m.path,
-          isDir: m.isDir,
-          score: 0,
-        })),
-      };
     },
 
     "models.list": async (params) => {

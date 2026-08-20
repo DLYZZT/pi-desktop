@@ -152,6 +152,33 @@ export async function runSmokeHostChecks(
         "initial",
       ]);
       await call("system.allowRoot", { path: repo });
+      const suggestionDirectory = path.join(repo, "Desktop");
+      const suggestionFile = path.join(suggestionDirectory, "issue-26-smoke-target.txt");
+      fs.mkdirSync(suggestionDirectory);
+      fs.writeFileSync(suggestionFile, "candidate smoke\n");
+      const browsedSuggestions = await call<{
+        matches?: Array<{ path?: string; isDir?: boolean }>;
+        truncated?: boolean;
+      }>("files.index", { root: repo, query: "" });
+      if (!browsedSuggestions.matches?.some((entry) => entry.path === "Desktop" && entry.isDir === true)) {
+        throw new Error("files.index direct browse did not return the Desktop directory");
+      }
+      const searchedSuggestions = await call<{
+        files?: string[];
+        matches?: Array<{ path?: string; isDir?: boolean }>;
+        degradedReason?: string;
+      }>("files.index", { root: repo, query: "issue-26-smoke-target" });
+      if (
+        searchedSuggestions.degradedReason ||
+        !searchedSuggestions.matches?.some(
+          (entry) => entry.path === "Desktop/issue-26-smoke-target.txt" && entry.isDir !== true,
+        ) ||
+        !searchedSuggestions.files?.includes("Desktop/issue-26-smoke-target.txt")
+      ) {
+        throw new Error(
+          `files.index managed search returned an invalid result: ${JSON.stringify(searchedSuggestions)}`,
+        );
+      }
       const skillDir = path.join(repo, ".pi", "skills", "smoke-skill");
       const skillPath = path.join(skillDir, "SKILL.md");
       fs.mkdirSync(skillDir, { recursive: true });

@@ -75,14 +75,16 @@ Object.defineProperties(globalThis, {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const fetchRequests = [];
-globalThis.fetch = async (url) => {
+const defaultFetchImplementation = async () => ({
+  ok: true,
+  async json() {
+    return { files: ["src/main.ts", "src/renderer/App.tsx", "README.md"], truncated: false };
+  },
+});
+let fetchImplementation = defaultFetchImplementation;
+globalThis.fetch = async (url, options) => {
   fetchRequests.push(String(url));
-  return {
-    ok: true,
-    async json() {
-      return { files: ["src/main.ts", "src/renderer/App.tsx", "README.md"], truncated: false };
-    },
-  };
+  return fetchImplementation(url, options);
 };
 
 const { ChatInput } = await importTestBundle("src/renderer/components/chat-input-file-reference", {
@@ -115,6 +117,23 @@ function keyboardEvent(key) {
 
 function renderedText(node) {
   return node.children.map((child) => (typeof child === "string" ? child : renderedText(child))).join("");
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
+function response(data) {
+  return {
+    ok: true,
+    async json() {
+      return data;
+    },
+  };
 }
 
 test("@ project file autocomplete survives component state and sends the completed reference", async () => {
@@ -157,9 +176,8 @@ test("@ project file autocomplete survives component state and sends the complet
   textareaNode.selectionEnd = inputText.length;
   await act(async () => {
     renderer.root.findByType("textarea").props.onChange({ target: textareaNode });
-    await Promise.resolve();
-    await Promise.resolve();
   });
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
 
   assert.equal(fetchRequests.length, 1);
   assert.match(fetchRequests[0], /^\/api\/file-index\?cwd=/);
@@ -185,6 +203,121 @@ test("@ project file autocomplete survives component state and sends the complet
   assert.deepEqual(sent, ["@src/main.ts"]);
 
   await act(async () => renderer.unmount());
+});
+
+test("@ autocomplete requests each query and ignores a late response for an older token", async () => {
+  const pending = [];
+  fetchImplementation = () => {
+    const request = deferred();
+    pending.push(request);
+    return request.promise;
+  };
+  const textareaNode = {
+    focus() {},
+    scrollHeight: 24,
+    selectionEnd: 0,
+    selectionStart: 0,
+    setSelectionRange(start, end) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+    },
+    style: {},
+    value: "",
+  };
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(
+        createElement(ChatInput, { cwd: "/workspace/project", isStreaming: false, onAbort() {}, onSend() {} }),
+        { createNodeMock: (element) => (element.type === "textarea" ? textareaNode : null) },
+      );
+    });
+    const requestStart = fetchRequests.length;
+
+    textareaNode.value = "@mai";
+    textareaNode.selectionStart = textareaNode.value.length;
+    textareaNode.selectionEnd = textareaNode.value.length;
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: textareaNode }));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 175)));
+    assert.match(fetchRequests[requestStart], /[?&]q=mai(?:&|$)/);
+
+    textareaNode.value = "@read";
+    textareaNode.selectionStart = textareaNode.value.length;
+    textareaNode.selectionEnd = textareaNode.value.length;
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: textareaNode }));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 175)));
+    assert.match(fetchRequests[requestStart + 1], /[?&]q=read(?:&|$)/);
+
+    await act(async () => {
+      pending[1].resolve(response({ matches: [{ path: "README.md", isDir: false }], truncated: false }));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    assert.match(renderedText(renderer.root), /README\.md/);
+
+    await act(async () => {
+      pending[0].resolve(response({ matches: [{ path: "src/main.ts", isDir: false }], truncated: false }));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    assert.doesNotMatch(renderedText(renderer.root), /main\.ts/);
+  } finally {
+    fetchImplementation = defaultFetchImplementation;
+    if (renderer) await act(async () => renderer.unmount());
+  }
+});
+
+test("@ autocomplete shows degraded scope and reuses a recent query from the bounded cache", async () => {
+  fetchImplementation = async () =>
+    response({
+      matches: [{ path: "Desktop/nested.txt", isDir: false }],
+      truncated: false,
+      degradedReason: "search-unavailable",
+    });
+  const textareaNode = {
+    focus() {},
+    scrollHeight: 24,
+    selectionEnd: 0,
+    selectionStart: 0,
+    setSelectionRange(start, end) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+    },
+    style: {},
+    value: "",
+  };
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(
+        createElement(ChatInput, { cwd: "/workspace/project", isStreaming: false, onAbort() {}, onSend() {} }),
+        { createNodeMock: (element) => (element.type === "textarea" ? textareaNode : null) },
+      );
+    });
+    const requestStart = fetchRequests.length;
+    textareaNode.value = "@nest";
+    textareaNode.selectionStart = textareaNode.value.length;
+    textareaNode.selectionEnd = textareaNode.value.length;
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: textareaNode }));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 175)));
+    assert.match(renderedText(renderer.root), /limited to this folder/);
+    assert.equal(fetchRequests.length, requestStart + 1);
+
+    textareaNode.value = "";
+    textareaNode.selectionStart = 0;
+    textareaNode.selectionEnd = 0;
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: textareaNode }));
+    textareaNode.value = "@nest";
+    textareaNode.selectionStart = textareaNode.value.length;
+    textareaNode.selectionEnd = textareaNode.value.length;
+    await act(async () => {
+      renderer.root.findByType("textarea").props.onChange({ target: textareaNode });
+      await Promise.resolve();
+    });
+    assert.equal(fetchRequests.length, requestStart + 1);
+    assert.match(renderedText(renderer.root), /Desktop\/nested\.txt/);
+  } finally {
+    fetchImplementation = defaultFetchImplementation;
+    if (renderer) await act(async () => renderer.unmount());
+  }
 });
 
 test("@ project references and absolute local file references keep their distinct wire formats", async () => {

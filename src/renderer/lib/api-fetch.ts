@@ -268,7 +268,9 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
     }
 
     if (segs[0] === "file-index" && method === "GET") {
-      // ISSUE-005: pass through Host contract { files, truncated, matches }
+      // Pass through the compatible Host candidate envelope. `matches` is
+      // authoritative; `files` remains a legacy projection and
+      // `degradedReason` is an optional additive field.
       const root = u.searchParams.get("cwd") ?? u.searchParams.get("root") ?? "";
       const query = u.searchParams.get("q") ?? undefined;
       const result = await fileIndex(root, query);
