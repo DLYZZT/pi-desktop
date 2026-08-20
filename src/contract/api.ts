@@ -272,6 +272,22 @@ export interface Api {
     };
     result: TestResult;
   };
+  "modelsConfig.fetchModels": {
+    params: {
+      providerName?: string;
+      provider?: Record<string, unknown>;
+      [key: string]: unknown;
+    };
+    result: {
+      ok: boolean;
+      error?: string;
+      models?: Array<{ id: string; name?: string }>;
+      source?: "network" | "catalog";
+      providerName?: string;
+      warning?: string;
+      [key: string]: unknown;
+    };
+  };
 
   "auth.providers": { params: void; result: { providers: ProviderStatus[] } };
   "auth.allProviders": { params: void; result: { providers: ProviderStatus[] } };

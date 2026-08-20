@@ -152,17 +152,30 @@ function ProviderDetail({
   onChange,
   onRename,
   onDelete,
+  onFetchModels,
 }: {
   name: string;
   provider: ProviderEntry;
   onChange: (p: ProviderEntry) => void;
   onRename: (n: string) => void;
   onDelete: () => void;
+  onFetchModels: (provider: ProviderEntry, providerName: string) => Promise<void>;
 }) {
   const { t } = useI18n();
   const [editingName, setEditingName] = useState(name);
+  const [fetchingModels, setFetchingModels] = useState(false);
   useEffect(() => setEditingName(name), [name]);
   const set = <K extends keyof ProviderEntry>(k: K, v: ProviderEntry[K]) => onChange({ ...provider, [k]: v });
+
+  const handleFetchModels = useCallback(async () => {
+    if (fetchingModels) return;
+    setFetchingModels(true);
+    try {
+      await onFetchModels(provider, name);
+    } finally {
+      setFetchingModels(false);
+    }
+  }, [fetchingModels, onFetchModels, provider, name]);
 
   useEffect(() => {
     if (!provider.api) onChange({ ...provider, api: "openai-completions" });
@@ -244,6 +257,244 @@ function ProviderDetail({
           required
         />
       </Field>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          onClick={() => void handleFetchModels()}
+          disabled={fetchingModels || !(provider.baseUrl ?? "").trim()}
+          style={{
+            minHeight: 32,
+            padding: "0 14px",
+            background: "var(--accent)",
+            border: "none",
+            borderRadius: 4,
+            color: "#fff",
+            cursor: fetchingModels || !(provider.baseUrl ?? "").trim() ? "default" : "pointer",
+            fontSize: 12,
+            opacity: fetchingModels ? 0.7 : 1,
+          }}
+        >
+          {fetchingModels ? t("fetchModelsFetching", "Fetching model list…") : t("fetchModels", "Fetch model list")}
+        </button>
+        <span style={{ fontSize: 10, color: "var(--text-dim)" }}>
+          {t(
+            "fetchModelsHint",
+            "Fetches GET {baseUrl}/models with the current form values; falls back to the built-in catalog when unavailable.",
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ── Fetch model list dialog ──────────────────────────────────────────────────
+
+interface FetchedModel {
+  id: string;
+  name?: string;
+}
+
+interface FetchModelsDialogState {
+  providerName: string;
+  provider: ProviderEntry;
+  models: FetchedModel[];
+  source: "network" | "catalog";
+  warning?: string;
+  error?: string;
+}
+
+function FetchModelsDialog({
+  dialog,
+  onConfirm,
+  onClose,
+}: {
+  dialog: FetchModelsDialogState;
+  onConfirm: (checkedIds: ReadonlySet<string>) => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const allIds = dialog.models.map((m) => m.id);
+  const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set(allIds));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- reset selection when the fetched list changes.
+  useEffect(() => setChecked(new Set(allIds)), [dialog]);
+
+  const toggle = (id: string, on: boolean) => {
+    const next = new Set(checked);
+    if (on) next.add(id);
+    else next.delete(id);
+    setChecked(next);
+  };
+
+  const linkButtonStyle: React.CSSProperties = {
+    padding: 0,
+    background: "none",
+    border: "none",
+    color: "var(--accent)",
+    cursor: "pointer",
+    fontSize: 12,
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1200,
+        background: "rgba(0,0,0,0.35)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 480,
+          maxWidth: "calc(100vw - 32px)",
+          maxHeight: "72vh",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+          background: "var(--bg-panel)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          padding: 16,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <strong style={{ fontSize: 13 }}>{t("fetchModelsDialogTitle", "Select models to import")}</strong>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              width: 24,
+              height: 24,
+              background: "none",
+              border: "none",
+              color: "var(--text-dim)",
+              cursor: "pointer",
+              fontSize: 16,
+              lineHeight: 1,
+            }}
+            aria-label={t("close", "Close")}
+          >
+            ×
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
+          {t("fetchModelsProviderName", "Provider")}:{" "}
+          <span style={{ fontFamily: "var(--font-mono)" }}>{dialog.providerName}</span>
+        </div>
+        {dialog.error ? (
+          <div style={{ fontSize: 12, color: "#f87171", padding: "4px 0" }}>
+            {t("fetchModelsError", "Failed to fetch models")}: {dialog.error}
+          </div>
+        ) : (
+          <>
+            {dialog.warning && (
+              <div style={{ fontSize: 11, color: "#d97706" }}>
+                {t("fetchModelsFallback", "Network fetch failed; showing the built-in catalog instead.")}{" "}
+                <span style={{ color: "var(--text-dim)" }}>({dialog.warning})</span>
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
+              {t("fetchModelsCount", "{count} models found").replace("{count}", String(dialog.models.length))}
+            </div>
+            <div
+              style={{
+                flex: 1,
+                minHeight: 80,
+                overflowY: "auto",
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                padding: 6,
+              }}
+            >
+              {dialog.models.map((m) => (
+                <label
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "4px 6px",
+                    fontSize: 12,
+                    cursor: "pointer",
+                    borderRadius: 4,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "none";
+                  }}
+                >
+                  <input type="checkbox" checked={checked.has(m.id)} onChange={(e) => toggle(m.id, e.target.checked)} />
+                  <span style={{ fontFamily: "var(--font-mono)", flexShrink: 0 }}>{m.id}</span>
+                  {m.name && m.name !== m.id && (
+                    <span
+                      style={{
+                        color: "var(--text-dim)",
+                        fontSize: 11,
+                        marginLeft: "auto",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        maxWidth: 180,
+                      }}
+                    >
+                      {m.name}
+                    </span>
+                  )}
+                </label>
+              ))}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button type="button" onClick={() => setChecked(new Set(allIds))} style={linkButtonStyle}>
+                {t("fetchModelsSelectAll", "Select all")}
+              </button>
+              <button type="button" onClick={() => setChecked(new Set())} style={linkButtonStyle}>
+                {t("fetchModelsClearAll", "Clear all")}
+              </button>
+              <div style={{ flex: 1 }} />
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  padding: "6px 14px",
+                  background: "none",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                {t("cancel", "Cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={() => onConfirm(checked)}
+                disabled={checked.size === 0}
+                style={{
+                  padding: "6px 16px",
+                  background: checked.size === 0 ? "var(--bg-panel)" : "var(--accent)",
+                  border: "none",
+                  borderRadius: 6,
+                  color: checked.size === 0 ? "var(--text-muted)" : "#fff",
+                  cursor: checked.size === 0 ? "default" : "pointer",
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                {t("fetchModelsImport", "Import models")}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -2083,6 +2334,7 @@ export function ModelsConfig({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
+  const [fetchDialog, setFetchDialog] = useState<FetchModelsDialogState | null>(null);
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
   const [modelPreferences, setModelPreferencesState] = useState<ModelPreferencesResult | null>(null);
@@ -2259,45 +2511,103 @@ export function ModelsConfig({
     [setConfig, setSelection],
   );
 
-  const handleSave = useCallback(async () => {
-    if (!configVersion) return;
-    setSaving(true);
-    setSaveError(null);
-    setSavedOk(false);
-    try {
-      const res = await fetch("/api/models-config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config, expectedVersion: configVersion }),
-      });
-      const d = (await res.json()) as { success?: boolean; error?: string; code?: string; version?: string };
-      if (!res.ok || d.error) {
-        const conflict = res.status === 409 || d.code === "CONFLICT";
-        setSaveConflict(conflict);
-        setSaveError(
-          conflict
-            ? t(
-                "modelConfigConflict",
-                "models.json changed outside this editor. Your edits are preserved here; copy or compare them before reloading the disk version to merge manually.",
-              )
-            : (d.error ?? `HTTP ${res.status}`),
-        );
-      } else if (typeof d.version !== "string") {
-        setSaveError("Invalid models config save response");
-      } else {
-        setConfigVersion(d.version);
-        setSaveConflict(false);
-        setSavedOk(true);
-        onChanged?.();
-        void loadModelPreferences();
-        setTimeout(() => setSavedOk(false), 2000);
+  const persistConfig = useCallback(
+    async (toSave: ModelsJson) => {
+      if (!configVersion) return;
+      setSaving(true);
+      setSaveError(null);
+      setSavedOk(false);
+      try {
+        const res = await fetch("/api/models-config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config: toSave, expectedVersion: configVersion }),
+        });
+        const d = (await res.json()) as { success?: boolean; error?: string; code?: string; version?: string };
+        if (!res.ok || d.error) {
+          const conflict = res.status === 409 || d.code === "CONFLICT";
+          setSaveConflict(conflict);
+          setSaveError(
+            conflict
+              ? t(
+                  "modelConfigConflict",
+                  "models.json changed outside this editor. Your edits are preserved here; copy or compare them before reloading the disk version to merge manually.",
+                )
+              : (d.error ?? `HTTP ${res.status}`),
+          );
+        } else if (typeof d.version !== "string") {
+          setSaveError("Invalid models config save response");
+        } else {
+          setConfigVersion(d.version);
+          setSaveConflict(false);
+          setSavedOk(true);
+          onChanged?.();
+          void loadModelPreferences();
+          setTimeout(() => setSavedOk(false), 2000);
+        }
+      } catch (e) {
+        setSaveError(String(e));
+      } finally {
+        setSaving(false);
       }
+    },
+    [configVersion, loadModelPreferences, onChanged, t],
+  );
+
+  const handleSave = useCallback(() => persistConfig(config), [persistConfig, config]);
+
+  const handleFetchModels = useCallback(async (provider: ProviderEntry, providerName: string) => {
+    try {
+      const res = await fetch("/api/models-config/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerName, provider }),
+      });
+      const d = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        models?: FetchedModel[];
+        source?: "network" | "catalog";
+        warning?: string;
+      };
+      setFetchDialog({
+        providerName,
+        provider,
+        models: d.models ?? [],
+        source: d.source === "catalog" ? "catalog" : "network",
+        warning: d.warning,
+        error: d.ok && d.models ? undefined : (d.error ?? `Failed to fetch models (HTTP ${res.status})`),
+      });
     } catch (e) {
-      setSaveError(String(e));
-    } finally {
-      setSaving(false);
+      setFetchDialog({
+        providerName,
+        provider,
+        models: [],
+        source: "network",
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
-  }, [config, configVersion, loadModelPreferences, onChanged, t]);
+  }, []);
+
+  const confirmImportModels = useCallback(
+    async (checkedIds: ReadonlySet<string>) => {
+      if (!fetchDialog) return;
+      const { providerName, provider } = fetchDialog;
+      const models: ModelEntry[] = fetchDialog.models
+        .filter((m) => checkedIds.has(m.id))
+        .map((m) => ({ id: m.id, name: m.name }));
+      if (models.length === 0) return;
+      const nextConfig: ModelsJson = {
+        ...config,
+        providers: { ...(config.providers ?? {}), [providerName]: { ...provider, models } },
+      };
+      setConfig(nextConfig);
+      setSelection({ type: "provider", name: providerName });
+      setFetchDialog(null);
+      await persistConfig(nextConfig);
+    },
+    [fetchDialog, config, setConfig, setSelection, persistConfig],
+  );
 
   const providers = Object.entries(config.providers ?? {});
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
@@ -2355,6 +2665,7 @@ export function ModelsConfig({
           onChange={(p) => updateProvider(selection.name, p)}
           onRename={(n) => renameProvider(selection.name, n)}
           onDelete={() => deleteProvider(selection.name)}
+          onFetchModels={handleFetchModels}
         />
       );
     }
@@ -2880,6 +3191,13 @@ export function ModelsConfig({
           onSelectApiKey={(id) => setSelection({ type: "apikey", providerId: id })}
           onAddCustom={addCustomProvider}
           onClose={() => setPickerOpen(false)}
+        />
+      )}
+      {fetchDialog && (
+        <FetchModelsDialog
+          dialog={fetchDialog}
+          onConfirm={(ids) => void confirmImportModels(ids)}
+          onClose={() => setFetchDialog(null)}
         />
       )}
     </>

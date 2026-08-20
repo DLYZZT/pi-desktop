@@ -265,6 +265,16 @@ export class AgentSessionWrapper {
     this.inner.setActiveToolsByName([...new Set([...current, ...browserTools])]);
   }
 
+  /** Reload the session's cwd-bound model runtime so new models.json content is picked up. */
+  async refreshModelRuntime(): Promise<void> {
+    if (typeof this.inner.modelRuntime.refresh !== "function") return;
+    try {
+      await this.inner.modelRuntime.refresh({ allowNetwork: false });
+    } catch (error) {
+      console.error(`[rpc-manager] Failed to refresh model runtime for session ${this.sessionId}:`, error);
+    }
+  }
+
   private withExternalChannelSource(event: AgentEvent): AgentEvent {
     if (!this.externalTurnChannel || (event.type !== "message_start" && event.type !== "message_end")) return event;
     const message = event.message;
@@ -1339,6 +1349,16 @@ export function getRpcSession(sessionId: string): AgentSessionWrapper | undefine
 
 export async function disposeAllRpcSessions(reason = "host-shutdown"): Promise<void> {
   await Promise.all([...getRegistry().values()].map((session) => session.dispose({ abort: true, reason })));
+}
+
+/**
+ * Refresh the model runtime of every live session so newly written
+ * models.json content (new providers/models) takes effect immediately.
+ * Sessions keep their own cwd-bound runtimes; the shared runtime reload is
+ * not enough for them (see reloadSharedModelRuntimeConfig).
+ */
+export async function refreshAllLiveSessionModelRuntimes(): Promise<void> {
+  await Promise.all([...getRegistry().values()].map((session) => session.refreshModelRuntime()));
 }
 
 export function syncBrowserToolsForAllSessions(): void {

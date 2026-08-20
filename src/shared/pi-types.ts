@@ -125,7 +125,11 @@ export interface AgentSessionLike {
   readonly autoRetryEnabled: boolean;
   readonly model: ModelLike | undefined;
   readonly sessionName: string | undefined;
-  readonly modelRuntime: { getModel: (provider: string, modelId: string) => ModelLike | undefined };
+  readonly modelRuntime: {
+    getModel: (provider: string, modelId: string) => ModelLike | undefined;
+    /** Reload model config from disk (shared runtime uses this after models.json changes). */
+    refresh?: (options?: { allowNetwork?: boolean }) => Promise<unknown>;
+  };
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
   readonly agent: { state?: { systemPrompt?: string; thinkingLevel?: string; messages?: unknown[] } };
