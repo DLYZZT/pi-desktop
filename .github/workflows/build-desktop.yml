@@ -84,6 +84,9 @@ jobs:
       - name: Install Electron binary
         run: npx install-electron --no
 
+      - name: Prepare verified bundled search tools
+        run: npm run prepare:bundled-tools -- --target linux-x64
+
       - name: Configure Electron sandbox
         run: |
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
