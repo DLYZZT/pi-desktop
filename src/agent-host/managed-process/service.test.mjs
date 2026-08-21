@@ -119,6 +119,7 @@ function harness() {
         workers.push(worker);
         return worker;
       },
+      terminateProcessGroup: async () => true,
       parentCall: async (method, params) => {
         parentCalls.push({ method, params });
         if (method === "managedProcesses.getSettings") return { enabled: true, reaperReady: true };
@@ -177,6 +178,7 @@ test("late readiness output cannot revive a stopping process", async () => {
       platform: "darwin",
       runtime: runtimeFixture(),
       spawnProcess: () => new LateReadinessWorker(),
+      terminateProcessGroup: async () => true,
       parentCall: async (method) => {
         if (method === "managedProcesses.getSettings") return { enabled: true, reaperReady: true };
         if (method === "managedProcesses.register") return { journalRevision: 1 };

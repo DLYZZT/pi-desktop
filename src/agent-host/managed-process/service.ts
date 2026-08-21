@@ -101,6 +101,7 @@ export interface ManagedProcessServiceOptions {
   platform?: NodeJS.Platform;
   runtime?: ToolchainRuntime;
   spawnProcess?: typeof spawn;
+  terminateProcessGroup?: typeof terminatePosixProcessGroup;
   workerEntryPath?: string;
   workerExecArgv?: string[];
   parentCall?: typeof callMain;
@@ -192,6 +193,7 @@ export class ManagedProcessService {
   private readonly platform: NodeJS.Platform;
   private readonly runtime: ToolchainRuntime;
   private readonly spawnProcess: typeof spawn;
+  private readonly terminateProcessGroup: typeof terminatePosixProcessGroup;
   private readonly workerEntryPath: string;
   private readonly workerExecArgv: string[];
   private readonly parentCall: typeof callMain;
@@ -208,6 +210,7 @@ export class ManagedProcessService {
     this.platform = options.platform ?? process.platform;
     this.runtime = options.runtime ?? toolchainRuntime;
     this.spawnProcess = options.spawnProcess ?? spawn;
+    this.terminateProcessGroup = options.terminateProcessGroup ?? terminatePosixProcessGroup;
     this.workerEntryPath = options.workerEntryPath ?? safeWorkerEntryPath();
     this.workerExecArgv = [...(options.workerExecArgv ?? [])];
     this.parentCall = options.parentCall ?? callMain;
@@ -983,7 +986,7 @@ export class ManagedProcessService {
     let treeClean = true;
     if ((this.platform === "darwin" || this.platform === "linux") && processGroupId) {
       try {
-        treeClean = await terminatePosixProcessGroup(processGroupId, {
+        treeClean = await this.terminateProcessGroup(processGroupId, {
           interruptMs: 250,
           terminateMs: 750,
           forceMs: 1_000,

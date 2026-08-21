@@ -24,7 +24,7 @@ test("journal round trips minimal reaper records", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "pi-reaper-"));
   const file = path.join(directory, "journal.json");
   writeReaperJournal(file, 3, [record()]);
-  const parsed = readReaperJournal(file, "darwin");
+  const parsed = readReaperJournal(file);
   assert.equal(parsed.revision, 3);
   assert.deepEqual(parsed.records, [record()]);
   const raw = await readFile(file, "utf8");
