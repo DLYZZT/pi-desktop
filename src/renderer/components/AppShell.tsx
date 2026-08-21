@@ -18,6 +18,7 @@ import { SettingsConfig, type SettingsTab } from "./SettingsConfig";
 import { QuickChannelBinding } from "./channels/QuickChannelBinding";
 import { BrowserDock } from "./browser/BrowserDock";
 import { BrowserAuthorizationDialog } from "./browser/BrowserAuthorizationDialog";
+import { ProcessPanel } from "./ProcessPanel";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
@@ -49,11 +50,13 @@ import type { ChannelsSnapshot } from "@shared/channel-types";
 import type { ChatAppearancePreferences } from "@shared/chat-appearance";
 import { worktreePathsEqual } from "@shared/worktree-path";
 import type { BrowserAgentAuthorizationRequest, BrowserAgentAuthorizationDecision } from "../../contract/browser";
+import { isManagedProcessActiveState } from "@contract/processes";
 
 type SessionCopyField = "file" | "id";
 type SessionCopyFeedback = { field: SessionCopyField; status: "copied" | "error" };
 const EXPLORER_TAB_ID = "explorer";
 const BROWSER_TAB_ID = "browser";
+const PROCESSES_TAB_ID = "processes";
 const BROWSER_PANEL_WIDTH_KEY = "pi-desktop.browser-panel-width";
 const EMPTY_CHANNELS: ChannelsSnapshot = { accounts: [], statuses: [], pairings: [], bindings: [], activities: [] };
 
@@ -218,7 +221,9 @@ export function AppShell({
     getRightPanelWidthBounds(window.innerWidth, sidebarOpen),
   );
   const rightPanelPreferredWidthRef = useRef(RIGHT_PANEL_DEFAULT_WIDTH);
-  const rightPanelKindRef = useRef<"files" | "browser">("files");
+  const rightPanelKindRef = useRef<"files" | "browser" | "processes">("files");
+  const [managedProcessCount, setManagedProcessCount] = useState(0);
+  const [managedProcessAttention, setManagedProcessAttention] = useState(false);
   const [rightPanelWidth, setRightPanelWidth] = useState(() => {
     const preferredWidth = initialRightPanelPreferredWidth();
     rightPanelPreferredWidthRef.current = preferredWidth;
@@ -226,6 +231,43 @@ export function AppShell({
   });
   const [rightPanelResizing, setRightPanelResizing] = useState(false);
   const rightPanelResizeCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribe: (() => void) | undefined;
+    const refreshCount = () => {
+      void call("processes.list", { includeExited: true })
+        .then((snapshot) => {
+          if (!disposed) {
+            setManagedProcessCount(
+              snapshot.processes.filter((process) => isManagedProcessActiveState(process.state)).length,
+            );
+            setManagedProcessAttention(
+              snapshot.processes.some(
+                (process) => process.state === "failed" || process.state === "lost" || process.exit?.code,
+              ),
+            );
+          }
+        })
+        .catch(() => undefined);
+    };
+    refreshCount();
+    void subscribe("processes.changed", "*", (event) => {
+      refreshCount();
+      if (event.reason === "created" && event.activateUi) {
+        if (isMobile) setSidebarOpen(false);
+        dispatchFileTab({ type: "select", tabId: PROCESSES_TAB_ID });
+        setRightPanelOpen(true);
+      }
+    }).then((value) => {
+      if (disposed) value();
+      else unsubscribe = value;
+    });
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, [isMobile]);
 
   const handleRightPanelResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -275,7 +317,8 @@ export function AppShell({
 
   useEffect(() => {
     if (isMobile) return;
-    const nextKind = activeFileTabId === BROWSER_TAB_ID ? "browser" : "files";
+    const nextKind =
+      activeFileTabId === BROWSER_TAB_ID ? "browser" : activeFileTabId === PROCESSES_TAB_ID ? "processes" : "files";
     if (rightPanelKindRef.current === nextKind) return;
     persistRightPanelPreferredWidth(rightPanelPreferredWidthRef.current, rightPanelKindRef.current === "browser");
     rightPanelKindRef.current = nextKind;
@@ -617,9 +660,16 @@ export function AppShell({
 
   const previousFileTabCountRef = useRef(fileTabs.length);
   useEffect(() => {
-    if (previousFileTabCountRef.current > 0 && fileTabs.length === 0) setRightPanelOpen(false);
+    if (
+      previousFileTabCountRef.current > 0 &&
+      fileTabs.length === 0 &&
+      activeFileTabId !== BROWSER_TAB_ID &&
+      activeFileTabId !== PROCESSES_TAB_ID
+    ) {
+      setRightPanelOpen(false);
+    }
     previousFileTabCountRef.current = fileTabs.length;
-  }, [fileTabs.length]);
+  }, [activeFileTabId, fileTabs.length]);
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
@@ -1459,7 +1509,7 @@ export function AppShell({
           </div>
         </div>
 
-        {/* Right panel: Browser, Explorer and file previews — always mounted, width animated via CSS */}
+        {/* Right panel: Browser, Explorer, managed processes and file previews */}
         <div
           className={`right-panel-container${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}${rightPanelResizing ? " right-panel-resizing" : ""}`}
           style={
@@ -1573,6 +1623,60 @@ export function AppShell({
               </svg>
               {t("browser", "Browser")}
             </button>
+            <button
+              type="button"
+              onClick={() => dispatchFileTab({ type: "select", tabId: PROCESSES_TAB_ID })}
+              aria-pressed={activeFileTabId === PROCESSES_TAB_ID}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                height: 36,
+                padding: "0 12px",
+                flexShrink: 0,
+                background: activeFileTabId === PROCESSES_TAB_ID ? "var(--bg)" : "var(--bg-panel)",
+                border: "none",
+                borderRight: "1px solid var(--border)",
+                color: activeFileTabId === PROCESSES_TAB_ID ? "var(--text)" : "var(--text-muted)",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: activeFileTabId === PROCESSES_TAB_ID ? 500 : 400,
+              }}
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="m7 9 3 3-3 3M13 15h4" />
+              </svg>
+              {t("processes", "Processes")}
+              {(managedProcessCount > 0 || managedProcessAttention) && (
+                <span
+                  style={{
+                    minWidth: 16,
+                    height: 16,
+                    padding: "0 4px",
+                    display: "inline-grid",
+                    placeItems: "center",
+                    borderRadius: 8,
+                    background: managedProcessAttention ? "#dc2626" : "var(--accent)",
+                    color: "white",
+                    fontSize: 9,
+                    fontWeight: 700,
+                  }}
+                >
+                  {managedProcessCount > 0 ? managedProcessCount : "!"}
+                </span>
+              )}
+            </button>
             <div style={{ flex: 1, overflow: "hidden" }}>
               <TabBar
                 tabs={fileTabs}
@@ -1629,12 +1733,17 @@ export function AppShell({
             )}
           </div>
 
-          {/* Browser, Explorer or file content */}
+          {/* Browser, Explorer, Processes or file content */}
           <div style={{ flex: 1, overflow: "hidden" }}>
             {activeFileTabId === BROWSER_TAB_ID ? (
               <BrowserDock
                 visible={rightPanelOpen && !settingsOpen && !browserAuthorization}
                 ownerSessionId={selectedSession?.id ?? null}
+              />
+            ) : activeFileTabId === PROCESSES_TAB_ID ? (
+              <ProcessPanel
+                onActiveCountChange={setManagedProcessCount}
+                onOpenBrowser={() => dispatchFileTab({ type: "select", tabId: BROWSER_TAB_ID })}
               />
             ) : activeFileTabId === EXPLORER_TAB_ID ? (
               explorerCwd ? (
@@ -1678,7 +1787,7 @@ export function AppShell({
                   fontSize: 12,
                 }}
               >
-                {t("selectRightPanelContent", "Select Browser, Explorer or open a file")}
+                {t("selectRightPanelContent", "Select Browser, Explorer, Processes or open a file")}
               </div>
             )}
           </div>

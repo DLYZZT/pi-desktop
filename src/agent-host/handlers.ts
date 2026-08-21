@@ -112,6 +112,13 @@ import { getSessionContentSnapshot, invalidateSessionContent } from "./session-c
 import { sessionIndex } from "./session-index";
 import { credentialStateMatches, recoverCommittedCredential, type CredentialTarget } from "./credential-sync";
 import { FileSuggestionRequestError, fileSuggestionService } from "./file-suggestions";
+import { initializeManagedProcessService } from "./managed-process/runtime";
+import { ManagedProcessError } from "./managed-process/service";
+import type {
+  ManagedProcessReadParams,
+  ManagedProcessWaitParams,
+  ManagedProcessWriteParams,
+} from "../contract/processes";
 
 const IGNORED_NAMES = new Set([
   "node_modules",
@@ -698,6 +705,18 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     ensureSessionEvents(server, session, sessionId),
   );
   initializeChannels(channelManager);
+  const managedProcesses = initializeManagedProcessService(server);
+
+  const managedCall = async <T>(operation: () => T | Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof ManagedProcessError) {
+        throw new RpcError({ code: error.code, message: error.message, detail: error.details });
+      }
+      throw error;
+    }
+  };
 
   // Running sessions stream + tray badge signal to main via parentPort
   subscribeRunningSessions((ids) => {
@@ -731,6 +750,53 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
           ]),
         ),
       };
+    },
+
+    "processes.list": (params) =>
+      managedCall(() =>
+        managedProcesses.list((params as { includeExited?: boolean } | undefined)?.includeExited === true),
+      ),
+
+    "processes.get": (params) => managedCall(() => managedProcesses.get((params as { processId: string }).processId)),
+
+    "processes.read": (params) =>
+      managedCall(() => managedProcesses.read(params as ManagedProcessReadParams, undefined, true)),
+
+    "processes.wait": (params) =>
+      managedCall(() => managedProcesses.wait(params as ManagedProcessWaitParams, undefined, true)),
+
+    "processes.write": (params) => managedCall(() => managedProcesses.write(params as ManagedProcessWriteParams)),
+
+    "processes.stop": (params) => {
+      const body = params as { processId: string; runId: string; mode?: "graceful" | "force" };
+      return managedCall(() => managedProcesses.stop(body.processId, body.runId, body.mode, "user"));
+    },
+
+    "processes.stopAll": (params) =>
+      managedCall(async () => ({
+        ok: true as const,
+        stopped: await managedProcesses.stopAll(
+          "user",
+          (params as { mode?: "graceful" | "force" } | undefined)?.mode,
+          false,
+        ),
+      })),
+
+    "processes.restart": (params) => {
+      const body = params as { processId: string; runId: string };
+      return managedCall(() => managedProcesses.restart(body.processId, body.runId, "user"));
+    },
+
+    "processes.dismiss": (params) =>
+      managedCall(() => managedProcesses.dismiss((params as { processId: string }).processId)),
+
+    "processes.export": (params) => {
+      const body = params as {
+        processId: string;
+        runId: string;
+        streams?: Array<"stdout" | "stderr" | "system">;
+      };
+      return managedCall(() => managedProcesses.exportLogs(body.processId, body.runId, body.streams));
     },
 
     "sessions.list": async (params) => {
@@ -951,6 +1017,19 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       const filePath = await resolveSessionPath(id);
       if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
       const existing = getRpcSession(id);
+      const activeProcesses = managedProcesses.activeForSession(id);
+      if (activeProcesses.length > 0 && !force) {
+        throw new RpcError({
+          code: "CONFLICT",
+          message: "Session still owns managed processes. Stop them before deleting.",
+          detail: { managedProcessCount: activeProcesses.length },
+        });
+      }
+      if (activeProcesses.length > 0) {
+        await Promise.all(
+          activeProcesses.map((process) => managedProcesses.stop(process.processId, process.runId, "graceful", "user")),
+        );
+      }
       if (existing?.isAlive()) {
         if (existing.isRunning() && !force) {
           throw new RpcError({
@@ -1043,6 +1122,14 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       const allowed = await getAllowedFileRoots();
       if (!isFilePathAllowed(cwd, allowed)) {
         throw new RpcError({ code: "FORBIDDEN", message: "Access denied" });
+      }
+      const activeProcesses = managedProcesses.activeWithinCwd(body.path);
+      if (activeProcesses.length > 0) {
+        throw new RpcError({
+          code: "CONFLICT",
+          message: "Worktree still contains active managed processes. Stop them before removing it.",
+          detail: { managedProcessCount: activeProcesses.length },
+        });
       }
       try {
         await removeWorktree(cwd, body.path, body.force === true);
@@ -1862,6 +1949,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
   return async () => {
     modelCatalogRefreshCoordinator.cancelAll();
+    await managedProcesses.stopAll("host");
     await channelManager.shutdown();
     stopAllFileWatches();
     await disposeAllRpcSessions();

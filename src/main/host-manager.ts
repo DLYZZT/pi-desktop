@@ -41,6 +41,7 @@ export class HostManager {
   private pendingPorts: MessagePortMain[] = [];
   private wasReadyBeforeExit = false;
   private requestHandler: ((method: string, params: unknown) => Promise<unknown>) | null = null;
+  private beforeRestartHandler: (() => Promise<void>) | null = null;
   private toolchainSnapshot: ToolchainSnapshot | null = null;
   private toolchainAckRevision = -1;
   private browserCapabilitySnapshot: BrowserCapabilitySnapshot | null = null;
@@ -59,6 +60,10 @@ export class HostManager {
 
   setRequestHandler(cb: (method: string, params: unknown) => Promise<unknown>): void {
     this.requestHandler = cb;
+  }
+
+  setBeforeRestartHandler(cb: () => Promise<void>): void {
+    this.beforeRestartHandler = cb;
   }
 
   getStatus(): HostStatus {
@@ -116,7 +121,7 @@ export class HostManager {
         } catch {
           /* ignore */
         }
-      }, 1_500).unref();
+      }, 10_000).unref();
     }
     return exitPromise;
   }
@@ -310,6 +315,7 @@ export class HostManager {
 
     child.on("exit", (code) => {
       appendMainLog(`agent-host exit code=${code}`);
+      this.onHostMessage?.({ type: "host-exited", code });
       this.clearPing();
       const wasCurrentChild = this.child === child;
       if (wasCurrentChild) this.child = null;
@@ -319,7 +325,18 @@ export class HostManager {
       if (this.status === "stopped") return;
 
       this.wasReadyBeforeExit = this.status === "ready" || this.status === "starting";
-      this.scheduleRestart(`Host exited (code ${code})`);
+      this.setStatus("starting", `Host exited (code ${code}); cleaning managed processes`);
+      void (async () => {
+        try {
+          await this.beforeRestartHandler?.();
+        } catch (error) {
+          appendMainLog(
+            `agent-host pre-restart cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        if (this.status === "stopped" || this.child) return;
+        this.scheduleRestart(`Host exited (code ${code})`);
+      })();
     });
 
     child.stdout?.on("data", (buf: Buffer) => stdoutBuffer.push(buf.toString()));

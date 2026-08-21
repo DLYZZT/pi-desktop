@@ -247,6 +247,7 @@ export interface ToolchainResolution {
 
 export const EXECUTION_INTENTS = [
   "agent-shell",
+  "managed-process",
   "skill-install",
   "plugin-install",
   "git-operation",

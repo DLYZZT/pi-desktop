@@ -3,7 +3,7 @@
  * Responsibilities: window lifecycle, menus, tray/badge, deep link,
  * Host supervision, system IPC. No business logic.
  */
-import { app, BrowserWindow, crashReporter, nativeTheme, nativeImage, net, Notification } from "electron";
+import { app, BrowserWindow, crashReporter, dialog, nativeTheme, nativeImage, net, Notification } from "electron";
 import fs from "node:fs";
 import path from "path";
 import { HostManager, getUserDataPath, resolveHostEntry } from "./host-manager";
@@ -12,7 +12,7 @@ import { installAppMenu } from "./menu";
 import { handleAppProtocol, registerAppProtocol, rendererRootPath } from "./protocol";
 import { acquireSingleInstanceLock } from "./single-instance";
 import { loadUiState } from "./window-state";
-import { createTray, destroyTray, setTrayRunningCount } from "./tray";
+import { createTray, destroyTray, setTrayManagedProcessCount, setTrayRunningCount } from "./tray";
 import { createMainWindow } from "./window";
 import { installDesktopIpc } from "./ipc";
 import { createCredentialRequestHandler, CredentialVault } from "./credential-vault";
@@ -27,6 +27,7 @@ import { createElectronRuntimeFetch } from "./toolchains/electron-runtime-fetch"
 import { BrowserService } from "./browser/browser-service";
 import { findDesktopDeepLink, parseDesktopDeepLink } from "./deep-link";
 import { restartHostAfterExit } from "./host-install-recovery";
+import { ManagedProcessReaper } from "./managed-process/reaper";
 
 // Must run before app ready
 registerAppProtocol();
@@ -46,17 +47,21 @@ let hostManager: HostManager | null = null;
 let updateManager: UpdateManager | null = null;
 let toolchainManager: ToolchainManager | null = null;
 let browserService: BrowserService | null = null;
+let managedProcessReaper: ManagedProcessReaper | null = null;
 let isQuitting = false;
 let unreadBadge = 0;
 let pendingDeepLink: string | null = null;
 let lastNotifiedUpdateVersion: string | null = null;
 let lastToolchainFocusScanAt = 0;
 let runningAgentSessionCount = 0;
+let runningManagedProcessCount = 0;
 let startupRendererReady = false;
 let startupHostReady = false;
 let startupToolchainSnapshot: ToolchainSnapshot | null = null;
 let startupCheckFinished = false;
 let startupCheckTimer: ReturnType<typeof setTimeout> | null = null;
+let quitCleanupStarted = false;
+let quitCleanupComplete = false;
 
 function finishPackagedStartupValidation(error?: string): void {
   if (!packagedStartupValidation || startupCheckFinished) return;
@@ -120,6 +125,85 @@ function finishPackagedStartupValidation(error?: string): void {
 
 function getMainWindow(): BrowserWindow | null {
   return mainWindow;
+}
+
+function managedProcessDialogCopy(): {
+  stopAllTitle: string;
+  stopAllMessage: (count: number) => string;
+  stopAllDetail: string;
+  stopAllButton: string;
+  cancelButton: string;
+  lanTitle: string;
+  lanMessage: string;
+  lanDetail: string;
+  allowOnceButton: string;
+  exportTitle: string;
+  exportFilter: string;
+  quitTitle: string;
+  quitMessage: (count: number) => string;
+  quitDetail: string;
+  stopAndQuitButton: string;
+} {
+  if (app.getLocale().toLowerCase().startsWith("zh")) {
+    return {
+      stopAllTitle: "停止后台进程",
+      stopAllMessage: (count) => `确认停止 ${count} 个受管后台进程？`,
+      stopAllDetail: "开发服务器和 watcher 将连同完整进程树一起停止。",
+      stopAllButton: "全部停止",
+      cancelButton: "取消",
+      lanTitle: "允许绑定局域网？",
+      lanMessage: "Agent 命令似乎会把受管进程绑定到所有网络接口。",
+      lanDetail: "这可能把开发服务器暴露给局域网内的其他设备。除非确实需要局域网访问，否则请使用 127.0.0.1。",
+      allowOnceButton: "仅允许本次",
+      exportTitle: "导出受管进程日志",
+      exportFilter: "日志文件",
+      quitTitle: "退出 Pi Agent Desktop",
+      quitMessage: (count) => `仍有 ${count} 个受管后台进程在运行。`,
+      quitDetail: "退出会停止所有开发服务器和 watcher，并清理其完整进程树。",
+      stopAndQuitButton: "停止并退出",
+    };
+  }
+  return {
+    stopAllTitle: "Stop background processes",
+    stopAllMessage: (count) => `Stop ${count} managed background process${count === 1 ? "" : "es"}?`,
+    stopAllDetail: "Development servers and watchers will be stopped with their complete process trees.",
+    stopAllButton: "Stop All",
+    cancelButton: "Cancel",
+    lanTitle: "Allow local-network binding?",
+    lanMessage: "An Agent command appears to bind a managed process to all network interfaces.",
+    lanDetail:
+      "This may expose the development server to other devices on the local network. Prefer 127.0.0.1 unless LAN access is intentional.",
+    allowOnceButton: "Allow Once",
+    exportTitle: "Export managed process log",
+    exportFilter: "Log files",
+    quitTitle: "Quit Pi Agent Desktop",
+    quitMessage: (count) => `${count} managed background process${count === 1 ? " is" : "es are"} still running.`,
+    quitDetail: "Quitting stops every development server and watcher with its complete process tree.",
+    stopAndQuitButton: "Stop and Quit",
+  };
+}
+
+async function stopAllManagedProcessesFromTray(): Promise<void> {
+  if (runningManagedProcessCount <= 0 || hostManager?.getStatus() !== "ready") return;
+  const window = getMainWindow();
+  const copy = managedProcessDialogCopy();
+  const options = {
+    type: "warning" as const,
+    title: copy.stopAllTitle,
+    message: copy.stopAllMessage(runningManagedProcessCount),
+    detail: copy.stopAllDetail,
+    buttons: [copy.stopAllButton, copy.cancelButton],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  };
+  const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+  if (result.response !== 0) return;
+  try {
+    await hostManager.call("processes.stopAll", { mode: "graceful" }, 15_000);
+  } catch (error) {
+    appendMainLog(`stop all managed processes failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function applyBadgeCount(count: number): void {
@@ -240,6 +324,13 @@ function startMainProcess(): void {
 
   void app.whenReady().then(async () => {
     appendMainLog(`app ready packaged=${app.isPackaged}`);
+    managedProcessReaper = new ManagedProcessReaper(path.join(app.getPath("userData"), "managed-process-reaper.json"), {
+      log: appendMainLog,
+    });
+    const reaperStatus = await managedProcessReaper.initialize();
+    appendMainLog(
+      `managed process reaper ready=${reaperStatus.ready} records=${reaperStatus.records} revision=${reaperStatus.revision}${reaperStatus.errorCode ? ` error=${reaperStatus.errorCode}` : ""}`,
+    );
     if (packagedStartupValidation) {
       startupCheckTimer = setTimeout(
         () => finishPackagedStartupValidation("Packaged startup validation timed out"),
@@ -285,7 +376,7 @@ function startMainProcess(): void {
       },
       recoverFromInstallFailure: async () => {
         isQuitting = false;
-        createTray(getMainWindow);
+        createTray(getMainWindow, () => void stopAllManagedProcessesFromTray());
         const manager = hostManager;
         if (manager) await restartHostAfterExit(manager, () => !isQuitting);
       },
@@ -377,7 +468,7 @@ function startMainProcess(): void {
     });
     installAppMenu(getMainWindow, () => openUpdateSettings(true), isDev);
 
-    createTray(getMainWindow);
+    createTray(getMainWindow, () => void stopAllManagedProcessesFromTray());
 
     // Apply persisted theme preference
     if (ui.theme === "light" || ui.theme === "dark" || ui.theme === "system") {
@@ -385,6 +476,12 @@ function startMainProcess(): void {
     }
 
     hostManager = new HostManager(resolveHostEntry());
+    hostManager.setBeforeRestartHandler(async () => {
+      const status = await managedProcessReaper!.reapAll();
+      appendMainLog(
+        `managed process pre-restart reap ready=${status.ready} records=${status.records}${status.errorCode ? ` error=${status.errorCode}` : ""}`,
+      );
+    });
     hostManager.setToolchainSnapshot(toolchainManager.getSnapshot());
     hostManager.setBrowserCapabilitySnapshot(browserService.getCapabilitySnapshot());
     const credentialRequestHandler = createCredentialRequestHandler(credentialVault);
@@ -405,6 +502,67 @@ function startMainProcess(): void {
         }
         return toolchainManager!.resolveForProject(body.cwd, { intent: body.intent, trusted: body.trusted });
       }
+      if (method === "managedProcesses.getSettings") {
+        const status = managedProcessReaper?.status();
+        return {
+          enabled:
+            (process.platform === "darwin" || process.platform === "linux") &&
+            loadUiState().managedProcessesEnabled === true,
+          reaperReady: status?.ready === true,
+          platform: process.platform,
+        };
+      }
+      if (method === "managedProcesses.register") {
+        const body = (params ?? {}) as { record?: unknown };
+        return managedProcessReaper!.register(body.record);
+      }
+      if (method === "managedProcesses.unregister") {
+        return managedProcessReaper!.unregister(params);
+      }
+      if (method === "managedProcesses.confirmLanBind") {
+        const body = (params ?? {}) as { ownerSessionId?: unknown; commandHash?: unknown };
+        if (
+          typeof body.ownerSessionId !== "string" ||
+          body.ownerSessionId.length > 128 ||
+          typeof body.commandHash !== "string" ||
+          !/^[a-f0-9]{16}$/.test(body.commandHash)
+        ) {
+          throw new Error("Invalid managed process network confirmation request");
+        }
+        const window = getMainWindow();
+        const copy = managedProcessDialogCopy();
+        const options = {
+          type: "warning" as const,
+          title: copy.lanTitle,
+          message: copy.lanMessage,
+          detail: copy.lanDetail,
+          buttons: [copy.allowOnceButton, copy.cancelButton],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        };
+        const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+        return { confirmed: result.response === 0 };
+      }
+      if (method === "managedProcesses.selectExportTarget") {
+        const body = (params ?? {}) as { suggestedName?: unknown };
+        const suggestedName =
+          typeof body.suggestedName === "string" && /^[a-z0-9._-]{1,128}$/i.test(body.suggestedName)
+            ? body.suggestedName
+            : "managed-process.log";
+        const copy = managedProcessDialogCopy();
+        const options = {
+          title: copy.exportTitle,
+          defaultPath: suggestedName,
+          filters: [{ name: copy.exportFilter, extensions: ["log", "txt"] }],
+          properties: ["showOverwriteConfirmation" as const, "createDirectory" as const],
+        };
+        const window = getMainWindow();
+        const result = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options);
+        return result.canceled || !result.filePath
+          ? {}
+          : { path: result.filePath, fileName: path.basename(result.filePath) };
+      }
       if (method.startsWith("browser.")) {
         return browserService!.handleHostRequest(method, params);
       }
@@ -419,7 +577,9 @@ function startMainProcess(): void {
       }
       if (status !== "ready") {
         runningAgentSessionCount = 0;
+        runningManagedProcessCount = 0;
         setTrayRunningCount(0, getMainWindow);
+        setTrayManagedProcessCount(0, getMainWindow);
         updateManager?.setRunningSessionCount(0);
         browserService?.onHostStopped();
       }
@@ -441,6 +601,10 @@ function startMainProcess(): void {
         runningAgentSessionCount = ids.length;
         setTrayRunningCount(ids.length, getMainWindow);
         updateManager?.setRunningSessionCount(ids.length);
+      } else if (msg.type === "managed-process-count") {
+        const count = Number(msg.count);
+        runningManagedProcessCount = Number.isSafeInteger(count) && count >= 0 ? count : 0;
+        setTrayManagedProcessCount(runningManagedProcessCount, getMainWindow);
       } else if (msg.type === "agent-end") {
         const sessionId = String(msg.sessionId ?? "");
         // Notify if no focused window or window is hidden (desktop value-add)
@@ -484,12 +648,49 @@ function startMainProcess(): void {
     });
   });
 
-  app.on("before-quit", () => {
-    isQuitting = true;
-    updateManager?.stopAutomaticChecks();
-    destroyTray();
-    void hostManager?.stop();
-    void browserService?.dispose();
+  app.on("before-quit", (event) => {
+    if (quitCleanupComplete) return;
+    event.preventDefault();
+    if (quitCleanupStarted) return;
+    quitCleanupStarted = true;
+    void (async () => {
+      if (runningManagedProcessCount > 0 && !packagedStartupValidation) {
+        const window = getMainWindow();
+        const copy = managedProcessDialogCopy();
+        const options = {
+          type: "warning" as const,
+          title: copy.quitTitle,
+          message: copy.quitMessage(runningManagedProcessCount),
+          detail: copy.quitDetail,
+          buttons: [copy.stopAndQuitButton, copy.cancelButton],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        };
+        const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+        if (result.response !== 0) {
+          quitCleanupStarted = false;
+          isQuitting = false;
+          return;
+        }
+      }
+      isQuitting = true;
+      updateManager?.stopAutomaticChecks();
+      destroyTray();
+      try {
+        await Promise.race([
+          hostManager?.stop() ?? Promise.resolve(),
+          new Promise<void>((resolve) => setTimeout(resolve, 12_000)),
+        ]);
+        await managedProcessReaper?.reapAll();
+        await browserService?.dispose();
+      } catch (error) {
+        appendMainLog(`quit cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        quitCleanupComplete = true;
+        app.quit();
+      }
+    })();
   });
 
   app.on("certificate-error", (event, webContents, url, _error, _certificate, callback) => {

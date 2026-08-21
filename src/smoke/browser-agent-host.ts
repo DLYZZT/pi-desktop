@@ -13,6 +13,7 @@ import type { ToolchainSnapshot } from "../shared/toolchains/types";
 
 type BrowserAgentFixtureStatus = {
   sessionId: string;
+  sessionFile?: string;
   activeTools: string[];
   isRunning: boolean;
   isStreaming: boolean;
@@ -20,6 +21,7 @@ type BrowserAgentFixtureStatus = {
   pendingResponses: number;
   assistantTexts: string[];
   toolResults: string[];
+  toolResultTexts: string[];
   browserMetrics: ReturnType<typeof browserAgentRuntime.getMetrics>;
 };
 
@@ -64,7 +66,15 @@ function lastToolResult(context: Context, toolName: string): unknown {
   throw new Error(`Missing ${toolName} result in Faux Provider context`);
 }
 
-function browserResponses(origin: string) {
+function lastToolText(context: Context, toolName: string): string {
+  for (let index = context.messages.length - 1; index >= 0; index -= 1) {
+    const message = context.messages[index];
+    if (message.role === "toolResult" && message.toolName === toolName) return textFromContent(message.content);
+  }
+  throw new Error(`Missing ${toolName} result in Faux Provider context`);
+}
+
+function browserResponses(origin: string, managedCommand: string) {
   return [
     fauxAssistantMessage(fauxToolCall("browser_open", { url: origin, profileId: "temporary", activate: true }), {
       stopReason: "toolUse",
@@ -158,6 +168,109 @@ function browserResponses(origin: string) {
       { stopReason: "toolUse" },
     ),
     fauxAssistantMessage("bypass-complete:blocked-before-exec"),
+    fauxAssistantMessage(
+      fauxToolCall("process_start", {
+        command: managedCommand,
+        label: "Agent managed Electron fixture",
+        kind: "server",
+        waitFor: { type: "loopback-url", timeoutMs: 5_000 },
+      }),
+      { stopReason: "toolUse" },
+    ),
+    (context: Context) => {
+      const started = lastToolResult(context, "process_start") as {
+        process?: { processId?: unknown; runId?: unknown };
+        endpoints?: Array<{ url?: unknown }>;
+      };
+      const endpoint = started.endpoints?.[0]?.url;
+      if (
+        typeof started.process?.processId !== "string" ||
+        typeof started.process.runId !== "string" ||
+        typeof endpoint !== "string"
+      ) {
+        throw new Error("process_start did not return a managed endpoint");
+      }
+      return fauxAssistantMessage(
+        fauxToolCall("browser_open", { url: endpoint, profileId: "temporary", activate: true }),
+        { stopReason: "toolUse" },
+      );
+    },
+    (context: Context) => {
+      const opened = lastToolResult(context, "browser_open") as { id?: unknown };
+      if (typeof opened.id !== "string") throw new Error("managed endpoint browser_open did not return a tab ID");
+      return fauxAssistantMessage(fauxToolCall("browser_inspect", { tabId: opened.id }), { stopReason: "toolUse" });
+    },
+    (context: Context) => {
+      const inspection = lastToolResult(context, "browser_inspect") as {
+        snapshot?: { text?: unknown; nodes?: Array<{ name?: unknown }> };
+      };
+      if (
+        !String(inspection.snapshot?.text ?? "").includes("managed-e2e-ready") &&
+        !inspection.snapshot?.nodes?.some((node) => node.name === "managed-e2e-ready")
+      ) {
+        throw new Error("managed endpoint Browser inspection did not see the fixture page");
+      }
+      const started = lastToolResult(context, "process_start") as {
+        process: { processId: string; runId: string };
+      };
+      return fauxAssistantMessage(
+        fauxToolCall("process_write", {
+          processId: started.process.processId,
+          runId: started.process.runId,
+          text: "electron-input",
+        }),
+        { stopReason: "toolUse" },
+      );
+    },
+    (context: Context) => {
+      const started = lastToolResult(context, "process_start") as {
+        process: { processId: string; runId: string };
+        output: { nextCursor: string };
+      };
+      return fauxAssistantMessage(
+        fauxToolCall("process_wait", {
+          processId: started.process.processId,
+          runId: started.process.runId,
+          cursor: started.output.nextCursor,
+          contains: "STDIN electron-input",
+          timeoutMs: 5_000,
+        }),
+        { stopReason: "toolUse" },
+      );
+    },
+    (context: Context) => {
+      const waited = lastToolResult(context, "process_wait") as {
+        matched?: unknown;
+        records?: Array<{ text?: unknown }>;
+      };
+      if (
+        typeof waited.matched !== "string" &&
+        !waited.records?.some((record) => record.text === "STDIN electron-input")
+      ) {
+        throw new Error("process_wait did not observe managed stdin output");
+      }
+      const started = lastToolResult(context, "process_start") as {
+        process: { processId: string; runId: string };
+      };
+      return fauxAssistantMessage(
+        fauxToolCall("process_restart", {
+          processId: started.process.processId,
+          runId: started.process.runId,
+          waitFor: { type: "loopback-url", timeoutMs: 5_000 },
+        }),
+        { stopReason: "toolUse" },
+      );
+    },
+    (context: Context) => {
+      const restarted = lastToolResult(context, "process_restart") as {
+        process?: { generation?: unknown; state?: unknown };
+        output?: { endpoints?: unknown[] };
+      };
+      if (restarted.process?.generation !== 2 || !restarted.output?.endpoints?.length) {
+        throw new Error("process_restart did not create a ready second generation");
+      }
+      return fauxAssistantMessage("managed-complete:process+logs+browser+stdin+restart");
+    },
   ];
 }
 
@@ -177,24 +290,37 @@ function fixtureStatus(sessionId: string): BrowserAgentFixtureStatus {
   const toolResults = messages
     .filter((message) => message.role === "toolResult" && typeof message.toolName === "string")
     .map((message) => message.toolName as string);
+  const toolResultTexts = messages
+    .filter((message) => message.role === "toolResult" && typeof message.toolName === "string")
+    .map((message) => textFromContent(message.content));
   return {
     sessionId,
-    activeTools: session.inner.getActiveToolNames().filter((name) => name.startsWith("browser_")),
+    ...((session.inner as unknown as { sessionFile?: string }).sessionFile
+      ? { sessionFile: (session.inner as unknown as { sessionFile: string }).sessionFile }
+      : {}),
+    activeTools: session.inner
+      .getActiveToolNames()
+      .filter((name) => name.startsWith("browser_") || name.startsWith("process_")),
     isRunning: session.isRunning(),
     isStreaming: session.inner.isStreaming,
     fauxCallCount: faux?.state.callCount ?? 0,
     pendingResponses: faux?.getPendingResponseCount() ?? 0,
     assistantTexts,
     toolResults,
+    toolResultTexts,
     browserMetrics: browserAgentRuntime.getMetrics(sessionId),
   };
 }
 
 server.handle({
   "browserAgentE2e.configure": async (params: unknown) => {
-    const body = params as { sessionId?: unknown; origin?: unknown };
-    if (typeof body.sessionId !== "string" || typeof body.origin !== "string") {
-      throw new Error("browserAgentE2e.configure requires sessionId and origin");
+    const body = params as { sessionId?: unknown; origin?: unknown; managedCommand?: unknown };
+    if (
+      typeof body.sessionId !== "string" ||
+      typeof body.origin !== "string" ||
+      typeof body.managedCommand !== "string"
+    ) {
+      throw new Error("browserAgentE2e.configure requires sessionId, origin and managedCommand");
     }
     const session = getRpcSession(body.sessionId);
     if (!session?.isAlive()) throw new Error(`Agent session is unavailable: ${body.sessionId}`);
@@ -207,7 +333,7 @@ server.handle({
       provider,
       models: [{ id: modelId, name: "Browser Agent E2E", reasoning: false, input: ["text"] }],
     });
-    faux.setResponses(browserResponses(body.origin));
+    faux.setResponses(browserResponses(body.origin, body.managedCommand));
     const modelRuntime = session.inner.modelRuntime as ModelRuntime;
     modelRuntime.registerProvider(provider, {
       name: "Browser Agent E2E",
@@ -231,6 +357,52 @@ server.handle({
     fauxBySession.set(body.sessionId, faux);
     await session.send({ type: "set_model", provider, modelId });
     return { provider, modelId };
+  },
+  "browserAgentE2e.configureManagedFollowup": async (params: unknown) => {
+    const body = params as {
+      sessionId?: unknown;
+      phase?: unknown;
+      processId?: unknown;
+      runId?: unknown;
+    };
+    if (
+      typeof body.sessionId !== "string" ||
+      (body.phase !== "barrier" && body.phase !== "stop") ||
+      typeof body.processId !== "string" ||
+      typeof body.runId !== "string"
+    ) {
+      throw new Error("invalid managed followup configuration");
+    }
+    const faux = fauxBySession.get(body.sessionId);
+    if (!faux) throw new Error(`Faux Provider is unavailable: ${body.sessionId}`);
+    if (body.phase === "barrier") {
+      faux.setResponses([
+        fauxAssistantMessage(fauxToolCall("process_restart", { processId: body.processId, runId: body.runId }), {
+          stopReason: "toolUse",
+        }),
+        (context: Context) => {
+          if (!lastToolText(context, "process_restart").includes("PROCESS_USER_STOPPED")) {
+            throw new Error("Agent restart did not observe the user stop barrier");
+          }
+          return fauxAssistantMessage("managed-user-stop-barrier-observed");
+        },
+      ]);
+    } else {
+      faux.setResponses([
+        fauxAssistantMessage(
+          fauxToolCall("process_stop", { processId: body.processId, runId: body.runId, mode: "graceful" }),
+          { stopReason: "toolUse" },
+        ),
+        (context: Context) => {
+          const stopped = lastToolResult(context, "process_stop") as { state?: unknown };
+          if (stopped.state !== "killed" && stopped.state !== "exited") {
+            throw new Error("Agent process_stop did not terminate the user-restarted process");
+          }
+          return fauxAssistantMessage("managed-agent-stop-complete");
+        },
+      ]);
+    }
+    return { ok: true };
   },
   "browserAgentE2e.status": async (params: unknown) => {
     const body = params as { sessionId?: unknown };

@@ -9,12 +9,14 @@ import type { BrowserAgentAuthorizationRequest, BrowserEvent } from "../contract
 import { BrowserError } from "../main/browser/browser-error";
 import { BrowserService } from "../main/browser/browser-service";
 import { HostManager, type HostStatus } from "../main/host-manager";
+import { ManagedProcessReaper } from "../main/managed-process/reaper";
 import { resolveRuntimeCatalogPath } from "../main/toolchains/catalog";
 import { ToolchainManager } from "../main/toolchains/manager";
 import { isExecutionIntent } from "../shared/toolchains/types";
 
 type BrowserAgentFixtureStatus = {
   sessionId: string;
+  sessionFile?: string;
   activeTools: string[];
   isRunning: boolean;
   isStreaming: boolean;
@@ -22,6 +24,7 @@ type BrowserAgentFixtureStatus = {
   pendingResponses: number;
   assistantTexts: string[];
   toolResults: string[];
+  toolResultTexts: string[];
   browserMetrics: {
     callCount: number;
     screenshotCount: number;
@@ -53,6 +56,7 @@ let mainWindow: BrowserWindow | null = null;
 let fixtureServer: http.Server | null = null;
 let browserService: BrowserService | null = null;
 let hostManager: HostManager | null = null;
+let managedProcessReaper: ManagedProcessReaper | null = null;
 let finishing = false;
 
 function log(message: string): void {
@@ -119,8 +123,10 @@ async function finish(exitCode: number, error?: unknown): Promise<void> {
   if (finishing) return;
   finishing = true;
   if (error) console.error(error instanceof Error ? (error.stack ?? error.message) : error);
-  void hostManager?.stop();
+  await hostManager?.stop().catch(() => undefined);
   hostManager = null;
+  await managedProcessReaper?.reapAll().catch(() => undefined);
+  managedProcessReaper = null;
   await browserService?.dispose().catch(() => undefined);
   browserService = null;
   await closeFixtureServer().catch(() => undefined);
@@ -132,6 +138,21 @@ async function finish(exitCode: number, error?: unknown): Promise<void> {
 
 async function run(): Promise<void> {
   const fixtureOrigin = await startFixtureServer();
+  const managedFixturePath = path.join(projectRoot, "managed-e2e-fixture.mjs");
+  fs.writeFileSync(
+    managedFixturePath,
+    `import http from "node:http";
+const server = http.createServer((_request, response) => {
+  response.setHeader("content-type", "text/html; charset=utf-8");
+  response.end("<!doctype html><title>managed-e2e</title><main>managed-e2e-ready</main>");
+});
+server.listen(0, "127.0.0.1", () => console.log("MANAGED_READY http://127.0.0.1:" + server.address().port + "/"));
+process.stdin.on("data", (chunk) => console.log("STDIN " + chunk.toString().trim()));
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.close(() => process.exit(0)));
+`,
+    { mode: 0o600 },
+  );
+  const managedCommand = `'${process.execPath.replaceAll("'", `'"'"'`)}' managed-e2e-fixture.mjs`;
   mainWindow = new BrowserWindow({
     show: false,
     width: 1000,
@@ -184,7 +205,12 @@ async function run(): Promise<void> {
   await toolchainManager.initialize();
 
   const browserCalls = new Map<string, number>();
+  managedProcessReaper = new ManagedProcessReaper(path.join(app.getPath("userData"), "managed-process-reaper.json"));
+  assert.equal((await managedProcessReaper.initialize()).ready, true, "managed process reaper did not initialize");
   hostManager = new HostManager(hostEntry);
+  hostManager.setBeforeRestartHandler(async () => {
+    await managedProcessReaper!.reapAll();
+  });
   hostManager.setToolchainSnapshot(toolchainManager.getSnapshot());
   hostManager.setBrowserCapabilitySnapshot(latestBrowserSnapshot);
   hostManager.setRequestHandler(async (method, params) => {
@@ -203,6 +229,13 @@ async function run(): Promise<void> {
       }
       return toolchainManager.resolveForProject(body.cwd, { intent: body.intent, trusted: body.trusted });
     }
+    if (method === "managedProcesses.getSettings") {
+      return { enabled: true, reaperReady: managedProcessReaper!.status().ready, platform: process.platform };
+    }
+    if (method === "managedProcesses.register") {
+      return managedProcessReaper!.register((params as { record?: unknown } | undefined)?.record);
+    }
+    if (method === "managedProcesses.unregister") return managedProcessReaper!.unregister(params);
     if (method.startsWith("browser.")) {
       browserCalls.set(method, (browserCalls.get(method) ?? 0) + 1);
       try {
@@ -244,13 +277,15 @@ async function run(): Promise<void> {
   let status = await hostManager.call<BrowserAgentFixtureStatus>("browserAgentE2e.status", { sessionId });
   assert.ok(status.activeTools.includes("browser_open"), "read Browser tool was not promptable");
   assert.ok(status.activeTools.includes("browser_click"), "interactive Browser tool was not promptable");
+  assert.ok(status.activeTools.includes("process_start"), "managed process start tool was not promptable");
+  assert.ok(status.activeTools.includes("process_stop"), "managed process stop tool was not promptable");
   assert.ok(
     !status.activeTools.includes("browser_execute_javascript"),
     "advanced Browser tool was promptable while Advanced Browser Mode was disabled",
   );
   log("base Browser tools are promptable without an eager grant");
 
-  await hostManager.call("browserAgentE2e.configure", { sessionId, origin: fixtureOrigin });
+  await hostManager.call("browserAgentE2e.configure", { sessionId, origin: fixtureOrigin, managedCommand });
   const readCommand = hostManager.call(
     "agent.command",
     { sessionId, command: { type: "prompt", message: "Open and inspect the local Browser fixture." } },
@@ -359,6 +394,101 @@ async function run(): Promise<void> {
   log(
     `Phase 9 efficiency calls=${totalFixtureCalls} screenshots=${totalFixtureScreenshots} resultChars=${totalFixtureResultChars}`,
   );
+
+  await hostManager.call(
+    "agent.command",
+    {
+      sessionId,
+      command: {
+        type: "prompt",
+        message:
+          "Start the local development fixture, inspect it in Browser, exercise stdin and logs, then restart it.",
+      },
+    },
+    60_000,
+  );
+  status = await waitFor(
+    "managed process Agent flow completion",
+    () => hostManager!.call<BrowserAgentFixtureStatus>("browserAgentE2e.status", { sessionId }),
+    (value) =>
+      !value.isRunning &&
+      !value.isStreaming &&
+      value.assistantTexts.includes("managed-complete:process+logs+browser+stdin+restart"),
+  );
+  for (const toolName of [
+    "process_start",
+    "process_write",
+    "process_wait",
+    "process_restart",
+    "browser_open",
+    "browser_inspect",
+  ]) {
+    assert.ok(status.toolResults.includes(toolName), `managed Agent flow did not execute ${toolName}`);
+  }
+  const activeSnapshot = await hostManager.call<{
+    processes: Array<{ processId: string; runId: string; generation: number; state: string }>;
+  }>("processes.list", { includeExited: true });
+  const activeManaged = activeSnapshot.processes.find(
+    (process) => process.generation === 2 && ["running", "ready"].includes(process.state),
+  );
+  assert.ok(activeManaged, "Agent restart did not leave the second managed generation visible to the UI API");
+  await hostManager.call("processes.stop", {
+    processId: activeManaged!.processId,
+    runId: activeManaged!.runId,
+    mode: "graceful",
+  });
+  await hostManager.call("browserAgentE2e.configureManagedFollowup", {
+    sessionId,
+    phase: "barrier",
+    processId: activeManaged!.processId,
+    runId: activeManaged!.runId,
+  });
+  await hostManager.call(
+    "agent.command",
+    { sessionId, command: { type: "prompt", message: "Continue the managed process after the user stop." } },
+    30_000,
+  );
+  status = await waitFor(
+    "user stop barrier",
+    () => hostManager!.call<BrowserAgentFixtureStatus>("browserAgentE2e.status", { sessionId }),
+    (value) => value.assistantTexts.includes("managed-user-stop-barrier-observed"),
+  );
+  assert.ok(
+    status.toolResultTexts.some((value) => value.includes("PROCESS_USER_STOPPED")),
+    "Agent did not receive the structured user stop barrier",
+  );
+
+  const userRestarted = await hostManager.call<{ processId: string; runId: string; generation: number }>(
+    "processes.restart",
+    { processId: activeManaged!.processId, runId: activeManaged!.runId },
+    30_000,
+  );
+  assert.equal(userRestarted.generation, 3, "user restart did not clear the stop barrier");
+  await hostManager.call("browserAgentE2e.configureManagedFollowup", {
+    sessionId,
+    phase: "stop",
+    processId: userRestarted.processId,
+    runId: userRestarted.runId,
+  });
+  await hostManager.call(
+    "agent.command",
+    { sessionId, command: { type: "prompt", message: "Stop the user-restarted managed fixture." } },
+    30_000,
+  );
+  status = await waitFor(
+    "Agent managed stop",
+    () => hostManager!.call<BrowserAgentFixtureStatus>("browserAgentE2e.status", { sessionId }),
+    (value) => value.assistantTexts.includes("managed-agent-stop-complete"),
+  );
+  assert.ok(status.toolResults.includes("process_stop"), "Agent did not execute process_stop");
+  assert.equal(managedProcessReaper.status().records, 0, "normal managed stop left a reaper journal record");
+
+  assert.ok(status.sessionFile && fs.existsSync(status.sessionFile), "Agent session file was unavailable");
+  const persistedSession = fs.readFileSync(status.sessionFile!, "utf8");
+  assert.equal(persistedSession.includes("managed-e2e-fixture.mjs"), false, "raw process command entered JSONL");
+  assert.equal(persistedSession.includes("electron-input"), false, "managed stdin or output entered JSONL");
+  assert.match(persistedSession, /Managed process tool result omitted from disk history/);
+  log("Agent managed process tools, UI control, Browser evidence, stop barrier and JSONL redaction passed");
 
   browserService.revokeSession(sessionId);
   await waitFor(

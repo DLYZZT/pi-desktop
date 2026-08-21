@@ -14,6 +14,7 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temp = createProjectBuildTemp(root, "pi-browser-agent-e2e-build-");
 const hostOutfile = path.join(temp, "browser-agent-host.mjs");
+const managedWorkerOutfile = path.join(temp, "managed-process-worker.mjs");
 const mainOutfile = path.join(temp, "browser-agent-e2e-harness.cjs");
 
 function build(entry, outfile, format, externals) {
@@ -39,6 +40,7 @@ try {
     "@earendil-works/pi-tui",
     "silk-wasm",
   ]);
+  build("src/agent-host/managed-process/worker.ts", managedWorkerOutfile, "esm", []);
   build("src/smoke/browser-agent-e2e-harness.ts", mainOutfile, "cjs", ["electron"]);
 
   const electronBinary = resolveElectronBinary(root);

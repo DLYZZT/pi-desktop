@@ -120,6 +120,7 @@ export interface LocalFileInspection {
 
 export interface DesktopUiState {
   backgroundMode?: boolean;
+  managedProcessesEnabled?: boolean;
   chatAppearance?: ChatAppearancePreferences;
 }
 

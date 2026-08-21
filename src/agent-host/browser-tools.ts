@@ -72,6 +72,10 @@ export function setBrowserSessionSource(sessionManager: object, source: "local" 
   browserSessionSources.set(sessionManager, source);
 }
 
+export function getBrowserSessionSource(sessionManager: object): "local" | "channel" {
+  return browserSessionSources.get(sessionManager) ?? "local";
+}
+
 async function browserCall<
   M extends Exclude<
     BrowserHostMethod,
@@ -92,7 +96,7 @@ async function browserCall<
       "browser.requestAuthorization",
       {
         sessionId,
-        source: browserSessionSources.get(ctx.sessionManager) ?? "local",
+        source: getBrowserSessionSource(ctx.sessionManager),
         targetMethod: method,
         requestId,
       },

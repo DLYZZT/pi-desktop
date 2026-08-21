@@ -1,7 +1,7 @@
 import type { DesktopUiStatePatch } from "../contract/desktop";
 import { isChatAppearancePreferences } from "../shared/chat-appearance.ts";
 
-const RENDERER_WRITABLE_UI_STATE_FIELDS = new Set(["backgroundMode", "chatAppearance"]);
+const RENDERER_WRITABLE_UI_STATE_FIELDS = new Set(["backgroundMode", "managedProcessesEnabled", "chatAppearance"]);
 
 export function validateDesktopUiStatePatch(value: unknown): DesktopUiStatePatch {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid UI state patch");
@@ -14,6 +14,12 @@ export function validateDesktopUiStatePatch(value: unknown): DesktopUiStatePatch
   if ("backgroundMode" in patch) {
     if (typeof patch.backgroundMode !== "boolean") throw new Error("Background mode must be a boolean");
     validated.backgroundMode = patch.backgroundMode;
+  }
+  if ("managedProcessesEnabled" in patch) {
+    if (typeof patch.managedProcessesEnabled !== "boolean") {
+      throw new Error("Managed processes setting must be a boolean");
+    }
+    validated.managedProcessesEnabled = patch.managedProcessesEnabled;
   }
   if ("chatAppearance" in patch) {
     if (!isChatAppearancePreferences(patch.chatAppearance)) throw new Error("Invalid chat appearance preferences");

@@ -17,6 +17,8 @@ const outputGroups = [
     "out/main/agent-host.mjs.map",
     "out/main/plugin-worker.mjs",
     "out/main/plugin-worker.mjs.map",
+    "out/main/managed-process-worker.mjs",
+    "out/main/managed-process-worker.mjs.map",
   ],
   ["out/preload/preload.js", "out/preload/preload.js.map"],
 ].map((group) => group.map((file) => path.join(root, file)));

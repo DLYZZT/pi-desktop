@@ -966,10 +966,15 @@ function GeneralSettings({
   const [backgroundModeLoading, setBackgroundModeLoading] = useState(true);
   const [backgroundModeSaving, setBackgroundModeSaving] = useState(false);
   const [backgroundModeError, setBackgroundModeError] = useState<"load" | "save" | null>(null);
+  const [managedProcessesEnabled, setManagedProcessesEnabled] = useState(false);
+  const [managedProcessesLoading, setManagedProcessesLoading] = useState(true);
+  const [managedProcessesSaving, setManagedProcessesSaving] = useState(false);
+  const [managedProcessesError, setManagedProcessesError] = useState<"load" | "save" | null>(null);
   const [autoSessionTitle, setAutoSessionTitle] = useState(() => isAutoSessionTitleEnabled());
   const [chatAppearanceError, setChatAppearanceError] = useState(false);
   const languageControlId = useId();
   const backgroundModeControlId = useId();
+  const managedProcessesControlId = useId();
   const autoSessionTitleControlId = useId();
   const chatFontSizeControlId = useId();
   const chatLayoutControlId = useId();
@@ -979,13 +984,22 @@ function GeneralSettings({
     void window.piBridge
       .getUiState()
       .then((state) => {
-        if (!disposed) setBackgroundMode(state.backgroundMode !== false);
+        if (!disposed) {
+          setBackgroundMode(state.backgroundMode !== false);
+          setManagedProcessesEnabled(state.managedProcessesEnabled === true);
+        }
       })
       .catch(() => {
-        if (!disposed) setBackgroundModeError("load");
+        if (!disposed) {
+          setBackgroundModeError("load");
+          setManagedProcessesError("load");
+        }
       })
       .finally(() => {
-        if (!disposed) setBackgroundModeLoading(false);
+        if (!disposed) {
+          setBackgroundModeLoading(false);
+          setManagedProcessesLoading(false);
+        }
       });
     return () => {
       disposed = true;
@@ -1004,6 +1018,20 @@ function GeneralSettings({
       setBackgroundModeError("save");
     } finally {
       setBackgroundModeSaving(false);
+    }
+  };
+  const saveManagedProcesses = async (next: boolean): Promise<void> => {
+    const previous = managedProcessesEnabled;
+    setManagedProcessesEnabled(next);
+    setManagedProcessesSaving(true);
+    setManagedProcessesError(null);
+    try {
+      await window.piBridge.setUiState({ managedProcessesEnabled: next });
+    } catch {
+      setManagedProcessesEnabled(previous);
+      setManagedProcessesError("save");
+    } finally {
+      setManagedProcessesSaving(false);
     }
   };
   const saveChatAppearance = async (next: ChatAppearancePreferences): Promise<void> => {
@@ -1034,6 +1062,66 @@ function GeneralSettings({
             <option value="zh-CN">简体中文</option>
           </select>
         </SettingRow>
+      </section>
+
+      <div style={{ height: 1, background: "var(--border)", maxWidth: 620, margin: "28px 0" }} />
+
+      <section style={{ maxWidth: 620 }}>
+        <h2 style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>{t("managedProcesses", "Managed processes")}</h2>
+        <p style={{ margin: "6px 0 16px", fontSize: 12, lineHeight: 1.6, color: "var(--text-dim)" }}>
+          {t(
+            "managedProcessesDescription",
+            "Let Agents run development servers and watchers under app-owned lifecycle control. Processes have the same local access as Bash and are not a sandbox.",
+          )}
+        </p>
+        <SettingRow
+          label={t("managedProcessesEnable", "Enable managed background processes")}
+          controlId={managedProcessesControlId}
+        >
+          <label
+            htmlFor={managedProcessesControlId}
+            style={{
+              width: 36,
+              height: 36,
+              display: "grid",
+              placeItems: "center",
+              flexShrink: 0,
+              cursor: window.piBridge.platform === "win32" ? "not-allowed" : "pointer",
+            }}
+          >
+            <input
+              id={managedProcessesControlId}
+              type="checkbox"
+              checked={managedProcessesEnabled}
+              disabled={window.piBridge.platform === "win32" || managedProcessesLoading || managedProcessesSaving}
+              onChange={(event) => void saveManagedProcesses(event.target.checked)}
+              style={{
+                width: 18,
+                height: 18,
+                margin: 0,
+                accentColor: "var(--accent)",
+              }}
+            />
+          </label>
+        </SettingRow>
+        {window.piBridge.platform === "win32" && (
+          <p style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.55, color: "var(--text-dim)" }}>
+            {t("managedProcessesUnsupported", "Managed processes are not available on Windows in this version.")}
+          </p>
+        )}
+        {managedProcessesError && (
+          <p role="alert" style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.55, color: "#f87171" }}>
+            {managedProcessesError === "save"
+              ? t(
+                  "managedProcessesSaveFailed",
+                  "Managed process settings could not be saved. The previous setting was restored.",
+                )
+              : t(
+                  "managedProcessesLoadFailed",
+                  "Managed process settings could not be loaded. The feature remains disabled.",
+                )}
+          </p>
+        )}
       </section>
 
       <div style={{ height: 1, background: "var(--border)", maxWidth: 620, margin: "28px 0" }} />

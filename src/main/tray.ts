@@ -8,13 +8,19 @@ import { appendMainLog } from "./logger";
 
 let tray: Tray | null = null;
 let runningCount = 0;
+let managedProcessCount = 0;
+let stopAllManagedProcesses: (() => void) | null = null;
 
 function iconPath(): string {
   // Prefer build/icon.png; fall back to empty template
   return path.join(app.getAppPath(), "build", "icon.png");
 }
 
-export function createTray(getMainWindow: () => BrowserWindow | null): Tray | null {
+export function createTray(
+  getMainWindow: () => BrowserWindow | null,
+  onStopAllManagedProcesses?: () => void,
+): Tray | null {
+  if (onStopAllManagedProcesses) stopAllManagedProcesses = onStopAllManagedProcesses;
   if (tray) return tray;
   try {
     let image = nativeImage.createFromPath(iconPath());
@@ -56,13 +62,48 @@ export function setTrayRunningCount(count: number, getMainWindow: () => BrowserW
   updateTrayMenu(getMainWindow);
 }
 
+export function setTrayManagedProcessCount(count: number, getMainWindow: () => BrowserWindow | null): void {
+  managedProcessCount = Math.max(0, count);
+  if (!tray) return;
+  const total = runningCount + managedProcessCount;
+  tray.setToolTip(total > 0 ? `Pi Agent Desktop — ${total} running` : "Pi Agent Desktop");
+  updateTrayMenu(getMainWindow);
+}
+
 function updateTrayMenu(getMainWindow: () => BrowserWindow | null): void {
   if (!tray) return;
+  const chinese = app.getLocale().toLowerCase().startsWith("zh");
   const menu = Menu.buildFromTemplate([
     {
-      label: runningCount > 0 ? `Running sessions: ${runningCount}` : "No running sessions",
+      label:
+        runningCount > 0
+          ? chinese
+            ? `运行中的任务：${runningCount}`
+            : `Running sessions: ${runningCount}`
+          : chinese
+            ? "没有运行中的任务"
+            : "No running sessions",
       enabled: false,
     },
+    {
+      label:
+        managedProcessCount > 0
+          ? chinese
+            ? `后台进程：${managedProcessCount}`
+            : `Background processes: ${managedProcessCount}`
+          : chinese
+            ? "没有后台进程"
+            : "No background processes",
+      enabled: false,
+    },
+    ...(managedProcessCount > 0
+      ? [
+          {
+            label: chinese ? "停止所有后台进程" : "Stop All Background Processes",
+            click: () => stopAllManagedProcesses?.(),
+          } as const,
+        ]
+      : []),
     { type: "separator" },
     {
       label: "Show Window",

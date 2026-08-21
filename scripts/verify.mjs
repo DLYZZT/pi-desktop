@@ -24,6 +24,8 @@ run("typecheck (main/host)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.json"]);
 run("typecheck (renderer)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.renderer.json"]);
 run("dependency contract", "node", ["scripts/check-dependency-contract.mjs"]);
 run("unit tests", "npm", ["test"]);
+run("managed process development workflows", "npm", ["run", "test:managed-process-workflows"]);
+run("managed process 60s flood", "npm", ["run", "test:managed-process-flood"]);
 run("contract coverage", "node", ["scripts/check-contract-coverage.mjs"]);
 run("Pi 0.84 compatibility", "node", ["scripts/check-pi-084-compatibility.mjs"]);
 run("toolchain contract safety", "node", ["scripts/check-toolchain-contract.mjs"]);

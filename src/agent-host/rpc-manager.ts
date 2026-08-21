@@ -31,6 +31,9 @@ import { browserCapabilityRuntime } from "./browser-capability-runtime";
 import { browserAgentRuntime } from "./browser-agent-runtime";
 import { projectExtensionDiagnostics } from "./extension-diagnostics";
 import { getDesktopSessionToolNames, setDesktopSessionToolNames } from "./session-tool-store";
+import { peekManagedProcessService } from "./managed-process/runtime";
+import { createManagedProcessToolDefinitions } from "./managed-process/tools";
+import { installManagedProcessSessionRedaction } from "./managed-process/session-redaction";
 
 // ============================================================================
 // Types
@@ -147,7 +150,7 @@ function stripLegacyChannelPrompts(messages: unknown[]): unknown[] {
   });
 }
 
-function withExtensionTools(session: AgentSessionLike, toolNames: string[]): string[] {
+export function withExtensionTools(session: AgentSessionLike, toolNames: string[]): string[] {
   if (toolNames.length === 0) return [];
 
   const codingToolNames = new Set(CODING_TOOL_NAMES);
@@ -1420,6 +1423,7 @@ export async function startRpcSession(
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, undefined)
       : SessionManager.create(cwd, undefined);
+    installManagedProcessSessionRedaction(sessionManager);
 
     // Desktop-owned session choices live outside Pi's shared JSONL so the CLI
     // remains unaffected. Read the old custom entry only for one-way migration.
@@ -1447,6 +1451,13 @@ export async function startRpcSession(
       createBashToolDefinition(cwd, bashOptions),
       ...createDesktopSearchToolDefinitions(cwd, executionContext, toolchainRuntime),
       ...createBrowserToolDefinitions(),
+      ...(peekManagedProcessService()
+        ? createManagedProcessToolDefinitions(
+            cwd,
+            services.settingsManager.isProjectTrusted(),
+            peekManagedProcessService()!,
+          )
+        : []),
     ] as unknown as NonNullable<CreateAgentSessionFromServicesOptions["customTools"]>;
     const { session: inner } = await createAgentSessionFromServices({
       services,
