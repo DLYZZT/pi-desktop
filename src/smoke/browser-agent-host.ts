@@ -74,6 +74,63 @@ function lastToolText(context: Context, toolName: string): string {
   throw new Error(`Missing ${toolName} result in Faux Provider context`);
 }
 
+function managedProcessContinuation(context: Context) {
+  const latest = [...context.messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "toolResult" &&
+        (message.toolName === "process_wait" || message.toolName === "process_restart"),
+    );
+  if (!latest || latest.role !== "toolResult") {
+    throw new Error("Missing managed process continuation result in Faux Provider context");
+  }
+  if (latest.toolName === "process_restart") {
+    const restarted = lastToolResult(context, "process_restart") as {
+      process?: { generation?: unknown; state?: unknown };
+      output?: { endpoints?: unknown[] };
+    };
+    if (restarted.process?.generation !== 2 || !restarted.output?.endpoints?.length) {
+      throw new Error("process_restart did not create a ready second generation");
+    }
+    return fauxAssistantMessage("managed-complete:process+logs+browser+stdin+restart");
+  }
+
+  const waited = lastToolResult(context, "process_wait") as {
+    nextCursor?: unknown;
+    matched?: unknown;
+    records?: Array<{ text?: unknown }>;
+  };
+  const matched =
+    typeof waited.matched === "string" || waited.records?.some((record) => record.text === "STDIN electron-input");
+  const started = lastToolResult(context, "process_start") as {
+    process: { processId: string; runId: string };
+  };
+  if (matched) {
+    return fauxAssistantMessage(
+      fauxToolCall("process_restart", {
+        processId: started.process.processId,
+        runId: started.process.runId,
+        waitFor: { type: "loopback-url", timeoutMs: 5_000 },
+      }),
+      { stopReason: "toolUse" },
+    );
+  }
+  if (typeof waited.nextCursor !== "string") {
+    throw new Error("process_wait returned unrelated output without a continuation cursor");
+  }
+  return fauxAssistantMessage(
+    fauxToolCall("process_wait", {
+      processId: started.process.processId,
+      runId: started.process.runId,
+      cursor: waited.nextCursor,
+      contains: "STDIN electron-input",
+      timeoutMs: 5_000,
+    }),
+    { stopReason: "toolUse" },
+  );
+}
+
 function browserResponses(origin: string, managedCommand: string) {
   return [
     fauxAssistantMessage(fauxToolCall("browser_open", { url: origin, profileId: "temporary", activate: true }), {
@@ -238,39 +295,12 @@ function browserResponses(origin: string, managedCommand: string) {
         { stopReason: "toolUse" },
       );
     },
-    (context: Context) => {
-      const waited = lastToolResult(context, "process_wait") as {
-        matched?: unknown;
-        records?: Array<{ text?: unknown }>;
-      };
-      if (
-        typeof waited.matched !== "string" &&
-        !waited.records?.some((record) => record.text === "STDIN electron-input")
-      ) {
-        throw new Error("process_wait did not observe managed stdin output");
-      }
-      const started = lastToolResult(context, "process_start") as {
-        process: { processId: string; runId: string };
-      };
-      return fauxAssistantMessage(
-        fauxToolCall("process_restart", {
-          processId: started.process.processId,
-          runId: started.process.runId,
-          waitFor: { type: "loopback-url", timeoutMs: 5_000 },
-        }),
-        { stopReason: "toolUse" },
-      );
-    },
-    (context: Context) => {
-      const restarted = lastToolResult(context, "process_restart") as {
-        process?: { generation?: unknown; state?: unknown };
-        output?: { endpoints?: unknown[] };
-      };
-      if (restarted.process?.generation !== 2 || !restarted.output?.endpoints?.length) {
-        throw new Error("process_restart did not create a ready second generation");
-      }
-      return fauxAssistantMessage("managed-complete:process+logs+browser+stdin+restart");
-    },
+    managedProcessContinuation,
+    managedProcessContinuation,
+    managedProcessContinuation,
+    managedProcessContinuation,
+    managedProcessContinuation,
+    managedProcessContinuation,
   ];
 }
 

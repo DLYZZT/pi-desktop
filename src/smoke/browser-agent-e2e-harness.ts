@@ -147,7 +147,10 @@ const server = http.createServer((_request, response) => {
   response.end("<!doctype html><title>managed-e2e</title><main>managed-e2e-ready</main>");
 });
 server.listen(0, "127.0.0.1", () => console.log("MANAGED_READY http://127.0.0.1:" + server.address().port + "/"));
-process.stdin.on("data", (chunk) => console.log("STDIN " + chunk.toString().trim()));
+process.stdin.on("data", (chunk) => {
+  console.error("STDIN_PENDING");
+  setTimeout(() => console.log("STDIN " + chunk.toString().trim()), 500);
+});
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.close(() => process.exit(0)));
 `,
     { mode: 0o600 },
@@ -425,6 +428,10 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
   ]) {
     assert.ok(status.toolResults.includes(toolName), `managed Agent flow did not execute ${toolName}`);
   }
+  assert.ok(
+    status.toolResults.filter((toolName) => toolName === "process_wait").length >= 2,
+    "managed Agent flow did not continue process_wait after unrelated output",
+  );
   const activeSnapshot = await hostManager.call<{
     processes: Array<{ processId: string; runId: string; generation: number; state: string }>;
   }>("processes.list", { includeExited: true });
