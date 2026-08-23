@@ -40,6 +40,8 @@ test("main pushes package every supported desktop target", () => {
 test("Windows runs pure quality checks and Electron smoke without an Xvfb dependency", () => {
   const windows = workflow.jobs["test-platforms"].strategy.matrix.include.find(({ name }) => name === "Windows x64");
   assert.equal(windows.runner, "windows-2025");
+  assert.equal(windows.timeout_minutes, 45);
+  assert.equal(workflow.jobs["test-platforms"]["timeout-minutes"], "${{ matrix.timeout_minutes }}");
 
   const quality = stepByName("test-platforms", "Run cross-platform quality checks (Windows)");
   assert.equal(quality.if, "runner.os == 'Windows'");

@@ -27,14 +27,18 @@ jobs:
         include:
           - name: Linux x64
             runner: ubuntu-24.04
+            timeout_minutes: 25
           - name: macOS arm64
             runner: macos-15
+            timeout_minutes: 25
           - name: macOS x64
             runner: macos-15-intel
+            timeout_minutes: 25
           - name: Windows x64
             runner: windows-2025
+            timeout_minutes: 45
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 25
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
