@@ -368,6 +368,7 @@ try {
 } finally {
   if (active) await stop(active, "force").catch(() => undefined);
   await service.stopAll("host").catch(() => undefined);
-  await rm(fixture, { recursive: true, force: true });
-  await rm(nodeWorkspace, { recursive: true, force: true });
+  const cleanupOptions = { recursive: true, force: true, maxRetries: 20, retryDelay: 250 };
+  await rm(fixture, cleanupOptions);
+  await rm(nodeWorkspace, cleanupOptions);
 }
