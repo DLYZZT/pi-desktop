@@ -758,8 +758,8 @@ try {
   const javac = findExecutable("javac.exe");
   const java = findExecutable("java.exe");
   if (javac && java) {
-    execFileSync(javac, [javaFile], { cwd: fixture, windowsHide: true });
-    await runCommandScenario("java", `${bashQuote(java)} -cp ${bashQuote(fixture)} PiManagedFixture`, "JAVA_READY");
+    execFileSync(javac, [path.basename(javaFile)], { cwd: fixture, windowsHide: true });
+    await runCommandScenario("java", `${bashQuote(java)} -cp . PiManagedFixture`, "JAVA_READY");
   }
 
   const dotnet = findExecutable("dotnet.exe");
