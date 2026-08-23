@@ -153,6 +153,9 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
   private pingSequence = 0;
   private lastPongAt = Date.now();
   private lastPingTickAt = Date.now();
+  private discardOutput = false;
+  private discardedOutputBytes = 0;
+  private discardedOutputChunks = 0;
 
   constructor(descriptor: WindowsManagedProcessHelperDescriptor, spawnProcess: typeof spawn = spawn) {
     this.descriptor = descriptor;
@@ -241,6 +244,7 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
     helper.once("error", () => this.fail(new Error("Windows helper failed to start")));
     helper.once("close", (code) => {
       this.stopPing();
+      this.flushDiscardedOutput();
       if (!this.exitReported) {
         this.exitReported = true;
         this.events.emit("event", {
@@ -322,6 +326,7 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
 
   async stop(mode: ManagedProcessStopMode, source: ManagedProcessStopSource): Promise<void> {
     if (!this.process || this.process.exitCode !== null) return;
+    this.discardOutput = true;
     this.send(WINDOWS_HELPER_KIND.stop, JSON.stringify({ mode, source }));
   }
 
@@ -414,6 +419,11 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
       return;
     }
     if (frame.kind === WINDOWS_HELPER_KIND.stdout || frame.kind === WINDOWS_HELPER_KIND.stderr) {
+      if (this.discardOutput) {
+        this.discardedOutputBytes += frame.payload.length;
+        this.discardedOutputChunks += 1;
+        return;
+      }
       this.events.emit("event", {
         type: frame.kind === WINDOWS_HELPER_KIND.stdout ? "stdout" : "stderr",
         bytes: frame.payload,
@@ -460,6 +470,7 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
       const exit = this.validateExit(value);
       this.exitReported = true;
       this.stopPing();
+      this.flushDiscardedOutput();
       this.events.emit("event", { type: "exit", exit } satisfies ManagedProcessBackendEvent);
       return;
     }
@@ -484,6 +495,17 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
       return;
     }
     this.fail(new Error("Unexpected Windows helper event"));
+  }
+
+  private flushDiscardedOutput(): void {
+    if (this.discardedOutputChunks <= 0) return;
+    this.events.emit("event", {
+      type: "output-dropped",
+      bytes: this.discardedOutputBytes,
+      chunks: this.discardedOutputChunks,
+    } satisfies ManagedProcessBackendEvent);
+    this.discardedOutputBytes = 0;
+    this.discardedOutputChunks = 0;
   }
 
   private validateHello(value: Record<string, unknown>): void {

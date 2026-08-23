@@ -125,6 +125,18 @@ const ticks = [];
 let ticker;
 
 const started = [];
+function consumeOutput(entry, output) {
+  for (const record of output.records) {
+    entry.seenStreams.add(record.stream);
+    if (record.stream !== "system") continue;
+    const dropped = record.text.match(/Backend dropped (\d+) bytes \/ (\d+) chunks\./u);
+    if (!dropped) continue;
+    entry.backendDroppedBytes += Number(dropped[1]);
+    entry.backendDroppedChunks += Number(dropped[2]);
+  }
+  entry.cursor = output.nextCursor;
+}
+
 try {
   process.stdout.write(`${JSON.stringify({ progress: "flood-launch-start", processCount, streamMode })}\n`);
   const launched = await Promise.all(
@@ -136,7 +148,14 @@ try {
         label: `1 MiB/s flood ${index + 1}/${processCount}`,
         waitFor: { type: "output", contains: "FLOOD_READY", timeoutMs: 5_000 },
       });
-      return { process, cursor: process.output.nextCursor, sessionId, seenStreams: new Set() };
+      return {
+        process,
+        cursor: process.output.nextCursor,
+        sessionId,
+        seenStreams: new Set(),
+        backendDroppedBytes: 0,
+        backendDroppedChunks: 0,
+      };
     }),
   );
   started.push(...launched);
@@ -169,8 +188,7 @@ try {
         entry.sessionId,
       );
       readLatencies.push(performance.now() - readStarted);
-      for (const record of output.records) entry.seenStreams.add(record.stream);
-      entry.cursor = output.nextCursor;
+      consumeOutput(entry, output);
     }
     service.list(false, started[0].sessionId);
   }
@@ -188,12 +206,30 @@ try {
   readLatencies.sort((left, right) => left - right);
   const percentile = (values, quantile) =>
     values[Math.min(values.length - 1, Math.floor(values.length * quantile))] ?? 0;
+  for (const entry of started) {
+    let output;
+    do {
+      output = service.read(
+        {
+          processId: entry.process.process.processId,
+          runId: entry.process.runId,
+          cursor: entry.cursor,
+          maxBytes: 128 * 1024,
+        },
+        entry.sessionId,
+      );
+      consumeOutput(entry, output);
+    } while (output.truncated);
+  }
   const snapshots = started.map((entry) => service.get(entry.process.process.processId));
   const perProcess = snapshots.map((snapshot, index) => ({
     processId: snapshot.processId,
     state: stopped[index].state,
     retainedBytes: snapshot.output.retainedBytes,
-    droppedBytes: snapshot.output.droppedBytes,
+    ringDroppedBytes: snapshot.output.droppedBytes,
+    backendDroppedBytes: started[index].backendDroppedBytes,
+    backendDroppedChunks: started[index].backendDroppedChunks,
+    droppedBytes: snapshot.output.droppedBytes + started[index].backendDroppedBytes,
     streams: [...started[index].seenStreams].sort(),
   }));
   const result = {
