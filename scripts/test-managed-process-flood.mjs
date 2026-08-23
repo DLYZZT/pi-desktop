@@ -112,10 +112,11 @@ const service = new ManagedProcessService(
 );
 
 const producer = [
-  'const line = "x".repeat(1023) + "\\n";',
-  "console.log('FLOOD_READY');",
+  'const line = "x".repeat(10 * 1024 - 1) + "\\n";',
   `const streams = ${streamMode === "both" ? "[process.stdout, process.stderr]" : "[process.stdout]"};`,
-  "setInterval(() => { for (const stream of streams) for (let i = 0; i < 10; i += 1) stream.write(line); }, 10);",
+  'process.stdin.setEncoding("utf8");',
+  "process.stdin.once('data', () => setInterval(() => { for (const stream of streams) stream.write(line); }, 10));",
+  "console.log('FLOOD_READY');",
 ].join(" ");
 const quote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
 const command = `${quote(process.execPath)} -e ${quote(producer)}`;
@@ -125,6 +126,7 @@ let ticker;
 
 const started = [];
 try {
+  process.stdout.write(`${JSON.stringify({ progress: "flood-launch-start", processCount, streamMode })}\n`);
   const launched = await Promise.all(
     Array.from({ length: processCount }, async (_, index) => {
       const sessionId = `flood-session-${index + 1}`;
@@ -138,6 +140,13 @@ try {
     }),
   );
   started.push(...launched);
+  for (const entry of started) {
+    service.write(
+      { processId: entry.process.process.processId, runId: entry.process.runId, text: "GO" },
+      entry.sessionId,
+    );
+  }
+  process.stdout.write(`${JSON.stringify({ progress: "flood-running", durationMs })}\n`);
   let previousTick = performance.now();
   ticker = setInterval(() => {
     const current = performance.now();
@@ -165,6 +174,7 @@ try {
     }
     service.list(false, started[0].sessionId);
   }
+  process.stdout.write(`${JSON.stringify({ progress: "flood-stopping" })}\n`);
   const stopStarted = performance.now();
   const stopped = await Promise.all(
     started.map((entry) =>
@@ -172,6 +182,7 @@ try {
     ),
   );
   const stopMs = performance.now() - stopStarted;
+  process.stdout.write(`${JSON.stringify({ progress: "flood-stopped", stopMs })}\n`);
   clearInterval(ticker);
   ticks.sort((left, right) => left - right);
   readLatencies.sort((left, right) => left - right);

@@ -192,9 +192,13 @@ export class ManagedProcessOutputDecoder {
     const state = this.states[stream];
     const decoded = typeof chunk === "string" ? chunk : state.decoder.write(chunk);
     if (!this.encodingWarningSent) {
-      for (const character of decoded) {
-        this.decodedCharacters += 1;
-        if (character === "\uFFFD") this.replacementCharacters += 1;
+      if (!/[\u{10000}-\u{10FFFF}\uFFFD]/u.test(decoded)) {
+        this.decodedCharacters += decoded.length;
+      } else {
+        for (const character of decoded) {
+          this.decodedCharacters += 1;
+          if (character === "\uFFFD") this.replacementCharacters += 1;
+        }
       }
       if (
         this.decodedCharacters >= 32 &&
@@ -219,33 +223,64 @@ export class ManagedProcessOutputDecoder {
   }
 
   private consume(stream: "stdout" | "stderr", state: DecoderState, value: string): void {
-    for (const character of value) {
+    let offset = 0;
+    while (offset < value.length) {
       if (state.carriageReturn) {
         state.carriageReturn = false;
-        if (character === "\n") {
+        if (value[offset] === "\n") {
           this.flush(stream, state);
+          offset += 1;
           continue;
         }
         state.line = "";
         state.retainedBytes = 0;
         state.omittedBytes = 0;
       }
-      if (character === "\r") {
+
+      const carriageReturn = value.indexOf("\r", offset);
+      const lineFeed = value.indexOf("\n", offset);
+      const boundary =
+        carriageReturn < 0 ? lineFeed : lineFeed < 0 ? carriageReturn : Math.min(carriageReturn, lineFeed);
+      const end = boundary < 0 ? value.length : boundary;
+      this.appendSegment(state, value.slice(offset, end));
+      if (boundary < 0) break;
+      offset = boundary + 1;
+      if (value[boundary] === "\r") {
         state.carriageReturn = true;
         continue;
       }
-      if (character === "\n") {
-        this.flush(stream, state);
-        continue;
-      }
+      this.flush(stream, state);
+    }
+  }
+
+  private appendSegment(state: DecoderState, segment: string): void {
+    if (!segment) return;
+    const segmentBytes = Buffer.byteLength(segment, "utf8");
+    const remaining = MANAGED_PROCESS_LIMITS.lineBytes - state.retainedBytes;
+    if (segmentBytes <= remaining) {
+      state.line += segment;
+      state.retainedBytes += segmentBytes;
+      return;
+    }
+    if (remaining <= 0) {
+      state.omittedBytes += segmentBytes;
+      return;
+    }
+    let retained = "";
+    let retainedBytes = 0;
+    let omittedBytes = 0;
+    for (const character of segment) {
       const bytes = Buffer.byteLength(character, "utf8");
-      if (state.retainedBytes + bytes <= MANAGED_PROCESS_LIMITS.lineBytes) {
-        state.line += character;
-        state.retainedBytes += bytes;
+      if (retainedBytes + bytes <= remaining) {
+        retained += character;
+        retainedBytes += bytes;
       } else {
-        state.omittedBytes += bytes;
+        omittedBytes += bytes;
       }
     }
+    state.line += retained;
+    state.retainedBytes += retainedBytes;
+    state.omittedBytes += omittedBytes;
   }
 
   private flush(stream: "stdout" | "stderr", state: DecoderState): void {

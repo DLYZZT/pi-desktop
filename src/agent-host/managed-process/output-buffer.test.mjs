@@ -40,6 +40,20 @@ test("decoder handles split utf8, CR progress and long line truncation", () => {
   assert.match(lines[2][1], /line truncated: 4096 bytes/);
 });
 
+test("decoder handles flood-sized lines in bulk without changing line or CR semantics", () => {
+  const lines = [];
+  const decoder = new ManagedProcessOutputDecoder((stream, line) => lines.push([stream, line]));
+  const floodLine = "x".repeat(10 * 1024 - 1);
+  decoder.write("stdout", `${floodLine}\n${floodLine}\n`);
+  decoder.write("stderr", "obsolete\r");
+  decoder.write("stderr", "current\n");
+  assert.deepEqual(lines, [
+    ["stdout", floodLine],
+    ["stdout", floodLine],
+    ["stderr", "current"],
+  ]);
+});
+
 test("output sanitizer strips terminal controls and common secrets", () => {
   const ring = new ManagedProcessOutputBuffer("run-a");
   ring.append(

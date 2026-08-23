@@ -224,7 +224,13 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
       safeStderrBytes += chunk.length;
       if (safeStderrBytes > 4_096) this.fail(new Error("Windows helper stderr exceeded its diagnostic limit"));
     });
-    helper.stdout?.on("data", (chunk: Buffer) => this.handleBytes(chunk));
+    helper.stdout?.on("data", (chunk: Buffer) => {
+      helper.stdout?.pause();
+      setImmediate(() => {
+        this.handleBytes(chunk);
+        helper.stdout?.resume();
+      });
+    });
     helper.stdout?.once("end", () => {
       try {
         this.decoder.finish();
