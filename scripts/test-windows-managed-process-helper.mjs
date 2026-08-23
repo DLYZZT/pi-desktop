@@ -416,19 +416,42 @@ async function startBackend(runId, entry = rootFile) {
   return { backend, events, prepared, port: Number(new URL(url).port) };
 }
 
-async function runCommandScenario(runId, command, readyText, cwd = fixture) {
+async function runCommandScenario(runId, command, readyText, cwd = fixture, readyTimeoutMs = 15_000) {
   const backend = new WindowsJobProcessBackend(descriptor);
   const events = [];
   backend.onEvent((event) => events.push(event));
   const prepared = await backend.prepare(launchCommandInput(runId, command, cwd));
   await backend.commit(prepared, 1);
-  await waitForEvent(
-    events,
-    (event) => (event.type === "stdout" || event.type === "stderr") && event.bytes.toString("utf8").includes(readyText),
-    15_000,
-  );
-  await backend.stop("force", "main");
-  await waitForBackendExit(backend, `${runId} backend exit`);
+  progress(`runtime-${runId}-started`);
+  let scenarioError;
+  try {
+    await waitForEvent(
+      events,
+      (event) =>
+        (event.type === "stdout" || event.type === "stderr") && event.bytes.toString("utf8").includes(readyText),
+      readyTimeoutMs,
+    );
+    progress(`runtime-${runId}-ready`);
+  } catch (error) {
+    scenarioError = error;
+  }
+  try {
+    await backend.stop("force", "main");
+    await waitForBackendExit(backend, `${runId} backend exit`);
+  } catch (error) {
+    if (!scenarioError) throw error;
+    console.error(`[${runId}] cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (scenarioError) {
+    const output = Buffer.concat(
+      events.filter((event) => event.type === "stdout" || event.type === "stderr").map((event) => event.bytes),
+    ).toString("utf8");
+    throw new Error(
+      `${runId} did not emit ${readyText} within ${readyTimeoutMs}ms${output ? `; output: ${output}` : ""}`,
+      { cause: scenarioError },
+    );
+  }
+  progress(`runtime-${runId}-stopped`);
 }
 
 async function runOwnerDeathScenario(mode) {
@@ -781,6 +804,8 @@ try {
         "dotnet-watch",
         `${bashQuote(dotnet)} watch --non-interactive --project ${bashQuote(dotnetProject)} run --no-launch-profile`,
         "DOTNET_WATCH_READY",
+        fixture,
+        60_000,
       );
       dotnetWatch = true;
     }
