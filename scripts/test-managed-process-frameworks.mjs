@@ -21,6 +21,7 @@ if (process.platform !== "win32" || process.arch !== "x64") {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const nodeRoot = requiredDirectory("PI_FRAMEWORK_NODE_ROOT");
 const springRoot = requiredDirectory("PI_SPRING_BOOT_FIXTURE");
+const java = requiredFile("PI_JAVA_EXECUTABLE");
 const dotnet = requiredFile("PI_DOTNET_EXECUTABLE");
 const packagedResourcesPath = process.env.PI_WINDOWS_MANAGED_HELPER_RESOURCES_PATH;
 const fixture = await mkdtemp(path.join(tmpdir(), "pi-managed-frameworks-"));
@@ -214,12 +215,12 @@ async function portClosed(port, timeoutMs = 10_000) {
   throw new Error(`port ${port} remained open`);
 }
 
-async function start(label, cwd, command, readyText, ownerCwd = unicodeFixture) {
+async function start(label, cwd, command, readyText, ownerCwd = unicodeFixture, readyTimeoutMs = 10_000) {
   return service.startForAgent("framework-session", ownerCwd, true, {
     command,
     cwd,
     label,
-    waitFor: { type: "output", contains: readyText, timeoutMs: 10_000 },
+    waitFor: { type: "output", contains: readyText, timeoutMs: readyTimeoutMs },
   });
 }
 
@@ -311,12 +312,14 @@ try {
     process.env.PI_MAVEN_USER_HOME ?? path.join(root, ".artifacts", "maven-user-home-3.9.16"),
   );
   await mkdir(mavenUserHome, { recursive: true });
+  const springJar = path.join(springApp, "target", "fixture-0.0.1-SNAPSHOT.jar");
   active = await start(
     "Spring Boot mvnw.cmd",
     springApp,
-    `MAVEN_USER_HOME=${quote(mavenUserHome)} ${quote(path.join(springApp, "mvnw.cmd"))} -q -DskipTests compile spring-boot:run`,
+    `MAVEN_USER_HOME=${quote(mavenUserHome)} ${quote(path.join(springApp, "mvnw.cmd"))} -q -DskipTests package && ${quote(java)} -jar ${quote(springJar)}`,
     "Started",
     javaUnicodeFixture,
+    240_000,
   );
   await fetchManaged(
     active,

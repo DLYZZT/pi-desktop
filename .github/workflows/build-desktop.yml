@@ -164,6 +164,7 @@ jobs:
           if (-not (Test-Path -LiteralPath (Join-Path $springRoot "mvnw.cmd"))) { throw "Spring wrapper is missing" }
           "PI_FRAMEWORK_NODE_ROOT=$nodeRoot" >> $env:GITHUB_ENV
           "PI_SPRING_BOOT_FIXTURE=$springRoot" >> $env:GITHUB_ENV
+          "PI_JAVA_EXECUTABLE=$((Get-Command java).Source)" >> $env:GITHUB_ENV
           "PI_DOTNET_EXECUTABLE=$((Get-Command dotnet).Source)" >> $env:GITHUB_ENV
           "PI_MAVEN_USER_HOME=$(Join-Path $env:RUNNER_TEMP 'maven-user-home-3.9.16')" >> $env:GITHUB_ENV
 
