@@ -24,7 +24,7 @@ if (process.platform !== "win32" || process.arch !== "x64") {
 }
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const fixtureRoot = await mkdtemp(path.join(tmpdir(), "pi-windows-helper-e2e-"));
+const fixtureRoot = realpathSync.native(await mkdtemp(path.join(tmpdir(), "pi-windows-helper-e2e-")));
 const fixture = path.join(fixtureRoot, "Unicode 空格 fixture");
 await mkdir(fixture);
 
@@ -90,7 +90,7 @@ function findBash() {
   ];
   const executable = candidates.find((candidate) => candidate && existsSync(candidate));
   if (!executable) throw new Error("A native Windows Bash is required for the helper E2E");
-  return executable;
+  return realpathSync.native(executable);
 }
 
 function findExecutable(name) {
