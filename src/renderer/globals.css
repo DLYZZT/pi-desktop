@@ -622,17 +622,20 @@ code {
   margin: 6px 0;
 }
 
-.compaction-summary-toggle {
+.compaction-summary-toggle,
+.skill-invocation-toggle {
   width: 100%;
   border: 0;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-.compaction-summary-toggle:hover {
+.compaction-summary-toggle:hover,
+.skill-invocation-toggle:hover {
   filter: brightness(0.98);
 }
-.compaction-summary-toggle:focus-visible {
+.compaction-summary-toggle:focus-visible,
+.skill-invocation-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }

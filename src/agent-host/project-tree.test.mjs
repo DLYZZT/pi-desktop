@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MAX_PROJECTED_TREE_DEPTH, projectTreeForResponse } from "./project-tree.ts";
+import { MAX_PROJECTED_TREE_DEPTH, projectSessionTreeForResponse, projectTreeForResponse } from "./project-tree.ts";
 
 const node = (id, children = [], extra = {}) => ({ entry: { id }, children, ...extra });
 
@@ -77,4 +77,24 @@ test("bounds projected depth without recursive stack usage", () => {
   }
 
   assert.equal(depth, MAX_PROJECTED_TREE_DEPTH + 1);
+});
+
+test("uses the slash command instead of skill instructions in branch previews", () => {
+  const expanded = `<skill name="review" location="/home/test/.pi/skills/review/SKILL.md">
+Private implementation instructions.
+</skill>
+
+Check the current change`;
+  const [projected] = projectSessionTreeForResponse([
+    {
+      entry: {
+        id: "skill-message",
+        type: "message",
+        message: { role: "user", content: expanded },
+      },
+      children: [],
+    },
+  ]);
+
+  assert.equal(projected.entry.preview, "/skill:review Check the current change");
 });

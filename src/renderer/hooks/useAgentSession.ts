@@ -73,6 +73,7 @@ import {
 import { NOTICE_VISIBLE_MS, noticeExpiryDelay, noticeReducer, type NoticeType } from "@/lib/notice-queue";
 import { useI18n } from "@/i18n";
 import { sessionClientErrorMessage } from "@/lib/session-error-message";
+import { skillInvocationCommandText } from "@shared/skill-invocation";
 
 export type SessionData = SessionDetail;
 type AgentStateResponse = SessionRuntimeState;
@@ -119,7 +120,10 @@ export interface QueuedMessages {
 }
 
 function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null): QueuedMessages {
-  return { steering: q?.steering ?? [], followUp: q?.followUp ?? [] };
+  return {
+    steering: (q?.steering ?? []).map(skillInvocationCommandText),
+    followUp: (q?.followUp ?? []).map(skillInvocationCommandText),
+  };
 }
 
 type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
@@ -1760,7 +1764,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // clearQueue also emits an empty queue_update, but that only reaches us
       // while the stream is connected — clear locally so idle recalls update the UI.
       setQueuedMessages({ steering: [], followUp: [] });
-      const texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])];
+      const texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])].map(skillInvocationCommandText);
       if (texts.length > 0) {
         opts.chatInputRef?.current?.prependText(texts.join("\n\n"));
       }

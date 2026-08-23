@@ -30,6 +30,7 @@ import { MessageRenderKeyRegistry, type MessageRenderRole } from "@/lib/message-
 import { buildToolMessageIndex } from "@/lib/tool-message-index";
 import { useI18n } from "@/i18n";
 import type { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
+import { skillInvocationCommandText } from "@shared/skill-invocation";
 
 interface Props {
   session: SessionInfo | null;
@@ -77,12 +78,13 @@ function toMinimapMessage(message: AgentMessage | Partial<AgentMessage>): ChatMi
   if (message.role !== "user" && message.role !== "assistant") return null;
   const content = message.content;
   if (message.role === "user") {
-    const preview =
+    const rawPreview =
       typeof content === "string"
         ? content
         : Array.isArray(content)
           ? content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(" ")
           : "";
+    const preview = skillInvocationCommandText(rawPreview);
     return { role: "user", preview: preview.slice(0, 200), hasText: true };
   }
   const blocks = Array.isArray(content) ? content : [];

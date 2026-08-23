@@ -73,6 +73,23 @@ test("refreshAll reuses unchanged records and derives parent ids", async () => {
   });
 });
 
+test("uses the slash command instead of skill instructions as the session title fallback", async () => {
+  const expanded = `<skill name="review" location="/home/test/.pi/skills/review/SKILL.md">
+Private implementation instructions.
+</skill>
+
+Check the current change`;
+  writeSession("skill-first-message", { message: expanded, timestamp: "2026-08-02T12:00:00.000Z" });
+  const index = new SessionIndex();
+  await index.refreshAll();
+
+  const sessions = await index.getAll();
+  assert.equal(
+    sessions.find((session) => session.id === "skill-first-message").firstMessage,
+    "/skill:review Check the current change",
+  );
+});
+
 test("refreshPath updates only one changed file and removePath deletes it", async () => {
   const index = new SessionIndex();
   await index.refreshAll();

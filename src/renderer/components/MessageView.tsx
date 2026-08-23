@@ -12,6 +12,7 @@ import {
 } from "@/lib/message-display";
 import { getUserBubbleStyle } from "@/lib/channel-message-style";
 import { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelAttachmentCopyText } from "@shared/channel-message";
+import { parseSkillInvocation, skillInvocationCommandText, type SkillInvocation } from "@shared/skill-invocation";
 import { useI18n } from "@/i18n";
 import { useTheme } from "@/hooks/useTheme";
 import { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
@@ -238,6 +239,7 @@ function UserMessageView({
           .filter((b): b is TextContent => b.type === "text")
           .map((b) => b.text)
           .join("\n");
+  const skillInvocation = useMemo(() => parseSkillInvocation(content), [content]);
 
   const imageBlocks: ImageContent[] =
     typeof message.content === "string"
@@ -252,8 +254,12 @@ function UserMessageView({
     ? imageBlocks.length > 0
       ? ""
       : attachmentCopyContent || t("channelAttachment", "Attachment")
-    : content;
-  const copyableContent = isChannelAttachmentPlaceholder ? attachmentCopyContent : visibleContent;
+    : skillInvocation
+      ? (skillInvocation.userMessage ?? "")
+      : content;
+  const skillCommand = skillInvocation ? skillInvocationCommandText(content) : null;
+  const copyableContent = isChannelAttachmentPlaceholder ? attachmentCopyContent : (skillCommand ?? visibleContent);
+  const editableContent = skillCommand ?? content;
 
   const time = formatTime(message.timestamp);
   const messageSource = message.channelSource ?? "local";
@@ -293,6 +299,14 @@ function UserMessageView({
             wordBreak: "break-word",
           }}
         >
+          {skillInvocation && (
+            <SkillInvocationView
+              invocation={skillInvocation}
+              cwd={cwd}
+              onOpenFile={onOpenFile}
+              followedByContent={imageBlocks.length > 0 || Boolean(visibleContent)}
+            />
+          )}
           {imageBlocks.length > 0 && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: visibleContent ? 8 : 0 }}>
               {imageBlocks.map((img, i) => {
@@ -429,7 +443,7 @@ function UserMessageView({
                 type="button"
                 onClick={() => {
                   onNavigate!(prevAssistantEntryId!);
-                  onEditContent?.(content);
+                  onEditContent?.(editableContent);
                 }}
                 title="Edit from here — branches within this session"
                 style={{
@@ -524,6 +538,106 @@ function UserMessageView({
         )}
         {time && <span style={{ fontSize: scaledChatFont(12), color: "var(--text-dim)" }}>{time}</span>}
       </div>
+    </div>
+  );
+}
+
+function SkillInvocationView({
+  invocation,
+  cwd,
+  onOpenFile,
+  followedByContent,
+}: {
+  invocation: SkillInvocation;
+  cwd?: string;
+  onOpenFile?: (filePath: string) => void;
+  followedByContent: boolean;
+}) {
+  const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const toggleTitle = expanded
+    ? t("collapseSkillInvocation", "Hide skill instructions")
+    : t("expandSkillInvocation", "Show skill instructions");
+
+  return (
+    <div
+      data-testid="skill-invocation"
+      data-skill-name={invocation.name}
+      style={{
+        overflow: "hidden",
+        marginBottom: followedByContent ? 8 : 0,
+        border: "1px solid color-mix(in srgb, var(--border) 80%, transparent)",
+        borderRadius: 7,
+        background: "color-mix(in srgb, var(--bg) 88%, transparent)",
+        color: "var(--text)",
+      }}
+    >
+      <button
+        type="button"
+        className="skill-invocation-toggle"
+        aria-expanded={expanded}
+        title={toggleTitle}
+        onClick={() => setExpanded((value) => !value)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "7px 9px",
+          borderBottom: expanded ? "1px solid var(--border)" : "none",
+          background: "color-mix(in srgb, var(--bg-panel) 82%, transparent)",
+          color: "var(--text-muted)",
+        }}
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          style={{
+            flexShrink: 0,
+            transform: expanded ? "rotate(90deg)" : "none",
+            transition: "transform 0.15s",
+          }}
+        >
+          <polyline points="4 2.5 7.5 6 4 9.5" />
+        </svg>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: scaledChatFont(11), fontWeight: 650 }}>
+          {t("skillInvocation", "skill")}
+        </span>
+        <span
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            color: "var(--text)",
+            fontSize: scaledChatFont(12),
+            fontWeight: 600,
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {invocation.name}
+        </span>
+      </button>
+
+      {expanded && (
+        <div
+          style={{
+            maxHeight: "min(52vh, 480px)",
+            overflowY: "auto",
+            padding: "10px 12px 11px",
+            overflowWrap: "anywhere",
+          }}
+        >
+          <MarkdownBody className="markdown-skill-invocation" cwd={cwd} onOpenFile={onOpenFile}>
+            {invocation.content}
+          </MarkdownBody>
+        </div>
+      )}
     </div>
   );
 }

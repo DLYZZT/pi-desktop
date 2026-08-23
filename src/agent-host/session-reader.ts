@@ -15,6 +15,7 @@ import type {
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "../shared/normalize";
 import { resolveProject, type ProjectInfo } from "../shared/worktree";
+import { skillInvocationCommandText } from "../shared/skill-invocation";
 import { sessionIndex } from "./session-index";
 
 export { getAgentDir };
@@ -57,7 +58,7 @@ async function listAllSessionsFallback(): Promise<SessionInfo[]> {
       created: s.created instanceof Date ? s.created.toISOString() : String(s.created),
       modified: s.modified instanceof Date ? s.modified.toISOString() : String(s.modified),
       messageCount: s.messageCount,
-      firstMessage: s.firstMessage || "(no messages)",
+      firstMessage: skillInvocationCommandText(s.firstMessage || "(no messages)"),
       parentSessionId: s.parentSessionPath ? pathToId.get(s.parentSessionPath) : undefined,
       projectRoot: project?.projectRoot ?? s.cwd,
       ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
@@ -149,7 +150,9 @@ export async function buildSessionInfoFromManager(
     const activityTime = getMessageActivityTime(entry);
     if (activityTime !== undefined) lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
     const message = entry.message as unknown as { role?: unknown };
-    if (!firstMessage && message.role === "user") firstMessage = getMessageTextContent(entry.message);
+    if (!firstMessage && message.role === "user") {
+      firstMessage = skillInvocationCommandText(getMessageTextContent(entry.message));
+    }
   }
 
   const headerTime = Date.parse(header.timestamp);
