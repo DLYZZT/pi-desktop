@@ -314,7 +314,7 @@ try {
   active = await start(
     "Spring Boot mvnw.cmd",
     springApp,
-    `MAVEN_USER_HOME=${quote(mavenUserHome)} ${quote(path.join(springApp, "mvnw.cmd"))} -q spring-boot:run`,
+    `MAVEN_USER_HOME=${quote(mavenUserHome)} ${quote(path.join(springApp, "mvnw.cmd"))} -q -DskipTests compile spring-boot:run`,
     "Started",
     javaUnicodeFixture,
   );
