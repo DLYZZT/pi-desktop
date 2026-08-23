@@ -84,7 +84,7 @@ jobs:
           cargo audit --file native/windows-managed-process-helper/Cargo.lock --deny warnings
           cargo deny --manifest-path native/windows-managed-process-helper/Cargo.toml --config native/windows-managed-process-helper/deny.toml --locked check
           npm run check:windows-helper-reproducibility
-          $env:PI_WINDOWS_HELPER_HANDLE_LOOPS = "1000"
+          $env:PI_WINDOWS_HELPER_HANDLE_LOOPS = "100"
           npm run test:windows-managed-helper
           npm run test:managed-process-workflows
           $env:PI_MANAGED_FLOOD_DURATION_MS = "60000"

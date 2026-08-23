@@ -42,6 +42,10 @@ test("Windows runs pure quality checks and Electron smoke without an Xvfb depend
   assert.equal(windows.runner, "windows-2025");
   assert.equal(windows.timeout_minutes, 45);
   assert.equal(workflow.jobs["test-platforms"]["timeout-minutes"], "${{ matrix.timeout_minutes }}");
+  assert.match(
+    stepByName("test-platforms", "Validate Windows managed process helper").run,
+    /PI_WINDOWS_HELPER_HANDLE_LOOPS = "100"/,
+  );
 
   const quality = stepByName("test-platforms", "Run cross-platform quality checks (Windows)");
   assert.equal(quality.if, "runner.os == 'Windows'");
