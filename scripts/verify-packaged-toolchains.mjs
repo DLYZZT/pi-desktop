@@ -207,7 +207,10 @@ function verifyWindowsManagedProcessHelper(resources, toolTarget, executeHelper,
       cwd: root,
       env: { ...process.env, PI_WINDOWS_MANAGED_HELPER_RESOURCES_PATH: resources },
       encoding: "utf8",
-      timeout: 45_000,
+      // This is the full Windows containment suite, including GUI and optional
+      // Java/.NET runtime scenarios. Cold hosted runners routinely need more
+      // than 45 seconds even when every individual scenario is healthy.
+      timeout: 180_000,
       windowsHide: true,
     },
   );

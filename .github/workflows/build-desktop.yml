@@ -269,6 +269,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Electron runtime for Windows acceptance
+        if: runner.os == 'Windows'
+        run: npx install-electron --no
+
       - name: Install pinned Rust toolchain (Windows)
         if: runner.os == 'Windows'
         run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc
@@ -284,7 +288,9 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           python -m pip install --disable-pip-version-check --no-input Flask==3.1.0 fastapi==0.128.0 uvicorn==0.40.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:windows-managed-helper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:managed-process-workflows
 
       - name: Prepare verified bundled search tools
@@ -749,6 +755,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Electron runtime for Windows acceptance
+        run: npx install-electron --no
+
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc
 
@@ -758,8 +767,11 @@ jobs:
       - name: Rebuild and test authoritative Windows helper
         run: |
           python -m pip install --disable-pip-version-check --no-input Flask==3.1.0 fastapi==0.128.0 uvicorn==0.40.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run check:windows-helper-reproducibility
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:windows-managed-helper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:managed-process-workflows
 
       - name: Prepare verified bundled search tools
