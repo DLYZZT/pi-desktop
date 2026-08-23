@@ -6,7 +6,7 @@
 
 **把 Pi Coding Agent 变成真正的桌面工作台。**
 
-本地优先 · 零本地服务器 · 跨平台应用
+本地优先 · 零内部服务器 · 跨平台应用
 
 [![Desktop Build](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml/badge.svg)](https://github.com/DLYZZT/pi-desktop/actions/workflows/build-desktop.yml)
 ![Electron 43](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)
@@ -16,7 +16,7 @@
 
 [English](./README.en.md) · **简体中文**
 
-[下载 v0.1.12](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.12) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
+[下载 v0.1.14](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.14) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
 
 </div>
 
@@ -60,6 +60,16 @@
 - 设置页管理全局默认与具体会话的永久权限，授权弹窗只产生当前会话的临时权限；高级浏览器模式由一个仅本次启动有效的本机开关统一控制
 - 高级浏览器模式整合三层 UA/Client Hints 身份、可信输入、CDP 网络抓包与确认后的写请求重放、JavaScript 经验库和专用高级 Profile；Agent 工具不接收或返回 Cookie value
 - 私网保护当前为明确标记的 best-effort；未部署受控网络沙箱时，Strict 模式会直接拒绝请求
+
+### 可观察、可控制的受管开发进程
+
+- 在受支持平台上让 Agent 用显式 `process_*` tools 持续运行 Vite、React、Three.js、Storybook、Flask、Spring Boot、mock API 和 watch build；普通短命令继续走 Bash
+- 右侧 Processes 面板展示 owner、状态、readiness、脱敏日志、loopback endpoint 和退出原因；用户可随时发送行式 stdin、停止、强制停止、重启、复制或导出日志
+- 框架页面使用受管 localhost 服务与内置 Browser 联调，进程权限与 Browser 授权保持分离；慢启动可复用日志 cursor 继续等待，不需要 shell `&`、nohup 或外部终端
+- macOS/Linux 使用 POSIX process group；Windows x64 使用经过完整性校验的 Rust helper 和 Job Object，helper、reaper 或 owner identity 未就绪时会 fail-closed
+- 功能默认关闭且不是安全沙箱：子进程拥有与 Agent Bash 相同的本机文件、网络和环境权限；常见 LAN bind 需要确认，Host/App 故障或退出时会有界清理进程树
+
+v0.1.14 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows ARM64、Windows Server 和 32 位 Windows 暂不支持。
 
 ### 围绕项目工作的文件体验
 
@@ -107,9 +117,9 @@
 
 ### 使用桌面安装包
 
-最新稳定版为 [v0.1.12](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.12)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
+最新稳定版为 [v0.1.14](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.14)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
 
-Pi Agent Desktop v0.1.12 已内置 Pi Coding Agent 0.84.0 运行时。普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
+Pi Agent Desktop v0.1.14 已内置 Pi Coding Agent 0.84.0 运行时。普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
 
 应用会读取 `~/.pi/agent/` 中的会话与配置。如果你已经使用 Pi CLI，可以直接复用现有数据，无需迁移；此前没有使用过 Pi CLI 也不影响使用。
 
@@ -118,7 +128,7 @@ Pi Desktop 会先发现并验证用户已经安装的 Node.js/npm、Python、Git
 ### 桌面安装包系统要求
 
 - macOS 12 Monterey 或更高版本，支持 Apple Silicon（arm64）和 Intel（x64）
-- Windows 10 或 Windows 11 64 位（x64）；推荐使用仍在常规安全支持期内的 Windows 11
+- Windows 10 或 Windows 11 64 位（x64）
 - Linux 64 位（x64）AppImage，需要现代 glibc 发行版和可用的桌面图形会话；当前采用手工下载安装更新
 - 暂不提供 Windows 32 位（x86）或 Windows ARM64 安装包
 
@@ -154,12 +164,16 @@ flowchart LR
     Host["Agent Host / utilityProcess<br/>Pi Agent · 会话 · 文件 · 配置"]
     UI["Renderer<br/>React 19 · Vite"]
     Browser["Main-owned WebContentsView<br/>远程网页 · Profile · 网络策略"]
+    Processes["受管项目进程<br/>dev server · watcher · mock API"]
     Data["~/.pi/agent/<br/>会话 · 模型 · 配置"]
 
     Main --> Host
     Main --> UI
     Main --> Browser
     Host -->|"revisioned Browser RPC"| Main
+    Host -->|"POSIX worker / Windows Job helper"| Processes
+    Main -.->|"crash reaper"| Processes
+    Browser -->|"独立授权的 localhost 访问"| Processes
     UI <-->|"Typed MessagePort IPC"| Host
     Host <--> Data
 ```
@@ -167,8 +181,8 @@ flowchart LR
 - **Main**：负责窗口生命周期、菜单、托盘、通知、软件更新、自定义协议和 Agent Host 监督
 - **Agent Host**：在独立 `utilityProcess` 中运行 Pi Coding Agent，处理会话、文件、配置与扩展
 - **Renderer**：运行 React UI，只通过受控的 preload bridge 与 Host 交互
-- **Browser View**：远程网页只进入 Main 创建的沙箱化 `WebContentsView`，不获得应用 preload、Node 或主 Renderer bridge
-- **无本地服务**：生产环境不监听 TCP 端口，也不需要附带 Web Server
+- **Browser View**：远程站点与 localhost 项目页只进入 Main 创建的沙箱化 `WebContentsView`，不获得应用 preload、Node 或主 Renderer bridge
+- **无内部本地服务**：应用不使用 TCP 端口承载 UI 或控制面；用户显式启动的受管项目服务可以监听 loopback
 
 ## 数据、安全与隐私
 
@@ -177,6 +191,7 @@ flowchart LR
 - Renderer 开启 Electron sandbox，并使用严格的 Content Security Policy
 - preload 只暴露受控桥接接口，Host RPC 由 TypeScript 契约约束
 - Agent Browser tools 与高级浏览器模式默认关闭；Main 在任何目标工具副作用前按 session、持久策略、临时 grant、lease 和 policy revision 逐次校验
+- 受管后台进程默认关闭，并要求受支持的平台与架构、项目 trust、Session cwd containment、健康的 crash reaper 和有界资源策略；Windows x64 还会校验 Rust helper 的固定路径、版本与完整性。它是生命周期控制，不是容器或沙箱
 - 更新客户端只使用正式包内固定的公开 GitHub Release 配置，不接收 Renderer 提供的更新地址或发布凭证
 - 微信和 Telegram 只发起出站 long polling，飞书/Lark 使用出站 WebSocket；均不开放 webhook 或本地监听端口
 - 模型请求的数据处理方式取决于你配置的模型提供商，请同时查看对应服务的隐私政策
@@ -185,31 +200,35 @@ flowchart LR
 
 ### 常用命令
 
-| 命令                            | 说明                                    |
-| ------------------------------- | --------------------------------------- |
-| `npm run dev`                   | 启动 Vite、主进程构建监听与 Electron    |
-| `npm run typecheck`             | 执行 TypeScript 类型检查                |
-| `npm run test`                  | 运行自动化测试套件                      |
-| `npm run check:contract`        | 检查 API 方法与 Host handler 覆盖关系   |
-| `npm run smoke`                 | 运行 Electron 冒烟测试                  |
-| `npm run test:browser-electron` | 运行本地 Browser Electron 集成测试      |
-| `npm run verify`                | 执行提交前的完整质量检查                |
-| `npm run build`                 | 构建 main、preload 与 renderer          |
-| `npm run pack`                  | 生成未封装的应用目录                    |
-| `npm run dist`                  | 生成当前平台配置的全部架构安装包        |
-| `npm run dist:mac:signed`       | 生成当前 Mac 架构的 Developer ID 签名包 |
-| `npm run dist:mac:notarized`    | 生成签名并经 Apple 公证的 macOS 包      |
+| 命令                                     | 说明                                          |
+| ---------------------------------------- | --------------------------------------------- |
+| `npm run dev`                            | 启动 Vite、主进程构建监听与 Electron          |
+| `npm run typecheck`                      | 执行 TypeScript 类型检查                      |
+| `npm run test`                           | 运行自动化测试套件                            |
+| `npm run check:contract`                 | 检查 API 方法与 Host handler 覆盖关系         |
+| `npm run smoke`                          | 运行 Electron 冒烟测试                        |
+| `npm run test:browser-electron`          | 运行本地 Browser Electron 集成测试            |
+| `npm run test:managed-process-workflows` | 运行受管进程生命周期与清理测试                |
+| `npm run test:windows-managed-helper`    | 在 Windows x64 验收 Rust helper 与 Job Object |
+| `npm run verify`                         | 执行提交前的完整质量检查                      |
+| `npm run build`                          | 构建 main、preload 与 renderer                |
+| `npm run pack`                           | 生成未封装的应用目录                          |
+| `npm run dist`                           | 生成当前平台配置的全部架构安装包              |
+| `npm run dist:mac:signed`                | 生成当前 Mac 架构的 Developer ID 签名包       |
+| `npm run dist:mac:notarized`             | 生成签名并经 Apple 公证的 macOS 包            |
 
 ### 项目结构
 
 ```text
 src/
 ├── contract/      # IPC 类型契约与 RPC 层
-├── main/          # Electron 主进程
+├── main/          # Electron 主进程与 crash reaper
 ├── preload/       # 安全桥接接口
-├── agent-host/    # Agent、会话、文件、配置与 watcher
+├── agent-host/    # Agent、会话、文件、配置与受管进程
 ├── renderer/      # React 桌面界面
 └── shared/        # 可测试的纯函数与共享模块
+native/
+└── windows-managed-process-helper/  # Windows x64 Rust / Job Object helper
 ```
 
 欢迎通过 [Issues](https://github.com/DLYZZT/pi-desktop/issues) 提交问题或建议，也欢迎直接发起 Pull Request。提交代码前请至少运行：
@@ -231,6 +250,8 @@ npm run verify
 - [x] 首个同时包含 macOS 与 Windows 正式资产的 Release 验收（v0.1.1）
 - [x] 实现主进程稳定版检查、用户确认下载、重启安装和设置界面
 - [x] 实现 Main-owned WebContentsView 内置浏览器、按需 Agent 会话授权和统一高级浏览器模式
+- [x] 实现 macOS/Linux 受管后台进程、Agent tools、Processes UI、日志游标与 crash reaper
+- [x] 实现 Windows x64 Rust helper、Job Object containment、打包门禁与 Windows 11 验收
 - [x] 完成 updater-enabled 基线到更高版本的 macOS 与 Windows 端到端升级验证
 - [x] macOS arm64/x64、Windows x64、Linux x64 安装包生产启动 E2E 与发布前检查
 
