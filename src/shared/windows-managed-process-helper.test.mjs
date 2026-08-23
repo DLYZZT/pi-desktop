@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -43,7 +43,7 @@ test("Windows helper resolution accepts only the fixed development or packaged d
     verifyExecutable: false,
   });
   assert.equal(dev.ok, true);
-  assert.equal(dev.descriptor.path, path.join(development.directory, development.manifest.file));
+  assert.equal(dev.descriptor.path, await realpath(path.join(development.directory, development.manifest.file)));
 
   const packaged = await fixture(true);
   const release = resolveWindowsManagedProcessHelper({
@@ -53,7 +53,7 @@ test("Windows helper resolution accepts only the fixed development or packaged d
     verifyExecutable: false,
   });
   assert.equal(release.ok, true);
-  assert.equal(release.descriptor.path, path.join(packaged.directory, packaged.manifest.file));
+  assert.equal(release.descriptor.path, await realpath(path.join(packaged.directory, packaged.manifest.file)));
 });
 
 test("Windows helper resolution fails closed on manifest drift and byte tampering", async () => {
