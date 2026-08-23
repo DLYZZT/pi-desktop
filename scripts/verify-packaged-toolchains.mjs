@@ -210,7 +210,7 @@ function verifyWindowsManagedProcessHelper(resources, toolTarget, executeHelper,
       // This is the full Windows containment suite, including GUI and optional
       // Java/.NET runtime scenarios. Cold hosted runners routinely need more
       // than 45 seconds even when every individual scenario is healthy.
-      timeout: 180_000,
+      timeout: 240_000,
       windowsHide: true,
     },
   );

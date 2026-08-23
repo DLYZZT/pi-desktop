@@ -805,7 +805,9 @@ try {
         `${bashQuote(dotnet)} watch --non-interactive --project ${bashQuote(dotnetProject)} run --no-launch-profile`,
         "DOTNET_WATCH_READY",
         fixture,
-        60_000,
+        // Fresh hosted runners may spend close to a minute restoring, building,
+        // and initializing dotnet watch before the application starts listening.
+        120_000,
       );
       dotnetWatch = true;
     }
