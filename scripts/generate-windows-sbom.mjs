@@ -580,6 +580,7 @@ export function collectWindowsSbomFacts(projectRoot = root) {
   if (process.platform !== "win32" || process.arch !== "x64") fail("Windows x64 is required");
   const packageJsonPath = path.join(projectRoot, "package.json");
   const packageLockPath = path.join(projectRoot, "package-lock.json");
+  const helperCrateRoot = path.join(projectRoot, "native", "windows-managed-process-helper");
   const helperRoot = path.join(projectRoot, "out", "native", "windows-managed-process-helper");
   const helperManifest = readJson(path.join(helperRoot, "manifest.json"));
   const helperBytes = fs.readFileSync(path.join(helperRoot, helperManifest.file));
@@ -594,8 +595,10 @@ export function collectWindowsSbomFacts(projectRoot = root) {
   );
   const rustToolchain = rustToolchainSource.match(/^channel\s*=\s*"(\d+\.\d+\.\d+)"$/mu)?.[1];
   if (!rustToolchain) fail("cannot parse rust-toolchain.toml");
-  const rustcOutput = runCapture("rustc", ["-Vv"], { cwd: projectRoot });
-  const cargoOutput = runCapture("cargo", ["-Vv"], { cwd: projectRoot });
+  // Run from the helper crate so rustup applies its checked-in
+  // rust-toolchain.toml, matching the authoritative native build.
+  const rustcOutput = runCapture("rustc", ["-Vv"], { cwd: helperCrateRoot });
+  const cargoOutput = runCapture("cargo", ["-Vv"], { cwd: helperCrateRoot });
   const rustc = parseVersion(rustcOutput, "rustc");
   const cargo = parseVersion(cargoOutput, "Cargo");
   const rustcLlvm = rustcOutput.match(/^LLVM version:\s*(\S+)$/mu)?.[1];
