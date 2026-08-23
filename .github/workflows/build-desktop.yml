@@ -74,6 +74,10 @@ jobs:
           cargo install cargo-audit --locked --version 0.22.2
           cargo install cargo-deny --locked --version 0.20.2
 
+      - name: Install Electron binary (Windows)
+        if: runner.os == 'Windows'
+        run: npx install-electron --no
+
       - name: Validate Windows managed process helper
         if: runner.os == 'Windows'
         run: |
