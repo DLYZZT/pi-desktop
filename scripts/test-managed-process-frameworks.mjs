@@ -312,7 +312,7 @@ try {
     process.env.PI_MAVEN_USER_HOME ?? path.join(root, ".artifacts", "maven-user-home-3.9.16"),
   );
   await mkdir(mavenUserHome, { recursive: true });
-  const springJar = path.join(springApp, "target", "fixture-0.0.1-SNAPSHOT.jar");
+  const springJar = "target/fixture-0.0.1-SNAPSHOT.jar";
   active = await start(
     "Spring Boot mvnw.cmd",
     springApp,
