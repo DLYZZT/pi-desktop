@@ -468,7 +468,7 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
         return this.fail(new Error("Windows helper returned an unsafe error"));
       }
       this.events.emit("event", { type: "error", subcode: value.subcode } satisfies ManagedProcessBackendEvent);
-      this.fail(new Error(value.subcode));
+      this.fail(new Error(`${value.subcode} (${value.win32Code})`));
       return;
     }
     if (frame.kind === WINDOWS_HELPER_KIND.pong) {
