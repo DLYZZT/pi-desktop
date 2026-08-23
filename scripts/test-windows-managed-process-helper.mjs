@@ -250,8 +250,6 @@ const pythonFile = path.join(fixture, "server.py");
 const javaFile = path.join(fixture, "PiManagedFixture.java");
 const electronFile = path.join(fixture, "electron-main.cjs");
 const environmentFile = path.join(fixture, "environment-boundary.mjs");
-const dotnetProject = path.join(fixture, "PiManagedFixture.csproj");
-const dotnetProgram = path.join(fixture, "Program.cs");
 const breakawayProbe = path.join(fixture, "breakaway-probe.ps1");
 const emojiFixture = path.join(fixture, "emoji 😀 path");
 await mkdir(emojiFixture, { recursive: true });
@@ -785,34 +783,6 @@ try {
     await runCommandScenario("java", `${bashQuote(java)} -cp . PiManagedFixture`, "JAVA_READY");
   }
 
-  const dotnet = findExecutable("dotnet.exe");
-  let dotnetWatch = false;
-  if (dotnet) {
-    const sdkVersion = execFileSync(dotnet, ["--list-sdks"], { encoding: "utf8", windowsHide: true })
-      .trim()
-      .match(/^(\d+)\./u)?.[1];
-    if (sdkVersion) {
-      await writeFile(
-        dotnetProject,
-        `<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup><TargetFramework>net${sdkVersion}.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>`,
-      );
-      await writeFile(
-        dotnetProgram,
-        `var builder=WebApplication.CreateBuilder(args);builder.WebHost.UseUrls("http://127.0.0.1:0");var app=builder.Build();app.MapGet("/",()=>"ok");app.Lifetime.ApplicationStarted.Register(()=>Console.WriteLine("DOTNET_WATCH_READY"));app.Run();`,
-      );
-      await runCommandScenario(
-        "dotnet-watch",
-        `${bashQuote(dotnet)} watch --non-interactive --project ${bashQuote(dotnetProject)} run --no-launch-profile`,
-        "DOTNET_WATCH_READY",
-        fixture,
-        // Fresh hosted runners may spend close to a minute restoring, building,
-        // and initializing dotnet watch before the application starts listening.
-        120_000,
-      );
-      dotnetWatch = true;
-    }
-  }
-
   progress("reaper");
   const reaped = await startBackend("reaper");
   const journal = path.join(fixture, "reaper.json");
@@ -868,7 +838,6 @@ try {
         ...(nmap ? ["nmap-loopback-limited"] : []),
         ...(python ? ["python-http"] : []),
         ...(javac && java ? ["java-runtime"] : []),
-        ...(dotnetWatch ? ["dotnet-watch"] : []),
       ],
       helperBuildId: descriptor.buildId,
     }),

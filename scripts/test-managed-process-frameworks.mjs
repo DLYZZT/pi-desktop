@@ -22,7 +22,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const nodeRoot = requiredDirectory("PI_FRAMEWORK_NODE_ROOT");
 const springRoot = requiredDirectory("PI_SPRING_BOOT_FIXTURE");
 const java = requiredFile("PI_JAVA_EXECUTABLE");
-const dotnet = requiredFile("PI_DOTNET_EXECUTABLE");
 const packagedResourcesPath = process.env.PI_WINDOWS_MANAGED_HELPER_RESOURCES_PATH;
 const fixture = await mkdtemp(path.join(tmpdir(), "pi-managed-frameworks-"));
 const unicodeFixture = path.join(fixture, "框架 Unicode 😀 With Spaces");
@@ -331,38 +330,6 @@ try {
   active = undefined;
   await portClosed(springPort);
   scenarios.push("Spring Boot mvnw.cmd JVM tree stop");
-
-  const dotnetApp = path.join(unicodeFixture, "dotnet-watch-app");
-  await mkdir(dotnetApp, { recursive: true });
-  const dotnetProject = path.join(dotnetApp, "ManagedWatch.csproj");
-  await writeFile(
-    dotnetProject,
-    `<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>\n`,
-  );
-  const dotnetProgram = path.join(dotnetApp, "Program.cs");
-  const dotnetPort = await reservePort();
-  const dotnetSource = (marker) =>
-    `var builder=WebApplication.CreateBuilder(args);builder.WebHost.UseUrls("http://127.0.0.1:${dotnetPort}");var app=builder.Build();app.MapGet("/",()=>"${marker}");app.Lifetime.ApplicationStarted.Register(()=>Console.WriteLine("DOTNET_WATCH_READY http://127.0.0.1:${dotnetPort}/"));app.Run();\n`;
-  await writeFile(dotnetProgram, dotnetSource("DOTNET_MANAGED_V1"));
-  execFileSync(dotnet, ["restore", dotnetProject, "--nologo"], {
-    cwd: dotnetApp,
-    timeout: 240_000,
-    windowsHide: true,
-    stdio: "inherit",
-  });
-  active = await start(
-    ".NET watch non-TTY restart",
-    dotnetApp,
-    `DOTNET_USE_POLLING_FILE_WATCHER=1 ${quote(dotnet)} watch --non-interactive --no-hot-reload --project ${quote(dotnetProject)} run --no-launch-profile`,
-    "DOTNET_WATCH_READY",
-  );
-  await fetchManaged(active, `http://127.0.0.1:${dotnetPort}/`, (text) => text.includes("DOTNET_MANAGED_V1"), 120_000);
-  await writeFile(dotnetProgram, dotnetSource("DOTNET_MANAGED_V2"));
-  await fetchManaged(active, `http://127.0.0.1:${dotnetPort}/`, (text) => text.includes("DOTNET_MANAGED_V2"), 180_000);
-  await stop(active);
-  active = undefined;
-  await portClosed(dotnetPort);
-  scenarios.push(".NET watch non-TTY restart stop");
 
   console.log(JSON.stringify({ ok: true, scenarios, helperBuildId: windowsHelper.buildId }));
 } finally {

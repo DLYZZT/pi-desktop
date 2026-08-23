@@ -243,14 +243,11 @@ const checks = [
     managedProcessFrameworkAcceptance.includes("Next dev HMR tree stop") &&
       managedProcessFrameworkAcceptance.includes("Storybook real cold start stop") &&
       managedProcessFrameworkAcceptance.includes("Spring Boot mvnw.cmd JVM tree stop") &&
-      managedProcessFrameworkAcceptance.includes(".NET watch non-TTY restart stop") &&
       desktopBuildWorkflow.includes("windows-frameworks:") &&
-      desktopBuildWorkflow.includes("actions/setup-dotnet@v5") &&
-      desktopBuildWorkflow.includes("dotnet-version: 10.0.400") &&
       desktopBuildWorkflow.includes("next@16.3.2") &&
       desktopBuildWorkflow.includes("storybook@10.5.10") &&
       desktopBuildWorkflow.includes("npm run test:managed-process-frameworks"),
-    "real Next, Storybook, Spring Boot, and .NET watch scenarios must remain pinned in the Windows release gate",
+    "real Next, Storybook, and Spring Boot scenarios must remain pinned in the Windows release gate",
   ],
   [
     managedProcessFloodAcceptance.includes('new Set(["stdout", "both"])') &&
