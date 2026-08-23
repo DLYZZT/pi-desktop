@@ -112,16 +112,19 @@ const service = new ManagedProcessService(
 );
 
 const producer = [
-  'const line = "x".repeat(10 * 1024 - 1) + "\\n";',
+  // Match the helper's 16 KiB drain buffer: 16 KiB every 16 ms is exactly
+  // 1 MiB/s while avoiding needless partial frames on constrained CI runners.
+  'const line = "x".repeat(16 * 1024 - 1) + "\\n";',
   `const streams = ${streamMode === "both" ? "[process.stdout, process.stderr]" : "[process.stdout]"};`,
   'process.stdin.setEncoding("utf8");',
-  "process.stdin.once('data', () => setInterval(() => { for (const stream of streams) stream.write(line); }, 10));",
+  "process.stdin.once('data', () => setInterval(() => { for (const stream of streams) stream.write(line); }, 16));",
   "console.log('FLOOD_READY');",
 ].join(" ");
 const quote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
 const command = `${quote(process.execPath)} -e ${quote(producer)}`;
 const rssBefore = process.memoryUsage().rss;
 const ticks = [];
+const slowTicks = [];
 let ticker;
 
 const started = [];
@@ -167,9 +170,12 @@ try {
   }
   process.stdout.write(`${JSON.stringify({ progress: "flood-running", durationMs })}\n`);
   let previousTick = performance.now();
+  const tickerStartedAt = previousTick;
   ticker = setInterval(() => {
     const current = performance.now();
-    ticks.push(Math.max(0, current - previousTick - 100));
+    const delayMs = Math.max(0, current - previousTick - 100);
+    ticks.push(delayMs);
+    if (delayMs >= 1_000) slowTicks.push({ elapsedMs: current - tickerStartedAt, delayMs });
     previousTick = current;
   }, 100);
   const readLatencies = [];
@@ -242,6 +248,7 @@ try {
     rssDeltaBytes: process.memoryUsage().rss - rssBefore,
     heartbeatDelayP99Ms: percentile(ticks, 0.99),
     heartbeatDelayMaxMs: Math.max(0, ...ticks),
+    heartbeatSlowTicks: slowTicks,
     readLatencyP99Ms: percentile(readLatencies, 0.99),
     stopMs,
     perProcess,

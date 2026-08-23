@@ -163,11 +163,11 @@ export async function resolveManagedProcessCwd(ownerCwd: string, requestedCwd?: 
 }
 
 export function sanitizeManagedProcessText(value: string): string {
-  return value
-    .replace(ANSI_OSC, "")
-    .replace(ANSI_CSI, "")
-    .replace(ANSI_SINGLE, "")
-    .replace(URL_CREDENTIALS, "$1[redacted]@")
+  let sanitized = value.replace(ANSI_OSC, "").replace(ANSI_CSI, "").replace(ANSI_SINGLE, "");
+  // URL_CREDENTIALS begins with an unconstrained scheme scan. Avoid its
+  // quadratic no-match path for the common case of long, URL-free build logs.
+  if (sanitized.includes("://")) sanitized = sanitized.replace(URL_CREDENTIALS, "$1[redacted]@");
+  return sanitized
     .replace(AUTHORIZATION_HEADER, "$1$2[redacted]")
     .replace(SECRET_CLI_ARGUMENT, "$1[redacted]")
     .replace(SECRET_ASSIGNMENT, (_match, key: string, separator: string) => `${key}${separator}[redacted]`)

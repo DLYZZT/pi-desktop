@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { performance } from "node:perf_hooks";
 import {
   ManagedProcessOutputBuffer,
   ManagedProcessOutputDecoder,
@@ -59,14 +60,22 @@ test("output sanitizer strips terminal controls and common secrets", () => {
   ring.append(
     "stdout",
     "\u001b]0;hostile title\u0007\u001b]52;c;evil\u0007\u001b]8;;https://evil.test\u0007link\u001b]8;;\u0007 " +
-      "\u001b[31mAuthorization: Bearer bearer-secret\u0000",
+      "\u001b[31mAuthorization: Bearer bearer-secret\u0000 https://user:pass@example.com/path",
   );
   const [record] = ring.read(undefined, 1024).records;
   assert.equal(record.text.includes("\u001b"), false);
   assert.match(record.text, /Authorization: \[redacted\]/i);
   assert.equal(record.text.includes("bearer-secret"), false);
+  assert.match(record.text, /https:\/\/\[redacted\]@example\.com\/path/u);
   assert.equal(record.text.includes("evil.test"), false);
   assert.equal(record.text.includes("\u0000"), false);
+});
+
+test("output sanitizer handles long URL-free flood lines without a quadratic scan", () => {
+  const ring = new ManagedProcessOutputBuffer("run-a");
+  const startedAt = performance.now();
+  ring.append("stdout", "x".repeat(64 * 1024));
+  assert.ok(performance.now() - startedAt < 250, "long URL-free output took too long to sanitize");
 });
 
 test("decoder replaces malformed utf8 without losing following output", () => {

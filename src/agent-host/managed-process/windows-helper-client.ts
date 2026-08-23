@@ -32,6 +32,8 @@ const PREPARE_TIMEOUT_MS = 5_000;
 const START_TIMEOUT_MS = 2_000;
 const PING_INTERVAL_MS = 15_000;
 const PING_TIMEOUT_MS = 10_000;
+const OUTPUT_FORWARD_RATE_BYTES_PER_SECOND = 128 * 1024;
+const OUTPUT_FORWARD_BURST_BYTES = 64 * 1024;
 const SAFE_HELPER_SUBCODES = new Set([
   "HELPER_PROTOCOL_MISMATCH",
   "HELPER_INVALID_FRAME",
@@ -153,9 +155,14 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
   private pingSequence = 0;
   private lastPongAt = Date.now();
   private lastPingTickAt = Date.now();
+  private failed = false;
   private discardOutput = false;
   private discardedOutputBytes = 0;
   private discardedOutputChunks = 0;
+  private readonly outputBudgets = {
+    stdout: { available: OUTPUT_FORWARD_BURST_BYTES, updatedAt: Date.now() },
+    stderr: { available: OUTPUT_FORWARD_BURST_BYTES, updatedAt: Date.now() },
+  };
 
   constructor(descriptor: WindowsManagedProcessHelperDescriptor, spawnProcess: typeof spawn = spawn) {
     this.descriptor = descriptor;
@@ -229,10 +236,10 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
     });
     helper.stdout?.on("data", (chunk: Buffer) => {
       helper.stdout?.pause();
-      setImmediate(() => {
+      setTimeout(() => {
         this.handleBytes(chunk);
         helper.stdout?.resume();
-      });
+      }, 0);
     });
     helper.stdout?.once("end", () => {
       try {
@@ -419,13 +426,14 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
       return;
     }
     if (frame.kind === WINDOWS_HELPER_KIND.stdout || frame.kind === WINDOWS_HELPER_KIND.stderr) {
-      if (this.discardOutput) {
+      const stream = frame.kind === WINDOWS_HELPER_KIND.stdout ? "stdout" : "stderr";
+      if (this.discardOutput || !this.consumeOutputBudget(stream, frame.payload.length)) {
         this.discardedOutputBytes += frame.payload.length;
         this.discardedOutputChunks += 1;
         return;
       }
       this.events.emit("event", {
-        type: frame.kind === WINDOWS_HELPER_KIND.stdout ? "stdout" : "stderr",
+        type: stream,
         bytes: frame.payload,
       } satisfies ManagedProcessBackendEvent);
       return;
@@ -441,13 +449,11 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
       ) {
         return this.fail(new Error("Invalid Windows helper output drop event"));
       }
-      this.events.emit("event", {
-        type: "output-dropped",
-        bytes: value.bytes as number,
-        chunks: value.chunks as number,
-      } satisfies ManagedProcessBackendEvent);
+      this.discardedOutputBytes += value.bytes as number;
+      this.discardedOutputChunks += value.chunks as number;
       return;
     }
+    this.flushDiscardedOutput();
     if (frame.kind === WINDOWS_HELPER_KIND.stdinClosed) {
       if (!exactKeys(value, [])) return this.fail(new Error("Invalid Windows helper stdin event"));
       this.events.emit("event", { type: "stdin-closed" } satisfies ManagedProcessBackendEvent);
@@ -506,6 +512,20 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
     } satisfies ManagedProcessBackendEvent);
     this.discardedOutputBytes = 0;
     this.discardedOutputChunks = 0;
+  }
+
+  private consumeOutputBudget(stream: "stdout" | "stderr", bytes: number): boolean {
+    const budget = this.outputBudgets[stream];
+    const now = Date.now();
+    const elapsedMs = Math.max(0, now - budget.updatedAt);
+    budget.available = Math.min(
+      OUTPUT_FORWARD_BURST_BYTES,
+      budget.available + (elapsedMs * OUTPUT_FORWARD_RATE_BYTES_PER_SECOND) / 1_000,
+    );
+    budget.updatedAt = now;
+    if (bytes > budget.available) return false;
+    budget.available -= bytes;
+    return true;
   }
 
   private validateHello(value: Record<string, unknown>): void {
@@ -608,6 +628,14 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
   }
 
   private fail(error: Error): void {
+    if (!this.failed) {
+      this.failed = true;
+      this.events.emit("event", {
+        type: "error",
+        subcode: "WINDOWS_HELPER_BACKEND_FAILED",
+        message: error.message,
+      } satisfies ManagedProcessBackendEvent);
+    }
     this.rejectWaiters(error);
     const child = this.process;
     if (child && child.exitCode === null && child.signalCode === null) {
