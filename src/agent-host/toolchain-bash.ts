@@ -1,6 +1,7 @@
 import { createLocalBashOperations, type BashToolOptions } from "@earendil-works/pi-coding-agent";
 import type { ToolExecutionContext } from "../shared/toolchains/types.ts";
 import { toolchainRuntime, type ToolchainRuntime } from "./toolchain-runtime.ts";
+import { sanitizeToolEnvironment } from "./tool-environment.ts";
 
 /** Build Bash options from one immutable project resolution. */
 export function createToolchainBashOptions(
@@ -34,7 +35,7 @@ export function createToolchainBashOptions(
     spawnHook(spawnContext) {
       return {
         ...spawnContext,
-        env: { ...spawnContext.env, ...context.shellEnv },
+        env: sanitizeToolEnvironment({ ...spawnContext.env, ...context.shellEnv }),
       };
     },
   };

@@ -39,6 +39,27 @@ const BLOCKED_COMMANDS: Array<{ pattern: RegExp; reason: string }> = [
   },
   { pattern: /(?:^|[;&|()\s])start\s+\/b(?:\s|$)/i, reason: "start /b is not supported by managed processes" },
   { pattern: /\bStart-Process\b/i, reason: "PowerShell Start-Process is not supported by managed processes" },
+  { pattern: /(?:^|[;&|()\s])runas(?:\.exe)?(?:\s|$)/i, reason: "elevated processes cannot be managed" },
+  {
+    pattern: /(?:^|[;&|()\s])schtasks(?:\.exe)?(?:\s|$)/i,
+    reason: "Task Scheduler processes are outside managed containment",
+  },
+  {
+    pattern: /(?:^|[;&|()\s])sc(?:\.exe)?\s+(?:create|start)(?:\s|$)/i,
+    reason: "Windows services are outside managed containment",
+  },
+  {
+    pattern: /(?:^|[;&|()\s])wmic(?:\.exe)?\s+process\s+call\s+create(?:\s|$)/i,
+    reason: "WMI-created processes are outside managed containment",
+  },
+  {
+    pattern: /(?:^|[;&|()\s])wt(?:\.exe)?(?:\s|$)/i,
+    reason: "external terminal processes are unmanaged",
+  },
+  {
+    pattern: /(?:^|[;&|()\s])cmd(?:\.exe)?\s+(?:\/d\s+)?(?:\/s\s+)?(?:\/c\s+)?start(?:\s|$)/i,
+    reason: "external terminal processes are unmanaged",
+  },
   { pattern: /(?:^|[^&])&\s*(?:$|[\r\n])/, reason: "background shell control is not allowed" },
   { pattern: /(?:^|[^&>])&(?![&>])(?=\s|$)/, reason: "background shell control is not allowed" },
   { pattern: /&!\s*(?:$|[\r\n])/, reason: "background shell control is not allowed" },

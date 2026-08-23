@@ -22,6 +22,13 @@ test("command policy blocks detach patterns and LAN binds", () => {
     "launchctl submit npm-run-dev",
     "open -a Terminal npm run dev",
     "Start-Process npm",
+    "runas /user:Administrator cmd.exe",
+    "schtasks /create /tn escaped /tr calc.exe",
+    "sc.exe create escaped binPath= calc.exe",
+    "sc start escaped",
+    "wmic process call create calc.exe",
+    "cmd.exe /d /s /c start cmd.exe",
+    "wt.exe cmd /c npm run dev",
   ]) {
     assert.throws(() => validateManagedProcessCommand(command), ManagedProcessPolicyError, command);
   }
@@ -31,6 +38,18 @@ test("command policy blocks detach patterns and LAN binds", () => {
   );
   assert.equal(validateManagedProcessCommand("npm run dev -- --host 127.0.0.1"), "npm run dev -- --host 127.0.0.1");
   assert.equal(validateManagedProcessCommand("npm run dev 2>&1"), "npm run dev 2>&1");
+  assert.equal(validateManagedProcessCommand("npm start"), "npm start");
+  assert.equal(validateManagedProcessCommand("cargo run --bin scanner"), "cargo run --bin scanner");
+});
+
+test("command policy accepts the exact 32 KiB worst-case escaping boundary and rejects one byte more", () => {
+  const exact = '\\"'.repeat((32 * 1024) / 2);
+  assert.equal(Buffer.byteLength(exact, "utf8"), 32 * 1024);
+  assert.equal(validateManagedProcessCommand(exact), exact);
+  assert.throws(
+    () => validateManagedProcessCommand(`${exact}x`),
+    (error) => error instanceof ManagedProcessPolicyError && error.code === "PROCESS_COMMAND_BLOCKED",
+  );
 });
 
 test("cwd must remain under real owner root", async () => {

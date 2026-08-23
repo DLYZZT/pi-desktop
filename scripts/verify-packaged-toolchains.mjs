@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { darwinCodeDigest } from "../src/main/toolchains/darwin-binary-integrity.ts";
 import { extractFile, listPackage } from "@electron/asar";
+import { verifyWindowsHelperPe } from "./windows-helper-pe.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const expectedPiVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).dependencies?.[
@@ -18,8 +19,10 @@ const argumentsList = process.argv.slice(2);
 const target = argumentsList.shift() ?? `${process.platform}-${process.arch}`;
 let outputArgument;
 let staticOnly = false;
+let requireReleaseHelper = false;
 for (const argument of argumentsList) {
   if (argument === "--static" && !staticOnly) staticOnly = true;
+  else if (argument === "--release-helper" && !requireReleaseHelper) requireReleaseHelper = true;
   else if (!argument.startsWith("--") && !outputArgument) outputArgument = argument;
   else {
     throw new Error(
@@ -37,11 +40,13 @@ const [expectedPlatform, expectedArch] = target.split("-");
 const layout = findPackagedLayout(dist, target);
 
 verifyPackagedResources(layout.resources, target);
+verifyWindowsManagedProcessHelper(layout.resources, target, !staticOnly, requireReleaseHelper);
 verifyPiRuntimeAssets(layout.resources, expectedPlatform, expectedArch);
 verifyBundledTools(layout.resources, expectedPlatform, expectedArch, !staticOnly);
 verifyLinuxSandbox(layout.executable, expectedPlatform);
 if (!staticOnly) {
   runPackagedStartup(layout.executable, target);
+  if (target === "win32-x64") runPackagedCleanupFaultValidation(layout.executable);
   if (layout.appImage) {
     verifyLinuxAppImageDesktopEntry(layout.appImage);
     // Extraction mode writes chrome-sandbox into a user-owned temporary directory, so it cannot retain the
@@ -67,7 +72,10 @@ function findPackagedLayout(directory, toolTarget) {
     if (expectedPlatform === "darwin" && normalized.endsWith(".app/Contents")) {
       resources = path.join(current, "Resources");
       executable = path.join(current, "MacOS", "Pi Agent Desktop");
-    } else if (/-unpacked$/i.test(path.basename(current))) {
+    } else if (
+      /-unpacked$/i.test(path.basename(current)) ||
+      (expectedPlatform === "win32" && path.resolve(current) === path.resolve(directory))
+    ) {
       resources = path.join(current, "resources");
       if (expectedPlatform === "win32") executable = path.join(current, "Pi Agent Desktop.exe");
       else if (expectedPlatform === "linux") executable = path.join(current, "pi-agent-desktop");
@@ -131,6 +139,101 @@ function verifyPackagedResources(resources, toolTarget) {
     if (/PortableGit-.*\.exe$/i.test(relative)) forbidden.push(relative);
   });
   if (forbidden.length > 0) throw new Error(`Packaged managed runtime residue: ${forbidden.join(", ")}`);
+}
+
+function verifyWindowsManagedProcessHelper(resources, toolTarget, executeHelper, requireReleaseProvenance) {
+  const helperRoot = path.join(resources, "managed-process");
+  if (toolTarget !== "win32-x64") {
+    if (fs.existsSync(helperRoot)) throw new Error("Windows managed process helper leaked into a non-Windows package");
+    return;
+  }
+  const targetRoot = path.join(helperRoot, "win32-x64");
+  assertExact(fs.readdirSync(helperRoot).sort(), ["win32-x64"], "managed process helper target directories");
+  assertExact(
+    fs.readdirSync(targetRoot).sort(),
+    ["manifest.json", "pi-managed-process-helper.exe"],
+    "managed process helper files",
+  );
+  const executable = path.join(targetRoot, "pi-managed-process-helper.exe");
+  const manifest = JSON.parse(fs.readFileSync(path.join(targetRoot, "manifest.json"), "utf8"));
+  const expectedKeys = [
+    "arch",
+    "buildId",
+    "file",
+    "protocolVersion",
+    "provenance",
+    "schemaVersion",
+    "sha256",
+    "sourceRevision",
+    "targetTriple",
+  ];
+  assertExact(Object.keys(manifest).sort(), expectedKeys, "managed process helper manifest keys");
+  if (
+    manifest.schemaVersion !== 1 ||
+    manifest.protocolVersion !== 1 ||
+    manifest.arch !== "x64" ||
+    manifest.file !== "pi-managed-process-helper.exe" ||
+    manifest.targetTriple !== "x86_64-pc-windows-msvc" ||
+    (requireReleaseProvenance && manifest.provenance !== "release-authoritative") ||
+    !/^[a-f0-9]{64}$/u.test(manifest.sha256) ||
+    createHash("sha256").update(fs.readFileSync(executable)).digest("hex") !== manifest.sha256
+  ) {
+    throw new Error("Packaged Windows managed process helper manifest or hash is invalid");
+  }
+  verifyWindowsHelperPe(executable);
+  if (!executeHelper) return;
+  for (const [mode, validate] of [
+    ["--version-json-v1", (value) => value?.buildId === manifest.buildId && value?.protocolVersion === 1],
+    ["--self-test-json-v1", (value) => value?.ok === true && value?.buildId === manifest.buildId],
+  ]) {
+    const result = spawnSync(executable, [mode], { encoding: "utf8", windowsHide: true });
+    if (result.status !== 0) throw new Error(`Packaged managed process helper ${mode} failed`);
+    let value;
+    try {
+      value = JSON.parse(result.stdout);
+    } catch {
+      throw new Error(`Packaged managed process helper ${mode} returned malformed JSON`);
+    }
+    if (!validate(value)) throw new Error(`Packaged managed process helper ${mode} metadata mismatch`);
+  }
+  const integration = spawnSync(
+    process.execPath,
+    [
+      "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
+      "--experimental-strip-types",
+      path.join(root, "scripts", "test-windows-managed-process-helper.mjs"),
+    ],
+    {
+      cwd: root,
+      env: { ...process.env, PI_WINDOWS_MANAGED_HELPER_RESOURCES_PATH: resources },
+      encoding: "utf8",
+      timeout: 45_000,
+      windowsHide: true,
+    },
+  );
+  if (integration.status !== 0 || integration.signal || integration.error) {
+    throw new Error(
+      `Packaged managed process helper integration failed: ${integration.error?.message ?? integration.stderr ?? integration.signal ?? integration.status}`,
+    );
+  }
+  let report;
+  for (const line of integration.stdout.trim().split(/\r?\n/u).reverse()) {
+    try {
+      const candidate = JSON.parse(line);
+      if (candidate?.ok === true) {
+        report = candidate;
+        break;
+      }
+    } catch {
+      // Progress and diagnostics are not the final machine-readable report.
+    }
+  }
+  if (!report) {
+    throw new Error("Packaged managed process helper integration returned malformed output");
+  }
+  if (report?.ok !== true || !report.scenarios?.includes("reaper-identity-fail-closed")) {
+    throw new Error("Packaged managed process helper integration did not complete the required scenarios");
+  }
 }
 
 function verifyPiRuntimeAssets(resources, platform, arch) {
@@ -327,6 +430,63 @@ function runPackagedStartup(executable, toolTarget, environmentPatch = {}, extra
       report.hostAckRevision !== report.revision
     ) {
       throw new Error(`Invalid packaged startup report: ${JSON.stringify(report)}`);
+    }
+  } finally {
+    fs.rmSync(isolated, { recursive: true, force: true });
+  }
+}
+
+function runPackagedCleanupFaultValidation(executable) {
+  const isolated = fs.mkdtempSync(path.join(os.tmpdir(), "pi-packaged-cleanup-fault-"));
+  const userData = path.join(isolated, "user-data");
+  try {
+    const result = spawnSync(
+      executable,
+      [`--user-data-dir=${userData}`, "--validate-packaged-cleanup-fault", "--disable-gpu"],
+      {
+        cwd: path.dirname(executable),
+        env: {
+          ...process.env,
+          HOME: isolated,
+          USERPROFILE: isolated,
+          APPDATA: path.join(isolated, "AppData", "Roaming"),
+          LOCALAPPDATA: path.join(isolated, "AppData", "Local"),
+          TMP: isolated,
+          TEMP: isolated,
+          ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+        windowsHide: true,
+      },
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(
+        `Packaged cleanup fault validation exited ${result.status}: ${[result.stdout, result.stderr]
+          .filter(Boolean)
+          .join("\n")
+          .slice(-4_000)}`,
+      );
+    }
+    const reports = [];
+    walkFiles(isolated, (file) => {
+      if (path.basename(file) === "packaged-cleanup-fault-check.json") reports.push(file);
+    });
+    if (reports.length !== 1) throw new Error(`Expected one packaged cleanup fault report, found ${reports.length}`);
+    const report = JSON.parse(fs.readFileSync(reports[0], "utf8"));
+    if (
+      report.ok !== true ||
+      report.productionDeadlineMs !== 15_000 ||
+      report.ordinaryQuitCompleted !== true ||
+      report.journalRetained !== true ||
+      report.installRejected !== true ||
+      report.installerLaunches !== 0 ||
+      report.recoveries !== 1 ||
+      report.updatePhase !== "error" ||
+      report.canRetry !== true
+    ) {
+      throw new Error(`Invalid packaged cleanup fault report: ${JSON.stringify(report)}`);
     }
   } finally {
     fs.rmSync(isolated, { recursive: true, force: true });

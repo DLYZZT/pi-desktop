@@ -27,9 +27,18 @@ test("managed process UI exposes lifecycle controls and independent Browser open
   assert.match(shell, /activateUi/);
 });
 
-test("managed process setting defaults off and is unavailable on Windows", () => {
+test("managed process setting defaults off and follows the Main capability projection", () => {
   assert.match(settings, /useState\(false\)/);
-  assert.match(settings, /platform === "win32"/);
+  assert.match(settings, /getManagedProcessCapability/);
+  assert.match(settings, /managedProcessCapability\?\.ready/);
+  assert.doesNotMatch(settings, /window\.piBridge\.platform === "win32"/);
   assert.match(settings, /managedProcessesEnabled/);
   assert.match(settings, /not a sandbox/);
+});
+
+test("containment failures are explicit and retain stop-all plus diagnostics actions", () => {
+  assert.match(panel, /selected\.state === "lost"/);
+  assert.match(panel, /call\("processes\.stopAll"/);
+  assert.match(panel, /exportDiagnostics/);
+  assert.match(panel, /role="alert"/);
 });

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -7,6 +7,7 @@ import type { RpcServer } from "../../contract/rpc.ts";
 import type {
   ManagedLoopbackEndpoint,
   ManagedProcessChangedEvent,
+  ManagedProcessCapability,
   ManagedProcessErrorCode,
   ManagedProcessExit,
   ManagedProcessKind,
@@ -27,7 +28,7 @@ import type {
   ManagedProcessWriteParams,
 } from "../../contract/processes.ts";
 import { isManagedProcessActiveState } from "../../contract/processes.ts";
-import type { ToolExecutionContext } from "../../shared/toolchains/types.ts";
+import type { CommandDescriptor, ToolExecutionContext } from "../../shared/toolchains/types.ts";
 import {
   MANAGED_PROCESS_LIMITS,
   ManagedProcessPolicyError,
@@ -44,15 +45,18 @@ import {
 } from "../../shared/managed-process-policy.ts";
 import { ToolchainError } from "../../shared/toolchains/errors.ts";
 import { callMain } from "../parent-rpc.ts";
-import { getProcessStartFingerprint, terminatePosixProcessGroup, terminateProcessTree } from "../process-tree.ts";
+import { getProcessStartFingerprint, terminatePosixProcessGroup } from "../process-tree.ts";
 import { toolchainRuntime, type ToolchainRuntime } from "../toolchain-runtime.ts";
 import { ManagedProcessOutputBuffer, ManagedProcessOutputDecoder, parseManagedProcessCursor } from "./output-buffer.ts";
-import type { ManagedProcessWorkerEvent, ManagedProcessWorkerRequest } from "./protocol.ts";
+import type { ManagedProcessBackend, ManagedProcessBackendEvent } from "./backend.ts";
+import { PosixManagedProcessBackend } from "./posix-backend.ts";
+import { WindowsJobProcessBackend } from "./windows-helper-client.ts";
+import type { WindowsManagedProcessHelperDescriptor } from "../../shared/windows-managed-process-helper.ts";
+import { getManagedProcessOwnerIdentity } from "./owner-identity.ts";
 
 const OUTPUT_NOTIFY_MS = 100;
 const START_RATE_WINDOW_MS = 60_000;
 const START_RATE_LIMIT = 12;
-const WORKER_START_TIMEOUT_MS = 10_000;
 const STOP_TOTAL_TIMEOUT_MS = 8_500;
 const HOST_INSTANCE_ID = randomUUID();
 
@@ -84,8 +88,8 @@ type ManagedRecord = {
   exit?: ManagedProcessExit;
   output: ManagedProcessOutputBuffer;
   decoder: ManagedProcessOutputDecoder;
-  worker?: ChildProcess;
-  workerStarted?: Deferred;
+  backend?: ManagedProcessBackend;
+  removeBackendListener?: () => void;
   finish?: Deferred;
   stopSource?: ManagedProcessStopSource;
   userStopBarrier: boolean;
@@ -107,6 +111,9 @@ export interface ManagedProcessServiceOptions {
   parentCall?: typeof callMain;
   fingerprint?: typeof getProcessStartFingerprint;
   now?: () => number;
+  arch?: NodeJS.Architecture;
+  posixBackendFactory?: () => ManagedProcessBackend;
+  windowsBackendFactory?: (descriptor: WindowsManagedProcessHelperDescriptor) => ManagedProcessBackend;
 }
 
 export class ManagedProcessError extends Error {
@@ -157,18 +164,6 @@ function safeWorkerEntryPath(): string {
   return path.join(path.dirname(fileURLToPath(import.meta.url)), "managed-process-worker.mjs");
 }
 
-function cleanEnvironment(context: ToolExecutionContext, processId: string, runId: string): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(context.shellEnv)) {
-    if (typeof value === "string") environment[key] = value;
-  }
-  environment.ELECTRON_RUN_AS_NODE = "1";
-  environment.PI_DESKTOP_MANAGED_PROCESS = "1";
-  environment.PI_DESKTOP_MANAGED_PROCESS_ID = processId;
-  environment.PI_DESKTOP_MANAGED_RUN_ID = runId;
-  return environment;
-}
-
 function terminalState(state: ManagedProcessState): boolean {
   return !isManagedProcessActiveState(state);
 }
@@ -191,31 +186,45 @@ function boundedSystemMessage(value: string): string {
 export class ManagedProcessService {
   private readonly server: Pick<RpcServer, "emit">;
   private readonly platform: NodeJS.Platform;
+  private readonly arch: NodeJS.Architecture;
   private readonly runtime: ToolchainRuntime;
-  private readonly spawnProcess: typeof spawn;
-  private readonly terminateProcessGroup: typeof terminatePosixProcessGroup;
-  private readonly workerEntryPath: string;
-  private readonly workerExecArgv: string[];
   private readonly parentCall: typeof callMain;
-  private readonly fingerprint: typeof getProcessStartFingerprint;
   private readonly now: () => number;
+  private readonly posixBackendFactory: () => ManagedProcessBackend;
+  private readonly windowsBackendFactory: (descriptor: WindowsManagedProcessHelperDescriptor) => ManagedProcessBackend;
   private readonly records = new Map<string, ManagedRecord>();
   private readonly startTimes: number[] = [];
   private revision = 0;
   private shuttingDown = false;
   private containmentFailed = false;
+  private windowsHelper?: WindowsManagedProcessHelperDescriptor;
 
   constructor(server: Pick<RpcServer, "emit">, options: ManagedProcessServiceOptions = {}) {
     this.server = server;
     this.platform = options.platform ?? process.platform;
+    this.arch = options.arch ?? process.arch;
     this.runtime = options.runtime ?? toolchainRuntime;
-    this.spawnProcess = options.spawnProcess ?? spawn;
-    this.terminateProcessGroup = options.terminateProcessGroup ?? terminatePosixProcessGroup;
-    this.workerEntryPath = options.workerEntryPath ?? safeWorkerEntryPath();
-    this.workerExecArgv = [...(options.workerExecArgv ?? [])];
     this.parentCall = options.parentCall ?? callMain;
-    this.fingerprint = options.fingerprint ?? getProcessStartFingerprint;
     this.now = options.now ?? Date.now;
+    this.posixBackendFactory =
+      options.posixBackendFactory ??
+      (() => {
+        if (this.platform !== "darwin" && this.platform !== "linux") {
+          throw new Error("POSIX managed process backend is unavailable on this platform");
+        }
+        return new PosixManagedProcessBackend({
+          platform: this.platform,
+          workerEntryPath: options.workerEntryPath ?? safeWorkerEntryPath(),
+          workerExecArgv: options.workerExecArgv,
+          hostInstanceId: HOST_INSTANCE_ID,
+          spawnProcess: options.spawnProcess ?? spawn,
+          fingerprint: options.fingerprint ?? getProcessStartFingerprint,
+          terminateProcessGroup: options.terminateProcessGroup ?? terminatePosixProcessGroup,
+          now: this.now,
+        });
+      });
+    this.windowsBackendFactory =
+      options.windowsBackendFactory ?? ((descriptor) => new WindowsJobProcessBackend(descriptor));
   }
 
   getRevision(): number {
@@ -302,7 +311,7 @@ export class ManagedProcessService {
     this.emitChanged(record, "created");
 
     const onAbort = () => {
-      if (!record.worker || terminalState(record.state)) return;
+      if (!record.backend || terminalState(record.state)) return;
       void this.stop(record.processId, record.runId, "graceful", "agent", record.ownerSessionId).catch(() => undefined);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -423,20 +432,18 @@ export class ManagedProcessService {
     if (record.state !== "running" && record.state !== "ready") {
       throw new ManagedProcessError("PROCESS_NOT_RUNNING", "Managed process is not running");
     }
-    if (!record.stdinOpen || !record.worker?.connected) {
+    if (!record.stdinOpen || !record.backend) {
       throw new ManagedProcessError("PROCESS_STDIN_CLOSED", "Managed process stdin is closed");
     }
     if (typeof params.text !== "string" || Buffer.byteLength(params.text, "utf8") > MANAGED_PROCESS_LIMITS.stdinBytes) {
       throw new ManagedProcessError("PROCESS_LIMIT_REACHED", "stdin write exceeds the 64 KiB limit");
     }
     this.assertStdinRate(record, Buffer.byteLength(params.text, "utf8"));
-    const message: ManagedProcessWorkerRequest = {
-      type: "stdin",
+    record.backend.write({
       text: params.text,
       appendNewline: params.appendNewline !== false,
       close: params.close === true,
-    };
-    record.worker.send(message);
+    });
     if (params.close) record.stdinOpen = false;
     this.emitChanged(record, "state");
     return { ok: true, runId: record.runId };
@@ -457,7 +464,7 @@ export class ManagedProcessService {
     record.state = "stopping";
     this.append(record, "system", `Stop requested by ${source} (${mode})`);
     this.emitChanged(record, "state");
-    if (!record.worker) {
+    if (!record.backend) {
       record.state = "killed";
       record.stoppedAt = this.now();
       record.stdinOpen = false;
@@ -466,13 +473,10 @@ export class ManagedProcessService {
       this.emitChanged(record, "exit");
       return this.publicInfo(record);
     }
-    const message: ManagedProcessWorkerRequest = { type: "stop", mode, source };
-    if (record.worker.connected) {
-      try {
-        record.worker.send(message);
-      } catch {
-        /* fall through to direct process-tree cleanup */
-      }
+    try {
+      await record.backend.stop(mode, source);
+    } catch {
+      // The timeout cleanup below disposes the backend containment.
     }
     try {
       await timeout(
@@ -481,7 +485,17 @@ export class ManagedProcessService {
         "Managed process did not stop in time",
       );
     } catch (error) {
-      if (record.worker) await terminateProcessTree(record.worker, 1_000);
+      await record.backend.dispose();
+      if (!terminalState(record.state)) {
+        this.containmentFailed = true;
+        record.state = "lost";
+        record.stoppedAt = this.now();
+        record.stdinOpen = false;
+        record.exit = { code: null, reason: "host-failure", stoppedBy: source, finishedAt: this.now() };
+        this.append(record, "system", "Managed process cleanup could not be verified; new starts are disabled");
+        this.emitChanged(record, "exit");
+        record.finish?.resolve();
+      }
       if (!terminalState(record.state)) {
         record.state = "killed";
         record.stoppedAt = this.now();
@@ -548,8 +562,9 @@ export class ManagedProcessService {
     record.networkWarnings = managedProcessNetworkWarnings(record.command);
     record.output = new ManagedProcessOutputBuffer(record.runId);
     record.decoder = this.createDecoder(record);
-    record.worker = undefined;
-    record.workerStarted = undefined;
+    record.removeBackendListener?.();
+    record.backend = undefined;
+    record.removeBackendListener = undefined;
     record.finish = undefined;
     record.reaper = undefined;
     record.reaperRegistered = false;
@@ -685,7 +700,10 @@ export class ManagedProcessService {
   }
 
   private createDecoder(record: ManagedRecord): ManagedProcessOutputDecoder {
-    return new ManagedProcessOutputDecoder((stream, line) => this.append(record, stream, line));
+    return new ManagedProcessOutputDecoder(
+      (stream, line) => this.append(record, stream, line),
+      () => this.append(record, "system", "Output may use a non-UTF-8 encoding; invalid bytes were replaced"),
+    );
   }
 
   private async assertStartEnabled(): Promise<void> {
@@ -695,27 +713,48 @@ export class ManagedProcessService {
         "Managed process containment failed; restart the app after reviewing the Processes panel",
       );
     }
-    if (this.platform === "win32") {
-      throw new ManagedProcessError(
-        "PROCESS_PLATFORM_UNSUPPORTED",
-        "Managed processes are not available on Windows v1",
-      );
+    if (this.platform === "win32" && this.arch !== "x64") {
+      throw new ManagedProcessError("PROCESS_PLATFORM_UNSUPPORTED", "Managed processes require Windows x64");
     }
-    if (this.platform !== "darwin" && this.platform !== "linux") {
+    if (this.platform !== "darwin" && this.platform !== "linux" && this.platform !== "win32") {
       throw new ManagedProcessError(
         "PROCESS_PLATFORM_UNSUPPORTED",
         "Managed processes are not available on this platform",
       );
     }
-    const setting = await this.parentCall<{ enabled?: boolean; reaperReady?: boolean }>(
-      "managedProcesses.getSettings",
-      undefined,
-      5_000,
-    );
+    const setting = await this.parentCall<{
+      enabled?: boolean;
+      reaperReady?: boolean;
+      capability?: ManagedProcessCapability;
+      windowsHelper?: WindowsManagedProcessHelperDescriptor;
+    }>("managedProcesses.getSettings", undefined, 5_000);
     if (!setting.enabled)
-      throw new ManagedProcessError("PROCESS_FEATURE_DISABLED", "Enable Managed Processes in Settings first");
+      throw new ManagedProcessError(
+        setting.capability?.supported === true && setting.capability.ready === false
+          ? "PROCESS_CONTAINMENT_UNAVAILABLE"
+          : "PROCESS_FEATURE_DISABLED",
+        setting.capability?.ready === false
+          ? "Managed process containment is not ready"
+          : "Enable Managed Processes in Settings first",
+        setting.capability?.errorCode ? { subcode: setting.capability.errorCode } : undefined,
+      );
     if (!setting.reaperReady) {
       throw new ManagedProcessError("PROCESS_CONTAINMENT_UNAVAILABLE", "Managed process crash recovery is not ready");
+    }
+    if (this.platform === "win32") {
+      if (
+        setting.capability?.backend !== "windows-job" ||
+        setting.capability.ready !== true ||
+        !setting.windowsHelper ||
+        !getManagedProcessOwnerIdentity()
+      ) {
+        throw new ManagedProcessError(
+          "PROCESS_CONTAINMENT_UNAVAILABLE",
+          "Windows managed process containment is not ready",
+          { subcode: setting.capability?.errorCode ?? "OWNER_IDENTITY_UNAVAILABLE" },
+        );
+      }
+      this.windowsHelper = setting.windowsHelper;
     }
   }
 
@@ -740,7 +779,6 @@ export class ManagedProcessService {
   private async startRun(record: ManagedRecord, trusted: boolean, signal?: AbortSignal): Promise<void> {
     record.state = "starting";
     record.finish = deferred();
-    record.workerStarted = deferred();
     this.append(record, "system", `Starting ${record.label}`);
     this.emitChanged(record, "state");
 
@@ -756,94 +794,164 @@ export class ManagedProcessService {
       throw new ManagedProcessError("PROCESS_USER_STOPPED", "The managed process was stopped while starting");
     }
     const shell = this.runtime.requireFromContext("shell.bash", context);
-    let worker: ChildProcess;
-    try {
-      worker = this.spawnProcess(process.execPath, [...this.workerExecArgv, this.workerEntryPath], {
-        cwd: record.cwd,
-        env: cleanEnvironment(context, record.processId, record.runId),
-        shell: false,
-        detached: true,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe", "ipc"],
-      });
-    } catch (error) {
-      throw new ManagedProcessError("PROCESS_CONTAINMENT_UNAVAILABLE", "Could not start the managed process worker", {
-        cause: error instanceof Error ? error.name : "unknown",
-      });
-    }
-    record.worker = worker;
-    worker.stdout?.on("data", (chunk: Buffer | string) => record.decoder.write("stdout", chunk));
-    worker.stderr?.on("data", (chunk: Buffer | string) => record.decoder.write("stderr", chunk));
-    worker.stdout?.once("end", () => record.decoder.end("stdout"));
-    worker.stderr?.once("end", () => record.decoder.end("stderr"));
-    worker.on("message", (message: ManagedProcessWorkerEvent) => this.handleWorkerEvent(record, worker, message));
-    worker.once("error", (error) => {
-      if (record.worker !== worker) return;
-      record.workerStarted?.reject(
-        new ManagedProcessError("PROCESS_CONTAINMENT_UNAVAILABLE", "Managed process worker failed to start"),
-      );
-      this.append(record, "system", boundedSystemMessage(error.message));
-    });
-    worker.once("close", (code, closeSignal) => {
-      void this.handleWorkerClose(record, worker, code, closeSignal);
-    });
-
-    const bootstrap: ManagedProcessWorkerRequest = {
-      type: "bootstrap",
-      processId: record.processId,
-      runId: record.runId,
-      cwd: record.cwd,
-      command: record.command,
-      shell: {
-        executable: shell.executable,
-        argvPrefix: [...shell.argvPrefix],
-        cwdSemantics: shell.cwdSemantics,
-      },
-    };
-    worker.send(bootstrap);
-    await timeout(
-      record.workerStarted.promise,
-      WORKER_START_TIMEOUT_MS,
-      "Managed process worker did not start",
-      "PROCESS_CONTAINMENT_UNAVAILABLE",
-    );
-    this.assertStartNotCancelled(signal);
-    if (terminalState(record.state) || worker.exitCode !== null || worker.signalCode !== null) {
-      await record.finish.promise;
+    if (this.platform === "win32") {
+      await this.startWindowsRun(record, context, shell, signal);
       return;
     }
-    if (!worker.pid)
-      throw new ManagedProcessError("PROCESS_CONTAINMENT_UNAVAILABLE", "Managed process worker has no PID");
-    const startFingerprint = await this.fingerprint(worker.pid);
-    if (!startFingerprint) {
-      await terminateProcessTree(worker, 500);
-      throw new ManagedProcessError("PROCESS_CONTAINMENT_UNAVAILABLE", "Could not verify managed process identity");
-    }
-    const reaper: ManagedProcessReaperRecord = {
-      version: 1,
-      processId: record.processId,
-      runId: record.runId,
-      hostInstanceId: HOST_INSTANCE_ID,
-      pid: worker.pid,
-      pgid: worker.pid,
-      startFingerprint,
-      nonce: randomUUID(),
-      createdAt: this.now(),
-    };
-    record.reaper = reaper;
+    await this.startPosixRun(record, context, shell, signal);
+  }
+
+  private async startPosixRun(
+    record: ManagedRecord,
+    context: ToolExecutionContext,
+    shell: CommandDescriptor,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const backend = this.posixBackendFactory();
+    record.backend = backend;
+    record.removeBackendListener = backend.onEvent((event) => this.handleBackendEvent(record, backend, event));
+    let prepared: Awaited<ReturnType<ManagedProcessBackend["prepare"]>>;
     try {
-      await this.parentCall("managedProcesses.register", { record: reaper }, 5_000);
-      record.reaperRegistered = true;
-    } catch {
-      await terminateProcessTree(worker, 500);
+      prepared = await backend.prepare(
+        {
+          processId: record.processId,
+          runId: record.runId,
+          cwd: record.cwd,
+          command: record.command,
+          shell: {
+            executable: shell.executable,
+            argvPrefix: [...shell.argvPrefix],
+            cwdSemantics: shell.cwdSemantics,
+          },
+          context,
+        },
+        signal,
+      );
+    } catch (error) {
       throw new ManagedProcessError(
         "PROCESS_CONTAINMENT_UNAVAILABLE",
-        "Could not register managed process crash recovery",
+        "POSIX managed process worker could not prepare containment",
+        { subcode: boundedSystemMessage(error instanceof Error ? error.message : "WORKER_START_FAILED") },
       );
     }
-    if (terminalState(record.state) || worker.exitCode !== null || worker.signalCode !== null) {
-      await record.finish.promise;
-      await this.unregisterReaper(record);
+    record.reaper = prepared.reaper;
+    let journalRevision: number;
+    try {
+      const registered = await this.parentCall<{ journalRevision?: number }>(
+        "managedProcesses.register",
+        { record: prepared.reaper },
+        5_000,
+      );
+      if (!Number.isSafeInteger(registered.journalRevision) || (registered.journalRevision ?? 0) <= 0) {
+        throw new Error("Invalid journal revision");
+      }
+      journalRevision = registered.journalRevision!;
+      record.reaperRegistered = true;
+    } catch {
+      await backend.dispose();
+      throw new ManagedProcessError(
+        "PROCESS_CONTAINMENT_UNAVAILABLE",
+        "Could not register POSIX managed process crash recovery",
+      );
+    }
+    try {
+      await backend.commit(prepared, journalRevision);
+    } catch (error) {
+      await backend.dispose();
+      throw new ManagedProcessError(
+        "PROCESS_CONTAINMENT_UNAVAILABLE",
+        "POSIX managed process worker could not commit containment",
+        { subcode: boundedSystemMessage(error instanceof Error ? error.message : "WORKER_COMMIT_FAILED") },
+      );
+    }
+    if (terminalState(record.state)) {
+      await record.finish?.promise;
+      return;
+    }
+    this.assertStartNotCancelled(signal);
+    if (record.userStopBarrier) {
+      await this.stop(record.processId, record.runId, "graceful", "user");
+      throw new ManagedProcessError("PROCESS_USER_STOPPED", "The user stopped this process while it was starting");
+    }
+    if ((record.state as ManagedProcessState) !== "ready") record.state = "running";
+    record.startedAt = this.now();
+    this.emitChanged(record, "state");
+  }
+
+  private async startWindowsRun(
+    record: ManagedRecord,
+    context: ToolExecutionContext,
+    shell: CommandDescriptor,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const descriptor = this.windowsHelper;
+    const owner = getManagedProcessOwnerIdentity();
+    if (!descriptor || !owner) {
+      throw new ManagedProcessError(
+        "PROCESS_CONTAINMENT_UNAVAILABLE",
+        "Windows managed process owner identity is unavailable",
+        { subcode: "OWNER_IDENTITY_UNAVAILABLE" },
+      );
+    }
+    const backend = this.windowsBackendFactory(descriptor);
+    record.backend = backend;
+    record.removeBackendListener = backend.onEvent((event) => this.handleBackendEvent(record, backend, event));
+    let prepared: Awaited<ReturnType<ManagedProcessBackend["prepare"]>>;
+    try {
+      prepared = await backend.prepare(
+        {
+          processId: record.processId,
+          runId: record.runId,
+          cwd: record.cwd,
+          command: record.command,
+          shell: {
+            executable: shell.executable,
+            argvPrefix: [...shell.argvPrefix],
+            cwdSemantics: shell.cwdSemantics,
+          },
+          context,
+          owner,
+        },
+        signal,
+      );
+    } catch (error) {
+      throw new ManagedProcessError(
+        "PROCESS_CONTAINMENT_UNAVAILABLE",
+        "Windows managed process helper could not prepare containment",
+        { subcode: boundedSystemMessage(error instanceof Error ? error.message : "HELPER_INVALID_FRAME") },
+      );
+    }
+    record.reaper = prepared.reaper;
+    let journalRevision: number;
+    try {
+      const registered = await this.parentCall<{ journalRevision?: number }>(
+        "managedProcesses.register",
+        { record: prepared.reaper },
+        5_000,
+      );
+      if (!Number.isSafeInteger(registered.journalRevision) || (registered.journalRevision ?? 0) <= 0)
+        throw new Error("Invalid journal revision");
+      journalRevision = registered.journalRevision!;
+      record.reaperRegistered = true;
+    } catch {
+      await backend.dispose();
+      throw new ManagedProcessError(
+        "PROCESS_CONTAINMENT_UNAVAILABLE",
+        "Could not register Windows managed process crash recovery",
+      );
+    }
+    try {
+      await backend.commit(prepared, journalRevision);
+    } catch (error) {
+      await backend.dispose();
+      throw new ManagedProcessError(
+        "PROCESS_CONTAINMENT_UNAVAILABLE",
+        "Windows managed process helper could not commit containment",
+        { subcode: boundedSystemMessage(error instanceof Error ? error.message : "TARGET_RESUME_FAILED") },
+      );
+    }
+    if (terminalState(record.state)) {
+      await record.finish?.promise;
       return;
     }
     this.assertStartNotCancelled(signal);
@@ -862,29 +970,24 @@ export class ManagedProcessService {
   }
 
   private async cleanupFailedRun(record: ManagedRecord): Promise<void> {
-    const worker = record.worker;
-    if (!worker) {
-      record.finish?.resolve();
+    if (record.backend) {
+      try {
+        await record.backend.dispose();
+      } catch {
+        this.containmentFailed = true;
+      }
+      if (!record.backend.child) {
+        record.finish?.resolve();
+        return;
+      }
+      try {
+        await timeout(record.finish?.promise ?? Promise.resolve(), 2_500, "Managed process cleanup did not finish");
+      } catch {
+        this.containmentFailed = true;
+      }
       return;
     }
-    try {
-      await terminateProcessTree(worker, 1_000);
-    } catch {
-      this.containmentFailed = true;
-    }
-    if (!record.finish) return;
-    try {
-      await timeout(record.finish.promise, 2_500, "Managed process cleanup did not finish");
-    } catch {
-      this.containmentFailed = true;
-      if (!terminalState(record.state)) {
-        record.state = "lost";
-        record.stoppedAt = this.now();
-        record.exit = { code: null, reason: "host-failure", finishedAt: this.now() };
-        this.append(record, "system", "Managed process cleanup could not be verified; new starts are disabled");
-        this.emitChanged(record, "exit");
-      }
-    }
+    record.finish?.resolve();
   }
 
   private async unregisterReaper(record: ManagedRecord): Promise<void> {
@@ -909,105 +1012,64 @@ export class ManagedProcessService {
     }
   }
 
-  private handleWorkerEvent(record: ManagedRecord, worker: ChildProcess, message: ManagedProcessWorkerEvent): void {
-    if (record.worker !== worker || !message || typeof message !== "object") return;
-    if (message.type === "started") {
-      if (!Number.isSafeInteger(message.shellPid) || message.shellPid <= 1) {
-        record.workerStarted?.reject(
-          new ManagedProcessError("PROCESS_CONTAINMENT_UNAVAILABLE", "Managed shell PID is invalid"),
-        );
-      } else {
-        record.workerStarted?.resolve();
-      }
+  private handleBackendEvent(
+    record: ManagedRecord,
+    backend: ManagedProcessBackend,
+    event: ManagedProcessBackendEvent,
+  ): void {
+    if (record.backend !== backend) return;
+    if (event.type === "stdout" || event.type === "stderr") {
+      record.decoder.write(event.type, event.bytes);
       return;
     }
-    if (message.type === "stdin-closed") {
+    if (event.type === "output-dropped") {
+      this.append(record, "system", `[system] Backend dropped ${event.bytes} bytes / ${event.chunks} chunks.`);
+      return;
+    }
+    if (event.type === "stdin-closed") {
       record.stdinOpen = false;
       this.emitChanged(record, "state");
       return;
     }
-    if (message.type === "stopping") {
-      this.append(record, "system", `Stopping phase: ${message.phase}`);
+    if (event.type === "stopping") {
+      this.append(record, "system", `Stopping phase: ${event.phase}`);
       return;
     }
-    if (message.type === "error") {
-      this.append(record, "system", `${boundedSystemMessage(message.code)}: ${boundedSystemMessage(message.message)}`);
-      if (record.state === "starting") {
-        record.workerStarted?.reject(
-          new ManagedProcessError("PROCESS_CONTAINMENT_UNAVAILABLE", "Managed process worker reported an error"),
-        );
-      }
+    if (event.type === "error") {
+      const diagnostic = event.message
+        ? `${boundedSystemMessage(event.subcode)}: ${boundedSystemMessage(event.message)}`
+        : boundedSystemMessage(event.subcode);
+      this.append(record, "system", diagnostic);
       return;
     }
-    if (message.type === "exit") {
-      const stopped = record.stopSource !== undefined || record.state === "stopping";
-      record.state = stopped ? "killed" : message.code === 0 ? "exited" : "failed";
-      record.stoppedAt = this.now();
-      record.stdinOpen = false;
-      record.exit = {
-        code: message.code,
-        ...(message.signal ? { signal: message.signal } : {}),
-        reason: stopped ? "stopped" : "exit",
-        ...(record.stopSource ? { stoppedBy: record.stopSource } : {}),
-        finishedAt: this.now(),
-      };
-      this.emitChanged(record, "exit");
-      this.resolveWaiters(record);
-    }
+    if (event.type === "exit") void this.finalizeBackendExit(record, backend, event.exit);
   }
 
-  private async handleWorkerClose(
+  private async finalizeBackendExit(
     record: ManagedRecord,
-    worker: ChildProcess,
-    code: number | null,
-    signal: NodeJS.Signals | null,
+    backend: ManagedProcessBackend,
+    exit: Omit<ManagedProcessExit, "finishedAt">,
   ): Promise<void> {
-    if (record.worker !== worker) return;
-    record.workerStarted?.reject(
-      new ManagedProcessError("PROCESS_CONTAINMENT_UNAVAILABLE", "Managed process worker exited during startup"),
-    );
-    if (!terminalState(record.state)) {
-      const stopped = record.stopSource !== undefined || record.state === "stopping";
-      record.state = stopped ? "killed" : code === 0 ? "exited" : "failed";
-      record.stoppedAt = this.now();
-      record.stdinOpen = false;
-      record.exit = {
-        code,
-        ...(signal ? { signal } : {}),
-        reason: stopped ? "stopped" : "error",
-        ...(record.stopSource ? { stoppedBy: record.stopSource } : {}),
-        finishedAt: this.now(),
-      };
-      this.emitChanged(record, "exit");
-    }
+    if (record.backend !== backend || terminalState(record.state)) return;
+    record.decoder.end("stdout");
+    record.decoder.end("stderr");
+    const stopped = exit.reason === "stopped" || record.stopSource !== undefined || record.state === "stopping";
+    record.state = stopped ? "killed" : exit.reason === "host-failure" ? "lost" : exit.code === 0 ? "exited" : "failed";
+    record.stoppedAt = this.now();
+    record.stdinOpen = false;
+    record.exit = {
+      ...exit,
+      reason: stopped ? "stopped" : exit.reason,
+      ...(record.stopSource ? { stoppedBy: record.stopSource } : {}),
+      finishedAt: this.now(),
+    };
+    this.emitChanged(record, "exit");
     this.resolveWaiters(record);
-
-    const processGroupId = record.reaper?.pgid ?? worker.pid;
-    let treeClean = true;
-    if ((this.platform === "darwin" || this.platform === "linux") && processGroupId) {
-      try {
-        treeClean = await this.terminateProcessGroup(processGroupId, {
-          interruptMs: 250,
-          terminateMs: 750,
-          forceMs: 1_000,
-        });
-      } catch {
-        treeClean = false;
-      }
-    }
-    if (treeClean) {
-      await this.unregisterReaper(record);
-    } else {
+    if (exit.reason === "host-failure") {
       this.containmentFailed = true;
-      record.state = "lost";
-      record.exit = {
-        code,
-        ...(signal ? { signal } : {}),
-        reason: "host-failure",
-        finishedAt: this.now(),
-      };
-      this.append(record, "system", "Managed process tree cleanup could not be verified; new starts are disabled");
-      this.emitChanged(record, "exit");
+      this.append(record, "system", "Managed process ownership was lost; new starts are disabled");
+    } else {
+      await this.unregisterReaper(record);
     }
     record.finish?.resolve();
   }

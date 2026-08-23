@@ -12,6 +12,7 @@ import type {
 import { ToolchainError } from "../shared/toolchains/errors.ts";
 import { callMain } from "./parent-rpc.ts";
 import { windowsNativePathToMsys } from "../main/toolchains/environment.ts";
+import { sanitizeToolEnvironment } from "./tool-environment.ts";
 
 const execFileAsync = promisify(execFile);
 const ENV_COMMAND_ORDER: readonly ToolCapabilityId[] = [
@@ -149,7 +150,7 @@ export class ToolchainRuntime {
 
   constructor(options: ToolchainRuntimeOptions = {}) {
     this.platform = options.platform ?? process.platform;
-    this.baseEnv = { ...(options.baseEnv ?? process.env) };
+    this.baseEnv = sanitizeToolEnvironment(options.baseEnv ?? process.env);
     this.fetchSnapshot =
       options.fetchSnapshot ?? (() => callMain<ToolchainSnapshot>("toolchain.getSnapshot", undefined, 15_000));
     this.resolveProject =

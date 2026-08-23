@@ -7,7 +7,8 @@ import { ManagedProcessReaper } from "./reaper.ts";
 
 function record() {
   return {
-    version: 1,
+    version: 2,
+    platform: "posix",
     processId: "proc-a",
     runId: "run-a",
     hostInstanceId: "host-a",

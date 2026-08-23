@@ -36,7 +36,52 @@ test("managed process command, stdin and output are omitted from persisted messa
   const serializedResult = JSON.stringify(result);
   assert.equal(serializedResult.includes("SECRET_OUTPUT"), false);
   assert.equal(serializedResult.includes("SECRET_DETAIL"), false);
-  assert.match(serializedResult, /omitted from disk history/);
+  assert.match(serializedResult, /Sensitive managed process result was not saved/);
+});
+
+test("managed process errors retain only a safe whitelisted error projection", () => {
+  const result = redactManagedProcessPersistedMessage({
+    role: "toolResult",
+    toolName: "process_start",
+    toolCallId: "call-safe",
+    isError: true,
+    content: [
+      {
+        type: "text",
+        text: "PROCESS_CONTAINMENT_UNAVAILABLE: CreateProcess failed at C:\\secret with command SECRET_COMMAND",
+      },
+    ],
+    details: { win32: 5, path: "C:\\secret" },
+    error: "SECRET_COMMAND",
+  });
+  assert.deepEqual(result, {
+    role: "toolResult",
+    toolName: "process_start",
+    toolCallId: "call-safe",
+    isError: true,
+    errorCode: "PROCESS_CONTAINMENT_UNAVAILABLE",
+    content: [
+      {
+        type: "text",
+        text: "PROCESS_CONTAINMENT_UNAVAILABLE: Managed process request failed. Sensitive details were not saved.",
+      },
+    ],
+  });
+  assert.equal(JSON.stringify(result).includes("SECRET"), false);
+  assert.equal(JSON.stringify(result).includes("C:\\\\secret"), false);
+});
+
+test("unrecognized error text is omitted without inventing a process id or refresh action", () => {
+  const result = redactManagedProcessPersistedMessage({
+    role: "toolResult",
+    toolName: "process_start",
+    isError: true,
+    content: [{ type: "text", text: "PRIVATE_FAILURE" }],
+  });
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes("PRIVATE_FAILURE"), false);
+  assert.equal(serialized.includes("process_read"), false);
+  assert.equal(serialized.includes("errorCode"), false);
 });
 
 test("session redaction changes only the persisted copy", () => {

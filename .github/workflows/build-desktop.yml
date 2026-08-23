@@ -34,7 +34,7 @@ jobs:
           - name: Windows x64
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -47,6 +47,46 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install pinned Rust toolchain (Windows)
+        if: runner.os == 'Windows'
+        run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc
+
+      - name: Install pinned Windows cross toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          rustup toolchain install 1.96.1 --profile minimal --target x86_64-pc-windows-msvc
+          cargo install cargo-xwin --locked --version 0.23.1
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends clang-18 lld-18 llvm-18
+
+      - name: Compile-check Windows helper with cargo-xwin (Linux)
+        if: runner.os == 'Linux'
+        run: npm run build:windows-helper
+
+      - name: Install pinned Rust supply-chain gates (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo install cargo-deny --locked --version 0.20.2
+
+      - name: Validate Windows managed process helper
+        if: runner.os == 'Windows'
+        run: |
+          python -m pip install --disable-pip-version-check --no-input Flask==3.1.0 fastapi==0.128.0 uvicorn==0.40.0
+          cargo fmt --manifest-path native/windows-managed-process-helper/Cargo.toml --all -- --check
+          cargo clippy --manifest-path native/windows-managed-process-helper/Cargo.toml --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+          cargo test --manifest-path native/windows-managed-process-helper/Cargo.toml --locked --target x86_64-pc-windows-msvc
+          cargo audit --file native/windows-managed-process-helper/Cargo.lock --deny warnings
+          cargo deny --manifest-path native/windows-managed-process-helper/Cargo.toml --config native/windows-managed-process-helper/deny.toml --locked check
+          npm run check:windows-helper-reproducibility
+          $env:PI_WINDOWS_HELPER_HANDLE_LOOPS = "1000"
+          npm run test:windows-managed-helper
+          npm run test:managed-process-workflows
+          $env:PI_MANAGED_FLOOD_DURATION_MS = "60000"
+          $env:PI_MANAGED_FLOOD_PROCESSES = "8"
+          $env:PI_MANAGED_FLOOD_STREAMS = "both"
+          npm run test:managed-process-flood
 
       - name: Run unit and handler tests
         run: npm test
@@ -63,6 +103,66 @@ jobs:
           npm run check:toolchain-contract
           npm run check:toolchain-catalog
           npm run check:browser-i18n
+
+  windows-frameworks:
+    name: Windows managed framework acceptance
+    runs-on: windows-2025
+    timeout-minutes: 35
+    env:
+      CI: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+      STORYBOOK_DISABLE_TELEMETRY: "1"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up pinned .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.400
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc
+
+      - name: Build authoritative Windows helper
+        run: npm run check:windows-helper-reproducibility
+
+      - name: Prepare pinned framework fixtures
+        shell: pwsh
+        run: |
+          $nodeRoot = Join-Path $env:RUNNER_TEMP "framework-node-root"
+          New-Item -ItemType Directory -Path $nodeRoot -Force | Out-Null
+          Push-Location $nodeRoot
+          try {
+            npm init -y | Out-Null
+            npm install --save-exact --no-audit --no-fund next@16.3.2 react@19.2.4 react-dom@19.2.4 storybook@10.5.10 @storybook/react-vite@10.5.10 vite@6.4.3 typescript@5.9.3
+          } finally {
+            Pop-Location
+          }
+          $springZip = Join-Path $env:RUNNER_TEMP "spring-boot-4.1.1-fixture.zip"
+          $springUrl = "https://start.spring.io/starter.zip?type=maven-project&language=java&bootVersion=4.1.1&baseDir=spring-boot-4.1.1-fixture&groupId=com.example&artifactId=fixture&name=SpringFixture&packageName=com.example.fixture&packaging=jar&javaVersion=21&dependencies=web"
+          curl.exe --fail --location --retry 3 --output $springZip $springUrl
+          if ($LASTEXITCODE -ne 0) { throw "Spring Initializr download exited $LASTEXITCODE" }
+          Expand-Archive -LiteralPath $springZip -DestinationPath $env:RUNNER_TEMP
+          $springRoot = Join-Path $env:RUNNER_TEMP "spring-boot-4.1.1-fixture"
+          if (-not (Test-Path -LiteralPath (Join-Path $springRoot "mvnw.cmd"))) { throw "Spring wrapper is missing" }
+          "PI_FRAMEWORK_NODE_ROOT=$nodeRoot" >> $env:GITHUB_ENV
+          "PI_SPRING_BOOT_FIXTURE=$springRoot" >> $env:GITHUB_ENV
+          "PI_DOTNET_EXECUTABLE=$((Get-Command dotnet).Source)" >> $env:GITHUB_ENV
+          "PI_MAVEN_USER_HOME=$(Join-Path $env:RUNNER_TEMP 'maven-user-home-3.9.16')" >> $env:GITHUB_ENV
+
+      - name: Run real managed framework matrix
+        run: npm run test:managed-process-frameworks
 
   quality:
     name: Quality gate
@@ -81,6 +181,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install pinned Rust toolchain (Windows)
+        if: runner.os == 'Windows'
+        run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc
+
       - name: Install Electron binary
         run: npx install-electron --no
 
@@ -98,7 +202,7 @@ jobs:
   package:
     name: ${{ matrix.name }}
     if: github.ref_type != 'tag'
-    needs: [quality, test-platforms]
+    needs: [quality, test-platforms, windows-frameworks]
     strategy:
       fail-fast: false
       matrix:
@@ -148,8 +252,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install pinned Rust toolchain (Windows)
+        if: runner.os == 'Windows'
+        run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc
+
       - name: Build application
         run: npm run build
+
+      - name: Rebuild authoritative Windows helper for packaging
+        if: runner.os == 'Windows'
+        run: npm run check:windows-helper-reproducibility
+
+      - name: Run Windows managed process integration
+        if: runner.os == 'Windows'
+        run: |
+          python -m pip install --disable-pip-version-check --no-input Flask==3.1.0 fastapi==0.128.0 uvicorn==0.40.0
+          npm run test:windows-managed-helper
+          npm run test:managed-process-workflows
 
       - name: Prepare verified bundled search tools
         run: npm run prepare:bundled-tools -- --target ${{ matrix.tool_target }}
@@ -162,6 +281,12 @@ jobs:
         shell: bash
         run: npx electron-builder --${{ matrix.platform }} ${{ matrix.targets }} --${{ matrix.arch }} --publish never
 
+      - name: Generate and verify Windows SBOM
+        if: runner.os == 'Windows'
+        run: |
+          npm run build:windows-sbom
+          npm run check:windows-sbom
+
       - name: Configure packaged Electron sandbox (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -172,9 +297,26 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum npm run check:packaged-toolchains -- ${{ matrix.tool_target }}
 
-      - name: Verify packaged toolchains and production startup
-        if: runner.os != 'Linux'
+      - name: Verify packaged toolchains and production startup (macOS)
+        if: runner.os == 'macOS'
         run: npm run check:packaged-toolchains -- ${{ matrix.tool_target }}
+
+      - name: Verify packaged toolchains and production startup (Windows)
+        if: runner.os == 'Windows'
+        run: npm run check:packaged-toolchains -- ${{ matrix.tool_target }} --release-helper
+
+      - name: Run Windows NSIS upgrade and rollback E2E
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $previous = Join-Path $env:RUNNER_TEMP "Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe"
+          curl.exe --fail --location --retry 3 --output $previous "https://github.com/DLYZZT/pi-desktop/releases/download/v0.1.10/Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe"
+          if ($LASTEXITCODE -ne 0) { throw "previous installer download exited $LASTEXITCODE" }
+          $expected = "5d99744a18f7495c987146a44718dbb5ba7037cf279ada62669aefc9940313c5"
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $previous).Hash.ToLowerInvariant() -ne $expected) { throw "previous installer hash mismatch" }
+          $current = @(Get-ChildItem -LiteralPath dist -Filter "Pi-Agent-Desktop-Unsigned-Beta-Setup-*.exe" -File)
+          if ($current.Count -ne 1) { throw "expected one current Windows installer, found $($current.Count)" }
+          npm run test:windows-nsis-upgrade -- $previous $current[0].FullName
 
       - name: Verify update metadata matches the packaged architecture
         shell: bash
@@ -218,13 +360,15 @@ jobs:
             dist/latest*.yaml
             dist/*-mac.yml
             dist/latest-linux*.yml
+            dist/*.cdx.json
+            THIRD_PARTY_NOTICES.md
           if-no-files-found: error
           retention-days: 14
 
   release-contract:
     name: Validate release contract
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
-    needs: [quality, test-platforms]
+    needs: [quality, test-platforms, windows-frameworks]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -588,14 +732,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc
+
       - name: Build application
         run: npm run build
+
+      - name: Rebuild and test authoritative Windows helper
+        run: |
+          python -m pip install --disable-pip-version-check --no-input Flask==3.1.0 fastapi==0.128.0 uvicorn==0.40.0
+          npm run check:windows-helper-reproducibility
+          npm run test:windows-managed-helper
+          npm run test:managed-process-workflows
 
       - name: Prepare verified bundled search tools
         run: npm run prepare:bundled-tools -- --target win32-x64
 
       - name: Package Windows x64
         run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Generate and verify Windows SBOM
+        run: |
+          npm run build:windows-sbom
+          npm run check:windows-sbom
 
       - name: Verify packaged Windows update configuration
         shell: bash
@@ -714,10 +873,15 @@ jobs:
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
           installer="dist/Pi-Agent-Desktop-Unsigned-Beta-Setup-${version}.exe"
+          sbom="dist/Pi-Agent-Desktop-Windows-x64-${version}.cdx.json"
           test -s "$installer"
           test "$(find dist -maxdepth 1 -type f -name '*.exe' | wc -l | tr -d ' ')" -eq 1
+          test -s "$sbom"
+          test "$(find dist -maxdepth 1 -type f -name '*.cdx.json' | wc -l | tr -d ' ')" -eq 1
+          test -s THIRD_PARTY_NOTICES.md
           test -s dist/latest.yml
           node scripts/verify-update-metadata.mjs dist/latest.yml "$version" "$installer"
+          npm run check:windows-sbom
 
       - name: Enforce unsigned Windows Beta trust status
         shell: pwsh
@@ -736,7 +900,19 @@ jobs:
           "@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
       - name: Run packaged toolchain E2E for Windows x64
-        run: npm run check:packaged-toolchains -- win32-x64
+        run: npm run check:packaged-toolchains -- win32-x64 --release-helper
+
+      - name: Run Windows NSIS upgrade and rollback E2E
+        shell: pwsh
+        run: |
+          $previous = Join-Path $env:RUNNER_TEMP "Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe"
+          curl.exe --fail --location --retry 3 --output $previous "https://github.com/DLYZZT/pi-desktop/releases/download/v0.1.10/Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe"
+          if ($LASTEXITCODE -ne 0) { throw "previous installer download exited $LASTEXITCODE" }
+          $expected = "5d99744a18f7495c987146a44718dbb5ba7037cf279ada62669aefc9940313c5"
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $previous).Hash.ToLowerInvariant() -ne $expected) { throw "previous installer hash mismatch" }
+          $current = @(Get-ChildItem -LiteralPath dist -Filter "Pi-Agent-Desktop-Unsigned-Beta-Setup-*.exe" -File)
+          if ($current.Count -ne 1) { throw "expected one current Windows installer, found $($current.Count)" }
+          npm run test:windows-nsis-upgrade -- $previous $current[0].FullName
 
       - name: Upload Windows release artifacts
         uses: actions/upload-artifact@v7
@@ -746,6 +922,8 @@ jobs:
             dist/*.exe
             dist/*.blockmap
             dist/latest.yml
+            dist/*.cdx.json
+            THIRD_PARTY_NOTICES.md
           if-no-files-found: error
           retention-days: 14
 
@@ -840,7 +1018,7 @@ jobs:
           test -d "$linux_artifacts"
           while IFS= read -r -d '' file; do
             files+=("$file")
-          done < <(find "$mac_artifacts" "$windows_artifacts" "$linux_artifacts" -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.blockmap' -o -name '*.yml' -o -name '*.yaml' \) -print0)
+          done < <(find "$mac_artifacts" "$windows_artifacts" "$linux_artifacts" -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.blockmap' -o -name '*.yml' -o -name '*.yaml' -o -name '*.cdx.json' -o -name 'THIRD_PARTY_NOTICES.md' \) -print0)
 
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release files were downloaded" >&2
@@ -858,6 +1036,8 @@ jobs:
           test "$(find "$windows_artifacts" -type f -name '*.exe' | wc -l | tr -d ' ')" -eq 1
           test "$(find "$windows_artifacts" -type f -name '*.exe.blockmap' | wc -l | tr -d ' ')" -eq 1
           test "$(find "$windows_artifacts" -type f -name 'latest.yml' | wc -l | tr -d ' ')" -eq 1
+          test "$(find "$windows_artifacts" -type f -name '*.cdx.json' | wc -l | tr -d ' ')" -eq 1
+          test "$(find "$windows_artifacts" -type f -name 'THIRD_PARTY_NOTICES.md' | wc -l | tr -d ' ')" -eq 1
           test "$(find "$linux_artifacts" -type f -name '*.AppImage' | wc -l | tr -d ' ')" -eq 1
           test "$(find "$linux_artifacts" -type f -name 'latest-linux.yml' | wc -l | tr -d ' ')" -eq 1
 

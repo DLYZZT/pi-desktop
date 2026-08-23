@@ -5,6 +5,7 @@
  */
 import { app, BrowserWindow, crashReporter, dialog, nativeTheme, nativeImage, net, Notification } from "electron";
 import fs from "node:fs";
+import os from "node:os";
 import path from "path";
 import { HostManager, getUserDataPath, resolveHostEntry } from "./host-manager";
 import { appendMainLog } from "./logger";
@@ -27,7 +28,16 @@ import { createElectronRuntimeFetch } from "./toolchains/electron-runtime-fetch"
 import { BrowserService } from "./browser/browser-service";
 import { findDesktopDeepLink, parseDesktopDeepLink } from "./deep-link";
 import { restartHostAfterExit } from "./host-install-recovery";
-import { ManagedProcessReaper } from "./managed-process/reaper";
+import { ManagedProcessReaper, secureWindowsReaperDirectory } from "./managed-process/reaper";
+import { beforeDeadline, cleanupManagedProcessContainment } from "./managed-process/shutdown-cleanup";
+import {
+  resolveWindowsManagedProcessHelper,
+  type WindowsManagedProcessHelperResolution,
+  verifyWindowsManagedProcessHelperReplaceable,
+} from "../shared/windows-managed-process-helper";
+import type { ManagedProcessCapability } from "../contract/processes";
+import { projectManagedProcessCapability } from "./managed-process/capability";
+import { runPackagedCleanupFaultValidation } from "./packaged-cleanup-fault-validation";
 
 // Must run before app ready
 registerAppProtocol();
@@ -39,8 +49,10 @@ crashReporter.start({
 
 const isDev = !app.isPackaged;
 const packagedStartupValidation = app.isPackaged && process.argv.includes("--validate-packaged-startup");
+const packagedCleanupFaultValidation = app.isPackaged && process.argv.includes("--validate-packaged-cleanup-fault");
 const expectedPiVersion = process.env.PI_DESKTOP_EXPECTED_PI_VERSION;
 const TOOLCHAIN_FOCUS_RESCAN_TTL_MS = 60_000;
+const MANAGED_PROCESS_SHUTDOWN_DEADLINE_MS = 15_000;
 
 let mainWindow: BrowserWindow | null = null;
 let hostManager: HostManager | null = null;
@@ -48,6 +60,7 @@ let updateManager: UpdateManager | null = null;
 let toolchainManager: ToolchainManager | null = null;
 let browserService: BrowserService | null = null;
 let managedProcessReaper: ManagedProcessReaper | null = null;
+let windowsManagedProcessHelper: WindowsManagedProcessHelperResolution | null = null;
 let isQuitting = false;
 let unreadBadge = 0;
 let pendingDeepLink: string | null = null;
@@ -62,6 +75,35 @@ let startupCheckFinished = false;
 let startupCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let quitCleanupStarted = false;
 let quitCleanupComplete = false;
+
+function getManagedProcessCapability(): ManagedProcessCapability {
+  const status = managedProcessReaper?.status();
+  const owner = hostManager?.getManagedProcessOwnerState();
+  return projectManagedProcessCapability({
+    platform: process.platform,
+    arch: process.arch,
+    reaperReady: status?.ready === true,
+    helper: windowsManagedProcessHelper,
+    ownerReady: owner?.ready === true && Boolean(owner.hostInstanceId),
+    windowsRelease: os.release(),
+    windowsVersion: os.version(),
+  });
+}
+
+async function cleanupManagedProcesses(deadline: number, requireConfirmedEmpty: boolean): Promise<void> {
+  await cleanupManagedProcessContainment({
+    deadline,
+    requireConfirmedEmpty,
+    stopHost: () => hostManager?.stop() ?? Promise.resolve(),
+    ...(managedProcessReaper
+      ? {
+          reapAll: () => managedProcessReaper!.reapAll(),
+          getStatus: () => managedProcessReaper!.status(),
+        }
+      : {}),
+    log: appendMainLog,
+  });
+}
 
 function finishPackagedStartupValidation(error?: string): void {
   if (!packagedStartupValidation || startupCheckFinished) return;
@@ -324,8 +366,52 @@ function startMainProcess(): void {
 
   void app.whenReady().then(async () => {
     appendMainLog(`app ready packaged=${app.isPackaged}`);
-    managedProcessReaper = new ManagedProcessReaper(path.join(app.getPath("userData"), "managed-process-reaper.json"), {
+    if (packagedCleanupFaultValidation) {
+      let exitCode = 0;
+      try {
+        const report = await runPackagedCleanupFaultValidation({
+          productionDeadlineMs: MANAGED_PROCESS_SHUTDOWN_DEADLINE_MS,
+        });
+        fs.mkdirSync(app.getPath("userData"), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(
+          path.join(app.getPath("userData"), "packaged-cleanup-fault-check.json"),
+          `${JSON.stringify(report, null, 2)}\n`,
+          { encoding: "utf8", mode: 0o600 },
+        );
+        if (!report.ok) exitCode = 1;
+      } catch (error) {
+        exitCode = 1;
+        appendMainLog(`packaged cleanup fault validation failed: ${error instanceof Error ? error.name : "unknown"}`);
+      }
+      isQuitting = true;
+      quitCleanupComplete = true;
+      app.exit(exitCode);
+      return;
+    }
+    if (process.platform === "win32" && process.arch === "x64") {
+      windowsManagedProcessHelper = resolveWindowsManagedProcessHelper({
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        projectRoot: path.resolve(__dirname, "../.."),
+      });
+      appendMainLog(
+        windowsManagedProcessHelper.ok
+          ? `windows managed process helper verified build=${windowsManagedProcessHelper.descriptor.buildId} provenance=${windowsManagedProcessHelper.descriptor.provenance}`
+          : `windows managed process helper unavailable error=${windowsManagedProcessHelper.errorCode}`,
+      );
+    }
+    const reaperDirectory = path.join(app.getPath("userData"), "managed-process-reaper");
+    const windowsJournalSecured =
+      process.platform !== "win32" ||
+      Boolean(
+        windowsManagedProcessHelper?.ok &&
+        (await secureWindowsReaperDirectory(reaperDirectory, windowsManagedProcessHelper.descriptor, appendMainLog)),
+      );
+    managedProcessReaper = new ManagedProcessReaper(path.join(reaperDirectory, "journal-v2.json"), {
       log: appendMainLog,
+      ...(windowsManagedProcessHelper?.ok && windowsJournalSecured
+        ? { windowsHelper: windowsManagedProcessHelper.descriptor }
+        : {}),
     });
     const reaperStatus = await managedProcessReaper.initialize();
     appendMainLog(
@@ -372,7 +458,20 @@ function startMainProcess(): void {
       prepareToInstall: async () => {
         isQuitting = true;
         destroyTray();
-        await hostManager?.stop();
+        const deadline = Date.now() + MANAGED_PROCESS_SHUTDOWN_DEADLINE_MS;
+        await cleanupManagedProcesses(deadline, true);
+        if (process.platform === "win32") {
+          const refreshed = resolveWindowsManagedProcessHelper({
+            isPackaged: app.isPackaged,
+            resourcesPath: process.resourcesPath,
+            projectRoot: path.resolve(__dirname, "../.."),
+          });
+          if (!refreshed.ok) throw new Error("Windows managed process helper is unavailable for update");
+          if (!verifyWindowsManagedProcessHelperReplaceable(refreshed.descriptor)) {
+            throw new Error("Windows managed process helper is locked for update");
+          }
+          windowsManagedProcessHelper = refreshed;
+        }
       },
       recoverFromInstallFailure: async () => {
         isQuitting = false;
@@ -464,6 +563,7 @@ function startMainProcess(): void {
       setChannelCredential: (payload) =>
         credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
       getBrowserService: () => browserService,
+      getManagedProcessCapability,
       updateManager,
     });
     installAppMenu(getMainWindow, () => openUpdateSettings(true), isDev);
@@ -481,6 +581,9 @@ function startMainProcess(): void {
       appendMainLog(
         `managed process pre-restart reap ready=${status.ready} records=${status.records}${status.errorCode ? ` error=${status.errorCode}` : ""}`,
       );
+      if (!status.ready || status.records !== 0) {
+        throw new Error(`Managed process cleanup blocked Host restart (${status.errorCode ?? "unknown"})`);
+      }
     });
     hostManager.setToolchainSnapshot(toolchainManager.getSnapshot());
     hostManager.setBrowserCapabilitySnapshot(browserService.getCapabilitySnapshot());
@@ -504,17 +607,29 @@ function startMainProcess(): void {
       }
       if (method === "managedProcesses.getSettings") {
         const status = managedProcessReaper?.status();
+        const capability = getManagedProcessCapability();
         return {
-          enabled:
-            (process.platform === "darwin" || process.platform === "linux") &&
-            loadUiState().managedProcessesEnabled === true,
+          enabled: capability.ready && loadUiState().managedProcessesEnabled === true,
           reaperReady: status?.ready === true,
-          platform: process.platform,
+          capability,
+          ...(windowsManagedProcessHelper?.ok ? { windowsHelper: windowsManagedProcessHelper.descriptor } : {}),
         };
       }
       if (method === "managedProcesses.register") {
         const body = (params ?? {}) as { record?: unknown };
-        return managedProcessReaper!.register(body.record);
+        const record = body.record;
+        const recordPlatform =
+          record && typeof record === "object" && !Array.isArray(record)
+            ? (record as { platform?: unknown }).platform
+            : undefined;
+        if (recordPlatform === "win32") {
+          const currentOwner = hostManager?.getManagedProcessOwnerState();
+          const recordOwner = (record as { hostInstanceId?: unknown }).hostInstanceId;
+          if (!currentOwner?.ready || recordOwner !== currentOwner.hostInstanceId) {
+            throw new Error("Windows managed process register owner generation mismatch");
+          }
+        }
+        return managedProcessReaper!.register(record);
       }
       if (method === "managedProcesses.unregister") {
         return managedProcessReaper!.unregister(params);
@@ -677,13 +792,11 @@ function startMainProcess(): void {
       isQuitting = true;
       updateManager?.stopAutomaticChecks();
       destroyTray();
+      const deadline = Date.now() + MANAGED_PROCESS_SHUTDOWN_DEADLINE_MS;
       try {
-        await Promise.race([
-          hostManager?.stop() ?? Promise.resolve(),
-          new Promise<void>((resolve) => setTimeout(resolve, 12_000)),
-        ]);
-        await managedProcessReaper?.reapAll();
-        await browserService?.dispose();
+        await cleanupManagedProcesses(deadline, false);
+        const browserCleanup = await beforeDeadline(browserService?.dispose() ?? Promise.resolve(), deadline);
+        if (!browserCleanup.completed) appendMainLog("browser cleanup reached the shutdown deadline");
       } catch (error) {
         appendMainLog(`quit cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {

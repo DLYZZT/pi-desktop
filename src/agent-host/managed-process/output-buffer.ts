@@ -174,18 +174,37 @@ type DecoderState = {
 
 export class ManagedProcessOutputDecoder {
   private readonly onLine: (stream: "stdout" | "stderr", line: string) => void;
+  private readonly onEncodingWarning?: () => void;
+  private decodedCharacters = 0;
+  private replacementCharacters = 0;
+  private encodingWarningSent = false;
   private readonly states: Record<"stdout" | "stderr", DecoderState> = {
     stdout: this.createState(),
     stderr: this.createState(),
   };
 
-  constructor(onLine: (stream: "stdout" | "stderr", line: string) => void) {
+  constructor(onLine: (stream: "stdout" | "stderr", line: string) => void, onEncodingWarning?: () => void) {
     this.onLine = onLine;
+    this.onEncodingWarning = onEncodingWarning;
   }
 
   write(stream: "stdout" | "stderr", chunk: Buffer | string): void {
     const state = this.states[stream];
     const decoded = typeof chunk === "string" ? chunk : state.decoder.write(chunk);
+    if (!this.encodingWarningSent) {
+      for (const character of decoded) {
+        this.decodedCharacters += 1;
+        if (character === "\uFFFD") this.replacementCharacters += 1;
+      }
+      if (
+        this.decodedCharacters >= 32 &&
+        this.replacementCharacters >= 4 &&
+        this.replacementCharacters * 10 >= this.decodedCharacters
+      ) {
+        this.encodingWarningSent = true;
+        this.onEncodingWarning?.();
+      }
+    }
     this.consume(stream, state, decoded);
   }
 

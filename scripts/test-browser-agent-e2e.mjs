@@ -16,6 +16,8 @@ const temp = createProjectBuildTemp(root, "pi-browser-agent-e2e-build-");
 const hostOutfile = path.join(temp, "browser-agent-host.mjs");
 const managedWorkerOutfile = path.join(temp, "managed-process-worker.mjs");
 const mainOutfile = path.join(temp, "browser-agent-e2e-harness.cjs");
+const runtimeRoot = path.join(temp, "runtime");
+fs.mkdirSync(runtimeRoot, { recursive: true });
 
 function build(entry, outfile, format, externals) {
   buildSync({
@@ -52,6 +54,7 @@ try {
       NODE_PATH: projectNodePath(root, process.env.NODE_PATH),
       ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
       PI_BROWSER_AGENT_E2E_HOST_ENTRY: hostOutfile,
+      PI_BROWSER_AGENT_E2E_ROOT: runtimeRoot,
     },
     detached: process.platform !== "win32",
   });
@@ -77,5 +80,5 @@ try {
   console.error(error);
   process.exitCode = 1;
 } finally {
-  fs.rmSync(temp, { recursive: true, force: true });
+  fs.rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

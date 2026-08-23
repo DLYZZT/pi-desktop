@@ -9,9 +9,14 @@ import type { BrowserAgentAuthorizationRequest, BrowserEvent } from "../contract
 import { BrowserError } from "../main/browser/browser-error";
 import { BrowserService } from "../main/browser/browser-service";
 import { HostManager, type HostStatus } from "../main/host-manager";
-import { ManagedProcessReaper } from "../main/managed-process/reaper";
+import { projectManagedProcessCapability } from "../main/managed-process/capability";
+import { ManagedProcessReaper, secureWindowsReaperDirectory } from "../main/managed-process/reaper";
 import { resolveRuntimeCatalogPath } from "../main/toolchains/catalog";
 import { ToolchainManager } from "../main/toolchains/manager";
+import {
+  resolveWindowsManagedProcessHelper,
+  type WindowsManagedProcessHelperResolution,
+} from "../shared/windows-managed-process-helper";
 import { isExecutionIntent } from "../shared/toolchains/types";
 
 type BrowserAgentFixtureStatus = {
@@ -37,7 +42,9 @@ type BrowserAgentFixtureStatus = {
   };
 };
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-browser-agent-e2e-"));
+const rootValue = process.env.PI_BROWSER_AGENT_E2E_ROOT;
+assert.ok(rootValue && path.isAbsolute(rootValue), "PI_BROWSER_AGENT_E2E_ROOT must be absolute");
+const root = rootValue;
 const projectRoot = path.join(root, "project");
 const browserDataRoot = path.join(root, "browser-data");
 fs.mkdirSync(projectRoot, { recursive: true });
@@ -57,6 +64,7 @@ let fixtureServer: http.Server | null = null;
 let browserService: BrowserService | null = null;
 let hostManager: HostManager | null = null;
 let managedProcessReaper: ManagedProcessReaper | null = null;
+let windowsManagedProcessHelper: WindowsManagedProcessHelperResolution | null = null;
 let finishing = false;
 
 function log(message: string): void {
@@ -132,7 +140,6 @@ async function finish(exitCode: number, error?: unknown): Promise<void> {
   await closeFixtureServer().catch(() => undefined);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
   mainWindow = null;
-  fs.rmSync(root, { recursive: true, force: true });
   app.exit(exitCode);
 }
 
@@ -155,7 +162,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
 `,
     { mode: 0o600 },
   );
-  const managedCommand = `'${process.execPath.replaceAll("'", `'"'"'`)}' managed-e2e-fixture.mjs`;
+  const managedCommand = "node managed-e2e-fixture.mjs";
   mainWindow = new BrowserWindow({
     show: false,
     width: 1000,
@@ -208,8 +215,38 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
   await toolchainManager.initialize();
 
   const browserCalls = new Map<string, number>();
-  managedProcessReaper = new ManagedProcessReaper(path.join(app.getPath("userData"), "managed-process-reaper.json"));
-  assert.equal((await managedProcessReaper.initialize()).ready, true, "managed process reaper did not initialize");
+  if (process.platform === "win32" && process.arch === "x64") {
+    windowsManagedProcessHelper = resolveWindowsManagedProcessHelper({
+      isPackaged: false,
+      resourcesPath: process.resourcesPath,
+      projectRoot: process.cwd(),
+    });
+    assert.equal(
+      windowsManagedProcessHelper.ok,
+      true,
+      `Windows managed process helper did not resolve: ${JSON.stringify(windowsManagedProcessHelper)}`,
+    );
+  }
+  const reaperDirectory = path.join(app.getPath("userData"), "managed-process-reaper");
+  const windowsJournalSecured =
+    process.platform !== "win32" ||
+    Boolean(
+      windowsManagedProcessHelper?.ok &&
+      (await secureWindowsReaperDirectory(reaperDirectory, windowsManagedProcessHelper.descriptor, log)),
+    );
+  assert.equal(windowsJournalSecured, true, "Windows managed process reaper directory was not secured");
+  managedProcessReaper = new ManagedProcessReaper(path.join(reaperDirectory, "journal-v2.json"), {
+    log,
+    ...(windowsManagedProcessHelper?.ok && windowsJournalSecured
+      ? { windowsHelper: windowsManagedProcessHelper.descriptor }
+      : {}),
+  });
+  const initialReaperStatus = await managedProcessReaper.initialize();
+  assert.equal(
+    initialReaperStatus.ready,
+    true,
+    `managed process reaper did not initialize: ${JSON.stringify(initialReaperStatus)}`,
+  );
   hostManager = new HostManager(hostEntry);
   hostManager.setBeforeRestartHandler(async () => {
     await managedProcessReaper!.reapAll();
@@ -233,10 +270,38 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
       return toolchainManager.resolveForProject(body.cwd, { intent: body.intent, trusted: body.trusted });
     }
     if (method === "managedProcesses.getSettings") {
-      return { enabled: true, reaperReady: managedProcessReaper!.status().ready, platform: process.platform };
+      const reaperStatus = managedProcessReaper!.status();
+      const owner = hostManager?.getManagedProcessOwnerState();
+      const capability = projectManagedProcessCapability({
+        platform: process.platform,
+        arch: process.arch,
+        reaperReady: reaperStatus.ready,
+        helper: windowsManagedProcessHelper,
+        ownerReady: owner?.ready === true && Boolean(owner.hostInstanceId),
+        windowsRelease: os.release(),
+        windowsVersion: os.version(),
+      });
+      return {
+        enabled: capability.ready,
+        reaperReady: reaperStatus.ready,
+        capability,
+        ...(windowsManagedProcessHelper?.ok ? { windowsHelper: windowsManagedProcessHelper.descriptor } : {}),
+      };
     }
     if (method === "managedProcesses.register") {
-      return managedProcessReaper!.register((params as { record?: unknown } | undefined)?.record);
+      const record = (params as { record?: unknown } | undefined)?.record;
+      const recordPlatform =
+        record && typeof record === "object" && !Array.isArray(record)
+          ? (record as { platform?: unknown }).platform
+          : undefined;
+      if (recordPlatform === "win32") {
+        const owner = hostManager?.getManagedProcessOwnerState();
+        const recordOwner = (record as { hostInstanceId?: unknown }).hostInstanceId;
+        if (!owner?.ready || recordOwner !== owner.hostInstanceId) {
+          throw new Error("Browser Agent E2E Windows managed process register owner generation mismatch");
+        }
+      }
+      return managedProcessReaper!.register(record);
     }
     if (method === "managedProcesses.unregister") return managedProcessReaper!.unregister(params);
     if (method.startsWith("browser.")) {
@@ -262,6 +327,13 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
     () => hostManager!.getStatus(),
     (status) => status === "ready",
   );
+  if (process.platform === "win32") {
+    await waitFor(
+      "managed process owner identity acknowledgement",
+      () => hostManager!.getManagedProcessOwnerState(),
+      (owner) => owner.ready && Boolean(owner.hostInstanceId),
+    );
+  }
   await waitFor(
     "initial Browser capability acknowledgement",
     () => hostManager!.getBrowserAckRevision(),
@@ -494,7 +566,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
   const persistedSession = fs.readFileSync(status.sessionFile!, "utf8");
   assert.equal(persistedSession.includes("managed-e2e-fixture.mjs"), false, "raw process command entered JSONL");
   assert.equal(persistedSession.includes("electron-input"), false, "managed stdin or output entered JSONL");
-  assert.match(persistedSession, /Managed process tool result omitted from disk history/);
+  assert.match(persistedSession, /Sensitive managed process result was not saved/);
   log("Agent managed process tools, UI control, Browser evidence, stop barrier and JSONL redaction passed");
 
   browserService.revokeSession(sessionId);

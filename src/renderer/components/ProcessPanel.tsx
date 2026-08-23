@@ -332,6 +332,37 @@ export function ProcessPanel({ onActiveCountChange, onOpenBrowser }: Props) {
                     : warning}
                 </div>
               ))}
+              {selected.state === "lost" && (
+                <div
+                  role="alert"
+                  style={{ padding: 9, border: "1px solid #ef4444", borderRadius: 6, color: "#fca5a5", fontSize: 11 }}
+                >
+                  <div>
+                    {t(
+                      "managedProcessContainmentFailure",
+                      "This process tree could not be safely confirmed as stopped. New starts are disabled; stop all processes and restart the app.",
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      style={buttonStyle}
+                      onClick={() => void invoke(() => call("processes.stopAll", { mode: "force" }))}
+                    >
+                      {t("stopAll", "Stop All")}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      style={buttonStyle}
+                      onClick={() => void invoke(() => window.piBridge.exportDiagnostics())}
+                    >
+                      {t("exportDiagnostics", "Export Diagnostics")}
+                    </button>
+                  </div>
+                </div>
+              )}
               {selected.endpoints.map((endpoint) => (
                 <button
                   key={endpoint.id}
@@ -394,7 +425,7 @@ export function ProcessPanel({ onActiveCountChange, onOpenBrowser }: Props) {
                       {t("restart", "Restart")}
                     </button>
                   </>
-                ) : (
+                ) : selected.state === "lost" ? null : (
                   <>
                     <button
                       type="button"

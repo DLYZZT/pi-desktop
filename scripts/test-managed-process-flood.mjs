@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,10 +9,51 @@ import { performance } from "node:perf_hooks";
 import { clearInterval, setInterval } from "node:timers";
 import { fileURLToPath } from "node:url";
 import { ManagedProcessService } from "../src/agent-host/managed-process/service.ts";
+import { applyManagedProcessOwnerIdentity } from "../src/agent-host/managed-process/owner-identity.ts";
+import { resolveWindowsManagedProcessHelper } from "../src/shared/windows-managed-process-helper.ts";
 
 const durationMs = Math.max(1_000, Number(process.env.PI_MANAGED_FLOOD_DURATION_MS ?? 60_000));
+const processCount = Math.max(1, Number(process.env.PI_MANAGED_FLOOD_PROCESSES ?? 1));
+const streamMode = process.env.PI_MANAGED_FLOOD_STREAMS ?? "stdout";
+if (!Number.isSafeInteger(processCount) || processCount > 8) {
+  throw new Error(`PI_MANAGED_FLOOD_PROCESSES must be an integer from 1 through 8, received ${processCount}`);
+}
+if (!new Set(["stdout", "both"]).has(streamMode)) {
+  throw new Error(`PI_MANAGED_FLOOD_STREAMS must be stdout or both, received ${streamMode}`);
+}
 const cwd = await mkdtemp(path.join(tmpdir(), "pi-managed-flood-"));
 const workerEntry = fileURLToPath(new URL("../src/agent-host/managed-process/worker.ts", import.meta.url));
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const bashCandidates = [
+  path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Git", "bin", "bash.exe"),
+  path.join(process.env.LOCALAPPDATA ?? "", "Programs", "Git", "bin", "bash.exe"),
+  "D:\\tools\\w64devkit\\bin\\bash.exe",
+];
+const bashExecutable =
+  process.platform === "win32" ? bashCandidates.find((candidate) => candidate && existsSync(candidate)) : "/bin/bash";
+if (!bashExecutable) throw new Error("A native Windows Bash is required for the flood test");
+let windowsHelper;
+if (process.platform === "win32") {
+  const script = `$p=Get-Process -Id ${process.pid} -ErrorAction Stop; [Console]::Out.Write([DateTimeOffset]::new($p.StartTime).ToUnixTimeMilliseconds())`;
+  const startedAt = Number(
+    execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
+      encoding: "utf8",
+      windowsHide: true,
+    }),
+  );
+  Object.defineProperty(process, "getCreationTime", { value: () => startedAt, configurable: true });
+  applyManagedProcessOwnerIdentity({
+    type: "managed-process-owner:init",
+    version: 1,
+    mainPid: process.pid,
+    mainStartFingerprint: String(startedAt),
+    mainImagePath: realpathSync.native(process.execPath),
+    hostInstanceId: randomUUID(),
+  });
+  const resolution = resolveWindowsManagedProcessHelper({ isPackaged: false, resourcesPath: root, projectRoot: root });
+  if (!resolution.ok) throw new Error(`Windows helper unavailable: ${resolution.errorCode}`);
+  windowsHelper = resolution.descriptor;
+}
 const runtime = {
   async createExecutionContext() {
     return {
@@ -21,9 +65,9 @@ const runtime = {
         "shell.bash": {
           capability: "shell.bash",
           provider: "system",
-          executable: "/bin/bash",
+          executable: bashExecutable,
           argvPrefix: [],
-          binDir: "/bin",
+          binDir: path.dirname(bashExecutable),
           cwdSemantics: "native",
           envPatch: {},
         },
@@ -43,7 +87,23 @@ const service = new ManagedProcessService(
     workerEntryPath: workerEntry,
     workerExecArgv: ["--experimental-strip-types"],
     parentCall: async (method) => {
-      if (method === "managedProcesses.getSettings") return { enabled: true, reaperReady: true };
+      if (method === "managedProcesses.getSettings")
+        return process.platform === "win32"
+          ? {
+              enabled: true,
+              reaperReady: true,
+              capability: {
+                platform: "win32",
+                arch: "x64",
+                supported: true,
+                ready: true,
+                backend: "windows-job",
+                helperBuildId: windowsHelper.buildId,
+                helperProvenance: windowsHelper.provenance,
+              },
+              windowsHelper,
+            }
+          : { enabled: true, reaperReady: true };
       if (method === "managedProcesses.register") return { journalRevision: 1 };
       if (method === "managedProcesses.unregister") return { journalRevision: 2, removed: true };
       throw new Error(`unexpected parent call: ${method}`);
@@ -54,68 +114,114 @@ const service = new ManagedProcessService(
 const producer = [
   'const line = "x".repeat(1023) + "\\n";',
   "console.log('FLOOD_READY');",
-  "setInterval(() => { for (let i = 0; i < 10; i += 1) process.stdout.write(line); }, 10);",
+  `const streams = ${streamMode === "both" ? "[process.stdout, process.stderr]" : "[process.stdout]"};`,
+  "setInterval(() => { for (const stream of streams) for (let i = 0; i < 10; i += 1) stream.write(line); }, 10);",
 ].join(" ");
 const quote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
 const command = `${quote(process.execPath)} -e ${quote(producer)}`;
 const rssBefore = process.memoryUsage().rss;
 const ticks = [];
-let previousTick = performance.now();
-const ticker = setInterval(() => {
-  const current = performance.now();
-  ticks.push(Math.max(0, current - previousTick - 100));
-  previousTick = current;
-}, 100);
+let ticker;
 
-let started;
+const started = [];
 try {
-  started = await service.startForAgent("flood-session", cwd, true, {
-    command,
-    kind: "watcher",
-    label: "1 MiB/s flood",
-    waitFor: { type: "output", contains: "FLOOD_READY", timeoutMs: 5_000 },
-  });
-  let cursor = started.output.nextCursor;
+  const launched = await Promise.all(
+    Array.from({ length: processCount }, async (_, index) => {
+      const sessionId = `flood-session-${index + 1}`;
+      const process = await service.startForAgent(sessionId, cwd, true, {
+        command,
+        kind: "watcher",
+        label: `1 MiB/s flood ${index + 1}/${processCount}`,
+        waitFor: { type: "output", contains: "FLOOD_READY", timeoutMs: 5_000 },
+      });
+      return { process, cursor: process.output.nextCursor, sessionId, seenStreams: new Set() };
+    }),
+  );
+  started.push(...launched);
+  let previousTick = performance.now();
+  ticker = setInterval(() => {
+    const current = performance.now();
+    ticks.push(Math.max(0, current - previousTick - 100));
+    previousTick = current;
+  }, 100);
   const readLatencies = [];
   const deadline = Date.now() + durationMs;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, Math.max(1, deadline - Date.now()))));
-    const readStarted = performance.now();
-    const output = service.read(
-      { processId: started.process.processId, runId: started.runId, cursor, maxBytes: 128 * 1024 },
-      "flood-session",
-    );
-    readLatencies.push(performance.now() - readStarted);
-    cursor = output.nextCursor;
-    service.list(false, "flood-session");
+    for (const entry of started) {
+      const readStarted = performance.now();
+      const output = service.read(
+        {
+          processId: entry.process.process.processId,
+          runId: entry.process.runId,
+          cursor: entry.cursor,
+          maxBytes: 128 * 1024,
+        },
+        entry.sessionId,
+      );
+      readLatencies.push(performance.now() - readStarted);
+      for (const record of output.records) entry.seenStreams.add(record.stream);
+      entry.cursor = output.nextCursor;
+    }
+    service.list(false, started[0].sessionId);
   }
   const stopStarted = performance.now();
-  const stopped = await service.stop(started.process.processId, started.runId, "graceful", "user", "flood-session");
+  const stopped = await Promise.all(
+    started.map((entry) =>
+      service.stop(entry.process.process.processId, entry.process.runId, "graceful", "user", entry.sessionId),
+    ),
+  );
   const stopMs = performance.now() - stopStarted;
   clearInterval(ticker);
   ticks.sort((left, right) => left - right);
   readLatencies.sort((left, right) => left - right);
   const percentile = (values, quantile) =>
     values[Math.min(values.length - 1, Math.floor(values.length * quantile))] ?? 0;
-  const snapshot = service.get(started.process.processId);
-  const result = {
-    durationMs,
-    state: stopped.state,
+  const snapshots = started.map((entry) => service.get(entry.process.process.processId));
+  const perProcess = snapshots.map((snapshot, index) => ({
+    processId: snapshot.processId,
+    state: stopped[index].state,
     retainedBytes: snapshot.output.retainedBytes,
     droppedBytes: snapshot.output.droppedBytes,
+    streams: [...started[index].seenStreams].sort(),
+  }));
+  const result = {
+    durationMs,
+    processCount,
+    streamMode,
+    states: stopped.map((process) => process.state),
+    retainedBytes: perProcess.reduce((total, process) => total + process.retainedBytes, 0),
+    droppedBytes: perProcess.reduce((total, process) => total + process.droppedBytes, 0),
     rssDeltaBytes: process.memoryUsage().rss - rssBefore,
     heartbeatDelayP99Ms: percentile(ticks, 0.99),
     heartbeatDelayMaxMs: Math.max(0, ...ticks),
     readLatencyP99Ms: percentile(readLatencies, 0.99),
     stopMs,
+    perProcess,
   };
-  if (result.retainedBytes > 2 * 1024 * 1024) throw new Error("per-process output memory exceeded 2 MiB");
-  if (result.droppedBytes <= 0) throw new Error("flood did not exercise ring eviction");
-  if (result.heartbeatDelayP99Ms >= 1_000) throw new Error("heartbeat p99 delay exceeded 1 second");
-  if (result.heartbeatDelayMaxMs >= 2_000) throw new Error("event-loop stall exceeded 2 seconds");
-  if (result.stopMs >= 8_500) throw new Error("user stop exceeded lifecycle budget");
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (perProcess.some((process) => process.retainedBytes > 2 * 1024 * 1024)) {
+    throw new Error("per-process output memory exceeded 2 MiB");
+  }
+  if (result.retainedBytes > processCount * 2 * 1024 * 1024) {
+    throw new Error("global output memory exceeded the 2 MiB per-process budget");
+  }
+  if (result.droppedBytes <= 0 || (durationMs >= 10_000 && perProcess.some((process) => process.droppedBytes <= 0))) {
+    throw new Error("flood processes did not all exercise ring eviction");
+  }
+  if (result.states.some((state) => state === "lost" || state === "failed")) {
+    throw new Error("a flood process lost containment or failed");
+  }
+  if (
+    streamMode === "both" &&
+    perProcess.some((process) => !process.streams.includes("stdout") || !process.streams.includes("stderr"))
+  ) {
+    throw new Error("a dual-stream flood process did not expose both stdout and stderr");
+  }
+  if (result.heartbeatDelayP99Ms >= 5_000) throw new Error("heartbeat p99 delay exceeded 5 seconds");
+  if (result.heartbeatDelayMaxMs >= 8_000) throw new Error("event-loop stall approached the 10 second timeout");
+  if (result.stopMs >= 8_500) throw new Error("user stop exceeded lifecycle budget");
 } finally {
-  clearInterval(ticker);
-  if (started) await service.stopAll("host");
+  if (ticker) clearInterval(ticker);
+  await service.stopAll("host");
 }

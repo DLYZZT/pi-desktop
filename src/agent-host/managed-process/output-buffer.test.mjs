@@ -62,3 +62,16 @@ test("decoder replaces malformed utf8 without losing following output", () => {
   decoder.end("stdout");
   assert.equal(lines.at(-1), "ok");
 });
+
+test("decoder reports a high invalid UTF-8 ratio only once", () => {
+  let warnings = 0;
+  const decoder = new ManagedProcessOutputDecoder(
+    () => {},
+    () => warnings++,
+  );
+  decoder.write("stdout", Buffer.alloc(40, 0xff));
+  decoder.write("stderr", Buffer.alloc(40, 0xff));
+  decoder.end("stdout");
+  decoder.end("stderr");
+  assert.equal(warnings, 1);
+});

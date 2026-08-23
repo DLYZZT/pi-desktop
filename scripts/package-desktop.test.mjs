@@ -8,17 +8,25 @@ test("pack and release plans use Node JS entries and set signing discovery in th
   const projectRoot = path.resolve("C:/repo/pi-desktop");
   const nodeBinary = "C:/Program Files/nodejs/node.exe";
   const pack = createDesktopPackageSteps("--dir", { root: projectRoot, nodeBinary });
-  const release = createDesktopPackageSteps("--release", { root: projectRoot, nodeBinary });
+  const release = createDesktopPackageSteps("--release", { root: projectRoot, nodeBinary, platform: "win32" });
 
   for (const step of [...pack, ...release]) assert.equal(step.command, nodeBinary);
   assert.deepEqual(pack[2].args.slice(-1), ["--dir"]);
-  assert.deepEqual(release[2].args.slice(-2), ["--publish", "never"]);
+  assert.deepEqual(release[3].args.slice(-2), ["--publish", "never"]);
   assert.equal(pack[2].env.CSC_IDENTITY_AUTO_DISCOVERY, "false");
-  assert.equal(release[2].env.CSC_IDENTITY_AUTO_DISCOVERY, "false");
+  assert.equal(release[3].env.CSC_IDENTITY_AUTO_DISCOVERY, "false");
   assert.equal(pack[0].label, "prepare bundled tools");
   assert.equal(pack[1].label, "verify");
   assert.equal(pack[0].args.includes("--release"), false);
   assert.equal(release[0].args.includes("--release"), true);
+  assert.equal(release[2].label, "verify reproducible authoritative Windows managed process helper");
+  assert.deepEqual(release[2].args.slice(-1), [
+    path.join(projectRoot, "scripts", "verify-windows-helper-reproducibility.mjs"),
+  ]);
+  assert.equal(release[4].label, "generate Windows release SBOM");
+  assert.deepEqual(release[4].args.slice(-1), [path.join(projectRoot, "scripts", "generate-windows-sbom.mjs")]);
+  assert.equal(release[5].label, "verify Windows release SBOM");
+  assert.deepEqual(release[5].args.slice(-1), [path.join(projectRoot, "scripts", "verify-windows-sbom.mjs")]);
 });
 
 test("packaging rejects unknown modes and diagnoses spawn failures, signals, and missing statuses", () => {

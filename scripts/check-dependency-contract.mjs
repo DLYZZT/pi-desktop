@@ -35,6 +35,17 @@ export function validateEsbuildTree(tree) {
   return failures;
 }
 
+export function npmInvocation(
+  platform = process.platform,
+  npmExecPath = process.env.npm_execpath,
+  nodeExecutable = process.execPath,
+) {
+  if (typeof npmExecPath === "string" && path.isAbsolute(npmExecPath) && fs.existsSync(npmExecPath)) {
+    return { command: nodeExecutable, args: [npmExecPath], shell: false };
+  }
+  return { command: platform === "win32" ? "npm.cmd" : "npm", args: [], shell: platform === "win32" };
+}
+
 function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -43,10 +54,11 @@ function main() {
   if (runtimeMajor !== expectedNodeMajor)
     failures.push(`dependency checks must run on Node 22, received ${process.version}`);
 
-  const npmTree = spawnSync("npm", ["ls", "esbuild", "--all", "--json"], {
+  const npm = npmInvocation();
+  const npmTree = spawnSync(npm.command, [...npm.args, "ls", "esbuild", "--all", "--json"], {
     cwd: root,
     encoding: "utf8",
-    shell: false,
+    shell: npm.shell,
   });
   if (npmTree.error) failures.push(`npm ls esbuild failed to start: ${npmTree.error.message}`);
   else if (npmTree.signal) failures.push(`npm ls esbuild terminated by signal ${npmTree.signal}`);

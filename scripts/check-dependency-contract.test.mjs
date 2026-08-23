@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateDependencyManifest, validateEsbuildTree } from "./check-dependency-contract.mjs";
+import { npmInvocation, validateDependencyManifest, validateEsbuildTree } from "./check-dependency-contract.mjs";
+
+test("dependency inspection uses the native npm launcher on Windows", () => {
+  assert.deepEqual(npmInvocation("win32", undefined), { command: "npm.cmd", args: [], shell: true });
+  assert.deepEqual(npmInvocation("linux", undefined), { command: "npm", args: [], shell: false });
+  assert.deepEqual(npmInvocation("darwin", undefined), { command: "npm", args: [], shell: false });
+  assert.deepEqual(npmInvocation("win32", import.meta.filename, "node.exe"), {
+    command: "node.exe",
+    args: [import.meta.filename],
+    shell: false,
+  });
+});
 
 const validManifest = {
   private: true,

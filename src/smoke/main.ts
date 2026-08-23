@@ -131,6 +131,14 @@ void app.whenReady().then(async () => {
     setChannelCredential: (payload) =>
       credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
     getBrowserService: () => null,
+    getManagedProcessCapability: () => ({
+      platform: process.platform,
+      arch: process.arch,
+      supported: false,
+      ready: false,
+      backend: "none",
+      errorCode: process.platform === "win32" ? "ARCH_UNSUPPORTED" : "PLATFORM_UNSUPPORTED",
+    }),
     updateManager,
   });
 

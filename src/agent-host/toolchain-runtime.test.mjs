@@ -47,7 +47,7 @@ function resolution(revision, commands) {
   };
 }
 
-test("builds an immutable local environment with selected bins and revision", async () => {
+test("builds an immutable credential-sanitized environment with selected bins and revision", async () => {
   const original = { Path: "C:\\Windows\\System32;C:\\Tools\\Node", TOKEN: "secret" };
   const commands = {
     "js.node": descriptor("js.node", "C:\\Tools\\Node\\node.exe", "C:\\Tools\\Node", "22.19.0"),
@@ -64,7 +64,7 @@ test("builds an immutable local environment with selected bins and revision", as
   assert.equal(context.inventoryRevision, 3);
   assert.equal(context.nativeEnv.PI_DESKTOP_TOOLCHAIN_REVISION, "3");
   assert.equal(context.nativeEnv.Path, "C:\\Program Files\\Git\\cmd;C:\\Tools\\Node;C:\\Windows\\System32");
-  assert.equal(context.nativeEnv.TOKEN, "secret");
+  assert.equal(context.nativeEnv.TOKEN, undefined);
   assert.equal(original.Path, "C:\\Windows\\System32;C:\\Tools\\Node");
   context.commands["js.node"].argvPrefix.push("mutated");
   assert.deepEqual(runtime.getSnapshot().defaults["js.node"].argvPrefix, []);

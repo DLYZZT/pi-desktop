@@ -1,9 +1,12 @@
 import { isManagedProcessToolName } from "./tool-names.ts";
+import { PROCESS_ERROR_CODES, type ManagedProcessErrorCode } from "../../contract/processes.ts";
 
 type PersistedMessage = {
   role?: unknown;
   content?: unknown;
   toolName?: unknown;
+  toolCallId?: unknown;
+  isError?: unknown;
   details?: unknown;
   [key: string]: unknown;
 };
@@ -13,8 +16,20 @@ type SessionManagerLike = {
 };
 
 const installed = new WeakSet<object>();
-const OMITTED_RESULT =
-  "[Managed process tool result omitted from disk history. Use process_list/process_read to refresh current state.]";
+const OMITTED_RESULT = "[Sensitive managed process result was not saved. Open Processes to view current state.]";
+const PROCESS_ERROR_CODE_SET = new Set<string>(PROCESS_ERROR_CODES);
+
+function safePersistedErrorCode(content: unknown): ManagedProcessErrorCode | null {
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+    const text = (block as { text?: unknown }).text;
+    if (typeof text !== "string") continue;
+    const code = text.match(/\bPROCESS_[A-Z_]+\b/u)?.[0];
+    if (code && PROCESS_ERROR_CODE_SET.has(code)) return code as ManagedProcessErrorCode;
+  }
+  return null;
+}
 
 function redactArguments(toolName: string, value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
@@ -43,11 +58,23 @@ export function redactManagedProcessPersistedMessage(value: unknown): unknown {
     typeof message.toolName === "string" &&
     isManagedProcessToolName(message.toolName)
   ) {
-    return {
-      ...message,
-      content: [{ type: "text", text: OMITTED_RESULT }],
-      details: undefined,
+    const errorCode = message.isError === true ? safePersistedErrorCode(message.content) : null;
+    const projected: PersistedMessage = {
+      role: "toolResult",
+      toolName: message.toolName,
+      content: [
+        {
+          type: "text",
+          text: errorCode
+            ? `${errorCode}: Managed process request failed. Sensitive details were not saved.`
+            : OMITTED_RESULT,
+        },
+      ],
+      isError: message.isError === true,
     };
+    if (typeof message.toolCallId === "string") projected.toolCallId = message.toolCallId;
+    if (errorCode) projected.errorCode = errorCode;
+    return projected;
   }
   if (message.role !== "assistant" || !Array.isArray(message.content)) return value;
   let changed = false;

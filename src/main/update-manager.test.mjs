@@ -311,6 +311,29 @@ test("a synchronous installer failure restores the surrounding application lifec
   assert.equal(manager.getState().phase, "error");
 });
 
+test("a failed containment cleanup aborts installation and restores the application lifecycle", async () => {
+  const adapter = new FakeUpdateAdapter();
+  let recoveries = 0;
+  adapter.checkImplementation = async () => adapter.emit("update-available", updateInfo());
+  adapter.downloadImplementation = async () => adapter.emit("update-downloaded", downloadedInfo());
+  const manager = packagedManager(adapter, {
+    prepareToInstall: async () => {
+      throw new Error("Managed process cleanup could not be safely confirmed");
+    },
+    recoverFromInstallFailure: () => {
+      recoveries++;
+    },
+  });
+
+  await manager.checkForUpdates();
+  await manager.downloadUpdate();
+  await assert.rejects(manager.installUpdate(), { code: "UPDATE_UNKNOWN" });
+  assert.equal(adapter.quitCalls.length, 0, "installer started despite uncertain containment");
+  assert.equal(recoveries, 1);
+  assert.equal(manager.getState().phase, "error");
+  assert.equal(manager.getState().canRetry, true);
+});
+
 test("an installer error event restores the surrounding application lifecycle", async () => {
   const adapter = new FakeUpdateAdapter();
   let recoveries = 0;

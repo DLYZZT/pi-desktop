@@ -21,10 +21,11 @@ function session(id, overrides = {}) {
 }
 
 test("groups sessions into calendar-aware recency buckets", () => {
-  const now = new Date("2026-07-15T18:00:00.000Z");
-  assert.equal(sessionDateGroup("2026-07-15T09:00:00.000Z", now), "today");
-  assert.equal(sessionDateGroup("2026-07-10T09:00:00.000Z", now), "recent");
-  assert.equal(sessionDateGroup("2026-07-01T09:00:00.000Z", now), "older");
+  const localDate = (day, hour) => new Date(2026, 6, day, hour).toISOString();
+  const now = new Date(2026, 6, 15, 18);
+  assert.equal(sessionDateGroup(localDate(15, 9), now), "today");
+  assert.equal(sessionDateGroup(localDate(10, 9), now), "recent");
+  assert.equal(sessionDateGroup(localDate(1, 9), now), "older");
   assert.equal(sessionDateGroup("invalid", now), "older");
 });
 

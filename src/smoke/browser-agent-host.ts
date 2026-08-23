@@ -5,6 +5,7 @@ import { browserAgentRuntime } from "../agent-host/browser-agent-runtime";
 import { createRpcServer } from "../contract/rpc";
 import { browserCapabilityRuntime } from "../agent-host/browser-capability-runtime";
 import { registerHandlers } from "../agent-host/handlers";
+import { applyManagedProcessOwnerIdentity } from "../agent-host/managed-process/owner-identity";
 import { installToolchainGitRunner } from "../agent-host/toolchain-git";
 import { getRpcSession, syncBrowserToolsForAllSessions } from "../agent-host/rpc-manager";
 import { startSessionWatcher } from "../agent-host/session-watcher";
@@ -445,7 +446,15 @@ const parentPort = process.parentPort;
 if (!parentPort) throw new Error("Browser Agent E2E Host requires an Electron utilityProcess parentPort");
 
 parentPort.on("message", (event) => {
-  const message = event.data as { type?: string; snapshot?: ToolchainSnapshot | BrowserCapabilitySnapshot };
+  const message = event.data as {
+    type?: string;
+    snapshot?: ToolchainSnapshot | BrowserCapabilitySnapshot;
+    version?: unknown;
+    mainPid?: unknown;
+    mainStartFingerprint?: unknown;
+    mainImagePath?: unknown;
+    hostInstanceId?: unknown;
+  };
   if (message.type === "ping") {
     parentPort.postMessage({ type: "pong", ts: Date.now() });
     return;
@@ -453,6 +462,15 @@ parentPort.on("message", (event) => {
   if (message.type === "attach-port") {
     const port = event.ports?.[0];
     if (port) server.attachPort(port as never);
+    return;
+  }
+  if (message.type === "managed-process-owner:init") {
+    const owner = applyManagedProcessOwnerIdentity(message);
+    parentPort.postMessage({
+      type: "managed-process-owner:ack",
+      version: 1,
+      hostInstanceId: owner.hostInstanceId,
+    });
     return;
   }
   if (message.type === "toolchain:init" || message.type === "toolchain:changed") {

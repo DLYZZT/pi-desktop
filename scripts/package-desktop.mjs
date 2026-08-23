@@ -13,7 +13,7 @@ export function createDesktopPackageSteps(mode, options = {}) {
   const projectRoot = options.root ?? root;
   const nodeBinary = options.nodeBinary ?? process.execPath;
   const release = mode === "--release";
-  return [
+  const steps = [
     {
       label: "prepare bundled tools",
       command: nodeBinary,
@@ -29,6 +29,15 @@ export function createDesktopPackageSteps(mode, options = {}) {
       command: nodeBinary,
       args: [path.join(projectRoot, "scripts", "verify.mjs")],
     },
+    ...(release && (options.platform ?? process.platform) === "win32"
+      ? [
+          {
+            label: "verify reproducible authoritative Windows managed process helper",
+            command: nodeBinary,
+            args: [path.join(projectRoot, "scripts", "verify-windows-helper-reproducibility.mjs")],
+          },
+        ]
+      : []),
     {
       label: "electron-builder",
       command: nodeBinary,
@@ -38,7 +47,22 @@ export function createDesktopPackageSteps(mode, options = {}) {
       ],
       env: { CSC_IDENTITY_AUTO_DISCOVERY: "false" },
     },
+    ...(release && (options.platform ?? process.platform) === "win32"
+      ? [
+          {
+            label: "generate Windows release SBOM",
+            command: nodeBinary,
+            args: [path.join(projectRoot, "scripts", "generate-windows-sbom.mjs")],
+          },
+          {
+            label: "verify Windows release SBOM",
+            command: nodeBinary,
+            args: [path.join(projectRoot, "scripts", "verify-windows-sbom.mjs")],
+          },
+        ]
+      : []),
   ];
+  return steps;
 }
 
 export function runDesktopPackageStep(step, options = {}) {

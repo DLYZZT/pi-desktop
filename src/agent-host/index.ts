@@ -12,6 +12,7 @@ import type { BrowserCapabilitySnapshot } from "../contract/browser";
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
 import { syncBrowserToolsForAllSessions } from "./rpc-manager";
 import { readPiRuntimeVersion } from "./runtime-version";
+import { applyManagedProcessOwnerIdentity } from "./managed-process/owner-identity";
 
 const piRuntimeVersion = readPiRuntimeVersion();
 
@@ -32,7 +33,15 @@ function log(message: string): void {
 const parentPort = process.parentPort;
 if (parentPort) {
   parentPort.on("message", (event) => {
-    const msg = event.data as { type?: string; snapshot?: ToolchainSnapshot | BrowserCapabilitySnapshot };
+    const msg = event.data as {
+      type?: string;
+      snapshot?: ToolchainSnapshot | BrowserCapabilitySnapshot;
+      version?: unknown;
+      mainPid?: unknown;
+      mainStartFingerprint?: unknown;
+      mainImagePath?: unknown;
+      hostInstanceId?: unknown;
+    };
     if (msg?.type === "ping") {
       parentPort.postMessage({ type: "pong", ts: Date.now() });
       return;
@@ -48,6 +57,19 @@ if (parentPort) {
         }
       } else {
         log("attach-port: no port in event");
+      }
+      return;
+    }
+    if (msg?.type === "managed-process-owner:init") {
+      try {
+        const owner = applyManagedProcessOwnerIdentity(msg);
+        parentPort.postMessage({
+          type: "managed-process-owner:ack",
+          version: 1,
+          hostInstanceId: owner.hostInstanceId,
+        });
+      } catch (error) {
+        log(`managed process owner identity rejected: ${error instanceof Error ? error.message : String(error)}`);
       }
       return;
     }

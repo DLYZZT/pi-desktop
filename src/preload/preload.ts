@@ -87,6 +87,7 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
       ipcRenderer.send("desktop:set-badge-count", n);
     },
     getUiState: () => ipcRenderer.invoke("desktop:get-ui-state"),
+    getManagedProcessCapability: () => ipcRenderer.invoke("desktop:managed-process-capability"),
     setUiState: (patch) => ipcRenderer.invoke("desktop:set-ui-state", patch),
     getThemeSource: () => ipcRenderer.invoke("desktop:get-theme-source"),
     setThemeSource: (source) => ipcRenderer.invoke("desktop:set-theme-source", source),

@@ -6,6 +6,7 @@ import type {
   SaveBinaryFileOptions,
   SaveTextFileOptions,
 } from "../contract/desktop";
+import type { ManagedProcessCapability } from "../contract/processes";
 import { exportDiagnostics } from "./diagnostics";
 import type { HostManager } from "./host-manager";
 import { appendMainLog, getMainLogPath } from "./logger";
@@ -54,6 +55,7 @@ export type DesktopIpcOptions = {
   ) => Promise<PublicToolchainState>;
   setChannelCredential: (payload: ChannelCredentialWrite) => void;
   getBrowserService: () => BrowserService | null;
+  getManagedProcessCapability: () => ManagedProcessCapability;
   updateManager: {
     getState: () => DesktopUpdateState;
     checkForUpdates: () => Promise<DesktopUpdateState>;
@@ -75,6 +77,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     chooseCustomTool,
     setChannelCredential,
     getBrowserService,
+    getManagedProcessCapability,
     updateManager,
   } = options;
   const assertTrustedSender = (event: IpcMainInvokeEvent): void => {
@@ -294,6 +297,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
 
   trustedOn("desktop:set-badge-count", (_event, count: number) => applyBadgeCount(count));
   trustedHandle("desktop:get-ui-state", () => loadUiState());
+  trustedHandle("desktop:managed-process-capability", () => getManagedProcessCapability());
   trustedHandle("desktop:set-ui-state", (_event, patch: unknown) =>
     saveUiStateStrict(validateDesktopUiStatePatch(patch)),
   );

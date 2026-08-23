@@ -38,6 +38,32 @@ test("pins Agent Bash to the resolved executable and context-local environment",
   assert.equal(process.env.PI_DESKTOP_TOOLCHAIN_REVISION, undefined);
 });
 
+test("removes host credentials from Agent Bash environment", () => {
+  const descriptor = {
+    capability: "shell.bash",
+    provider: "system",
+    executable: "/resolved/bin/bash",
+    argvPrefix: [],
+    binDir: "/resolved/bin",
+    version: "5.2.0",
+    cwdSemantics: "posix",
+    envPatch: {},
+  };
+  const toolContext = context({ "shell.bash": descriptor });
+  toolContext.shellEnv.XAI_API_KEY = "provider-secret";
+  toolContext.shellEnv.CLI_PROXY_API_KEY = "proxy-secret";
+  const options = createToolchainBashOptions(toolContext);
+  const spawned = options.spawnHook({
+    command: "/resolved/bin/bash",
+    args: [],
+    env: { GITHUB_TOKEN: "github-secret", SAFE_VALUE: "kept" },
+  });
+  assert.equal(spawned.env.XAI_API_KEY, undefined);
+  assert.equal(spawned.env.CLI_PROXY_API_KEY, undefined);
+  assert.equal(spawned.env.GITHUB_TOKEN, undefined);
+  assert.equal(spawned.env.SAFE_VALUE, "kept");
+});
+
 test("reports structured Bash absence and never falls back to PATH", async () => {
   const missing = Object.assign(new Error("Bash required"), {
     code: "TOOLCHAIN_BASH_REQUIRED",

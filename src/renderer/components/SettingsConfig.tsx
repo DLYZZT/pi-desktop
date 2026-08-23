@@ -12,6 +12,7 @@ import type { ChannelsSnapshot } from "@shared/channel-types";
 import type { ChatAppearancePreferences, ChatFontSize, ChatLayout } from "@shared/chat-appearance";
 import { APP_WEBSITE_URL } from "@shared/app-links";
 import type { DesktopUpdateState } from "../../contract/desktop";
+import type { ManagedProcessCapability } from "../../contract/processes";
 import { APP_AUTHOR, APP_DISPLAY_NAME, APP_GITHUB_URL, APP_VERSION, PI_VERSION } from "@/lib/app-version";
 import appIconUrl from "../../../build/icon.png";
 import { isAutoSessionTitleEnabled, setAutoSessionTitleEnabled } from "../lib/auto-session-title";
@@ -970,6 +971,7 @@ function GeneralSettings({
   const [managedProcessesLoading, setManagedProcessesLoading] = useState(true);
   const [managedProcessesSaving, setManagedProcessesSaving] = useState(false);
   const [managedProcessesError, setManagedProcessesError] = useState<"load" | "save" | null>(null);
+  const [managedProcessCapability, setManagedProcessCapability] = useState<ManagedProcessCapability | null>(null);
   const [autoSessionTitle, setAutoSessionTitle] = useState(() => isAutoSessionTitleEnabled());
   const [chatAppearanceError, setChatAppearanceError] = useState(false);
   const languageControlId = useId();
@@ -981,12 +983,12 @@ function GeneralSettings({
   const themeControlId = useId();
   useEffect(() => {
     let disposed = false;
-    void window.piBridge
-      .getUiState()
-      .then((state) => {
+    void Promise.all([window.piBridge.getUiState(), window.piBridge.getManagedProcessCapability()])
+      .then(([state, capability]) => {
         if (!disposed) {
           setBackgroundMode(state.backgroundMode !== false);
           setManagedProcessesEnabled(state.managedProcessesEnabled === true);
+          setManagedProcessCapability(capability);
         }
       })
       .catch(() => {
@@ -1042,6 +1044,36 @@ function GeneralSettings({
       setChatAppearanceError(true);
     }
   };
+  const managedProcessCapabilityMessage = (() => {
+    if (!managedProcessCapability || managedProcessCapability.ready) return null;
+    switch (managedProcessCapability.errorCode) {
+      case "ARCH_UNSUPPORTED":
+        return t("managedProcessesArchUnsupported", "Managed processes require Windows x64 on this platform.");
+      case "HELPER_MISSING":
+        return t(
+          "managedProcessesHelperMissing",
+          "The Windows process helper is missing. Reinstall the app, then restart it.",
+        );
+      case "HELPER_INTEGRITY":
+        return t(
+          "managedProcessesHelperIntegrity",
+          "The Windows process helper failed its integrity check. Reinstall the app, then restart it.",
+        );
+      case "OWNER_IDENTITY_UNAVAILABLE":
+        return t(
+          "managedProcessesOwnerUnavailable",
+          "Windows process ownership could not be verified. Restart the app before enabling this feature.",
+        );
+      case "REAPER_UNHEALTHY":
+        return t(
+          "managedProcessesReaperUnhealthy",
+          "A previous process tree could not be safely verified as stopped. Restart the app or export diagnostics.",
+        );
+      default:
+        return t("managedProcessesUnsupported", "Managed processes are not available on this platform.");
+    }
+  })();
+  const managedProcessesUnavailable = !managedProcessCapability?.ready;
   return (
     <div style={{ width: "100%", overflowY: "auto", padding: "28px clamp(18px, 5vw, 52px)" }}>
       <section style={{ maxWidth: 620 }}>
@@ -1086,14 +1118,14 @@ function GeneralSettings({
               display: "grid",
               placeItems: "center",
               flexShrink: 0,
-              cursor: window.piBridge.platform === "win32" ? "not-allowed" : "pointer",
+              cursor: managedProcessesUnavailable ? "not-allowed" : "pointer",
             }}
           >
             <input
               id={managedProcessesControlId}
               type="checkbox"
               checked={managedProcessesEnabled}
-              disabled={window.piBridge.platform === "win32" || managedProcessesLoading || managedProcessesSaving}
+              disabled={managedProcessesUnavailable || managedProcessesLoading || managedProcessesSaving}
               onChange={(event) => void saveManagedProcesses(event.target.checked)}
               style={{
                 width: 18,
@@ -1104,11 +1136,18 @@ function GeneralSettings({
             />
           </label>
         </SettingRow>
-        {window.piBridge.platform === "win32" && (
+        {managedProcessCapabilityMessage && (
           <p style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.55, color: "var(--text-dim)" }}>
-            {t("managedProcessesUnsupported", "Managed processes are not available on Windows in this version.")}
+            {managedProcessCapabilityMessage}
           </p>
         )}
+        {managedProcessCapability?.ready &&
+          managedProcessCapability.backend === "windows-job" &&
+          managedProcessCapability.helperProvenance === "windows-native-dev" && (
+            <p style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.55, color: "var(--text-dim)" }}>
+              {t("managedProcessesDeveloperBuild", "Developer build — not a release-validated Windows helper.")}
+            </p>
+          )}
         {managedProcessesError && (
           <p role="alert" style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.55, color: "#f87171" }}>
             {managedProcessesError === "save"

@@ -157,8 +157,9 @@ export interface ManagedProcessOutputEvent {
   latestCursor: string;
 }
 
-export interface ManagedProcessReaperRecord {
-  version: 1;
+export interface PosixManagedProcessReaperRecord {
+  version: 2;
+  platform: "posix";
   processId: string;
   runId: string;
   hostInstanceId: string;
@@ -167,6 +168,49 @@ export interface ManagedProcessReaperRecord {
   startFingerprint: string;
   nonce: string;
   createdAt: number;
+}
+
+export interface WindowsManagedProcessReaperRecord {
+  version: 2;
+  platform: "win32";
+  processId: string;
+  runId: string;
+  hostInstanceId: string;
+  helperPid: number;
+  helperStartFingerprint: string;
+  jobName: string;
+  helperBuildId: string;
+  nonce: string;
+  createdAt: number;
+}
+
+export type ManagedProcessReaperRecord = PosixManagedProcessReaperRecord | WindowsManagedProcessReaperRecord;
+
+export type ManagedProcessCapabilityErrorCode =
+  | "PLATFORM_UNSUPPORTED"
+  | "ARCH_UNSUPPORTED"
+  | "OWNER_IDENTITY_UNAVAILABLE"
+  | "HELPER_MISSING"
+  | "HELPER_INTEGRITY"
+  | "REAPER_UNHEALTHY";
+
+export interface ManagedProcessCapability {
+  platform: NodeJS.Platform;
+  arch: NodeJS.Architecture;
+  supported: boolean;
+  ready: boolean;
+  backend: "posix-group" | "windows-job" | "none";
+  helperBuildId?: string;
+  helperProvenance?: "windows-native-dev" | "release-authoritative";
+  errorCode?: ManagedProcessCapabilityErrorCode;
+}
+
+export interface ManagedProcessOwnerIdentityV1 {
+  version: 1;
+  mainPid: number;
+  mainStartFingerprint: string;
+  mainImagePath: string;
+  hostInstanceId: string;
 }
 
 export const PROCESS_ERROR_CODES = [

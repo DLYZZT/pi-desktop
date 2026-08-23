@@ -11,6 +11,8 @@ import type { BrowserCapabilitySnapshot } from "../contract/browser";
 import { BrowserError } from "./browser/browser-error";
 import { createHostExitSignal, reserveHostRestart, trySpawnHost, type HostExitSignal } from "./host-restart-core";
 import { HostOutputLineBuffer } from "./logger-core";
+import { randomUUID } from "node:crypto";
+import { evaluateHeartbeatTick } from "../shared/heartbeat-liveness";
 
 const CRASH_WINDOW_MS = 30_000;
 const MAX_RESTARTS = 2;
@@ -27,6 +29,7 @@ export type HostMessage =
   | { type: "agent-end"; sessionId: string; eventType?: string }
   | { type: "toolchain:ack"; revision: number }
   | { type: "browser:ack"; revision: number }
+  | { type: "managed-process-owner:ack"; version: 1; hostInstanceId: string }
   | { type: string; [key: string]: unknown };
 
 export class HostManager {
@@ -36,6 +39,7 @@ export class HostManager {
   private restartTimes: number[] = [];
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private lastPong = 0;
+  private lastPingTick = 0;
   private onStatusChange: ((s: HostStatus, detail?: string) => void) | null = null;
   private onHostMessage: ((msg: HostMessage) => void) | null = null;
   private pendingPorts: MessagePortMain[] = [];
@@ -47,6 +51,8 @@ export class HostManager {
   private browserCapabilitySnapshot: BrowserCapabilitySnapshot | null = null;
   private browserAckRevision = -1;
   private piVersion: string | null = null;
+  private hostInstanceId: string | null = null;
+  private managedProcessOwnerReady = false;
 
   constructor(private readonly hostEntry: string) {}
 
@@ -72,6 +78,10 @@ export class HostManager {
 
   getPiVersion(): string | null {
     return this.piVersion;
+  }
+
+  getManagedProcessOwnerState(): { hostInstanceId: string | null; ready: boolean } {
+    return { hostInstanceId: this.hostInstanceId, ready: this.managedProcessOwnerReady };
   }
 
   setToolchainSnapshot(snapshot: ToolchainSnapshot): void {
@@ -202,6 +212,8 @@ export class HostManager {
     // itself; an acknowledgement from the previous Host is not transferable.
     this.toolchainAckRevision = -1;
     this.browserAckRevision = -1;
+    this.hostInstanceId = randomUUID();
+    this.managedProcessOwnerReady = false;
     this.setStatus("starting");
 
     // utilityProcess.fork rejects undefined env values
@@ -257,6 +269,7 @@ export class HostManager {
         this.wasReadyBeforeExit = false;
         this.postToolchainSnapshot("toolchain:init");
         this.postBrowserSnapshot("browser:init");
+        this.postManagedProcessOwnerIdentity();
         this.setStatus("ready");
         this.startPing();
         if (restarted) {
@@ -277,6 +290,11 @@ export class HostManager {
         if (Number.isSafeInteger(revision) && revision >= 0) {
           this.browserAckRevision = Math.max(this.browserAckRevision, revision);
           appendMainLog(`agent-host browser ack revision=${revision}`);
+        }
+      } else if (m?.type === "managed-process-owner:ack") {
+        if (m.version === 1 && m.hostInstanceId === this.hostInstanceId && this.child === child) {
+          this.managedProcessOwnerReady = true;
+          appendMainLog("agent-host managed process owner identity acknowledged");
         }
       } else if (m?.type === "host-rpc") {
         const request = m as HostMessage & { id?: string; method?: string; params?: unknown };
@@ -333,6 +351,8 @@ export class HostManager {
           appendMainLog(
             `agent-host pre-restart cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
           );
+          this.setStatus("crashed", "Managed process cleanup could not be safely confirmed");
+          return;
         }
         if (this.status === "stopped" || this.child) return;
         this.scheduleRestart(`Host exited (code ${code})`);
@@ -365,9 +385,20 @@ export class HostManager {
 
   private startPing(): void {
     this.clearPing();
+    this.lastPingTick = Date.now();
     this.pingTimer = setInterval(() => {
       if (!this.child) return;
-      if (Date.now() - this.lastPong > PING_TIMEOUT_MS + PING_INTERVAL_MS) {
+      const now = Date.now();
+      const heartbeat = evaluateHeartbeatTick({
+        now,
+        lastTickAt: this.lastPingTick,
+        lastAcknowledgedAt: this.lastPong,
+        intervalMs: PING_INTERVAL_MS,
+        timeoutMs: PING_TIMEOUT_MS,
+      });
+      this.lastPingTick = now;
+      if (heartbeat.clockDiscontinuity) this.lastPong = now;
+      if (heartbeat.timedOut) {
         appendMainLog("agent-host ping timeout — killing");
         try {
           this.child.kill();
@@ -399,6 +430,28 @@ export class HostManager {
       this.child.postMessage({ type, snapshot: this.browserCapabilitySnapshot });
     } catch (error) {
       appendMainLog(`browser snapshot delivery failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private postManagedProcessOwnerIdentity(): void {
+    if (!this.child || !this.hostInstanceId) return;
+    const getCreationTime = (process as NodeJS.Process & { getCreationTime?: () => number | null }).getCreationTime;
+    const creationTime = typeof getCreationTime === "function" ? getCreationTime.call(process) : null;
+    if (typeof creationTime !== "number" || !Number.isSafeInteger(Math.trunc(creationTime)) || creationTime <= 0) {
+      appendMainLog("managed process owner identity unavailable: main creation time missing");
+      return;
+    }
+    try {
+      this.child.postMessage({
+        type: "managed-process-owner:init",
+        version: 1,
+        mainPid: process.pid,
+        mainStartFingerprint: String(Math.trunc(creationTime)),
+        mainImagePath: fs.realpathSync.native(process.execPath),
+        hostInstanceId: this.hostInstanceId,
+      });
+    } catch {
+      appendMainLog("managed process owner identity delivery failed");
     }
   }
 

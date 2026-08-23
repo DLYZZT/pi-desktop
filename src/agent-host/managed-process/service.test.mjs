@@ -247,7 +247,7 @@ test("feature, trust and platform gates fail before spawning", async () => {
     (error) => error.code === "PROCESS_FEATURE_DISABLED",
   );
 
-  const windows = new ManagedProcessService({ emit() {} }, { platform: "win32" });
+  const windows = new ManagedProcessService({ emit() {} }, { platform: "win32", arch: "arm64" });
   await assert.rejects(
     windows.startForAgent("session", cwd, true, { command: "npm run dev" }),
     (error) => error.code === "PROCESS_PLATFORM_UNSUPPORTED",
@@ -354,6 +354,41 @@ test("cancelling start before spawn leaves no worker", async () => {
   await assert.rejects(start, (error) => error.code === "PROCESS_USER_STOPPED");
   assert.equal(spawnCount, 0);
   assert.equal(service.list(false, "session-a").processes.length, 0);
+});
+
+test("a synchronous POSIX worker spawn failure leaves no containment uncertainty", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "pi-managed-spawn-failure-"));
+  let attempts = 0;
+  const service = new ManagedProcessService(
+    { emit() {} },
+    {
+      platform: "darwin",
+      runtime: runtimeFixture(),
+      spawnProcess: () => {
+        attempts++;
+        if (attempts === 1) throw new Error("spawn failed");
+        return new FakeWorker();
+      },
+      terminateProcessGroup: async () => true,
+      parentCall: async (method) => {
+        if (method === "managedProcesses.getSettings") return { enabled: true, reaperReady: true };
+        if (method === "managedProcesses.register") return { journalRevision: 1 };
+        if (method === "managedProcesses.unregister") return { journalRevision: 2, removed: true };
+        throw new Error(`unexpected parent call: ${method}`);
+      },
+      fingerprint: async (pid) => `fingerprint-${pid}`,
+    },
+  );
+
+  const startedAt = Date.now();
+  await assert.rejects(
+    service.startForAgent("session-a", cwd, true, { command: "npm run dev" }),
+    (error) => error.code === "PROCESS_CONTAINMENT_UNAVAILABLE",
+  );
+  assert.ok(Date.now() - startedAt < 500, "spawn failure cleanup waited for a nonexistent worker");
+  const started = await service.startForAgent("session-a", cwd, true, { command: "npm run dev" });
+  assert.equal(started.state, "running");
+  await service.stop(started.process.processId, started.runId, "force", "user");
 });
 
 test("user stop before spawn settles immediately as a stopped run", async () => {

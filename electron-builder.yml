@@ -127,6 +127,12 @@ mac:
   artifactName: Pi-Agent-Desktop-${version}-${arch}.${ext}
 
 win:
+  extraResources:
+    - from: out/native/windows-managed-process-helper
+      to: managed-process/win32-x64
+      filter:
+        - pi-managed-process-helper.exe
+        - manifest.json
   target:
     - target: nsis
       arch:

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mainBundle = readFileSync(path.join(root, "out", "main", "main.js"), "utf8");
+const agentHostBundle = readFileSync(path.join(root, "out", "main", "agent-host.mjs"), "utf8");
 const builderConfig = readFileSync(path.join(root, "electron-builder.yml"), "utf8");
 const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 const packageLock = JSON.parse(readFileSync(path.join(root, "package-lock.json"), "utf8"));
@@ -15,14 +16,19 @@ const updaterDependencyIsValid =
   /^\d+\.\d+\.\d+$/.test(updaterVersion) &&
   updaterVersion === lockedUpdaterVersion &&
   packageJson.devDependencies?.["electron-updater"] === undefined;
-const requiredMarkers = [
+const requiredMainMarkers = [
   "electron-updater",
   "update:state",
   "desktop:update:check",
   "--validate-packaged-startup",
   "packaged-startup-check.json",
+  "pi-managed-process-helper.exe",
+  "--version-json-v1",
+  "--reap-stdio-v1",
 ];
-const missing = requiredMarkers.filter((marker) => !mainBundle.includes(marker));
+const requiredAgentHostMarkers = ["--owner-stdio-v1", "JOB_TERMINATE"];
+const missingMainMarkers = requiredMainMarkers.filter((marker) => !mainBundle.includes(marker));
+const missingAgentHostMarkers = requiredAgentHostMarkers.filter((marker) => !agentHostBundle.includes(marker));
 const forbiddenMarkers = [
   "runSmokeHostChecks",
   "Smoke RPC timed out",
@@ -89,11 +95,18 @@ const toolchainCatalogPackagingIsValid =
   builderConfig.includes("to: toolchains/core/${platform}-${arch}") &&
   builderConfig.includes("executableName: pi-agent-desktop") &&
   !/from:\s*build\/toolchains\/(?:archives|downloads|runtimes)/i.test(builderConfig);
+const windowsHelperPackagingIsValid =
+  builderConfig.includes("from: out/native/windows-managed-process-helper") &&
+  builderConfig.includes("to: managed-process/win32-x64") &&
+  builderConfig.includes("pi-managed-process-helper.exe") &&
+  builderConfig.includes("manifest.json");
 
 if (
   !updaterDependencyIsValid ||
   !toolchainCatalogPackagingIsValid ||
-  missing.length > 0 ||
+  !windowsHelperPackagingIsValid ||
+  missingMainMarkers.length > 0 ||
+  missingAgentHostMarkers.length > 0 ||
   found.length > 0 ||
   leakedCredentials.length > 0 ||
   missingPackageExclusions.length > 0 ||
@@ -102,7 +115,12 @@ if (
   if (!updaterDependencyIsValid) {
     console.error("FAIL: electron-updater must be an exact production dependency matching package-lock.json");
   }
-  for (const marker of missing) console.error(`FAIL: production main bundle is missing updater marker: ${marker}`);
+  for (const marker of missingMainMarkers) {
+    console.error(`FAIL: production main bundle is missing required marker: ${marker}`);
+  }
+  for (const marker of missingAgentHostMarkers) {
+    console.error(`FAIL: production Agent Host bundle is missing required marker: ${marker}`);
+  }
   for (const marker of found) console.error(`FAIL: production main bundle contains forbidden marker: ${marker}`);
   for (const pattern of leakedCredentials) {
     console.error(`FAIL: production main bundle contains a credential matching ${pattern}`);
@@ -118,9 +136,12 @@ if (
       "FAIL: production packaging must include third-party notices, fixed catalogs, and only target-specific bundled core tools",
     );
   }
+  if (!windowsHelperPackagingIsValid) {
+    console.error("FAIL: Windows packages must include exactly the fixed helper executable and integrity manifest");
+  }
   process.exit(1);
 }
 
 console.log(
-  `OK: electron-updater ${updaterVersion} is locked for production; main bundle contains ${requiredMarkers.length} updater markers, excludes ${forbiddenMarkers.length} forbidden markers, packaging retains ${requiredPackageExclusions.length} source exclusions and explicit Pi authoring asset FileSets, and fixed catalogs plus target-specific core tools are packaged without managed runtime archives`,
+  `OK: electron-updater ${updaterVersion} is locked for production; main and Agent Host bundles contain ${requiredMainMarkers.length + requiredAgentHostMarkers.length} required markers, main excludes ${forbiddenMarkers.length} forbidden markers, packaging retains ${requiredPackageExclusions.length} source exclusions and explicit Pi authoring asset FileSets, and fixed catalogs plus target-specific core tools are packaged without managed runtime archives`,
 );

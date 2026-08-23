@@ -24,8 +24,12 @@ test("main pushes package every supported desktop target", () => {
     ["darwin-arm64", "darwin-x64", "win32-x64", "linux-x64"],
   );
   assert.match(
-    stepByName("package", "Verify packaged toolchains and production startup").run,
+    stepByName("package", "Verify packaged toolchains and production startup (macOS)").run,
     /check:packaged-toolchains/,
+  );
+  assert.match(
+    stepByName("package", "Verify packaged toolchains and production startup (Windows)").run,
+    /check:packaged-toolchains.*--release-helper/,
   );
   assert.match(
     stepByName("package", "Verify packaged toolchains and production startup (Linux)").run,
@@ -62,6 +66,11 @@ test("Windows runs pure quality checks and Electron smoke without an Xvfb depend
     packageSteps.indexOf(stepByName("package", "Prepare verified bundled search tools")) < packageSteps.indexOf(smoke),
     "bundled search tools must be prepared before Electron smoke",
   );
+  assert.ok(
+    packageSteps.indexOf(stepByName("package", "Rebuild authoritative Windows helper for packaging")) <
+      packageSteps.indexOf(stepByName("package", "Package ${{ matrix.name }}")),
+    "the authoritative helper must replace the development build before packaging",
+  );
 });
 
 test("package metadata is cross-checked against each platform artifact", () => {
@@ -93,4 +102,19 @@ test("unsigned Windows releases remain explicitly Beta until Authenticode proven
 
   const builderConfig = fs.readFileSync(path.join(root, "electron-builder.yml"), "utf8");
   assert.match(builderConfig, /artifactName: Pi-Agent-Desktop-Unsigned-Beta-Setup-\$\{version\}\.\$\{ext\}/);
+});
+
+test("Windows packages and draft releases require an exact CycloneDX SBOM and notices asset", () => {
+  for (const jobName of ["package", "release-windows"]) {
+    const gate = stepByName(jobName, "Generate and verify Windows SBOM");
+    assert.match(gate.run, /npm run build:windows-sbom/);
+    assert.match(gate.run, /npm run check:windows-sbom/);
+  }
+  const windowsUpload = stepByName("release-windows", "Upload Windows release artifacts").with.path;
+  assert.match(windowsUpload, /dist\/\*\.cdx\.json/);
+  assert.match(windowsUpload, /THIRD_PARTY_NOTICES\.md/);
+  const release = stepByName("release", "Create or update draft release").run;
+  assert.match(release, /-name '\*\.cdx\.json'/);
+  assert.match(release, /-name 'THIRD_PARTY_NOTICES\.md'/);
+  assert.match(release, /find "\$windows_artifacts" -type f -name '\*\.cdx\.json'/);
 });
