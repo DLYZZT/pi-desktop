@@ -152,12 +152,14 @@ function ProviderDetail({
   onChange,
   onRename,
   onDelete,
+  modelSelection,
 }: {
   name: string;
   provider: ProviderEntry;
   onChange: (p: ProviderEntry) => void;
   onRename: (n: string) => void;
   onDelete: () => void;
+  modelSelection: ModelSelectionControl;
 }) {
   const { t } = useI18n();
   const [editingName, setEditingName] = useState(name);
@@ -173,22 +175,30 @@ function ProviderDetail({
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <SectionTitle>{t("modelProvider", "Provider")}</SectionTitle>
-        <button
-          type="button"
-          onClick={onDelete}
-          style={{
-            minHeight: 32,
-            padding: "0 10px",
-            background: "none",
-            border: "1px solid rgba(239,68,68,0.3)",
-            borderRadius: 4,
-            color: "#ef4444",
-            cursor: "pointer",
-            fontSize: 12,
-          }}
-        >
-          {t("delete", "Delete")}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <ProviderEnableToggle
+            providerId={name}
+            preferences={modelSelection.preferences}
+            saving={modelSelection.saving}
+            onChange={modelSelection.onChange}
+          />
+          <button
+            type="button"
+            onClick={onDelete}
+            style={{
+              minHeight: 32,
+              padding: "0 10px",
+              background: "none",
+              border: "1px solid rgba(239,68,68,0.3)",
+              borderRadius: 4,
+              color: "#ef4444",
+              cursor: "pointer",
+              fontSize: 12,
+            }}
+          >
+            {t("delete", "Delete")}
+          </button>
+        </div>
       </div>
 
       <Field label={t("modelProviderName", "Provider name")}>
@@ -759,6 +769,73 @@ function ModelDetail({
 }
 
 // ── Managed provider models ──────────────────────────────────────────────────
+
+function ProviderEnableToggle({
+  providerId,
+  preferences,
+  saving,
+  onChange,
+}: {
+  providerId: string;
+  preferences: ModelPreferencesResult | null;
+  saving: boolean;
+  onChange: (enabledModels: string[] | null) => Promise<void>;
+}) {
+  const providerModels = (preferences?.models ?? []).filter((model) => model.provider === providerId);
+  const enabledCount = providerModels.filter((model) =>
+    isModelEnabled(model, preferences?.enabledModels ?? null),
+  ).length;
+  const enabled = enabledCount > 0;
+  const toggle = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (saving || providerModels.length === 0) return;
+    void onChange(setProviderModelsEnabled(providerModels, preferences?.enabledModels ?? null, providerId, !enabled));
+  };
+  // Same switch look as Skills/Plugins toggles.
+  const w = 48;
+  const h = 32;
+  const knob = 20;
+  const pad = (h - knob) / 2;
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label={(enabled ? "Disable " : "Enable ") + providerId + " models in the picker"}
+      title={(enabled ? "Disable " : "Enable ") + providerId + " models in the picker"}
+      onClick={toggle}
+      disabled={saving}
+      style={{
+        flexShrink: 0,
+        width: w,
+        height: h,
+        borderRadius: h / 2,
+        border: "none",
+        padding: 0,
+        cursor: saving ? "wait" : providerModels.length === 0 ? "not-allowed" : "pointer",
+        opacity: providerModels.length === 0 ? 0.4 : 1,
+        background: enabled ? "var(--accent)" : "var(--border)",
+        position: "relative",
+        transition: "background 0.18s",
+        outline: "none",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          top: pad,
+          left: enabled ? w - knob - pad : pad,
+          width: knob,
+          height: knob,
+          borderRadius: "50%",
+          background: "var(--bg)",
+          boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
+          transition: "left 0.18s cubic-bezier(.4,0,.2,1)",
+        }}
+      />
+    </button>
+  );
+}
 
 interface ModelSelectionControl {
   preferences: ModelPreferencesResult | null;
@@ -2086,6 +2163,9 @@ export function ModelsConfig({
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
   const [modelPreferences, setModelPreferencesState] = useState<ModelPreferencesResult | null>(null);
+  // Snapshot of models.json as last loaded from disk. Used to auto-enable
+  // newly added provider models in the model picker on save.
+  const baselineConfigRef = useRef<ModelsJson | null>(null);
   const [modelPreferencesLoading, setModelPreferencesLoading] = useState(true);
   const [modelPreferencesSaving, setModelPreferencesSaving] = useState(false);
   const [modelPreferencesError, setModelPreferencesError] = useState<string | null>(null);
@@ -2167,6 +2247,7 @@ export function ModelsConfig({
         config: normalized,
         selection: keys.length > 0 ? { type: "provider", name: keys[0] } : null,
       });
+      baselineConfigRef.current = normalized;
       setConfigVersion(snapshot.version);
       setConfigLoaded(true);
       setSaveConflict(false);
@@ -2289,6 +2370,32 @@ export function ModelsConfig({
         setSaveConflict(false);
         setSavedOk(true);
         onChanged?.();
+        // Newly added provider models are enabled in the picker by default:
+        // merge refs absent from the last disk snapshot into enabledModels.
+        if (modelPreferences?.enabledModels != null) {
+          const baseline = baselineConfigRef.current;
+          const baselineRefs = new Set<string>();
+          for (const [pName, p] of Object.entries(baseline?.providers ?? {})) {
+            for (const m of p.models ?? []) {
+              const id = m.id?.trim();
+              if (id) baselineRefs.add(`${pName}/${id}`);
+            }
+          }
+          const newRefs: string[] = [];
+          for (const [pName, p] of Object.entries(config.providers ?? {})) {
+            for (const m of p.models ?? []) {
+              const id = m.id?.trim();
+              const ref = id ? `${pName}/${id}` : "";
+              if (ref && !baselineRefs.has(ref) && !modelPreferences.enabledModels.includes(ref)) {
+                newRefs.push(ref);
+              }
+            }
+          }
+          if (newRefs.length > 0) {
+            void updateModelPreferences([...modelPreferences.enabledModels, ...newRefs]);
+          }
+        }
+        baselineConfigRef.current = config;
         void loadModelPreferences();
         setTimeout(() => setSavedOk(false), 2000);
       }
@@ -2297,7 +2404,7 @@ export function ModelsConfig({
     } finally {
       setSaving(false);
     }
-  }, [config, configVersion, loadModelPreferences, onChanged, t]);
+  }, [config, configVersion, loadModelPreferences, modelPreferences, updateModelPreferences, onChanged, t]);
 
   const providers = Object.entries(config.providers ?? {});
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
@@ -2355,6 +2462,13 @@ export function ModelsConfig({
           onChange={(p) => updateProvider(selection.name, p)}
           onRename={(n) => renameProvider(selection.name, n)}
           onDelete={() => deleteProvider(selection.name)}
+          modelSelection={{
+            preferences: modelPreferences,
+            loading: modelPreferencesLoading,
+            saving: modelPreferencesSaving,
+            error: modelPreferencesError,
+            onChange: updateModelPreferences,
+          }}
         />
       );
     }
