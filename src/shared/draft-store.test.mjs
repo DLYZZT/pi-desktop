@@ -5,6 +5,7 @@ import {
   CHAT_DRAFT_SCHEMA_VERSION,
   DraftPersistenceController,
   MAX_PERSISTED_DRAFT_FILES,
+  MAX_PERSISTED_DRAFT_IMAGE_BYTES,
   clearDraft,
   decodedBase64ByteLength,
   flushDraft,
@@ -44,7 +45,8 @@ test("base64 size accounting excludes oversized image sets before serialization"
   assert.equal(decodedBase64ByteLength("YQ=="), 1);
   assert.equal(decodedBase64ByteLength("YWI="), 2);
   assert.deepEqual(persistableDraftImages([{ data: "YQ==", mimeType: "image/png" }]).length, 1);
-  assert.deepEqual(persistableDraftImages([{ data: "A".repeat(3_000_000), mimeType: "image/png" }]), []);
+  const oversized = "A".repeat(Math.ceil(((MAX_PERSISTED_DRAFT_IMAGE_BYTES + 1) * 4) / 3));
+  assert.deepEqual(persistableDraftImages([{ data: oversized, mimeType: "image/png" }]), []);
 });
 
 test("image additions are rejected with distinct count and byte-limit reasons", () => {
@@ -56,10 +58,8 @@ test("image additions are rejected with distinct count and byte-limit reasons", 
   assert.deepEqual(countSelection.accepted, []);
   assert.equal(countSelection.rejected[0].reason, "count");
 
-  const byteSelection = selectDraftImageAdditions(
-    [],
-    [{ data: "A".repeat(2_100_000), mimeType: "image/png" }, tiny("small")],
-  );
+  const oversized = "A".repeat(Math.ceil(((MAX_PERSISTED_DRAFT_IMAGE_BYTES + 1) * 4) / 3));
+  const byteSelection = selectDraftImageAdditions([], [{ data: oversized, mimeType: "image/png" }, tiny("small")]);
   assert.deepEqual(byteSelection.accepted, [tiny("small")]);
   assert.equal(byteSelection.rejected[0].reason, "bytes");
 });
