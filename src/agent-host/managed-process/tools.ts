@@ -56,7 +56,7 @@ function owner(ctx: ToolContext): string {
 }
 
 function assertLocalTurn(ctx: ToolContext): void {
-  if (getBrowserSessionSource(ctx.sessionManager) === "channel") {
+  if (getBrowserSessionSource(ctx.sessionManager) !== "local") {
     throw new ManagedProcessError(
       "PROCESS_FEATURE_DISABLED",
       "Managed process tools are unavailable for messaging-channel turns",

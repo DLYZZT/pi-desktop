@@ -70,6 +70,7 @@ const COMPONENT_SOURCE_NAMES: Readonly<Record<ManagedComponentId, string>> = {
   fd: "sharkdp/fd",
   jq: "jqlang/jq",
   bun: "Oven Bun",
+  herdr: "Herdr",
 };
 
 /**
@@ -128,6 +129,13 @@ export interface ToolchainManagerOptions {
   fetchImpl?: typeof fetch;
   legacyNpmCommand?: readonly string[];
   isRuntimeInUse?: () => boolean;
+  managedComponentLifecycles?: Partial<Record<ManagedComponentId, ManagedComponentLifecycle>>;
+}
+
+export interface ManagedComponentLifecycle {
+  getState(): PublicManagedComponentState;
+  install(onProgress: (progress: InstallerProgress) => void, signal: AbortSignal): Promise<void>;
+  remove(): Promise<void>;
 }
 
 export interface ResolveProjectOptions {
@@ -181,6 +189,7 @@ export class ToolchainManager {
   private readonly stateStore?: ToolchainStateStore;
   private readonly installer?: ManagedComponentInstaller;
   private readonly isRuntimeInUse: () => boolean;
+  private readonly managedComponentLifecycles: Partial<Record<ManagedComponentId, ManagedComponentLifecycle>>;
   private persistentState: ToolchainPersistentState;
   private readonly operations = new Map<string, PublicToolchainOperation>();
   private readonly installs = new Map<ManagedComponentId, Promise<PublicToolchainState>>();
@@ -264,6 +273,7 @@ export class ToolchainManager {
           })
         : undefined);
     this.isRuntimeInUse = options.isRuntimeInUse ?? (() => false);
+    this.managedComponentLifecycles = options.managedComponentLifecycles ?? {};
     this.redactionRoots = [
       ...(options.userDataRoot ? [{ path: options.userDataRoot, label: "$APP_DATA" }] : []),
       ...(options.resourcesRoot ? [{ path: options.resourcesRoot, label: "$APP_RESOURCES" }] : []),
@@ -284,6 +294,11 @@ export class ToolchainManager {
 
   getPublicState(): PublicToolchainState {
     return this.snapshot.publicState;
+  }
+
+  refreshManagedComponents(): PublicToolchainState {
+    this.refreshPublicState();
+    return this.getPublicState();
   }
 
   async getPublicStateForProject(cwd: string): Promise<PublicToolchainState> {
@@ -449,6 +464,8 @@ export class ToolchainManager {
   private installComponent(componentId: ManagedComponentId): Promise<PublicToolchainState> {
     const active = this.installs.get(componentId);
     if (active) return active;
+    const lifecycle = this.managedComponentLifecycles[componentId];
+    if (lifecycle) return this.installLifecycleComponent(componentId, lifecycle);
     if (!this.installer || !this.catalog) {
       return Promise.reject(
         new ToolchainError({
@@ -467,6 +484,46 @@ export class ToolchainManager {
       .then(async (state) => {
         this.persistentState = state;
         return (await this.rescan()).publicState;
+      })
+      .finally(() => {
+        this.installs.delete(componentId);
+        this.installControllers.delete(componentId);
+      });
+    this.installs.set(componentId, install);
+    return install;
+  }
+
+  private installLifecycleComponent(
+    componentId: ManagedComponentId,
+    lifecycle: ManagedComponentLifecycle,
+  ): Promise<PublicToolchainState> {
+    const operationId = randomUUID();
+    const controller = new AbortController();
+    this.installControllers.set(componentId, controller);
+    this.operations.set(operationId, { operationId, componentId, phase: "queued" });
+    this.refreshPublicState();
+    const install = lifecycle
+      .install((progress) => this.updateOperation(operationId, componentId, progress), controller.signal)
+      .then(async () => (await this.rescan()).publicState)
+      .catch((error) => {
+        const toolchainError =
+          error instanceof ToolchainError
+            ? error
+            : new ToolchainError({
+                code: "TOOLCHAIN_INTERNAL",
+                message: `Managed ${componentId} operation failed`,
+                cause: error,
+              });
+        this.operations.set(operationId, {
+          operationId,
+          componentId,
+          phase: toolchainError.code === "TOOLCHAIN_CANCELLED" ? "cancelled" : "error",
+          ...(toolchainError.code === "TOOLCHAIN_CANCELLED"
+            ? {}
+            : { error: { code: toolchainError.code, message: toolchainError.message } }),
+        });
+        this.refreshPublicState();
+        throw toolchainError;
       })
       .finally(() => {
         this.installs.delete(componentId);
@@ -504,6 +561,17 @@ export class ToolchainManager {
   }
 
   private async removeComponent(componentId: ManagedComponentId): Promise<void> {
+    const lifecycle = this.managedComponentLifecycles[componentId];
+    if (lifecycle) {
+      if (this.installs.has(componentId)) {
+        throw new ToolchainError({
+          code: "TOOLCHAIN_INSTALL_BUSY",
+          message: `${componentId} is currently being installed`,
+        });
+      }
+      await lifecycle.remove();
+      return;
+    }
     if (!this.paths || !this.stateStore) {
       throw new ToolchainError({ code: "TOOLCHAIN_INTERNAL", message: "Managed runtimes are unavailable" });
     }
@@ -981,6 +1049,11 @@ export class ToolchainManager {
         canRepair: Boolean(variant && installed),
         canRemove: installed,
       };
+    }
+    for (const lifecycle of Object.values(this.managedComponentLifecycles)) {
+      if (!lifecycle) continue;
+      const state = lifecycle.getState();
+      result[state.componentId] = state;
     }
     return result;
   }

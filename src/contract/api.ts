@@ -52,6 +52,17 @@ import type {
   ManagedProcessWaitParams,
   ManagedProcessWriteParams,
 } from "./processes";
+import type {
+  HerdrAgentState,
+  HerdrAgentKey,
+  HerdrFleetSnapshot,
+  HerdrRuntimeConfigureRequest,
+  HerdrRuntimeSnapshot,
+  HerdrTerminalFrame,
+  HerdrTerminalStatus,
+  HerdrAgentKind,
+  HerdrDiagnostics,
+} from "./herdr";
 
 /** Request/response API surface (replaces HTTP routes). */
 export interface Api {
@@ -64,6 +75,49 @@ export interface Api {
       capabilities: Partial<Record<ToolCapabilityId, { provider: ToolProvider; version: string }>>;
     };
   };
+
+  // External terminal agents managed by a pinned Herdr protocol adapter.
+  "herdr.runtime.get": { params: void; result: HerdrRuntimeSnapshot };
+  "herdr.runtime.configure": { params: HerdrRuntimeConfigureRequest; result: HerdrRuntimeSnapshot };
+  "herdr.runtime.probe": { params: void; result: HerdrRuntimeSnapshot };
+  "herdr.runtime.connect": { params: void; result: HerdrRuntimeSnapshot };
+  "herdr.runtime.disconnect": { params: void; result: { ok: true } };
+  "herdr.diagnostics": { params: void; result: HerdrDiagnostics };
+  "herdr.snapshot": { params: void; result: HerdrFleetSnapshot };
+  "herdr.workspace.create": {
+    params: { cwd: string; name?: string };
+    result: { workspaceId: string; rootPaneId: string };
+  };
+  "herdr.pane.split": {
+    params: { paneId: string; direction: "horizontal" | "vertical"; cwd?: string };
+    result: { paneId: string };
+  };
+  "herdr.pane.read": {
+    params: { paneId: string; maxBytes?: number };
+    result: { text: string; truncated: boolean };
+  };
+  "herdr.agent.start": {
+    params: { paneId: string; kind: HerdrAgentKind };
+    result: { paneId: string; state: HerdrAgentState };
+  };
+  "herdr.agent.prompt": { params: { paneId: string; prompt: string }; result: { accepted: true } };
+  "herdr.agent.sendKeys": { params: { paneId: string; keys: HerdrAgentKey[] }; result: { accepted: true } };
+  "herdr.agent.wait": {
+    params: { paneId: string; states: HerdrAgentState[]; timeoutMs: number; requestId: string };
+    result: { state: HerdrAgentState; timedOut: boolean };
+  };
+  "herdr.agent.waitCancel": { params: { requestId: string }; result: { ok: true } };
+  "herdr.terminal.open": {
+    params: { paneId: string; mode: "observe" | "control"; cols: number; rows: number; takeover?: boolean };
+    result: { terminalId: string; mode: "observe" | "control"; controller: boolean };
+  };
+  "herdr.terminal.input": { params: { terminalId: string; bytes: Uint8Array }; result: { accepted: true } };
+  "herdr.terminal.resize": {
+    params: { terminalId: string; cols: number; rows: number };
+    result: { accepted: true };
+  };
+  "herdr.terminal.ack": { params: { terminalId: string; seq: number }; result: { ok: true } };
+  "herdr.terminal.close": { params: { terminalId: string; release: boolean }; result: { ok: true } };
 
   // Managed background processes (trusted Renderer control surface)
   "processes.list": {
@@ -417,6 +471,10 @@ export interface Streams {
   "channels.activity": ChannelActivity;
   "processes.changed": ManagedProcessChangedEvent;
   "processes.output": ManagedProcessOutputEvent;
+  "herdr.runtime": HerdrRuntimeSnapshot;
+  "herdr.fleet": HerdrFleetSnapshot;
+  "herdr.terminal.frame": HerdrTerminalFrame;
+  "herdr.terminal.status": HerdrTerminalStatus;
 }
 
 export type ApiMethod = keyof Api;

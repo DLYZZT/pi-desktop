@@ -1,0 +1,5 @@
+{"type":"event","event":{"type":"pane.updated","pane_id":"w1:p1"}}
+{"type":"event","event":{"type":"pane.agent_detected","pane_id":"w1:p1"}}
+{"type":"event","event":{"type":"tab.renamed","workspace_id":"w1","tab_id":"w1:t1"}}
+{"type":"event","event":{"type":"workspace.updated","workspace_id":"w1"}}
+{"type":"event","event":{"type":"layout.updated","workspace_id":"w1","tab_id":"w1:t1"}}

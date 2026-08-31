@@ -26,6 +26,7 @@ export const MANAGED_COMPONENT_IDS = [
   "fd",
   "jq",
   "bun",
+  "herdr",
 ] as const;
 
 export type ManagedComponentId = (typeof MANAGED_COMPONENT_IDS)[number];
@@ -83,6 +84,7 @@ export const TOOLCHAIN_ERROR_CODES = [
   "TOOLCHAIN_EXTRACTION_FAILED",
   "TOOLCHAIN_INSTALL_BUSY",
   "TOOLCHAIN_PERMISSION_DENIED",
+  "TOOLCHAIN_DISK_FULL",
   "TOOLCHAIN_INVALID_SELECTION",
   "TOOLCHAIN_INVALID_CATALOG",
   "TOOLCHAIN_CANCELLED",

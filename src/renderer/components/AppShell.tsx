@@ -51,12 +51,18 @@ import type { ChatAppearancePreferences } from "@shared/chat-appearance";
 import { worktreePathsEqual } from "@shared/worktree-path";
 import type { BrowserAgentAuthorizationRequest, BrowserAgentAuthorizationDecision } from "../../contract/browser";
 import { isManagedProcessActiveState } from "@contract/processes";
+import { QuickHerdrFleet } from "./herdr/QuickHerdrFleet";
+import { TerminalDock } from "./herdr/TerminalDock";
+import type { HerdrPane } from "@contract/herdr";
 
 type SessionCopyField = "file" | "id";
 type SessionCopyFeedback = { field: SessionCopyField; status: "copied" | "error" };
 const EXPLORER_TAB_ID = "explorer";
 const BROWSER_TAB_ID = "browser";
 const PROCESSES_TAB_ID = "processes";
+const HERDR_TERMINAL_TAB_ID = "herdr-terminal";
+const HERDR_TERMINAL_PANEL_RATIO = 0.55;
+const HERDR_TERMINAL_EXPANDED_RATIO = 0.72;
 const BROWSER_PANEL_WIDTH_KEY = "pi-desktop.browser-panel-width";
 const EMPTY_CHANNELS: ChannelsSnapshot = { accounts: [], statuses: [], pairings: [], bindings: [], activities: [] };
 
@@ -221,7 +227,10 @@ export function AppShell({
     getRightPanelWidthBounds(window.innerWidth, sidebarOpen),
   );
   const rightPanelPreferredWidthRef = useRef(RIGHT_PANEL_DEFAULT_WIDTH);
-  const rightPanelKindRef = useRef<"files" | "browser" | "processes">("files");
+  const rightPanelKindRef = useRef<"files" | "browser" | "processes" | "terminal">("files");
+  const [herdrTerminalPane, setHerdrTerminalPane] = useState<HerdrPane | null>(null);
+  const [herdrTerminalExpanded, setHerdrTerminalExpanded] = useState(false);
+  const herdrTerminalRestoreRef = useRef<{ width: number; sidebarOpen: boolean } | null>(null);
   const [managedProcessCount, setManagedProcessCount] = useState(0);
   const [managedProcessAttention, setManagedProcessAttention] = useState(false);
   const [rightPanelWidth, setRightPanelWidth] = useState(() => {
@@ -231,6 +240,12 @@ export function AppShell({
   });
   const [rightPanelResizing, setRightPanelResizing] = useState(false);
   const rightPanelResizeCleanupRef = useRef<(() => void) | null>(null);
+  const rightPanelMaxRatio =
+    activeFileTabId === HERDR_TERMINAL_TAB_ID
+      ? herdrTerminalExpanded
+        ? HERDR_TERMINAL_EXPANDED_RATIO
+        : HERDR_TERMINAL_PANEL_RATIO
+      : undefined;
 
   useEffect(() => {
     let disposed = false;
@@ -282,8 +297,13 @@ export function AppShell({
 
       const handleMove = (moveEvent: PointerEvent) => {
         if (moveEvent.clientX !== startX) didResize = true;
-        finalWidth = clampRightPanelWidth(startWidth + startX - moveEvent.clientX, window.innerWidth, sidebarOpen);
-        setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, sidebarOpen));
+        finalWidth = clampRightPanelWidth(
+          startWidth + startX - moveEvent.clientX,
+          window.innerWidth,
+          sidebarOpen,
+          rightPanelMaxRatio,
+        );
+        setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, sidebarOpen, rightPanelMaxRatio));
         setRightPanelWidth(finalWidth);
       };
       const cleanup = (commit: boolean) => {
@@ -294,7 +314,7 @@ export function AppShell({
         document.body.style.userSelect = "";
         setRightPanelResizing(false);
         rightPanelResizeCleanupRef.current = null;
-        if (commit && didResize && finalWidth >= RIGHT_PANEL_MIN_WIDTH) {
+        if (commit && didResize && !herdrTerminalExpanded && finalWidth >= RIGHT_PANEL_MIN_WIDTH) {
           rightPanelPreferredWidthRef.current = finalWidth;
           persistRightPanelPreferredWidth(finalWidth, activeFileTabId === BROWSER_TAB_ID);
         }
@@ -310,7 +330,7 @@ export function AppShell({
       window.addEventListener("pointerup", handlePointerUp);
       window.addEventListener("pointercancel", handlePointerCancel);
     },
-    [activeFileTabId, isMobile, rightPanelWidth, sidebarOpen],
+    [activeFileTabId, herdrTerminalExpanded, isMobile, rightPanelMaxRatio, rightPanelWidth, sidebarOpen],
   );
 
   useEffect(() => () => rightPanelResizeCleanupRef.current?.(), []);
@@ -318,36 +338,66 @@ export function AppShell({
   useEffect(() => {
     if (isMobile) return;
     const nextKind =
-      activeFileTabId === BROWSER_TAB_ID ? "browser" : activeFileTabId === PROCESSES_TAB_ID ? "processes" : "files";
+      activeFileTabId === BROWSER_TAB_ID
+        ? "browser"
+        : activeFileTabId === PROCESSES_TAB_ID
+          ? "processes"
+          : activeFileTabId === HERDR_TERMINAL_TAB_ID
+            ? "terminal"
+            : "files";
     if (rightPanelKindRef.current === nextKind) return;
     persistRightPanelPreferredWidth(rightPanelPreferredWidthRef.current, rightPanelKindRef.current === "browser");
     rightPanelKindRef.current = nextKind;
-    const preferred = nextKind === "browser" ? loadBrowserPanelPreferredWidth() : initialRightPanelPreferredWidth();
+    const preferred =
+      nextKind === "browser"
+        ? loadBrowserPanelPreferredWidth()
+        : nextKind === "terminal"
+          ? Math.max(520, initialRightPanelPreferredWidth())
+          : initialRightPanelPreferredWidth();
     rightPanelPreferredWidthRef.current = preferred;
-    setRightPanelWidth(clampRightPanelWidth(preferred, window.innerWidth, sidebarOpen));
+    const maxRatio = nextKind === "terminal" ? HERDR_TERMINAL_PANEL_RATIO : undefined;
+    setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, sidebarOpen, maxRatio));
+    setRightPanelWidth(clampRightPanelWidth(preferred, window.innerWidth, sidebarOpen, maxRatio));
   }, [activeFileTabId, isMobile, sidebarOpen]);
 
   useEffect(() => {
     if (isMobile) return;
     const fitToWindow = () => {
-      setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, sidebarOpen));
-      setRightPanelWidth(clampRightPanelWidth(rightPanelPreferredWidthRef.current, window.innerWidth, sidebarOpen));
+      const bounds = getRightPanelWidthBounds(window.innerWidth, sidebarOpen, rightPanelMaxRatio);
+      setRightPanelBounds(bounds);
+      setRightPanelWidth(
+        activeFileTabId === HERDR_TERMINAL_TAB_ID && herdrTerminalExpanded
+          ? bounds.maxWidth
+          : clampRightPanelWidth(
+              rightPanelPreferredWidthRef.current,
+              window.innerWidth,
+              sidebarOpen,
+              rightPanelMaxRatio,
+            ),
+      );
     };
     fitToWindow();
     window.addEventListener("resize", fitToWindow);
     return () => window.removeEventListener("resize", fitToWindow);
-  }, [isMobile, sidebarOpen]);
+  }, [activeFileTabId, herdrTerminalExpanded, isMobile, rightPanelMaxRatio, sidebarOpen]);
 
   const openRightPanel = useCallback(() => {
     const closeSidebar = isMobile || shouldCollapseSidebarForRightPanel(window.innerWidth);
     const nextSidebarOpen = closeSidebar ? false : sidebarOpen;
     if (closeSidebar) setSidebarOpen(false);
     if (!isMobile) {
-      setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, nextSidebarOpen));
-      setRightPanelWidth(clampRightPanelWidth(rightPanelPreferredWidthRef.current, window.innerWidth, nextSidebarOpen));
+      setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, nextSidebarOpen, rightPanelMaxRatio));
+      setRightPanelWidth(
+        clampRightPanelWidth(
+          rightPanelPreferredWidthRef.current,
+          window.innerWidth,
+          nextSidebarOpen,
+          rightPanelMaxRatio,
+        ),
+      );
     }
     setRightPanelOpen(true);
-  }, [isMobile, sidebarOpen]);
+  }, [isMobile, rightPanelMaxRatio, sidebarOpen]);
 
   const handleRightPanelToggle = useCallback(() => {
     if (rightPanelOpen) setRightPanelOpen(false);
@@ -419,16 +469,48 @@ export function AppShell({
         window.innerWidth,
         sidebarOpen,
         event.shiftKey,
+        rightPanelMaxRatio,
       );
-      setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, sidebarOpen));
+      setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, sidebarOpen, rightPanelMaxRatio));
       setRightPanelWidth(nextWidth);
-      if (nextWidth >= RIGHT_PANEL_MIN_WIDTH) {
+      if (!herdrTerminalExpanded && nextWidth >= RIGHT_PANEL_MIN_WIDTH) {
         rightPanelPreferredWidthRef.current = nextWidth;
         persistRightPanelPreferredWidth(nextWidth, activeFileTabId === BROWSER_TAB_ID);
       }
     },
-    [activeFileTabId, isMobile, rightPanelWidth, sidebarOpen],
+    [activeFileTabId, herdrTerminalExpanded, isMobile, rightPanelMaxRatio, rightPanelWidth, sidebarOpen],
   );
+
+  const restoreHerdrTerminalLayout = useCallback(() => {
+    const restore = herdrTerminalRestoreRef.current;
+    const restoreSidebar = restore?.sidebarOpen ?? sidebarOpen;
+    const restoreWidth = restore?.width ?? Math.max(520, initialRightPanelPreferredWidth());
+    herdrTerminalRestoreRef.current = null;
+    setHerdrTerminalExpanded(false);
+    setSidebarOpen(restoreSidebar);
+    setRightPanelBounds(getRightPanelWidthBounds(window.innerWidth, restoreSidebar, HERDR_TERMINAL_PANEL_RATIO));
+    setRightPanelWidth(
+      clampRightPanelWidth(restoreWidth, window.innerWidth, restoreSidebar, HERDR_TERMINAL_PANEL_RATIO),
+    );
+  }, [sidebarOpen]);
+
+  const toggleHerdrTerminalExpanded = useCallback(() => {
+    if (herdrTerminalExpanded) {
+      restoreHerdrTerminalLayout();
+      return;
+    }
+    herdrTerminalRestoreRef.current = { width: rightPanelWidth, sidebarOpen };
+    if (sidebarOpen) setSidebarOpen(false);
+    const bounds = getRightPanelWidthBounds(window.innerWidth, false, HERDR_TERMINAL_EXPANDED_RATIO);
+    setRightPanelBounds(bounds);
+    setRightPanelWidth(bounds.maxWidth);
+    setHerdrTerminalExpanded(true);
+  }, [herdrTerminalExpanded, restoreHerdrTerminalLayout, rightPanelWidth, sidebarOpen]);
+
+  useEffect(() => {
+    if ((activeFileTabId === HERDR_TERMINAL_TAB_ID && rightPanelOpen) || !herdrTerminalExpanded) return;
+    restoreHerdrTerminalLayout();
+  }, [activeFileTabId, herdrTerminalExpanded, restoreHerdrTerminalLayout, rightPanelOpen]);
 
   // Same @mention format as the chat input's @ autocomplete, so the agent's
   // read tool resolves it the same way (it strips the @ prefix).
@@ -664,7 +746,8 @@ export function AppShell({
       previousFileTabCountRef.current > 0 &&
       fileTabs.length === 0 &&
       activeFileTabId !== BROWSER_TAB_ID &&
-      activeFileTabId !== PROCESSES_TAB_ID
+      activeFileTabId !== PROCESSES_TAB_ID &&
+      activeFileTabId !== HERDR_TERMINAL_TAB_ID
     ) {
       setRightPanelOpen(false);
     }
@@ -1026,6 +1109,16 @@ export function AppShell({
                 snapshot={channelSnapshot}
                 isMobile={isMobile}
                 onSnapshotChange={setChannelSnapshot}
+              />
+            )}
+            {showChat && (
+              <QuickHerdrFleet
+                isMobile={isMobile}
+                onOpenTerminal={(pane) => {
+                  setHerdrTerminalPane(pane);
+                  dispatchFileTab({ type: "select", tabId: HERDR_TERMINAL_TAB_ID });
+                  openRightPanel();
+                }}
               />
             )}
             {/* Session stats — right-aligned in top bar */}
@@ -1677,6 +1770,29 @@ export function AppShell({
                 </span>
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => dispatchFileTab({ type: "select", tabId: HERDR_TERMINAL_TAB_ID })}
+              aria-pressed={activeFileTabId === HERDR_TERMINAL_TAB_ID}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                height: 36,
+                padding: "0 12px",
+                flexShrink: 0,
+                background: activeFileTabId === HERDR_TERMINAL_TAB_ID ? "var(--bg)" : "var(--bg-panel)",
+                border: "none",
+                borderRight: "1px solid var(--border)",
+                color: activeFileTabId === HERDR_TERMINAL_TAB_ID ? "var(--text)" : "var(--text-muted)",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: activeFileTabId === HERDR_TERMINAL_TAB_ID ? 500 : 400,
+              }}
+            >
+              <span aria-hidden="true">›_</span>
+              {t("herdrTerminal", "Herdr Terminal")}
+            </button>
             <div style={{ flex: 1, overflow: "hidden" }}>
               <TabBar
                 tabs={fileTabs}
@@ -1744,6 +1860,14 @@ export function AppShell({
               <ProcessPanel
                 onActiveCountChange={setManagedProcessCount}
                 onOpenBrowser={() => dispatchFileTab({ type: "select", tabId: BROWSER_TAB_ID })}
+              />
+            ) : activeFileTabId === HERDR_TERMINAL_TAB_ID ? (
+              <TerminalDock
+                pane={herdrTerminalPane}
+                visible={rightPanelOpen && !settingsOpen && !browserAuthorization}
+                expanded={herdrTerminalExpanded}
+                onToggleExpanded={toggleHerdrTerminalExpanded}
+                onPaneUnavailable={() => setHerdrTerminalPane(null)}
               />
             ) : activeFileTabId === EXPLORER_TAB_ID ? (
               explorerCwd ? (

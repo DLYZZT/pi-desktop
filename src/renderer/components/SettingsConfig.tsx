@@ -16,8 +16,10 @@ import type { ManagedProcessCapability } from "../../contract/processes";
 import { APP_AUTHOR, APP_DISPLAY_NAME, APP_GITHUB_URL, APP_VERSION, PI_VERSION } from "@/lib/app-version";
 import appIconUrl from "../../../build/icon.png";
 import { isAutoSessionTitleEnabled, setAutoSessionTitleEnabled } from "../lib/auto-session-title";
+import { HerdrSettings } from "./herdr/HerdrSettings";
 
-export type SettingsTab = "general" | "browser" | "channels" | "models" | "tools" | "skills" | "plugins" | "about";
+export type SettingsTab =
+  "general" | "herdr" | "browser" | "channels" | "models" | "tools" | "skills" | "plugins" | "about";
 
 interface SettingsConfigProps {
   cwd: string | null;
@@ -89,6 +91,7 @@ export function SettingsConfig({
 
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: "general", label: t("general", "General") },
+    { id: "herdr", label: t("herdr", "Herdr") },
     { id: "models", label: t("models", "Models") },
     { id: "skills", label: t("skills", "Skills") },
     { id: "plugins", label: t("plugins", "Plugins") },
@@ -298,6 +301,7 @@ export function SettingsConfig({
               />
             )}
             {activeTab === "browser" && <BrowserSettings sessionId={sessionId} />}
+            {activeTab === "herdr" && <HerdrSettings />}
             {activeTab === "models" && (
               <ModelsConfig embedded cwd={cwd} onClose={() => undefined} onChanged={onModelsChanged} />
             )}

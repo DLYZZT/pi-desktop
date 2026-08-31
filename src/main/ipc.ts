@@ -56,6 +56,7 @@ export type DesktopIpcOptions = {
   setChannelCredential: (payload: ChannelCredentialWrite) => void;
   getBrowserService: () => BrowserService | null;
   getManagedProcessCapability: () => ManagedProcessCapability;
+  onUiStatePatch?: (patch: ReturnType<typeof validateDesktopUiStatePatch>) => void | Promise<void>;
   updateManager: {
     getState: () => DesktopUpdateState;
     checkForUpdates: () => Promise<DesktopUpdateState>;
@@ -78,6 +79,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     setChannelCredential,
     getBrowserService,
     getManagedProcessCapability,
+    onUiStatePatch,
     updateManager,
   } = options;
   const assertTrustedSender = (event: IpcMainInvokeEvent): void => {
@@ -298,9 +300,11 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   trustedOn("desktop:set-badge-count", (_event, count: number) => applyBadgeCount(count));
   trustedHandle("desktop:get-ui-state", () => loadUiState());
   trustedHandle("desktop:managed-process-capability", () => getManagedProcessCapability());
-  trustedHandle("desktop:set-ui-state", (_event, patch: unknown) =>
-    saveUiStateStrict(validateDesktopUiStatePatch(patch)),
-  );
+  trustedHandle("desktop:set-ui-state", async (_event, patch: unknown) => {
+    const validated = validateDesktopUiStatePatch(patch);
+    saveUiStateStrict(validated);
+    await onUiStatePatch?.(validated);
+  });
   trustedHandle("desktop:get-theme-source", () => nativeTheme.themeSource);
   trustedHandle("desktop:set-theme-source", (_event, source: "system" | "light" | "dark") => {
     nativeTheme.themeSource = source;
@@ -406,6 +410,22 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
 function toolchainActionConfirmation(request: ToolchainActionRequest): Electron.MessageBoxOptions | undefined {
   const chinese = app.getLocale().toLowerCase().startsWith("zh");
   if (
+    (request.action === "install-component" || request.action === "repair-component") &&
+    request.componentId === "herdr"
+  ) {
+    return {
+      type: "question",
+      title: chinese ? "管理 Herdr" : "Manage Herdr",
+      message: chinese
+        ? "从 Pi Desktop 内置的已校验副本安装或修复 Herdr？此操作不会联网，也不会修改系统 PATH。"
+        : "Install or repair Herdr from the verified copy included with Pi Desktop? This action does not access the network or modify system PATH.",
+      buttons: chinese ? ["取消", "继续"] : ["Cancel", "Continue"],
+      defaultId: 1,
+      cancelId: 0,
+      noLink: true,
+    };
+  }
+  if (
     request.action === "install-profile" ||
     request.action === "install-component" ||
     request.action === "repair-component"
@@ -423,12 +443,17 @@ function toolchainActionConfirmation(request: ToolchainActionRequest): Electron.
     };
   }
   if (request.action === "remove-component") {
+    const herdr = request.componentId === "herdr";
     return {
       type: "warning",
-      title: chinese ? "移除托管工具" : "Remove managed tool",
+      title: chinese ? (herdr ? "卸载 Herdr" : "移除托管工具") : herdr ? "Uninstall Herdr" : "Remove managed tool",
       message: chinese
-        ? "移除此 Pi Desktop 托管运行时？系统工具和自定义工具不会受影响。"
-        : "Remove this Pi Desktop-managed runtime? System and custom tools are not affected.",
+        ? herdr
+          ? "移除 Pi Desktop 的 Herdr 私有运行时？Herdr Session 和应用内置的恢复副本会保留。"
+          : "移除此 Pi Desktop 托管运行时？系统工具和自定义工具不会受影响。"
+        : herdr
+          ? "Remove Pi Desktop's private Herdr runtime? Herdr Sessions and the bundled recovery copy are kept."
+          : "Remove this Pi Desktop-managed runtime? System and custom tools are not affected.",
       buttons: chinese ? ["取消", "移除"] : ["Cancel", "Remove"],
       defaultId: 0,
       cancelId: 0,

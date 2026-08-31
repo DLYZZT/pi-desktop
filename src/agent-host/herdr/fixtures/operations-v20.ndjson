@@ -1,0 +1,26 @@
+{"id":"fixture:1","method":"ping","params":{}}
+{"id":"fixture:1","result":{"type":"pong","version":"0.8.2","protocol":20}}
+{"id":"fixture:2","method":"session.snapshot","params":{}}
+{"id":"fixture:2","result":{"type":"session_snapshot","snapshot":{"version":"0.8.2","protocol":20,"workspaces":[],"tabs":[],"panes":[],"agents":[],"layouts":[]}}}
+{"id":"fixture:3","method":"workspace.create","params":{"cwd":"/tmp/project","focus":true,"label":"Project","env":{}}}
+{"id":"fixture:3","result":{"type":"workspace_created","workspace":{"workspace_id":"w1"},"root_pane":{"workspace_id":"w1","tab_id":"w1:t1","pane_id":"w1:p1"}}}
+{"id":"fixture:4","method":"tab.create","params":{"workspace_id":"w1","cwd":"/tmp/project","focus":false,"label":"Review","env":{}}}
+{"id":"fixture:4","result":{"type":"tab_created","tab":{"workspace_id":"w1","tab_id":"w1:t2"},"root_pane":{"workspace_id":"w1","tab_id":"w1:t2","pane_id":"w1:p2"}}}
+{"id":"fixture:5","method":"tab.focus","params":{"tab_id":"w1:t2"}}
+{"id":"fixture:5","result":{"type":"tab_info","tab":{"workspace_id":"w1","tab_id":"w1:t2","label":"Review"}}}
+{"id":"fixture:6","method":"tab.rename","params":{"tab_id":"w1:t2","label":"Done"}}
+{"id":"fixture:6","result":{"type":"tab_info","tab":{"workspace_id":"w1","tab_id":"w1:t2","label":"Done"}}}
+{"id":"fixture:7","method":"pane.split","params":{"target_pane_id":"w1:p1","direction":"right","focus":true,"right_click":"herdr","cwd":"/tmp/project","env":{}}}
+{"id":"fixture:7","result":{"type":"pane_info","pane":{"workspace_id":"w1","tab_id":"w1:t1","pane_id":"w1:p3","terminal_id":"term3","focused":true,"revision":1}}}
+{"id":"fixture:8","method":"pane.read","params":{"pane_id":"w1:p1","source":"recent_unwrapped","lines":20,"format":"text","strip_ansi":true}}
+{"id":"fixture:8","result":{"type":"pane_read","read":{"text":"fixture output","truncated":false}}}
+{"id":"fixture:9","method":"agent.start","params":{"name":"claude","kind":"claude","pane_id":"w1:p1","args":[],"timeout_ms":60000}}
+{"id":"fixture:9","result":{"type":"agent_started","agent":{"workspace_id":"w1","tab_id":"w1:t1","pane_id":"w1:p1","terminal_id":"term1","agent_status":"working","focused":true,"revision":2},"argv":["claude"]}}
+{"id":"fixture:10","method":"agent.prompt","params":{"target":"w1:p1","text":"fixture prompt"}}
+{"id":"fixture:10","result":{"type":"agent_prompted","agent":{"workspace_id":"w1","tab_id":"w1:t1","pane_id":"w1:p1","terminal_id":"term1","agent_status":"working","focused":true,"revision":3}}}
+{"id":"fixture:11","method":"agent.send_keys","params":{"target":"w1:p1","keys":["enter"]}}
+{"id":"fixture:11","result":{"type":"agent_info","agent":{"workspace_id":"w1","tab_id":"w1:t1","pane_id":"w1:p1","terminal_id":"term1","agent_status":"working","focused":true,"revision":4}}}
+{"id":"fixture:12","method":"agent.wait","params":{"target":"w1:p1","until":["blocked","done"],"timeout_ms":1000}}
+{"id":"fixture:12","result":{"type":"agent_info","agent":{"workspace_id":"w1","tab_id":"w1:t1","pane_id":"w1:p1","terminal_id":"term1","agent_status":"done","focused":true,"revision":5}}}
+{"id":"fixture:13","method":"events.subscribe","params":{"subscriptions":[{"type":"pane.updated"},{"type":"pane.agent_detected"}]}}
+{"id":"fixture:13","result":{"type":"subscription_started"}}

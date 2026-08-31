@@ -11,4 +11,5 @@ temp/
 .artifacts/
 build/toolchains/.core-cache/
 build/toolchains/core/
+build/herdr/bin/
 native/**/target/

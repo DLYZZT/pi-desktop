@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-This notice was reviewed against the Pi Agent Desktop v0.1.13 production dependency graph. The license links below
+This notice was reviewed against the Pi Agent Desktop v0.1.14 production dependency graph. The license links below
 identify the upstream terms that apply to each component; Pi Agent Desktop does not modify or replace those terms.
 A reference-only entry records project lineage and does not mean that the referenced project is bundled with the
 application.
@@ -20,6 +20,8 @@ application.
 | Tencent `openclaw-weixin` adapted code | 2.4.6            | Weixin channel transport                  | [MIT](https://github.com/Tencent/openclaw-weixin/blob/v2.4.6/LICENSE)                                                            | [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin/tree/v2.4.6); Copyright © 2026 Tencent            |
 | `@rc-component/qrcode`                 | 2.0.0            | QR-code settings UI                       | [MIT](https://github.com/react-component/qrcode/blob/master/LICENSE)                                                             | [react-component/qrcode](https://github.com/react-component/qrcode); Copyright © 2015-present Alipay.com               |
 | `@larksuiteoapi/node-sdk`              | 1.71.1           | Feishu/Lark channel transport             | [MIT](https://github.com/larksuite/node-sdk/blob/main/LICENSE)                                                                   | [larksuite/node-sdk](https://github.com/larksuite/node-sdk); Copyright © 2022 Lark Technologies Pte. Ltd.              |
+| `@xterm/xterm`                         | 6.0.0            | ANSI terminal rendering for Herdr panes   | [MIT](https://github.com/xtermjs/xterm.js/blob/6.0.0/LICENSE)                                                                    | [xtermjs/xterm.js](https://github.com/xtermjs/xterm.js/tree/6.0.0); Copyright © 2012-2026 Xterm.js contributors        |
+| `@xterm/addon-fit`                     | 0.11.0           | Herdr terminal viewport sizing            | [MIT](https://github.com/xtermjs/xterm.js/blob/6.0.0/LICENSE)                                                                    | [xtermjs/xterm.js](https://github.com/xtermjs/xterm.js/tree/6.0.0/addons/addon-fit)                                    |
 | `silk-wasm`                            | 3.7.1            | Weixin SILK voice decoding                | [MIT](https://github.com/idranme/silk-wasm/blob/v3.7.1/LICENSE)                                                                  | [idranme/silk-wasm](https://github.com/idranme/silk-wasm/tree/v3.7.1); Copyright © 2024 idranme                        |
 | Electron                               | 43.1.1           | Desktop application runtime               | [MIT](https://github.com/electron/electron/blob/v43.1.1/LICENSE)                                                                 | [electron/electron](https://github.com/electron/electron/tree/v43.1.1); bundled Chromium notices ship with the runtime |
 | Chromium                               | 150.0.7871.114   | Embedded browser runtime                  | [BSD-3-Clause and bundled component licenses](https://chromium.googlesource.com/chromium/src/+/refs/tags/150.0.7871.114/LICENSE) | Embedded by Electron; `LICENSES.chromium.html` is shipped with the runtime                                             |
@@ -41,8 +43,9 @@ application.
 
 ## Developer toolchains
 
-Pi Agent Desktop redistributes only the target-specific ripgrep and fd executables in its default installer. The
-remaining tools are fixed official releases downloaded to private application storage only after user confirmation.
+Pi Agent Desktop redistributes the target-specific ripgrep, fd, and supported macOS/Linux Herdr executables in its
+default installer. Remaining tools are fixed official releases downloaded to private application storage only after
+user confirmation.
 
 | Component                         | Version         | Distribution                  | License                                                                                                                                                                  | Upstream source                                                                              |
 | --------------------------------- | --------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
@@ -55,6 +58,7 @@ remaining tools are fixed official releases downloaded to private application st
 | PortableGit                       | 2.55.0.3        | Downloaded on Windows x64     | [GPL-2.0-only and bundled notices](https://github.com/git-for-windows/git/blob/v2.55.0.windows.3/COPYING)                                                                | [git-for-windows/git](https://github.com/git-for-windows/git/releases/tag/v2.55.0.windows.3) |
 | jq                                | 1.8.2           | Downloaded after confirmation | [MIT](https://github.com/jqlang/jq/blob/jq-1.8.2/COPYING)                                                                                                                | [jqlang/jq](https://github.com/jqlang/jq/tree/jq-1.8.2)                                      |
 | Bun                               | 1.3.14          | Downloaded after confirmation | [MIT with separately licensed bundled components](https://github.com/oven-sh/bun/blob/bun-v1.3.14/LICENSE.md)                                                            | [oven-sh/bun](https://github.com/oven-sh/bun/releases/tag/bun-v1.3.14)                       |
+| Herdr                             | 0.8.2           | Bundled on macOS/Linux        | [Apache-2.0](https://github.com/herdrdev/herdr/blob/v0.8.2/LICENSE)                                                                                                      | [herdrdev/herdr](https://github.com/herdrdev/herdr/tree/v0.8.2)                              |
 
 Windows helper cross-build dependencies are not bundled in the application: `cargo-xwin` 0.23.1 is used under the
 [MIT license](https://github.com/rust-cross/cargo-xwin/blob/v0.23.1/LICENSE), LLVM 18 is used under
@@ -68,7 +72,8 @@ the authoritative Windows-native rustc, Cargo, rustc LLVM backend, Windows SDK a
 from the fixed cargo-xwin/LLVM/SDK/CRT cross-build gate, together with the exact helper, installer and bundled-tool
 hashes.
 
-The bundled ripgrep and fd executables are distributed with their upstream license files. Downloaded archives may
+The bundled ripgrep, fd, and Herdr executables are distributed with their upstream license files. The managed Herdr
+activation is copied from the bundled verified runtime together with its Apache-2.0 license text. Downloaded archives may
 contain additional components and notices; those upstream files remain authoritative.
 
 ## License reference index

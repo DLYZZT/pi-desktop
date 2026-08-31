@@ -636,3 +636,56 @@ test("cooperatively cancels the active install for a fixed component ID", async 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("routes Herdr install, repair, and removal through the shared managed-component lifecycle", async () => {
+  let installed = false;
+  const phases = [];
+  const lifecycle = {
+    getState() {
+      return {
+        componentId: "herdr",
+        installed,
+        ...(installed ? { activeVersion: "0.8.2" } : {}),
+        availableVersion: "0.8.2",
+        platformArch: "darwin-arm64",
+        downloadBytes: 0,
+        sourceName: "Bundled with Pi Desktop",
+        health: installed ? "healthy" : "missing",
+        canInstall: !installed,
+        canRepair: installed,
+        canRemove: installed,
+      };
+    },
+    async install(onProgress) {
+      for (const phase of ["verifying", "probing", "activating", "ready"]) {
+        phases.push(phase);
+        onProgress({ phase });
+      }
+      installed = true;
+    },
+    async remove() {
+      installed = false;
+    },
+  };
+  const manager = new ToolchainManager({
+    platform: "darwin",
+    arch: "arm64",
+    registry: {
+      async collect() {
+        return [];
+      },
+    },
+    probe: async () => [],
+    managedComponentLifecycles: { herdr: lifecycle },
+  });
+  await manager.initialize();
+  assert.equal(manager.getPublicState().components.herdr?.canInstall, true);
+
+  const installedState = await manager.performAction({ action: "install-component", componentId: "herdr" });
+  assert.equal(installedState.components.herdr?.health, "healthy");
+  assert.deepEqual(phases, ["verifying", "probing", "activating", "ready"]);
+
+  const removedState = await manager.performAction({ action: "remove-component", componentId: "herdr" });
+  assert.equal(removedState.components.herdr?.installed, false);
+  assert.equal(removedState.components.herdr?.canInstall, true);
+});

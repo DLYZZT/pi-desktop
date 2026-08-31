@@ -43,6 +43,7 @@ verifyPackagedResources(layout.resources, target);
 verifyWindowsManagedProcessHelper(layout.resources, target, !staticOnly, requireReleaseHelper);
 verifyPiRuntimeAssets(layout.resources, expectedPlatform, expectedArch);
 verifyBundledTools(layout.resources, expectedPlatform, expectedArch, !staticOnly);
+verifyBundledHerdr(layout.resources, expectedPlatform, expectedArch, !staticOnly);
 verifyLinuxSandbox(layout.executable, expectedPlatform);
 if (!staticOnly) {
   runPackagedStartup(layout.executable, target);
@@ -123,6 +124,7 @@ function verifyPackagedResources(resources, toolTarget) {
     ["PortableGit", "2.55.0.3"],
     ["jq", "1.8.2"],
     ["Bun", "1.3.14"],
+    ["Herdr", "0.8.2"],
   ]) {
     const tableRow = new RegExp(`^\\|\\s*${escapeRegExp(component)}\\s*\\|\\s*${escapeRegExp(version)}\\s*\\|`, "m");
     if (!tableRow.test(noticeText)) throw new Error(`Third-party notices are missing ${component} ${version}`);
@@ -130,6 +132,23 @@ function verifyPackagedResources(resources, toolTarget) {
   const runtimeCatalog = JSON.parse(fs.readFileSync(path.join(toolchains, "runtime-catalog.json"), "utf8"));
   const ids = runtimeCatalog.components?.map((component) => component.id).sort();
   assertExact(ids ?? [], ["bun", "cpython", "jq", "node-lts", "portable-git", "uv"], "managed runtime catalog IDs");
+
+  const herdrRoot = path.join(resources, "herdr");
+  if (!fs.existsSync(herdrRoot)) throw new Error("Packaged Herdr catalog is missing");
+  const herdrEntries = fs.readdirSync(herdrRoot).sort();
+  assertExact(
+    herdrEntries,
+    toolTarget === "win32-x64" ? ["runtime-catalog.json"] : ["bin", "runtime-catalog.json"],
+    "packaged Herdr resources",
+  );
+  if (toolTarget !== "win32-x64") {
+    const herdrTargets = fs
+      .readdirSync(path.join(herdrRoot, "bin"), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    assertExact(herdrTargets, [toolTarget], "packaged Herdr target directories");
+  }
 
   const forbidden = [];
   walkFiles(toolchains, (file) => {
@@ -381,6 +400,67 @@ function verifyBundledTools(resources, platform, arch, executeTools) {
     if (fd.status !== 0 || !fd.stdout.includes("needle.txt")) throw new Error(`Packaged fd failed: ${fd.stderr}`);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+function verifyBundledHerdr(resources, platform, arch, executeTool) {
+  const herdrRoot = path.join(resources, "herdr");
+  if (platform === "win32") {
+    if (fs.existsSync(path.join(herdrRoot, "bin"))) throw new Error("Herdr binary leaked into the Windows package");
+    return;
+  }
+  const catalog = JSON.parse(fs.readFileSync(path.join(herdrRoot, "runtime-catalog.json"), "utf8"));
+  const target = `${platform}-${arch}`;
+  const artifact = catalog.artifacts?.[target];
+  if (!artifact || catalog.version !== "0.8.2" || catalog.protocol !== 20 || catalog.apiSchemaVersion !== 1) {
+    throw new Error("Packaged Herdr catalog target is invalid");
+  }
+  const targetRoot = path.join(herdrRoot, "bin", target);
+  assertExact(fs.readdirSync(targetRoot).sort(), ["LICENSE", "herdr", "manifest.json"], "packaged Herdr files");
+  const manifest = JSON.parse(fs.readFileSync(path.join(targetRoot, "manifest.json"), "utf8"));
+  if (
+    manifest.schemaVersion !== 1 ||
+    manifest.version !== catalog.version ||
+    manifest.protocol !== catalog.protocol ||
+    manifest.apiSchemaVersion !== catalog.apiSchemaVersion ||
+    manifest.apiSchemaSha256 !== catalog.apiSchemaSha256 ||
+    manifest.platform !== platform ||
+    manifest.arch !== arch ||
+    manifest.executable !== "herdr" ||
+    manifest.artifactSha256 !== artifact.sha256 ||
+    manifest.sha256 !== artifact.sha256 ||
+    manifest.bytes !== artifact.downloadBytes
+  ) {
+    throw new Error("Packaged Herdr manifest does not match the pinned catalog");
+  }
+  const executable = path.join(targetRoot, "herdr");
+  if (platform === "darwin") {
+    if (!/^[a-f0-9]{64}$/.test(manifest.darwinCodeSha256) || !Number.isSafeInteger(manifest.darwinCodeBytes)) {
+      throw new Error("Packaged Herdr is missing signed-code integrity metadata");
+    }
+    verifyDarwinExecutable(executable, manifest.darwinCodeSha256, manifest.darwinCodeBytes);
+  } else {
+    verifyManifestFile(executable, manifest.sha256, manifest.bytes);
+  }
+  if ((fs.statSync(executable).mode & 0o111) === 0) throw new Error("Packaged Herdr is not executable");
+  const license = fs.readFileSync(path.join(targetRoot, "LICENSE"));
+  if (
+    license.length !== 11357 ||
+    createHash("sha256").update(license).digest("hex") !==
+      "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  ) {
+    throw new Error("Packaged Herdr license failed verification");
+  }
+  if (!executeTool) return;
+  const version = spawnSync(executable, ["--version"], { encoding: "utf8", timeout: 10_000 });
+  if (version.status !== 0 || !version.stdout.includes(`herdr ${catalog.version}`)) {
+    throw new Error(`Packaged Herdr version probe failed: ${version.stderr}`);
+  }
+  const schema = spawnSync(executable, ["api", "schema", "--json"], { encoding: "utf8", timeout: 10_000 });
+  if (schema.status !== 0) throw new Error(`Packaged Herdr schema probe failed: ${schema.stderr}`);
+  const parsed = JSON.parse(schema.stdout);
+  if (parsed.protocol !== catalog.protocol || parsed.schema_version !== catalog.apiSchemaVersion) {
+    throw new Error("Packaged Herdr schema metadata is incompatible");
   }
 }
 

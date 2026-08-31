@@ -10,6 +10,8 @@ import type {
 } from "../contract/browser";
 import { callMain } from "./parent-rpc";
 import { BROWSER_CANONICAL_GUIDELINES, browserAgentRuntime } from "./browser-agent-runtime";
+export { getBrowserSessionSource, setBrowserSessionSource } from "./session-source";
+import { getBrowserSessionSource } from "./session-source";
 
 export const BROWSER_TOOL_PERMISSIONS = {
   browser_open: "read",
@@ -66,15 +68,6 @@ export function browserToolNamesForSnapshot(snapshot: BrowserCapabilitySnapshot)
 }
 
 type ToolContext = { sessionManager: { getSessionId(): string } };
-const browserSessionSources = new WeakMap<object, "local" | "channel">();
-
-export function setBrowserSessionSource(sessionManager: object, source: "local" | "channel"): void {
-  browserSessionSources.set(sessionManager, source);
-}
-
-export function getBrowserSessionSource(sessionManager: object): "local" | "channel" {
-  return browserSessionSources.get(sessionManager) ?? "local";
-}
 
 async function browserCall<
   M extends Exclude<
@@ -89,6 +82,8 @@ async function browserCall<
 ): Promise<BrowserHostResult<M>> {
   const sessionId = ctx.sessionManager.getSessionId();
   const requestId = randomUUID();
+  const source = getBrowserSessionSource(ctx.sessionManager);
+  if (source === "unknown") throw new Error("CAPABILITY_DISABLED: Session source is unavailable");
   let capabilities = await callMain<BrowserHostResult<"browser.capabilities">>("browser.capabilities", { sessionId });
   const required = requiredPermissionForHostMethod(method);
   if (!capabilities.lease || permissionRank(capabilities.lease.permission) < permissionRank(required)) {
@@ -96,7 +91,7 @@ async function browserCall<
       "browser.requestAuthorization",
       {
         sessionId,
-        source: getBrowserSessionSource(ctx.sessionManager),
+        source,
         targetMethod: method,
         requestId,
       },

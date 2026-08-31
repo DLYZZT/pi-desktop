@@ -39,6 +39,12 @@ const packagedToolchainVerifier = read("scripts/verify-packaged-toolchains.mjs")
 const toolchainSearch = read("src/agent-host/toolchain-search.ts");
 const toolchainInstaller = read("src/main/toolchains/installer.ts");
 const toolchainManager = read("src/main/toolchains/manager.ts");
+const herdrInstaller = read("src/main/herdr/installer.ts");
+const herdrManagedServer = read("src/main/herdr/managed-server.ts");
+const herdrBridge = read("src/agent-host/herdr/bridge.ts");
+const herdrSocketClient = read("src/agent-host/herdr/socket-client.ts");
+const herdrTools = read("src/agent-host/herdr/tools.ts");
+const herdrTerminal = read("src/agent-host/herdr/terminal-session.ts");
 const electronRuntimeFetch = read("src/main/toolchains/electron-runtime-fetch.ts");
 const legacyNpmCommand = read("src/main/toolchains/legacy-npm-command.ts");
 const toolchainStateStore = read("src/main/toolchains/state-store.ts");
@@ -366,6 +372,38 @@ const checks = [
     "Desktop grep/find must use injected rg/fd descriptors and fixed build-time assets without upstream dynamic downloads",
   ],
   [
+    bundledToolsBuild.includes("prepareHerdrTarget") &&
+      bundledToolsBuild.includes("c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4") &&
+      herdrInstaller.includes("The bundled Herdr runtime failed integrity verification") &&
+      herdrInstaller.includes("executableIntegrity") &&
+      herdrInstaller.includes("async remove()") &&
+      !herdrInstaller.includes("globalThis.fetch") &&
+      (electronBuilderConfig.match(/from: build\/herdr\/bin\/\$\{platform\}-\$\{arch\}/g) ?? []).length === 2,
+    "Herdr must be build-time pinned, runtime-offline, integrity checked, removable, and bundled only for macOS/Linux",
+  ],
+  [
+    herdrManagedServer.includes('["--session", target.sessionName, "server"]') &&
+      herdrManagedServer.includes("shell: false") &&
+      herdrManagedServer.includes('"conflict"') &&
+      herdrManagedServer.includes('this.signal(child, "SIGTERM")') &&
+      herdrManagedServer.includes('this.signal(child, "SIGKILL")') &&
+      main.includes("herdrRuntimeManager?.stopManagedServer()") &&
+      main.includes("managed Herdr server cleanup reached the shutdown deadline"),
+    "Managed Herdr must use fixed argv, refuse external Session adoption, signal only owned children, and join app cleanup",
+  ],
+  [
+    !channelContract.includes("herdr.rawCall") &&
+      !herdrTools.includes("herdr.rawCall") &&
+      !/shell\s*:\s*true/u.test(`${herdrBridge}\n${herdrSocketClient}\n${herdrTerminal}\n${herdrManagedServer}`) &&
+      !/(?:console\.(?:log|info|warn|error)|appendMainLog)[^\n]*(?:prompt|text)/iu.test(
+        `${herdrBridge}\n${herdrSocketClient}\n${herdrTools}\n${herdrTerminal}`,
+      ) &&
+      bundledToolsBuild.includes('redirect: "manual"') &&
+      bundledToolsBuild.includes("assertRuntimeRedirectUrl") &&
+      !bundledToolsBuild.includes("response.arrayBuffer()"),
+    "Herdr must expose no raw RPC, spawn without a shell, avoid prompt logging, and stream build assets through allowlisted redirects",
+  ],
+  [
     main.includes('app.isPackaged && process.argv.includes("--validate-packaged-startup")') &&
       main.includes("packaged-startup-check.json") &&
       main.includes("getToolchainAckRevision") &&
@@ -379,6 +417,7 @@ const checks = [
         'assertExact(entries, ["core", "core-catalog.json", "runtime-catalog.json"]',
       ) &&
       packagedToolchainVerifier.includes("verifyManifestFile") &&
+      packagedToolchainVerifier.includes("verifyBundledHerdr") &&
       packagedToolchainVerifier.includes("verifyLinuxSandbox") &&
       packagedToolchainVerifier.includes("stat.uid !== 0") &&
       packagedToolchainVerifier.includes('spawnSync(byComponent.get("ripgrep")') &&

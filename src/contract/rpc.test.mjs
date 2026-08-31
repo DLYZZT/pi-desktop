@@ -183,6 +183,16 @@ test("client calls time out and remote close settles pending calls", async () =>
   }
 });
 
+test("a long-running operation can use a dedicated per-call timeout", async (t) => {
+  const { client, server } = createPair(t);
+  server.handle({
+    "host.ping": () => new Promise((resolve) => setTimeout(() => resolve({ ok: true, ts: 7 }), 35)),
+  });
+
+  const result = await client.callWithTimeout("host.ping", 100);
+  assert.deepEqual(result, { ok: true, ts: 7 });
+});
+
 test("postMessage failure rejects and removes a pending call", async () => {
   const listeners = new Set();
   const port = {

@@ -10,9 +10,11 @@ import type { ToolchainSnapshot } from "../shared/toolchains/types";
 import { installToolchainGitRunner } from "./toolchain-git";
 import type { BrowserCapabilitySnapshot } from "../contract/browser";
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
-import { syncBrowserToolsForAllSessions } from "./rpc-manager";
+import { syncDesktopToolsForAllSessions } from "./rpc-manager";
 import { readPiRuntimeVersion } from "./runtime-version";
 import { applyManagedProcessOwnerIdentity } from "./managed-process/owner-identity";
+import type { HerdrRuntimeDescriptor } from "../contract/herdr";
+import { herdrRuntimeController } from "./herdr/runtime-controller";
 
 const piRuntimeVersion = readPiRuntimeVersion();
 
@@ -36,6 +38,7 @@ if (parentPort) {
     const msg = event.data as {
       type?: string;
       snapshot?: ToolchainSnapshot | BrowserCapabilitySnapshot;
+      descriptor?: HerdrRuntimeDescriptor;
       version?: unknown;
       mainPid?: unknown;
       mainStartFingerprint?: unknown;
@@ -88,11 +91,28 @@ if (parentPort) {
       try {
         if (!msg.snapshot) throw new Error("missing snapshot");
         browserCapabilityRuntime.apply(msg.snapshot as BrowserCapabilitySnapshot);
-        syncBrowserToolsForAllSessions();
+        syncDesktopToolsForAllSessions();
         parentPort.postMessage({ type: "browser:ack", revision: msg.snapshot.revision });
         log(`browser ${msg.type === "browser:init" ? "initialized" : "updated"} revision=${msg.snapshot.revision}`);
       } catch (error) {
         log(`browser capability snapshot rejected: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
+    if (msg?.type === "herdr:runtime:init" || msg?.type === "herdr:runtime:changed") {
+      try {
+        if (!msg.descriptor) throw new Error("missing descriptor");
+        herdrRuntimeController.apply(msg.descriptor);
+        parentPort.postMessage({
+          type: "herdr:ack",
+          revision: msg.descriptor.revision,
+          hostGeneration: msg.descriptor.hostGeneration,
+        });
+        log(
+          `Herdr runtime ${msg.type === "herdr:runtime:init" ? "initialized" : "updated"} revision=${msg.descriptor.revision}`,
+        );
+      } catch (error) {
+        log(`Herdr runtime descriptor rejected: ${error instanceof Error ? error.message : String(error)}`);
       }
       return;
     }

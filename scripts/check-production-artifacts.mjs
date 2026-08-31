@@ -95,6 +95,11 @@ const toolchainCatalogPackagingIsValid =
   builderConfig.includes("to: toolchains/core/${platform}-${arch}") &&
   builderConfig.includes("executableName: pi-agent-desktop") &&
   !/from:\s*build\/toolchains\/(?:archives|downloads|runtimes)/i.test(builderConfig);
+const herdrPackagingIsValid =
+  builderConfig.includes("from: build/herdr/runtime-catalog.json") &&
+  builderConfig.includes("to: herdr/runtime-catalog.json") &&
+  (builderConfig.match(/from: build\/herdr\/bin\/\$\{platform\}-\$\{arch\}/g) ?? []).length === 2 &&
+  (builderConfig.match(/to: herdr\/bin\/\$\{platform\}-\$\{arch\}/g) ?? []).length === 2;
 const windowsHelperPackagingIsValid =
   builderConfig.includes("from: out/native/windows-managed-process-helper") &&
   builderConfig.includes("to: managed-process/win32-x64") &&
@@ -104,6 +109,7 @@ const windowsHelperPackagingIsValid =
 if (
   !updaterDependencyIsValid ||
   !toolchainCatalogPackagingIsValid ||
+  !herdrPackagingIsValid ||
   !windowsHelperPackagingIsValid ||
   missingMainMarkers.length > 0 ||
   missingAgentHostMarkers.length > 0 ||
@@ -136,6 +142,9 @@ if (
       "FAIL: production packaging must include third-party notices, fixed catalogs, and only target-specific bundled core tools",
     );
   }
+  if (!herdrPackagingIsValid) {
+    console.error("FAIL: macOS/Linux packages must include the pinned target Herdr runtime and shared catalog");
+  }
   if (!windowsHelperPackagingIsValid) {
     console.error("FAIL: Windows packages must include exactly the fixed helper executable and integrity manifest");
   }
@@ -143,5 +152,5 @@ if (
 }
 
 console.log(
-  `OK: electron-updater ${updaterVersion} is locked for production; main and Agent Host bundles contain ${requiredMainMarkers.length + requiredAgentHostMarkers.length} required markers, main excludes ${forbiddenMarkers.length} forbidden markers, packaging retains ${requiredPackageExclusions.length} source exclusions and explicit Pi authoring asset FileSets, and fixed catalogs plus target-specific core tools are packaged without managed runtime archives`,
+  `OK: electron-updater ${updaterVersion} is locked for production; main and Agent Host bundles contain ${requiredMainMarkers.length + requiredAgentHostMarkers.length} required markers, main excludes ${forbiddenMarkers.length} forbidden markers, packaging retains ${requiredPackageExclusions.length} source exclusions and explicit Pi authoring asset FileSets, and fixed catalogs plus target-specific core/Herdr tools are packaged without managed download archives`,
 );

@@ -12,7 +12,7 @@ import { appendMainLog } from "./logger";
 import { installAppMenu } from "./menu";
 import { handleAppProtocol, registerAppProtocol, rendererRootPath } from "./protocol";
 import { acquireSingleInstanceLock } from "./single-instance";
-import { loadUiState } from "./window-state";
+import { loadUiState, saveUiStateStrict } from "./window-state";
 import { createTray, destroyTray, setTrayManagedProcessCount, setTrayRunningCount } from "./tray";
 import { createMainWindow } from "./window";
 import { installDesktopIpc } from "./ipc";
@@ -38,6 +38,9 @@ import {
 import type { ManagedProcessCapability } from "../contract/processes";
 import { projectManagedProcessCapability } from "./managed-process/capability";
 import { runPackagedCleanupFaultValidation } from "./packaged-cleanup-fault-validation";
+import { HerdrRuntimeManager } from "./herdr/runtime-manager";
+import { resolveBundledHerdrRoot, resolveHerdrCatalogPath } from "./herdr/catalog";
+import { isHerdrSettings } from "../contract/herdr";
 
 // Must run before app ready
 registerAppProtocol();
@@ -61,6 +64,7 @@ let toolchainManager: ToolchainManager | null = null;
 let browserService: BrowserService | null = null;
 let managedProcessReaper: ManagedProcessReaper | null = null;
 let windowsManagedProcessHelper: WindowsManagedProcessHelperResolution | null = null;
+let herdrRuntimeManager: HerdrRuntimeManager | null = null;
 let isQuitting = false;
 let unreadBadge = 0;
 let pendingDeepLink: string | null = null;
@@ -435,6 +439,25 @@ function startMainProcess(): void {
       onCapabilitySnapshot: (snapshot) => hostManager?.setBrowserCapabilitySnapshot(snapshot),
     });
     const ui = loadUiState();
+    herdrRuntimeManager = new HerdrRuntimeManager({
+      userDataDir: app.getPath("userData"),
+      log: (message) => appendMainLog(`herdr managed server: ${message}`),
+      catalogPath: resolveHerdrCatalogPath({
+        isPackaged: app.isPackaged,
+        resourcesRoot: process.resourcesPath,
+      }),
+      bundledRoot: resolveBundledHerdrRoot({
+        isPackaged: app.isPackaged,
+        resourcesRoot: process.resourcesPath,
+      }),
+    });
+    herdrRuntimeManager.setListener((descriptor) => {
+      hostManager?.setHerdrRuntimeDescriptor(descriptor);
+      toolchainManager?.refreshManagedComponents();
+    });
+    void herdrRuntimeManager.initializeInBackground(ui.herdrSettings).catch(() => {
+      appendMainLog("Herdr runtime initialization failed");
+    });
     const updaterTestMode = !app.isPackaged && process.env.PI_DESKTOP_TEST_UPDATER === "1";
     const updaterSupported =
       isProductionUpdatePlatformEnabled(process.platform) ||
@@ -459,7 +482,9 @@ function startMainProcess(): void {
         isQuitting = true;
         destroyTray();
         const deadline = Date.now() + MANAGED_PROCESS_SHUTDOWN_DEADLINE_MS;
+        const herdrCleanup = beforeDeadline(herdrRuntimeManager?.stopManagedServer() ?? Promise.resolve(), deadline);
         await cleanupManagedProcesses(deadline, true);
+        if (!(await herdrCleanup).completed) throw new Error("Managed Herdr server cleanup timed out before update");
         if (process.platform === "win32") {
           const refreshed = resolveWindowsManagedProcessHelper({
             isPackaged: app.isPackaged,
@@ -478,6 +503,7 @@ function startMainProcess(): void {
         createTray(getMainWindow, () => void stopAllManagedProcessesFromTray());
         const manager = hostManager;
         if (manager) await restartHostAfterExit(manager, () => !isQuitting);
+        await herdrRuntimeManager?.refresh();
       },
       log: (level, message) => appendMainLog(`updater[${level}] ${message}`),
     });
@@ -505,6 +531,17 @@ function startMainProcess(): void {
       fetchImpl: createElectronRuntimeFetch((options) => net.request(options)),
       legacyNpmCommand: readLegacyNpmCommand({ homeDir: toolchainHome, env: process.env }),
       isRuntimeInUse: () => runningAgentSessionCount > 0,
+      managedComponentLifecycles: {
+        herdr: {
+          getState: () => herdrRuntimeManager!.getManagedComponentState(),
+          install: async (onProgress, signal) => {
+            await herdrRuntimeManager!.installManagedRuntime(onProgress, signal);
+          },
+          remove: async () => {
+            await herdrRuntimeManager!.removeManagedRuntime();
+          },
+        },
+      },
     });
     toolchainManager.subscribe((snapshot) => {
       if (packagedStartupValidation) startupToolchainSnapshot = snapshot;
@@ -564,6 +601,13 @@ function startMainProcess(): void {
         credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
       getBrowserService: () => browserService,
       getManagedProcessCapability,
+      onUiStatePatch: (patch) => {
+        if (patch.herdrSettings) {
+          void herdrRuntimeManager!.configure(patch.herdrSettings).catch((error) => {
+            appendMainLog(`Herdr settings refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        }
+      },
       updateManager,
     });
     installAppMenu(getMainWindow, () => openUpdateSettings(true), isDev);
@@ -587,6 +631,7 @@ function startMainProcess(): void {
     });
     hostManager.setToolchainSnapshot(toolchainManager.getSnapshot());
     hostManager.setBrowserCapabilitySnapshot(browserService.getCapabilitySnapshot());
+    hostManager.setHerdrRuntimeDescriptor(herdrRuntimeManager.getDescriptor());
     const credentialRequestHandler = createCredentialRequestHandler(credentialVault);
     hostManager.setRequestHandler(async (method, params) => {
       if (method.startsWith("channelSecrets.")) return credentialRequestHandler(method, params);
@@ -615,6 +660,13 @@ function startMainProcess(): void {
           ...(windowsManagedProcessHelper?.ok ? { windowsHelper: windowsManagedProcessHelper.descriptor } : {}),
         };
       }
+      if (method === "herdr.configure") {
+        const body = (params ?? {}) as { settings?: unknown };
+        if (!isHerdrSettings(body.settings)) throw new Error("Invalid Herdr settings");
+        saveUiStateStrict({ herdrSettings: body.settings });
+        return herdrRuntimeManager!.configure(body.settings);
+      }
+      if (method === "herdr.refreshRuntime") return herdrRuntimeManager!.refresh();
       if (method === "managedProcesses.register") {
         const body = (params ?? {}) as { record?: unknown };
         const record = body.record;
@@ -794,7 +846,13 @@ function startMainProcess(): void {
       destroyTray();
       const deadline = Date.now() + MANAGED_PROCESS_SHUTDOWN_DEADLINE_MS;
       try {
+        const herdrCleanupPromise = beforeDeadline(
+          herdrRuntimeManager?.stopManagedServer() ?? Promise.resolve(),
+          deadline,
+        );
         await cleanupManagedProcesses(deadline, false);
+        const herdrCleanup = await herdrCleanupPromise;
+        if (!herdrCleanup.completed) appendMainLog("managed Herdr server cleanup reached the shutdown deadline");
         const browserCleanup = await beforeDeadline(browserService?.dispose() ?? Promise.resolve(), deadline);
         if (!browserCleanup.completed) appendMainLog("browser cleanup reached the shutdown deadline");
       } catch (error) {

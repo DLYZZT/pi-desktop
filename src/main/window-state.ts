@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import type { DesktopUiState } from "../contract/desktop";
 import { normalizeChatAppearance } from "../shared/chat-appearance.ts";
+import { normalizeHerdrSettings } from "../contract/herdr.ts";
 import { persistableWindowState, resolveWindowBounds, type DisplayBounds } from "./window-state-core";
 
 export type UiState = DesktopUiState & {
@@ -31,6 +32,7 @@ export function loadUiState(): UiState {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     const state = parsed as UiState;
     if ("chatAppearance" in state) state.chatAppearance = normalizeChatAppearance(state.chatAppearance);
+    if ("herdrSettings" in state) state.herdrSettings = normalizeHerdrSettings(state.herdrSettings);
     return state;
   } catch {
     return {};

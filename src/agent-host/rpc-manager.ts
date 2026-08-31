@@ -34,6 +34,9 @@ import { getDesktopSessionToolNames, setDesktopSessionToolNames } from "./sessio
 import { peekManagedProcessService } from "./managed-process/runtime";
 import { createManagedProcessToolDefinitions } from "./managed-process/tools";
 import { installManagedProcessSessionRedaction } from "./managed-process/session-redaction";
+import { peekHerdrBridge } from "./herdr/runtime";
+import { createHerdrToolDefinitions, herdrToolNamesForRuntime, isHerdrToolName } from "./herdr/tools";
+import { installHerdrSessionRedaction } from "./herdr/session-redaction";
 
 // ============================================================================
 // Types
@@ -258,14 +261,21 @@ export class AgentSessionWrapper {
     notifyRunningChange();
   }
 
-  syncBrowserToolActivation(): void {
+  syncDesktopToolActivation(): void {
     if (this.forceEmptySystemPrompt) {
       this.inner.setActiveToolsByName([]);
       return;
     }
-    const current = this.inner.getActiveToolNames().filter((name) => !isBrowserToolName(name));
+    const current = this.inner
+      .getActiveToolNames()
+      .filter((name) => !isBrowserToolName(name) && !isHerdrToolName(name));
     const browserTools = browserToolNamesForSnapshot(browserCapabilityRuntime.getSnapshot());
-    this.inner.setActiveToolsByName([...new Set([...current, ...browserTools])]);
+    const herdrTools = herdrToolNamesForRuntime(peekHerdrBridge());
+    this.inner.setActiveToolsByName([...new Set([...current, ...browserTools, ...herdrTools])]);
+  }
+
+  syncBrowserToolActivation(): void {
+    this.syncDesktopToolActivation();
   }
 
   private withExternalChannelSource(event: AgentEvent): AgentEvent {
@@ -405,7 +415,7 @@ export class AgentSessionWrapper {
     this.requestedToolNames = [...toolNames];
     this.forceEmptySystemPrompt = toolNames.length === 0;
     this.inner.setActiveToolsByName(withExtensionTools(this.inner, toolNames));
-    this.syncBrowserToolActivation();
+    this.syncDesktopToolActivation();
     this.applyForcedEmptySystemPrompt();
   }
 
@@ -795,7 +805,7 @@ export class AgentSessionWrapper {
 
       case "reload": {
         await this.enqueueTurn(() => this.reloadSessionResources());
-        this.syncBrowserToolActivation();
+        this.syncDesktopToolActivation();
         return { success: true };
       }
 
@@ -1345,7 +1355,11 @@ export async function disposeAllRpcSessions(reason = "host-shutdown"): Promise<v
 }
 
 export function syncBrowserToolsForAllSessions(): void {
-  for (const session of getRegistry().values()) session.syncBrowserToolActivation();
+  syncDesktopToolsForAllSessions();
+}
+
+export function syncDesktopToolsForAllSessions(): void {
+  for (const session of getRegistry().values()) session.syncDesktopToolActivation();
 }
 
 export function getRunningRpcSessionIds(): string[] {
@@ -1423,7 +1437,11 @@ export async function startRpcSession(
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, undefined)
       : SessionManager.create(cwd, undefined);
+    // Unknown provenance is fail-closed for desktop tools. A session becomes
+    // local only at this explicit desktop-owned construction boundary.
+    setBrowserSessionSource(sessionManager, "local");
     installManagedProcessSessionRedaction(sessionManager);
+    installHerdrSessionRedaction(sessionManager);
 
     // Desktop-owned session choices live outside Pi's shared JSONL so the CLI
     // remains unaffected. Read the old custom entry only for one-way migration.
@@ -1451,6 +1469,7 @@ export async function startRpcSession(
       createBashToolDefinition(cwd, bashOptions),
       ...createDesktopSearchToolDefinitions(cwd, executionContext, toolchainRuntime),
       ...createBrowserToolDefinitions(),
+      ...(peekHerdrBridge() ? createHerdrToolDefinitions(cwd, peekHerdrBridge()!) : []),
       ...(peekManagedProcessService()
         ? createManagedProcessToolDefinitions(
             cwd,
@@ -1477,7 +1496,7 @@ export async function startRpcSession(
     wrapper.setRuntimeDiagnostics(services.diagnostics);
     wrapper.setToolchainSummary(executionContext.inventoryRevision, executionContext.summary);
     wrapper.start();
-    wrapper.syncBrowserToolActivation();
+    wrapper.syncDesktopToolActivation();
 
     const realSessionFile = inner.sessionFile as string | undefined;
     if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);

@@ -1,7 +1,13 @@
 import type { DesktopUiStatePatch } from "../contract/desktop";
 import { isChatAppearancePreferences } from "../shared/chat-appearance.ts";
+import { isHerdrSettings } from "../contract/herdr.ts";
 
-const RENDERER_WRITABLE_UI_STATE_FIELDS = new Set(["backgroundMode", "managedProcessesEnabled", "chatAppearance"]);
+const RENDERER_WRITABLE_UI_STATE_FIELDS = new Set([
+  "backgroundMode",
+  "managedProcessesEnabled",
+  "chatAppearance",
+  "herdrSettings",
+]);
 
 export function validateDesktopUiStatePatch(value: unknown): DesktopUiStatePatch {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid UI state patch");
@@ -24,6 +30,10 @@ export function validateDesktopUiStatePatch(value: unknown): DesktopUiStatePatch
   if ("chatAppearance" in patch) {
     if (!isChatAppearancePreferences(patch.chatAppearance)) throw new Error("Invalid chat appearance preferences");
     validated.chatAppearance = patch.chatAppearance;
+  }
+  if ("herdrSettings" in patch) {
+    if (!isHerdrSettings(patch.herdrSettings)) throw new Error("Invalid Herdr settings");
+    validated.herdrSettings = patch.herdrSettings;
   }
   return validated;
 }

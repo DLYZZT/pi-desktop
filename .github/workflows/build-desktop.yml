@@ -101,6 +101,63 @@ jobs:
       - name: Run unit and handler tests
         run: npm test
 
+      - name: Download pinned Herdr v0.8.2 fixture (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}-$(uname -m)" in
+            macOS-arm64)
+              asset="herdr-macos-aarch64"
+              expected="a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574"
+              ;;
+            macOS-x86_64)
+              asset="herdr-macos-x86_64"
+              expected="ab50262c8190cd7aa9056d249d255c08c328c3e8716de9cfa29db4f131b8e2c1"
+              ;;
+            Linux-x86_64)
+              asset="herdr-linux-x86_64"
+              expected="976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4"
+              ;;
+            *)
+              echo "Unsupported Herdr E2E runner: ${{ runner.os }}-$(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+          fixture="$RUNNER_TEMP/herdr-v0.8.2"
+          curl --fail --location --retry 3 --output "$fixture" \
+            "https://github.com/herdrdev/herdr/releases/download/v0.8.2/$asset"
+          if command -v shasum >/dev/null 2>&1; then
+            actual="$(shasum -a 256 "$fixture" | awk '{print $1}')"
+          else
+            actual="$(sha256sum "$fixture" | awk '{print $1}')"
+          fi
+          test "$actual" = "$expected"
+          chmod 700 "$fixture"
+          echo "HERDR_E2E_BINARY=$fixture" >> "$GITHUB_ENV"
+
+      - name: Configure Electron sandbox for Herdr Desktop E2E (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+
+      - name: Run pinned Herdr upstream and Desktop E2E (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HERDR_DESKTOP_E2E_STRESS: "1"
+        run: |
+          npm run test:herdr-e2e
+          npm run test:herdr-desktop-e2e
+
+      - name: Run pinned Herdr upstream and Desktop E2E under Xvfb (Linux)
+        if: runner.os == 'Linux'
+        env:
+          HERDR_DESKTOP_E2E_STRESS: "1"
+        run: |
+          npm run test:herdr-e2e
+          xvfb-run --auto-servernum npm run test:herdr-desktop-e2e
+
       - name: Run cross-platform quality checks (Windows)
         if: runner.os == 'Windows'
         run: |
