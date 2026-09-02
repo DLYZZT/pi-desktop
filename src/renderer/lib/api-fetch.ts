@@ -158,6 +158,15 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       const body = await parseBody(init);
       return jsonResponse(await call("modelsConfig.test", body as never));
     }
+    if (segs[0] === "models-config" && segs[1] === "discover" && method === "POST") {
+      const body = await parseBody(init);
+      return jsonResponse(await call("modelsConfig.discover", body as never));
+    }
+    if (segs[0] === "models-config" && segs[1] === "upsert-models" && (method === "PUT" || method === "POST")) {
+      const body = await parseBody(init);
+      const result = await call("modelsConfig.upsertModels", body as never);
+      return jsonResponse({ success: true, version: result.version });
+    }
 
     if (segs[0] === "auth" && segs[1] === "providers" && method === "GET") {
       return jsonResponse(await call("auth.providers"));

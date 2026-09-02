@@ -6,6 +6,7 @@ import { useI18n } from "@/i18n";
 import {
   addModelTransition,
   deleteProviderTransition,
+  insertDiscoveredModelsTransition,
   modelsConfigEditorReducer,
   renameProviderEntry,
   replaceModelEntry,
@@ -20,6 +21,8 @@ import {
 import { call, getModelPreferences, setModelPreferences } from "@/lib/api-client";
 import { isModelEnabled, setProviderModelsEnabled, toggleModelEnabled } from "@/lib/model-selection";
 import type { ModelPreferencesResult } from "@contract/types";
+import type { DiscoveredModel } from "@contract/types";
+import { DiscoverModelsDialog } from "./DiscoverModelsDialog";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
 import OpenAIIcon from "@lobehub/icons/es/OpenAI/components/Mono";
@@ -775,7 +778,8 @@ function ManagedModelsControl({
   saving,
   error,
   onChange,
-}: ModelSelectionControl & { providerId: string }) {
+  onDiscover,
+}: ModelSelectionControl & { providerId: string; onDiscover: () => void }) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   useEffect(() => setQuery(""), [providerId]);
@@ -832,47 +836,66 @@ function ManagedModelsControl({
         </p>
       )}
 
-      {!loading && preferences && providerModels.length > 0 && (
+      {!loading && preferences && (
         <>
           <div style={{ display: "flex", gap: 6 }}>
             <button
               type="button"
-              disabled={saving || enabledCount === providerModels.length}
-              onClick={() =>
-                void onChange(setProviderModelsEnabled(preferences.models, preferences.enabledModels, providerId, true))
-              }
+              onClick={onDiscover}
               style={{
                 padding: "4px 9px",
                 background: "none",
                 border: "1px solid var(--border)",
                 borderRadius: 5,
                 color: "var(--text-muted)",
-                cursor: saving || enabledCount === providerModels.length ? "not-allowed" : "pointer",
+                cursor: "pointer",
                 fontSize: 11,
               }}
             >
-              {t("modelEnableAll", "Enable all")}
+              {t("discoverSyncModels", "Fetch list")}
             </button>
-            <button
-              type="button"
-              disabled={saving || enabledCount === 0}
-              onClick={() =>
-                void onChange(
-                  setProviderModelsEnabled(preferences.models, preferences.enabledModels, providerId, false),
-                )
-              }
-              style={{
-                padding: "4px 9px",
-                background: "none",
-                border: "1px solid var(--border)",
-                borderRadius: 5,
-                color: "var(--text-muted)",
-                cursor: saving || enabledCount === 0 ? "not-allowed" : "pointer",
-                fontSize: 11,
-              }}
-            >
-              {t("modelDisableAll", "Disable all")}
-            </button>
+            {providerModels.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  disabled={saving || enabledCount === providerModels.length}
+                  onClick={() =>
+                    void onChange(setProviderModelsEnabled(preferences.models, preferences.enabledModels, providerId, true))
+                  }
+                  style={{
+                    padding: "4px 9px",
+                    background: "none",
+                    border: "1px solid var(--border)",
+                    borderRadius: 5,
+                    color: "var(--text-muted)",
+                    cursor: saving || enabledCount === providerModels.length ? "not-allowed" : "pointer",
+                    fontSize: 11,
+                  }}
+                >
+                  {t("modelEnableAll", "Enable all")}
+                </button>
+                <button
+                  type="button"
+                  disabled={saving || enabledCount === 0}
+                  onClick={() =>
+                    void onChange(
+                      setProviderModelsEnabled(preferences.models, preferences.enabledModels, providerId, false),
+                    )
+                  }
+                  style={{
+                    padding: "4px 9px",
+                    background: "none",
+                    border: "1px solid var(--border)",
+                    borderRadius: 5,
+                    color: "var(--text-muted)",
+                    cursor: saving || enabledCount === 0 ? "not-allowed" : "pointer",
+                    fontSize: 11,
+                  }}
+                >
+                  {t("modelDisableAll", "Disable all")}
+                </button>
+              </>
+            )}
           </div>
 
           {providerModels.length > 8 && (
@@ -986,10 +1009,12 @@ function OAuthDetail({
   provider,
   onRefresh,
   modelSelection,
+  onDiscover,
 }: {
   provider: OAuthProvider;
   onRefresh: () => void;
   modelSelection: ModelSelectionControl;
+  onDiscover: () => void;
 }) {
   const { t } = useI18n();
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
@@ -1453,7 +1478,13 @@ function OAuthDetail({
         )}
       </div>
 
-      {provider.loggedIn && <ManagedModelsControl providerId={provider.id} {...modelSelection} />}
+      {provider.loggedIn && (
+        <ManagedModelsControl
+          providerId={provider.id}
+          onDiscover={onDiscover}
+          {...modelSelection}
+        />
+      )}
     </div>
   );
 }
@@ -1466,12 +1497,14 @@ function ApiKeyDetail({
   onBaseUrlChange,
   onRefresh,
   modelSelection,
+  onDiscover,
 }: {
   provider: ApiKeyProvider;
   baseUrl: string;
   onBaseUrlChange: (baseUrl: string) => void;
   onRefresh: () => void;
   modelSelection: ModelSelectionControl;
+  onDiscover: () => void;
 }) {
   const { t } = useI18n();
   const [apiKey, setApiKey] = useState("");
@@ -1645,7 +1678,13 @@ function ApiKeyDetail({
       {error && <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{error}</p>}
       {warning && <p style={{ margin: 0, fontSize: 12, color: "#d97706" }}>{warning}</p>}
 
-      {provider.configured && <ManagedModelsControl providerId={provider.id} {...modelSelection} />}
+      {provider.configured && (
+        <ManagedModelsControl
+          providerId={provider.id}
+          onDiscover={onDiscover}
+          {...modelSelection}
+        />
+      )}
 
       {provider.configured && (
         <button
@@ -2259,6 +2298,171 @@ export function ModelsConfig({
     [setConfig, setSelection],
   );
 
+  // ── Discover models from a compatible /v1/models endpoint ─────────────────
+  // Two modes:
+  //   custom   — insert into editor config (providerName), saved with the editor's Save button.
+  //   official  — upsert directly into models.json via modelsConfig.upsertModels (providerId),
+  //              then refresh model preferences. Built-in providers are NOT in the editor config,
+  //              so we never create a custom-provider-looking entry.
+  const [discoverState, setDiscoverState] = useState<{
+    open: boolean;
+    mode: "custom" | "official";
+    providerLabel: string;
+    loading: boolean;
+    models: DiscoveredModel[];
+    existingIds: Set<string>;
+    error: string | null;
+    endpoint: string | null;
+    targetProviderName: string | null; // custom mode: editor provider key
+    officialProviderId: string | null; // official mode: built-in provider id
+  }>({
+    open: false,
+    mode: "custom",
+    providerLabel: "",
+    loading: false,
+    models: [],
+    existingIds: new Set(),
+    error: null,
+    endpoint: null,
+    targetProviderName: null,
+    officialProviderId: null,
+  });
+
+  const runDiscover = useCallback(
+    async (
+      target: { providerName: string; provider?: ProviderEntry } | { providerId: string },
+      providerLabel: string,
+    ) => {
+      const isOfficial = "providerId" in target;
+      const providerId = isOfficial ? target.providerId : null;
+      const providerName = isOfficial ? null : target.providerName;
+      setDiscoverState((s) => ({
+        ...s,
+        open: true,
+        mode: isOfficial ? "official" : "custom",
+        loading: true,
+        providerLabel,
+        models: [],
+        error: null,
+        endpoint: null,
+        targetProviderName: providerName,
+        officialProviderId: providerId,
+      }));
+      try {
+        const body = isOfficial
+          ? { providerId: providerId }
+          : { providerName: target.providerName, provider: target.provider };
+        const res = await fetch("/api/models-config/discover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const d = (await res.json()) as {
+          ok?: boolean;
+          models?: DiscoveredModel[];
+          format?: string;
+          endpoint?: string;
+          error?: string;
+          status?: number;
+        };
+        if (!res.ok || !d.ok) {
+          setDiscoverState((s) => ({
+            ...s, loading: false, error: d.error ?? `HTTP ${res.status}` }));
+          return;
+        }
+        // Existing-id set: official → from live model preferences; custom → from editor config.
+        let existing: Set<string>;
+        if (isOfficial && providerId) {
+          existing = new Set(
+            (modelPreferences?.models ?? []).filter((m) => m.provider === providerId).map((m) => m.id),
+          );
+        } else if (providerName) {
+          existing = new Set((config.providers?.[providerName]?.models ?? []).map((m) => m.id));
+        } else {
+          existing = new Set();
+        }
+        setDiscoverState((s) => ({
+          ...s, loading: false, models: d.models ?? [], existingIds: existing, endpoint: d.endpoint ?? null }));
+      } catch (e) {
+        setDiscoverState((s) => ({
+          ...s,
+          loading: false,
+          error: e instanceof Error ? e.message : String(e),
+        }));
+      }
+    },
+    [config.providers, modelPreferences],
+  );
+
+  const insertDiscovered = useCallback(
+    async (selected: DiscoveredModel[]) => {
+      if (selected.length === 0) {
+        setDiscoverState((s) => ({ ...s, open: false }));
+        return;
+      }
+      if (discoverState.mode === "official" && discoverState.officialProviderId) {
+        // Upsert directly into models.json + reload runtime + refresh preferences.
+        if (!configVersion) {
+          setDiscoverState((s) => ({ ...s, open: false }));
+          return;
+        }
+        try {
+          const res = await fetch("/api/models-config/upsert-models", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              providerId: discoverState.officialProviderId,
+              models: selected,
+              expectedVersion: configVersion,
+            }),
+          });
+          const d = (await res.json()) as { success?: boolean; version?: string; error?: string };
+          if (!res.ok || !d.success) {
+            setDiscoverState((s) => ({
+              ...s,
+              error: d.error ?? `HTTP ${res.status}`,
+            }));
+            return;
+          }
+          if (d.version) setConfigVersion(d.version);
+          // Refresh editor config (so a later Save sees the merged state) and model preferences.
+          await loadModelsConfig();
+          await loadModelPreferences();
+          refreshApiKeyProviders();
+          setDiscoverState((s) => ({ ...s, open: false }));
+        } catch (e) {
+          setDiscoverState((s) => ({
+            ...s,
+            error: e instanceof Error ? e.message : String(e),
+          }));
+        }
+        return;
+      }
+      // Custom mode: insert into editor config; user saves explicitly.
+      const targetName = discoverState.targetProviderName;
+      if (!targetName) {
+        setDiscoverState((s) => ({ ...s, open: false }));
+        return;
+      }
+      const transition = insertDiscoveredModelsTransition(config, targetName, selected);
+      setConfig(transition.config);
+      setSelection(transition.selection);
+      setDiscoverState((s) => ({ ...s, open: false }));
+    },
+    [
+      config,
+      setConfig,
+      setSelection,
+      discoverState.mode,
+      discoverState.officialProviderId,
+      discoverState.targetProviderName,
+      configVersion,
+      loadModelsConfig,
+      loadModelPreferences,
+      refreshApiKeyProviders,
+    ],
+  );
+
   const handleSave = useCallback(async () => {
     if (!configVersion) return;
     setSaving(true);
@@ -2321,6 +2525,7 @@ export function ModelsConfig({
             error: modelPreferencesError,
             onChange: updateModelPreferences,
           }}
+          onDiscover={() => void runDiscover({ providerId: p.id }, p.name)}
         />
       );
     }
@@ -2341,6 +2546,7 @@ export function ModelsConfig({
             error: modelPreferencesError,
             onChange: updateModelPreferences,
           }}
+          onDiscover={() => void runDiscover({ providerId: p.id }, p.displayName)}
         />
       );
     }
@@ -2685,30 +2891,60 @@ export function ModelsConfig({
                         })}
 
                         {/* Add model button */}
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            addModel(pName);
-                          }}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 4,
-                            padding: "4px 8px 4px 26px",
-                            borderRadius: 5,
-                            cursor: "pointer",
-                            color: "var(--text-dim)",
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.color = "var(--accent)";
-                            e.currentTarget.style.background = "var(--bg-hover)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.color = "var(--text-dim)";
-                            e.currentTarget.style.background = "none";
-                          }}
-                        >
-                          <span style={{ fontSize: 11 }}>+ {t("modelAddModel", "model")}</span>
+                        <div style={{ display: "flex", gap: 2, padding: "0 4px 0 22px" }}>
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              addModel(pName);
+                            }}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              padding: "4px 8px",
+                              borderRadius: 5,
+                              cursor: "pointer",
+                              color: "var(--text-dim)",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.color = "var(--accent)";
+                              e.currentTarget.style.background = "var(--bg-hover)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.color = "var(--text-dim)";
+                              e.currentTarget.style.background = "none";
+                            }}
+                          >
+                            <span style={{ fontSize: 11 }}>+ {t("modelAddModel", "model")}</span>
+                          </div>
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void runDiscover(
+                                { providerName: pName, provider: pData },
+                                pName,
+                              );
+                            }}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              padding: "4px 8px",
+                              borderRadius: 5,
+                              cursor: "pointer",
+                              color: "var(--text-dim)",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.color = "var(--accent)";
+                              e.currentTarget.style.background = "var(--bg-hover)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.color = "var(--text-dim)";
+                              e.currentTarget.style.background = "none";
+                            }}
+                          >
+                            <span style={{ fontSize: 11 }}>{t("discoverModels", "Discover")}</span>
+                          </div>
                         </div>
                       </div>
                     );
@@ -2882,6 +3118,17 @@ export function ModelsConfig({
           onClose={() => setPickerOpen(false)}
         />
       )}
+      <DiscoverModelsDialog
+        open={discoverState.open}
+        providerLabel={discoverState.providerLabel}
+        loading={discoverState.loading}
+        models={discoverState.models}
+        existingIds={discoverState.existingIds}
+        error={discoverState.error}
+        endpoint={discoverState.endpoint}
+        onClose={() => setDiscoverState((s) => ({ ...s, open: false }))}
+        onInsert={insertDiscovered}
+      />
     </>
   );
 }

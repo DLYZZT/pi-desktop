@@ -11,6 +11,7 @@ import type {
   ModelPreferencesResult,
   ModelsConfig,
   ModelsConfigSnapshot,
+  ModelsConfigDiscoverResult,
   ModelsListResult,
   PagedContextInfo,
   ProviderStatus,
@@ -323,6 +324,24 @@ export interface Api {
       [key: string]: unknown;
     };
     result: TestResult;
+  };
+  "modelsConfig.discover": {
+    params: {
+      providerName?: string;
+      provider?: Record<string, unknown>;
+      providerId?: string;
+      [key: string]: unknown;
+    };
+    result: ModelsConfigDiscoverResult;
+  };
+  "modelsConfig.upsertModels": {
+    params: {
+      providerId: string;
+      models: Record<string, unknown>[];
+      expectedVersion: string;
+      [key: string]: unknown;
+    };
+    result: { ok: true; version: string };
   };
 
   "auth.providers": { params: void; result: { providers: ProviderStatus[] } };
