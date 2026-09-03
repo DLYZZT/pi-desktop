@@ -19,6 +19,7 @@ export const enUS: Record<string, string> = {
   allStates: "All states",
   connect: "Connect",
   connecting: "Connecting…",
+  confirm: "Confirm",
   disconnect: "Disconnect",
   enableHerdr: "Enable Herdr",
   enableHerdrDescription:
@@ -30,6 +31,15 @@ export const enUS: Record<string, string> = {
   herdrAutoConnect: "Connect automatically",
   herdrAutoConnectDescription: "Reconnect after the Agent Host restarts or the socket returns.",
   herdrConnectHint: "Start the selected Herdr Session, then connect again.",
+  herdrCloseAgentPaneMessage:
+    "Close the {agentKind} Agent by closing pane {paneId}? Herdr v0.8.2 cannot stop only the Agent; the pane and every process in it will terminate.",
+  herdrCloseAgentPaneTitle: "Close Herdr Agent pane",
+  herdrClosePaneMessage:
+    "Close pane {target}? This will terminate its shell, Agent, and other processes. This cannot be undone by Pi Desktop.",
+  herdrClosePaneTitle: "Close Herdr pane",
+  herdrCloseWorkspaceMessage:
+    "Close workspace {target}? This will terminate {paneCount} pane(s) and all processes in them. This cannot be undone by Pi Desktop.",
+  herdrCloseWorkspaceTitle: "Close Herdr workspace",
   herdrIntegration: "Herdr integration",
   herdrIntegrationDescription:
     "Configure how Pi Desktop connects to a local Herdr Session. Installations and updates are managed in Developer Tools.",
@@ -64,6 +74,7 @@ export const enUS: Record<string, string> = {
   herdrErrorBinaryMissing: "A required Herdr or Agent executable is unavailable.",
   herdrErrorCancelled: "The Herdr operation was cancelled.",
   herdrErrorConflict: "Another process already owns this Herdr Session.",
+  herdrErrorConfirmationRequired: "This Herdr operation requires an interactive local confirmation.",
   herdrErrorControllerLost: "Terminal control was lost. Reconnect in Observe mode.",
   herdrErrorGeneric: "The Herdr operation failed. Try again or open diagnostics.",
   herdrErrorIntegrity: "Herdr failed a compatibility or integrity check.",
@@ -112,6 +123,7 @@ export const enUS: Record<string, string> = {
   terminalStateObserving: "Observing",
   terminalStateOpening: "Connecting",
   expandTerminal: "Expand",
+  extensionRequest: "Extension request",
   restoreTerminal: "Restore",
   agentEventStreamConnectFailed: "Failed to connect to the agent event stream. Please try again.",
   agentEventStreamTimeout: "Timed out connecting to the agent event stream. Please try again.",
@@ -1199,6 +1211,7 @@ export const zhCN: Record<string, string> = {
   allStates: "全部状态",
   connect: "连接",
   connecting: "正在连接…",
+  confirm: "确认",
   disconnect: "断开连接",
   enableHerdr: "启用 Herdr",
   enableHerdrDescription: "Attach 不影响用户启动的 server；Managed 由 Pi Desktop 自动启动和关闭私有 server。",
@@ -1209,6 +1222,14 @@ export const zhCN: Record<string, string> = {
   herdrAutoConnect: "自动连接",
   herdrAutoConnectDescription: "Agent Host 重启或 socket 恢复后自动重连。",
   herdrConnectHint: "请启动所选 Herdr Session，然后重试连接。",
+  herdrCloseAgentPaneMessage:
+    "通过关闭 pane {paneId} 来终止 {agentKind} Agent？Herdr v0.8.2 无法只停止 Agent；该 pane 及其中全部进程都会终止。",
+  herdrCloseAgentPaneTitle: "关闭 Herdr Agent 所在 pane",
+  herdrClosePaneMessage: "关闭 pane“{target}”？这将终止其中的 shell、Agent 和其他进程。Pi Desktop 无法撤销此操作。",
+  herdrClosePaneTitle: "关闭 Herdr pane",
+  herdrCloseWorkspaceMessage:
+    "关闭工作区“{target}”？这将终止其中 {paneCount} 个 pane 及其全部进程。Pi Desktop 无法撤销此操作。",
+  herdrCloseWorkspaceTitle: "关闭 Herdr 工作区",
   herdrIntegration: "Herdr 集成",
   herdrIntegrationDescription: "配置 Pi Desktop 如何连接本机 Herdr Session。安装、版本和更新统一在“开发工具”中管理。",
   herdrManaged: "Managed（自动管理 server）",
@@ -1241,6 +1262,7 @@ export const zhCN: Record<string, string> = {
   herdrErrorBinaryMissing: "缺少所需的 Herdr 或 Agent 可执行文件。",
   herdrErrorCancelled: "Herdr 操作已取消。",
   herdrErrorConflict: "另一个进程已占用此 Herdr Session。",
+  herdrErrorConfirmationRequired: "此 Herdr 操作需要在本机交互式确认。",
   herdrErrorControllerLost: "终端控制权已丢失，请以观察模式重新连接。",
   herdrErrorGeneric: "Herdr 操作失败，请重试或打开诊断。",
   herdrErrorIntegrity: "Herdr 未通过兼容性或完整性检查。",
@@ -1288,6 +1310,7 @@ export const zhCN: Record<string, string> = {
   terminalStateObserving: "观察中",
   terminalStateOpening: "连接中",
   expandTerminal: "展开",
+  extensionRequest: "扩展请求",
   restoreTerminal: "恢复",
   agentEventStreamConnectFailed: "连接 Agent 事件流失败，请重试。",
   agentEventStreamTimeout: "连接 Agent 事件流超时，请重试。",

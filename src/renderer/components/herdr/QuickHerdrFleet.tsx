@@ -10,7 +10,7 @@ import {
 } from "@/lib/quick-channel-binding-layout";
 import type { HerdrAgentState, HerdrPane } from "@contract/herdr";
 import { countHerdrAgents, herdrPaneMatchesFilter } from "./fleet-selectors";
-import { getFleetPresentation } from "./fleet-presentation";
+import { getFleetPresentation, getFleetTriggerSpacing } from "./fleet-presentation";
 import { herdrErrorLabel, herdrRuntimeStatusLabel, publicHerdrErrorLabel } from "./herdr-ui-copy";
 
 const FILTER_STATES: Array<HerdrAgentState | "all"> = ["all", "working", "blocked", "idle", "done", "unknown"];
@@ -18,9 +18,13 @@ const FILTER_STATES: Array<HerdrAgentState | "all"> = ["all", "working", "blocke
 export function QuickHerdrFleet({
   isMobile,
   onOpenTerminal,
+  alignRight = false,
+  rightInset = 0,
 }: {
   isMobile: boolean;
   onOpenTerminal: (pane: HerdrPane) => void;
+  alignRight?: boolean;
+  rightInset?: number;
 }) {
   const { t } = useI18n();
   const { runtime, loading: runtimeLoading, error: runtimeError, refresh: refreshRuntime } = useHerdrRuntime();
@@ -171,7 +175,15 @@ export function QuickHerdrFleet({
 
   return (
     <>
-      <div ref={rootRef} style={{ position: "relative", marginLeft: 10, minWidth: 0, flexShrink: 1 }}>
+      <div
+        ref={rootRef}
+        style={{
+          position: "relative",
+          ...getFleetTriggerSpacing(alignRight, rightInset),
+          minWidth: 0,
+          flexShrink: 1,
+        }}
+      >
         <button
           ref={triggerRef}
           type="button"

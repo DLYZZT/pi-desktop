@@ -31,6 +31,7 @@ import { buildToolMessageIndex } from "@/lib/tool-message-index";
 import { useI18n } from "@/i18n";
 import type { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
+import { localizedExtensionConfirmCopy } from "@/lib/extension-ui-copy";
 
 interface Props {
   session: SessionInfo | null;
@@ -1154,7 +1155,9 @@ function ExtensionDialog({
     response: { value: string } | { confirmed: boolean } | { cancelled: true },
   ) => void;
 }) {
+  const { t } = useI18n();
   const [value, setValue] = useState(request.method === "editor" ? (request.prefill ?? "") : "");
+  const confirmCopy = request.method === "confirm" ? localizedExtensionConfirmCopy(request, t) : null;
 
   useEffect(() => {
     setValue(request.method === "editor" ? (request.prefill ?? "") : "");
@@ -1194,7 +1197,9 @@ function ExtensionDialog({
         }}
       >
         <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ color: "var(--text)", fontSize: scaledChatFont(14), fontWeight: 650 }}>{request.title}</div>
+          <div style={{ color: "var(--text)", fontSize: scaledChatFont(14), fontWeight: 650 }}>
+            {confirmCopy?.title ?? request.title}
+          </div>
           <div
             style={{
               marginTop: 3,
@@ -1203,7 +1208,7 @@ function ExtensionDialog({
               fontFamily: "var(--font-mono)",
             }}
           >
-            extension request
+            {t("extensionRequest", "Extension request")}
           </div>
         </div>
 
@@ -1217,7 +1222,7 @@ function ExtensionDialog({
                 whiteSpace: "pre-wrap",
               }}
             >
-              {request.message}
+              {confirmCopy?.message ?? request.message}
             </div>
           )}
           {request.method === "select" && (
@@ -1313,7 +1318,7 @@ function ExtensionDialog({
               cursor: "pointer",
             }}
           >
-            Cancel
+            {t("cancel", "Cancel")}
           </button>
           {request.method === "confirm" ? (
             <button
@@ -1327,7 +1332,7 @@ function ExtensionDialog({
                 cursor: "pointer",
               }}
             >
-              Confirm
+              {t("confirm", "Confirm")}
             </button>
           ) : request.method !== "select" ? (
             <button
@@ -1341,7 +1346,7 @@ function ExtensionDialog({
                 cursor: "pointer",
               }}
             >
-              Submit
+              {t("submit", "Submit")}
             </button>
           ) : null}
         </div>

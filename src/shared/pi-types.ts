@@ -4,6 +4,7 @@ import type {
   SettingsManager,
   SlashCommandInfo,
 } from "@earendil-works/pi-coding-agent";
+import type { ExtensionUiConfirmLocalization } from "./types";
 
 export interface ContextUsage {
   percent: number | null;
@@ -84,6 +85,12 @@ type WidgetOptionsLike = {
 export interface ExtensionUiContextLike {
   select(title: string, options: string[], opts?: DialogOptionsLike): Promise<string | undefined>;
   confirm(title: string, message: string, opts?: DialogOptionsLike): Promise<boolean>;
+  confirmLocalized?(
+    title: string,
+    message: string,
+    localization: ExtensionUiConfirmLocalization,
+    opts?: DialogOptionsLike,
+  ): Promise<boolean>;
   input(title: string, placeholder?: string, opts?: DialogOptionsLike): Promise<string | undefined>;
   editor(title: string, prefill?: string, opts?: DialogOptionsLike): Promise<string | undefined>;
   notify(message: string, type?: "info" | "warning" | "error"): void;

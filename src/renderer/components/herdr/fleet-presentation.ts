@@ -8,3 +8,10 @@ export function getFleetPresentation(ready: boolean, fleet: HerdrFleetSnapshot |
     showEmpty: ready && !hasFleet,
   };
 }
+
+export function getFleetTriggerSpacing(alignRight: boolean, rightInset: number) {
+  return {
+    marginLeft: alignRight ? "auto" : 10,
+    marginRight: alignRight ? Math.max(0, rightInset) : 0,
+  } as const;
+}

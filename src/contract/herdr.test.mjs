@@ -4,12 +4,14 @@ import test from "node:test";
 import {
   DEFAULT_HERDR_SETTINGS,
   HERDR_AGENT_PROMPT_MAX_BYTES,
+  HERDR_AGENT_ALIAS_PATTERN,
   HERDR_AGENT_KINDS,
   HERDR_AGENT_WAIT_MAX_MS,
   HERDR_PANE_READ_MAX_BYTES,
   HERDR_PROTOCOL_VERSION,
   HERDR_SCHEMA_VERSION,
   isHerdrAgentKind,
+  isHerdrAgentAlias,
   isHerdrStartableAgentKind,
   isHerdrSessionName,
   isHerdrSettings,
@@ -20,7 +22,19 @@ test("Herdr contract is pinned to v0.8.2 protocol 20/schema 1 and all 22 recogni
   assert.equal(HERDR_PROTOCOL_VERSION, 20);
   assert.equal(HERDR_SCHEMA_VERSION, 1);
   assert.equal(HERDR_AGENT_KINDS.length, 22);
-  for (const kind of ["pi", "claude", "codex", "gemini", "opencode", "qwen"]) {
+  for (const kind of [
+    "pi",
+    "claude",
+    "codex",
+    "gemini",
+    "omp",
+    "opencode",
+    "copilot",
+    "kimi",
+    "droid",
+    "grok",
+    "qwen",
+  ]) {
     assert.equal(isHerdrAgentKind(kind), true);
   }
   assert.equal(isHerdrAgentKind("qwen-code"), false);
@@ -30,12 +44,22 @@ test("Herdr contract is pinned to v0.8.2 protocol 20/schema 1 and all 22 recogni
     "claude",
     "codex",
     "gemini",
+    "omp",
     "opencode",
+    "copilot",
+    "kimi",
+    "droid",
+    "grok",
     "qwen",
   ]);
   assert.equal(HERDR_AGENT_PROMPT_MAX_BYTES, 256 * 1024);
   assert.equal(HERDR_AGENT_WAIT_MAX_MS, 120_000);
   assert.equal(HERDR_PANE_READ_MAX_BYTES, 64 * 1024);
+  assert.equal(HERDR_AGENT_ALIAS_PATTERN, "^[a-z][a-z0-9_-]{0,63}$");
+  for (const alias of ["x", "cu-fake-pi", "agent_1"]) assert.equal(isHerdrAgentAlias(alias), true);
+  for (const alias of ["", "CU Fake Pi", "Upper", "-agent", "a".repeat(65)]) {
+    assert.equal(isHerdrAgentAlias(alias), false);
+  }
 });
 
 test("Herdr Session names and settings use exact fail-closed validation", () => {

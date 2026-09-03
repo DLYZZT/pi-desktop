@@ -11,6 +11,18 @@ export const HERDR_TOOL_NAMES = [
   "herdr_agent_prompt",
   "herdr_agent_wait",
   "herdr_agent_keys",
+  "herdr_agent_explain",
+  "herdr_pane_process_info",
+  "herdr_pane_wait_for_output",
+  "herdr_workspace_focus",
+  "herdr_workspace_rename",
+  "herdr_workspace_close",
+  "herdr_pane_focus",
+  "herdr_pane_rename",
+  "herdr_pane_close",
+  "herdr_agent_focus",
+  "herdr_agent_rename",
+  "herdr_agent_close",
 ] as const;
 
 const HERDR_TOOL_NAME_SET = new Set<string>(HERDR_TOOL_NAMES);

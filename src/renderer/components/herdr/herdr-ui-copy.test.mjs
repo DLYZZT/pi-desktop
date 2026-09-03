@@ -11,6 +11,10 @@ test("Herdr UI copy maps runtime enums and public codes without exposing raw ups
   assert.equal(label, "The Herdr Session endpoint did not pass local security checks.");
   assert.equal(label.includes("private"), false);
   assert.equal(
+    herdrErrorLabel({ code: "HERDR_CONFIRMATION_REQUIRED", message: "/private/raw" }, t),
+    "This Herdr operation requires an interactive local confirmation.",
+  );
+  assert.equal(
     herdrErrorLabel(new Error("untrusted wire payload"), t),
     "The Herdr operation failed. Try again or open diagnostics.",
   );

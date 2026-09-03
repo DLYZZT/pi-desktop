@@ -63,6 +63,18 @@ function fakeBridge() {
       calls.push(["create", cwd, name]);
       return { workspaceId: "workspace-new", rootPaneId: "pane-new" };
     },
+    async focusWorkspace(id) {
+      calls.push(["workspace-focus", id]);
+      return { workspaceId: id };
+    },
+    async renameWorkspace(id, name) {
+      calls.push(["workspace-rename", id, name]);
+      return { workspaceId: id, name };
+    },
+    async closeWorkspace(id) {
+      calls.push(["workspace-close", id]);
+      return { workspaceId: id, closed: true };
+    },
     async createTab(workspaceId, cwd, name, focus) {
       calls.push(["tab-create", workspaceId, cwd, name, focus]);
       return { workspaceId, tabId: "tab-new", rootPaneId: "pane-new" };
@@ -83,9 +95,45 @@ function fakeBridge() {
       calls.push(["read", id, maxBytes]);
       return { text: "output", truncated: false };
     },
+    async getPaneProcessInfo(id) {
+      calls.push(["process-info", id]);
+      return { paneId: id, processCount: 1, foregroundProcesses: [{ name: "node" }] };
+    },
+    async waitForPaneOutput(id, match, timeoutMs, requestId) {
+      calls.push(["wait-output", id, match, timeoutMs, requestId]);
+      return { paneId: id, matched: true, timedOut: false, matchedLine: "ready" };
+    },
+    async focusPane(id) {
+      calls.push(["pane-focus", id]);
+      return { paneId: id, workspaceId: "workspace-a", tabId: "tab-a" };
+    },
+    async renamePane(id, name) {
+      calls.push(["pane-rename", id, name]);
+      return { paneId: id, name };
+    },
+    async closePane(id) {
+      calls.push(["pane-close", id]);
+      return { paneId: id, workspaceId: "workspace-a", tabId: "tab-a", closed: true };
+    },
     async startAgent(id, kind) {
       calls.push(["start", id, kind]);
       return { paneId: id, state: "idle" };
+    },
+    async explainAgent(id) {
+      calls.push(["agent-explain", id]);
+      return { paneId: id, detected: true, detection: { available: true } };
+    },
+    async focusAgent(id) {
+      calls.push(["agent-focus", id]);
+      return { paneId: id, agentKind: "codex" };
+    },
+    async renameAgent(id, name) {
+      calls.push(["agent-rename", id, name]);
+      return { paneId: id, agentKind: "codex", name };
+    },
+    async closeAgent(id) {
+      calls.push(["agent-close", id]);
+      return { paneId: id, agentKind: "codex", paneClosed: true };
     },
     async promptAgent(id, prompt) {
       calls.push(["prompt", id, prompt]);
@@ -106,10 +154,25 @@ function fakeBridge() {
   return bridge;
 }
 
-function toolContext(source = "local") {
+function toolContext(source = "local", confirmed = true) {
   const sessionManager = { getSessionId: () => "pi-session-a" };
   setAgentSessionSource(sessionManager, source);
-  return { sessionManager };
+  const confirmations = [];
+  return {
+    sessionManager,
+    hasUI: true,
+    confirmations,
+    ui: {
+      async confirm(title, message) {
+        confirmations.push({ title, message });
+        return confirmed;
+      },
+      async confirmLocalized(title, message, localization) {
+        confirmations.push({ title, message, localization });
+        return confirmed;
+      },
+    },
+  };
 }
 
 test("Herdr tool registration is a strict semantic allowlist", () => {
@@ -161,6 +224,134 @@ test("Herdr tab focus and rename use exact semantic bridge methods", async () =>
     ["tab-focus", "tab-a"],
     ["tab-rename", "tab-a", "Implementation"],
   ]);
+});
+
+test("new Herdr inspection, focus, and rename tools use fixed semantic bridge methods", async () => {
+  const bridge = fakeBridge();
+  const tools = createHerdrToolDefinitions("/project", bridge);
+  const find = (name) => tools.find((tool) => tool.name === name);
+  await find("herdr_agent_explain").execute("explain-a", { paneId: "pane-a" }, undefined, undefined, toolContext());
+  const processResult = await find("herdr_pane_process_info").execute(
+    "process-a",
+    { paneId: "pane-a" },
+    undefined,
+    undefined,
+    toolContext(),
+  );
+  await find("herdr_pane_wait_for_output").execute(
+    "wait-output-a",
+    { paneId: "pane-a", text: "ready", timeoutMs: 4_000 },
+    undefined,
+    undefined,
+    toolContext(),
+  );
+  await find("herdr_workspace_focus").execute(
+    "workspace-focus-a",
+    { workspaceId: "workspace-a" },
+    undefined,
+    undefined,
+    toolContext(),
+  );
+  await find("herdr_workspace_rename").execute(
+    "workspace-rename-a",
+    { workspaceId: "workspace-a", name: "Review" },
+    undefined,
+    undefined,
+    toolContext(),
+  );
+  await find("herdr_pane_focus").execute("pane-focus-a", { paneId: "pane-a" }, undefined, undefined, toolContext());
+  await find("herdr_pane_rename").execute(
+    "pane-rename-a",
+    { paneId: "pane-a", name: "Runner" },
+    undefined,
+    undefined,
+    toolContext(),
+  );
+  await find("herdr_agent_focus").execute("agent-focus-a", { paneId: "pane-a" }, undefined, undefined, toolContext());
+  await find("herdr_agent_rename").execute(
+    "agent-rename-a",
+    { paneId: "pane-a", name: "reviewer" },
+    undefined,
+    undefined,
+    toolContext(),
+  );
+  assert.doesNotMatch(processResult.content[0].text, /cwd|argv|cmdline|pid|tty/i);
+  assert.deepEqual(bridge.calls.slice(0, 2), [
+    ["agent-explain", "pane-a"],
+    ["process-info", "pane-a"],
+  ]);
+  assert.deepEqual(bridge.calls[2].slice(0, 4), ["wait-output", "pane-a", "ready", 4_000]);
+  assert.match(bridge.calls[2][4], /^[0-9a-f-]{36}$/);
+  assert.deepEqual(bridge.calls.slice(3), [
+    ["workspace-focus", "workspace-a"],
+    ["workspace-rename", "workspace-a", "Review"],
+    ["pane-focus", "pane-a"],
+    ["pane-rename", "pane-a", "Runner"],
+    ["agent-focus", "pane-a"],
+    ["agent-rename", "pane-a", "reviewer"],
+  ]);
+});
+
+test("Herdr close tools require local UI confirmation and describe destructive scope", async () => {
+  const bridge = fakeBridge();
+  const tools = createHerdrToolDefinitions("/project", bridge);
+  const closePane = tools.find((tool) => tool.name === "herdr_pane_close");
+  const closeWorkspace = tools.find((tool) => tool.name === "herdr_workspace_close");
+  const closeAgent = tools.find((tool) => tool.name === "herdr_agent_close");
+  const noUiSessionManager = { getSessionId: () => "pi-session-no-ui" };
+  setAgentSessionSource(noUiSessionManager, "local");
+  await assert.rejects(
+    closePane.execute("close-no-ui", { paneId: "pane-a" }, undefined, undefined, {
+      sessionManager: noUiSessionManager,
+      hasUI: false,
+      ui: undefined,
+    }),
+    /HERDR_CONFIRMATION_REQUIRED/,
+  );
+  const denied = toolContext("local", false);
+  await assert.rejects(
+    closePane.execute("close-denied", { paneId: "pane-a" }, undefined, undefined, denied),
+    /HERDR_REQUEST_CANCELLED/,
+  );
+  assert.match(denied.confirmations[0].message, /terminate its shell, Agent, and other processes/);
+  assert.deepEqual(denied.confirmations[0].localization, { id: "herdr.closePane", target: "pane-a" });
+  assert.equal(
+    bridge.calls.some(([method]) => method === "pane-close"),
+    false,
+  );
+
+  const workspaceContext = toolContext();
+  await closeWorkspace.execute(
+    "close-workspace",
+    { workspaceId: "workspace-a" },
+    undefined,
+    undefined,
+    workspaceContext,
+  );
+  const paneContext = toolContext();
+  await closePane.execute("close-pane", { paneId: "pane-a" }, undefined, undefined, paneContext);
+  const agentContext = toolContext();
+  await closeAgent.execute("close-agent", { paneId: "pane-a" }, undefined, undefined, agentContext);
+  assert.match(workspaceContext.confirmations[0].message, /terminate 1 pane/);
+  assert.deepEqual(workspaceContext.confirmations[0].localization, {
+    id: "herdr.closeWorkspace",
+    target: "workspace-a",
+    paneCount: 1,
+  });
+  assert.match(agentContext.confirmations[0].message, /cannot stop only the Agent/);
+  assert.deepEqual(agentContext.confirmations[0].localization, {
+    id: "herdr.closeAgentPane",
+    paneId: "pane-a",
+    agentKind: "codex",
+  });
+  assert.deepEqual(
+    bridge.calls.filter(([method]) => ["workspace-close", "pane-close", "agent-close"].includes(method)),
+    [
+      ["workspace-close", "workspace-a"],
+      ["pane-close", "pane-a"],
+      ["agent-close", "pane-a"],
+    ],
+  );
 });
 
 test("Herdr tools fail closed for messaging-channel turns", async () => {

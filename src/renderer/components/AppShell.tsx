@@ -1114,6 +1114,8 @@ export function AppShell({
             {showChat && (
               <QuickHerdrFleet
                 isMobile={isMobile}
+                alignRight={!selectedSession}
+                rightInset={!selectedSession && !rightPanelOpen ? 44 : 0}
                 onOpenTerminal={(pane) => {
                   setHerdrTerminalPane(pane);
                   dispatchFileTab({ type: "select", tabId: HERDR_TERMINAL_TAB_ID });

@@ -1157,6 +1157,20 @@ export class AgentSessionWrapper {
           opts?.timeout,
           opts?.signal,
         ),
+      confirmLocalized: (title, message, localization, opts) =>
+        this.requestExtensionUi(
+          {
+            method: "confirm",
+            title,
+            message,
+            localization,
+            ...(opts?.timeout ? { timeout: opts.timeout } : {}),
+          },
+          false,
+          (response) => ("confirmed" in response ? response.confirmed : false),
+          opts?.timeout,
+          opts?.signal,
+        ),
       input: (title, placeholder, opts) =>
         this.requestExtensionUi(
           {

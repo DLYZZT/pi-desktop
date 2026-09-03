@@ -183,6 +183,20 @@ try {
   assert.equal(created.type, "workspace_created");
   assert.equal(created.root_pane.scroll.viewport_rows, 40);
   const paneId = created.root_pane.pane_id;
+  const focusedWorkspace = await request("workspace.focus", { workspace_id: created.workspace.workspace_id });
+  assert.equal(focusedWorkspace.workspace.workspace_id, created.workspace.workspace_id);
+  const renamedWorkspace = await request("workspace.rename", {
+    workspace_id: created.workspace.workspace_id,
+    label: "pi-desktop-e2e-renamed-workspace",
+  });
+  assert.equal(renamedWorkspace.workspace.label, "pi-desktop-e2e-renamed-workspace");
+  const focusedPane = await request("pane.focus", { pane_id: paneId });
+  assert.equal(focusedPane.pane.pane_id, paneId);
+  const renamedPane = await request("pane.rename", { pane_id: paneId, label: "pi-desktop-e2e-pane" });
+  assert.equal(renamedPane.pane.label, "pi-desktop-e2e-pane");
+  const processInfo = await request("pane.process_info", { pane_id: paneId });
+  assert.equal(processInfo.process_info.pane_id, paneId);
+  assert.equal(Array.isArray(processInfo.process_info.foreground_processes), true);
 
   const createdTab = await request("tab.create", {
     workspace_id: created.workspace.workspace_id,
@@ -279,6 +293,16 @@ try {
     });
     return read.read.text.includes("PI_DESKTOP_HERDR_E2E_OK");
   }, "terminal input echo");
+  const outputMatch = await request("pane.wait_for_output", {
+    pane_id: paneId,
+    source: "recent_unwrapped",
+    match: { type: "substring", value: "PI_DESKTOP_HERDR_E2E_OK" },
+    lines: 100,
+    strip_ansi: true,
+    timeout_ms: 2_000,
+  });
+  assert.equal(outputMatch.type, "output_matched");
+  assert.equal(outputMatch.pane_id, paneId);
   terminal.stdin.write(`${JSON.stringify({ type: "terminal.release" })}\n`);
   terminal.stdin.end();
   await once(terminal, "exit");
@@ -289,6 +313,10 @@ try {
     afterRelease.snapshot.panes.some((pane) => pane.pane_id === paneId),
     true,
   );
+  assert.equal((await request("pane.close", { pane_id: createdTab.root_pane.pane_id })).type, "ok");
+  assert.equal((await request("workspace.close", { workspace_id: created.workspace.workspace_id })).type, "ok");
+  const afterClose = await request("session.snapshot", {});
+  assert.equal(afterClose.snapshot.workspaces.length, 0);
   console.log("Herdr v0.8.2 isolated socket + workspace + ANSI terminal control E2E: OK");
 } finally {
   await cleanup();

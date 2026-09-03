@@ -29,10 +29,23 @@ export const HERDR_AGENT_KINDS = [
   "qwen",
   "maki",
 ] as const;
-export const HERDR_STARTABLE_AGENT_KINDS = ["pi", "claude", "codex", "gemini", "opencode", "qwen"] as const;
+export const HERDR_STARTABLE_AGENT_KINDS = [
+  "pi",
+  "claude",
+  "codex",
+  "gemini",
+  "omp",
+  "opencode",
+  "copilot",
+  "kimi",
+  "droid",
+  "grok",
+  "qwen",
+] as const;
 export const HERDR_AGENT_PROMPT_MAX_BYTES = 256 * 1024;
 export const HERDR_AGENT_WAIT_MAX_MS = 120_000;
 export const HERDR_PANE_READ_MAX_BYTES = 64 * 1024;
+export const HERDR_AGENT_ALIAS_PATTERN = "^[a-z][a-z0-9_-]{0,63}$" as const;
 
 export type HerdrAgentKind = (typeof HERDR_AGENT_KINDS)[number];
 export const HERDR_SAFE_AGENT_KEYS = [
@@ -101,6 +114,7 @@ export type HerdrErrorCode =
   | "HERDR_ENDPOINT_UNSAFE"
   | "HERDR_REQUEST_TIMEOUT"
   | "HERDR_REQUEST_CANCELLED"
+  | "HERDR_CONFIRMATION_REQUIRED"
   | "HERDR_PROTOCOL_LIMIT_EXCEEDED"
   | "HERDR_SCHEMA_INVALID"
   | "HERDR_AGENT_KIND_UNSUPPORTED"
@@ -236,6 +250,67 @@ export interface HerdrAgent {
   stateChangeSeq?: number;
 }
 
+export interface HerdrAgentExplanation {
+  paneId: string;
+  detected: boolean;
+  agent?: {
+    name?: string;
+    kind: HerdrAgentKindDisplay;
+    state: HerdrAgentState;
+    interactiveReady: boolean;
+    launchPending: boolean;
+  };
+  cli: {
+    startSupported: boolean;
+    available?: boolean;
+    candidates?: HerdrAgentCliDiagnostic[];
+  };
+  detection: {
+    available: boolean;
+    evaluatedRuleCount?: number;
+    matchedRule?: {
+      id: string;
+      state?: HerdrAgentState;
+      region?: string;
+    };
+    fallbackReason?: string;
+    manifestSource?: string;
+    manifestVersion?: string;
+    screenDetectionSkipped?: boolean;
+    skipStateUpdate?: boolean;
+    skippedUpdateReason?: string;
+    visibleBlocker?: boolean;
+    visibleIdle?: boolean;
+    visibleWorking?: boolean;
+  };
+}
+
+export interface HerdrPaneProcessSummary {
+  paneId: string;
+  shellDetected: boolean;
+  foregroundProcessGroupDetected: boolean;
+  processCount: number;
+  truncated: boolean;
+  foregroundProcesses: Array<{
+    name: string;
+    cwdMatchesPane: boolean;
+  }>;
+  agent?: {
+    kind: HerdrAgentKindDisplay;
+    state: HerdrAgentState;
+    interactiveReady: boolean;
+    launchPending: boolean;
+  };
+}
+
+export interface HerdrPaneOutputWaitResult {
+  paneId: string;
+  matched: boolean;
+  timedOut: boolean;
+  revision?: number;
+  matchedLine?: string;
+}
+
 export interface HerdrTerminalFrame {
   terminalId: string;
   seq: number;
@@ -302,6 +377,10 @@ export function isHerdrAgentKind(value: unknown): value is HerdrAgentKind {
 
 export function isHerdrStartableAgentKind(value: unknown): value is (typeof HERDR_STARTABLE_AGENT_KINDS)[number] {
   return typeof value === "string" && (HERDR_STARTABLE_AGENT_KINDS as readonly string[]).includes(value);
+}
+
+export function isHerdrAgentAlias(value: unknown): value is string {
+  return typeof value === "string" && new RegExp(HERDR_AGENT_ALIAS_PATTERN).test(value);
 }
 
 export function isHerdrSessionName(value: unknown): value is string {

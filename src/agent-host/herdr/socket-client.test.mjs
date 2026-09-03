@@ -86,6 +86,22 @@ test("socket client uses process-monotonic request ids", async (t) => {
   assert.equal(sequences[1], sequences[0] + 1);
 });
 
+test("socket client maps unavailable Agent explanations to a stable not-ready error", async (t) => {
+  const { HerdrSocketClient } = await loadSocketClient();
+  const { endpoint } = await listen(t, (socket, request) => {
+    socket.end(
+      `${JSON.stringify({
+        id: request.id,
+        error: { code: "agent_explain_unavailable", message: "raw upstream details" },
+      })}\n`,
+    );
+  });
+  await assert.rejects(
+    new HerdrSocketClient(endpoint).request({ method: "agent.explain", params: { target: "pane-a" } }),
+    (error) => error.code === "HERDR_AGENT_NOT_READY" && !error.message.includes("raw upstream"),
+  );
+});
+
 test("socket client distinguishes request timeout from cancellation", async (t) => {
   const { HerdrSocketClient } = await loadSocketClient();
   const { endpoint } = await listen(t, () => {});

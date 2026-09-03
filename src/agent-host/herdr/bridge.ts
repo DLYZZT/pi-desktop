@@ -5,6 +5,7 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import {
   HERDR_AGENT_PROMPT_MAX_BYTES,
+  isHerdrAgentAlias,
   HERDR_AGENT_WAIT_MAX_MS,
   HERDR_PANE_READ_MAX_BYTES,
   HERDR_PROTOCOL_VERSION,
@@ -15,11 +16,14 @@ import {
   isHerdrStartableAgentKind,
   isHerdrSettings,
   type HerdrAgentKindDisplay,
+  type HerdrAgentExplanation,
   type HerdrAgentCliDiagnostic,
   type HerdrAgentState,
   type HerdrDiagnostics,
   type HerdrFleetSnapshot,
   type HerdrPane,
+  type HerdrPaneOutputWaitResult,
+  type HerdrPaneProcessSummary,
   type HerdrRuntimeDescriptor,
   type HerdrRuntimeSnapshot,
   type HerdrSettings,
@@ -52,6 +56,8 @@ const EMPTY_FLEET: HerdrFleetSnapshot = {
 const MAX_WORKSPACES = 128;
 const MAX_TABS = 512;
 const MAX_PANES = 1_024;
+const MAX_PROCESS_INFO_ENTRIES = 128;
+const MAX_PUBLIC_PROCESS_ENTRIES = 32;
 const AGENT_CLI_VERSION_TIMEOUT_MS = 1_000;
 
 async function findExecutableOnPath(name: string, pathValue = process.env.PATH ?? ""): Promise<string | null> {
@@ -113,6 +119,21 @@ function idField(value: JsonRecord, name: string): string {
     throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", `Herdr field ${name} is not a safe identifier.`);
   }
   return id;
+}
+
+function safeDiagnosticToken(value: unknown, max = 128): string | undefined {
+  if (typeof value !== "string" || !value || value.length > max || !/^[A-Za-z0-9_.:-]+$/.test(value)) return undefined;
+  return value;
+}
+
+function safeProcessName(value: unknown, max = 128): string | undefined {
+  if (typeof value !== "string" || !value || value.length > 512 || /[\0\r\n]/.test(value)) return undefined;
+  const name = path.posix.basename(value.replace(/\\/g, "/")).slice(0, max);
+  return name || undefined;
+}
+
+function isOptionalNonnegativeInteger(value: unknown): boolean {
+  return value === undefined || value === null || (Number.isSafeInteger(value) && Number(value) >= 0);
 }
 
 export const __test = {
@@ -581,6 +602,57 @@ export class HerdrBridge {
     };
   }
 
+  async focusWorkspace(workspaceId: string): Promise<{ workspaceId: string }> {
+    const workspace = this.requireWorkspace(workspaceId);
+    const result = await this.requireReady().request<JsonRecord>({
+      method: HERDR_V20_METHODS.workspaceFocus,
+      params: { workspace_id: workspace.id },
+    });
+    if (
+      result.type !== "workspace_info" ||
+      !isRecord(result.workspace) ||
+      idField(result.workspace, "workspace_id") !== workspace.id
+    ) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr workspace focus response is invalid.");
+    }
+    await this.refreshSnapshot();
+    return { workspaceId: workspace.id };
+  }
+
+  async renameWorkspace(workspaceId: string, name: string): Promise<{ workspaceId: string; name: string }> {
+    const workspace = this.requireWorkspace(workspaceId);
+    if (typeof name !== "string" || !name.trim() || name.length > 256 || /[\0\r\n]/.test(name)) {
+      throw new HerdrBridgeError("HERDR_INVALID_REQUEST", "Workspace name is invalid.");
+    }
+    const result = await this.requireReady().request<JsonRecord>({
+      method: HERDR_V20_METHODS.workspaceRename,
+      params: { workspace_id: workspace.id, label: name },
+    });
+    if (
+      result.type !== "workspace_info" ||
+      !isRecord(result.workspace) ||
+      idField(result.workspace, "workspace_id") !== workspace.id ||
+      stringField(result.workspace, "label", 256) !== name
+    ) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr workspace rename response is invalid.");
+    }
+    await this.refreshSnapshot();
+    return { workspaceId: workspace.id, name };
+  }
+
+  async closeWorkspace(workspaceId: string): Promise<{ workspaceId: string; closed: true }> {
+    const workspace = this.requireWorkspace(workspaceId);
+    const result = await this.requireReady().request<JsonRecord>({
+      method: HERDR_V20_METHODS.workspaceClose,
+      params: { workspace_id: workspace.id },
+    });
+    if (result.type !== "ok") {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr workspace close response is invalid.");
+    }
+    await this.refreshSnapshot();
+    return { workspaceId: workspace.id, closed: true };
+  }
+
   async createTab(
     workspaceId: string,
     cwd: string,
@@ -714,6 +786,181 @@ export class HerdrBridge {
     };
   }
 
+  async getPaneProcessInfo(paneId: string): Promise<HerdrPaneProcessSummary> {
+    const pane = this.requirePane(paneId);
+    const result = await this.requireReady().request<JsonRecord>({
+      method: HERDR_V20_METHODS.paneProcessInfo,
+      params: { pane_id: pane.id },
+    });
+    if (
+      result.type !== "pane_process_info" ||
+      !isRecord(result.process_info) ||
+      idField(result.process_info, "pane_id") !== pane.id ||
+      !isOptionalNonnegativeInteger(result.process_info.shell_pid) ||
+      !isOptionalNonnegativeInteger(result.process_info.foreground_process_group_id)
+    ) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr pane process response is invalid.");
+    }
+    const foreground = result.process_info.foreground_processes;
+    if (foreground !== undefined && !Array.isArray(foreground)) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr pane process list is invalid.");
+    }
+    const processes = (foreground ?? []).filter(isRecord);
+    if (processes.length !== (foreground ?? []).length) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr pane process entry is invalid.");
+    }
+    if (processes.length > MAX_PROCESS_INFO_ENTRIES) {
+      throw new HerdrBridgeError("HERDR_PROTOCOL_LIMIT_EXCEEDED", "Herdr pane process list exceeded object limits.");
+    }
+    const visibleProcesses = processes.slice(0, MAX_PUBLIC_PROCESS_ENTRIES).map((processInfo) => {
+      const name = safeProcessName(processInfo.name);
+      if (!name || !isOptionalNonnegativeInteger(processInfo.pid)) {
+        throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr pane process entry is invalid.");
+      }
+      const processCwd = optionalStringField(processInfo, "cwd");
+      return {
+        name,
+        cwdMatchesPane: Boolean(processCwd && (processCwd === pane.foregroundCwd || processCwd === pane.cwd)),
+      };
+    });
+    return {
+      paneId: pane.id,
+      shellDetected: result.process_info.shell_pid !== undefined && result.process_info.shell_pid !== null,
+      foregroundProcessGroupDetected:
+        result.process_info.foreground_process_group_id !== undefined &&
+        result.process_info.foreground_process_group_id !== null,
+      processCount: processes.length,
+      truncated: processes.length > visibleProcesses.length,
+      foregroundProcesses: visibleProcesses,
+      ...(pane.agent
+        ? {
+            agent: {
+              kind: pane.agent.kind,
+              state: pane.agent.state,
+              interactiveReady: pane.agent.interactiveReady === true,
+              launchPending: pane.agent.launchPending === true,
+            },
+          }
+        : {}),
+    };
+  }
+
+  async waitForPaneOutput(
+    paneId: string,
+    match: unknown,
+    timeoutMs: unknown,
+    requestId: unknown,
+  ): Promise<HerdrPaneOutputWaitResult> {
+    const pane = this.requirePane(paneId);
+    if (
+      typeof match !== "string" ||
+      !match ||
+      Buffer.byteLength(match, "utf8") > 4_096 ||
+      /\0/.test(match) ||
+      !Number.isSafeInteger(timeoutMs) ||
+      Number(timeoutMs) < 100 ||
+      Number(timeoutMs) > HERDR_AGENT_WAIT_MAX_MS ||
+      !isId(requestId) ||
+      this.waits.has(requestId)
+    ) {
+      throw new HerdrBridgeError("HERDR_INVALID_REQUEST", "Pane output wait parameters are invalid.");
+    }
+    const controller = new AbortController();
+    this.waits.set(requestId, controller);
+    try {
+      const result = await this.requireReady().request<JsonRecord>({
+        method: HERDR_V20_METHODS.paneWaitForOutput,
+        params: {
+          pane_id: pane.id,
+          source: "recent_unwrapped",
+          match: { type: "substring", value: match },
+          lines: 1_000,
+          strip_ansi: true,
+          timeout_ms: timeoutMs,
+        },
+        timeoutMs: Number(timeoutMs) + 2_000,
+        signal: controller.signal,
+      });
+      if (
+        result.type !== "output_matched" ||
+        idField(result, "pane_id") !== pane.id ||
+        !isRecord(result.read) ||
+        idField(result.read, "pane_id") !== pane.id
+      ) {
+        throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr pane output wait response is invalid.");
+      }
+      const matchedLine = optionalStringField(result, "matched_line", 4_096);
+      return {
+        paneId: pane.id,
+        matched: true,
+        timedOut: false,
+        revision: numberField(result, "revision"),
+        ...(matchedLine ? { matchedLine } : {}),
+      };
+    } catch (error) {
+      const mapped = asHerdrError(error);
+      if (mapped.code === "HERDR_REQUEST_TIMEOUT") {
+        return { paneId: pane.id, matched: false, timedOut: true };
+      }
+      throw mapped;
+    } finally {
+      this.waits.delete(requestId);
+    }
+  }
+
+  async focusPane(paneId: string): Promise<{ paneId: string; workspaceId: string; tabId: string }> {
+    const pane = this.requirePane(paneId);
+    const result = await this.requireReady().request<JsonRecord>({
+      method: HERDR_V20_METHODS.paneFocus,
+      params: { pane_id: pane.id },
+    });
+    if (
+      result.type !== "pane_info" ||
+      !isRecord(result.pane) ||
+      idField(result.pane, "pane_id") !== pane.id ||
+      idField(result.pane, "workspace_id") !== pane.workspaceId ||
+      idField(result.pane, "tab_id") !== pane.tabId
+    ) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr pane focus response is invalid.");
+    }
+    await this.refreshSnapshot();
+    return { paneId: pane.id, workspaceId: pane.workspaceId, tabId: pane.tabId };
+  }
+
+  async renamePane(paneId: string, name: string): Promise<{ paneId: string; name: string }> {
+    const pane = this.requirePane(paneId);
+    if (typeof name !== "string" || !name.trim() || name.length > 256 || /[\0\r\n]/.test(name)) {
+      throw new HerdrBridgeError("HERDR_INVALID_REQUEST", "Pane name is invalid.");
+    }
+    const result = await this.requireReady().request<JsonRecord>({
+      method: HERDR_V20_METHODS.paneRename,
+      params: { pane_id: pane.id, label: name },
+    });
+    if (
+      result.type !== "pane_info" ||
+      !isRecord(result.pane) ||
+      idField(result.pane, "pane_id") !== pane.id ||
+      optionalStringField(result.pane, "label", 256) !== name
+    ) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr pane rename response is invalid.");
+    }
+    await this.refreshSnapshot();
+    return { paneId: pane.id, name };
+  }
+
+  async closePane(paneId: string): Promise<{ paneId: string; workspaceId: string; tabId: string; closed: true }> {
+    const pane = this.requirePane(paneId);
+    const result = await this.requireReady().request<JsonRecord>({
+      method: HERDR_V20_METHODS.paneClose,
+      params: { pane_id: pane.id },
+    });
+    if (result.type !== "ok") {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr pane close response is invalid.");
+    }
+    await this.refreshSnapshot();
+    return { paneId: pane.id, workspaceId: pane.workspaceId, tabId: pane.tabId, closed: true };
+  }
+
   async startAgent(paneId: string, kind: unknown): Promise<{ paneId: string; state: HerdrAgentState }> {
     const pane = this.requirePane(paneId);
     if (!isHerdrAgentKind(kind) || !isHerdrStartableAgentKind(kind))
@@ -742,6 +989,179 @@ export class HerdrBridge {
     }
     await this.refreshSnapshot();
     return { paneId, state: agentState(result.agent.agent_status) };
+  }
+
+  async explainAgent(paneId: string): Promise<HerdrAgentExplanation> {
+    const pane = this.requirePane(paneId);
+    if (!pane.agent) {
+      return {
+        paneId: pane.id,
+        detected: false,
+        cli: { startSupported: false, candidates: await probeAgentClis() },
+        detection: { available: false },
+      };
+    }
+    const startableKind = isHerdrStartableAgentKind(pane.agent.kind) ? pane.agent.kind : undefined;
+    const startSupported = startableKind !== undefined;
+    const cliAvailable = startableKind
+      ? this.options.isAgentCliAvailable
+        ? await this.options.isAgentCliAvailable(startableKind)
+        : Boolean(await findExecutableOnPath(startableKind))
+      : undefined;
+    let result: JsonRecord;
+    try {
+      result = await this.requireReady().request<JsonRecord>({
+        method: HERDR_V20_METHODS.agentExplain,
+        params: { target: pane.id },
+      });
+    } catch (error) {
+      const mapped = asHerdrError(error);
+      if (mapped.code !== "HERDR_AGENT_NOT_READY") throw mapped;
+      return {
+        paneId: pane.id,
+        detected: true,
+        agent: {
+          name: pane.agent.name,
+          kind: pane.agent.kind,
+          state: pane.agent.state,
+          interactiveReady: pane.agent.interactiveReady === true,
+          launchPending: pane.agent.launchPending === true,
+        },
+        cli: { startSupported, ...(cliAvailable !== undefined ? { available: cliAvailable } : {}) },
+        detection: { available: false },
+      };
+    }
+    if (result.type !== "agent_explain" || !isRecord(result.explain)) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr agent explanation response is invalid.");
+    }
+    const explain = result.explain;
+    const evaluatedRules = explain.evaluated_rules;
+    if (evaluatedRules !== undefined && !Array.isArray(evaluatedRules)) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr agent explanation rules are invalid.");
+    }
+    if ((evaluatedRules?.length ?? 0) > 128) {
+      throw new HerdrBridgeError("HERDR_PROTOCOL_LIMIT_EXCEEDED", "Herdr agent explanation exceeded object limits.");
+    }
+    const matchedRule = explain.matched_rule;
+    if (matchedRule !== undefined && matchedRule !== null && !isRecord(matchedRule)) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr matched Agent rule is invalid.");
+    }
+    const matchedRuleId = isRecord(matchedRule) ? safeDiagnosticToken(matchedRule.id) : undefined;
+    const matchedRuleState = isRecord(matchedRule) ? agentState(matchedRule.state) : undefined;
+    const matchedRuleRegion = isRecord(matchedRule) ? safeDiagnosticToken(matchedRule.region) : undefined;
+    return {
+      paneId: pane.id,
+      detected: true,
+      agent: {
+        name: pane.agent.name,
+        kind: pane.agent.kind,
+        state: pane.agent.state,
+        interactiveReady: pane.agent.interactiveReady === true,
+        launchPending: pane.agent.launchPending === true,
+      },
+      cli: { startSupported, ...(cliAvailable !== undefined ? { available: cliAvailable } : {}) },
+      detection: {
+        available: true,
+        ...(evaluatedRules ? { evaluatedRuleCount: evaluatedRules.length } : {}),
+        ...(matchedRuleId
+          ? {
+              matchedRule: {
+                id: matchedRuleId,
+                ...(matchedRuleState ? { state: matchedRuleState } : {}),
+                ...(matchedRuleRegion ? { region: matchedRuleRegion } : {}),
+              },
+            }
+          : {}),
+        ...(safeDiagnosticToken(explain.fallback_reason)
+          ? { fallbackReason: safeDiagnosticToken(explain.fallback_reason) }
+          : {}),
+        ...(safeDiagnosticToken(explain.manifest_source)
+          ? { manifestSource: safeDiagnosticToken(explain.manifest_source) }
+          : {}),
+        ...(safeDiagnosticToken(explain.manifest_version)
+          ? { manifestVersion: safeDiagnosticToken(explain.manifest_version) }
+          : {}),
+        ...(typeof explain.screen_detection_skipped === "boolean"
+          ? { screenDetectionSkipped: explain.screen_detection_skipped }
+          : {}),
+        ...(typeof explain.skip_state_update === "boolean" ? { skipStateUpdate: explain.skip_state_update } : {}),
+        ...(safeDiagnosticToken(explain.skipped_update_reason)
+          ? { skippedUpdateReason: safeDiagnosticToken(explain.skipped_update_reason) }
+          : {}),
+        ...(typeof explain.visible_blocker === "boolean" ? { visibleBlocker: explain.visible_blocker } : {}),
+        ...(typeof explain.visible_idle === "boolean" ? { visibleIdle: explain.visible_idle } : {}),
+        ...(typeof explain.visible_working === "boolean" ? { visibleWorking: explain.visible_working } : {}),
+      },
+    };
+  }
+
+  async focusAgent(paneId: string): Promise<{ paneId: string; agentKind: HerdrAgentKindDisplay }> {
+    const pane = this.requirePane(paneId);
+    if (!pane.agent) throw new HerdrBridgeError("HERDR_AGENT_NOT_READY", "No Agent is detected in this pane.");
+    const result = await this.requireReady().request<JsonRecord>({
+      method: HERDR_V20_METHODS.agentFocus,
+      params: { target: pane.id },
+    });
+    if (result.type !== "agent_info" || !isRecord(result.agent) || idField(result.agent, "pane_id") !== pane.id) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr agent focus response is invalid.");
+    }
+    await this.refreshSnapshot();
+    return { paneId: pane.id, agentKind: pane.agent.kind };
+  }
+
+  async renameAgent(
+    paneId: string,
+    name: string,
+  ): Promise<{ paneId: string; agentKind: HerdrAgentKindDisplay; name: string }> {
+    const pane = this.requirePane(paneId);
+    if (!pane.agent) throw new HerdrBridgeError("HERDR_AGENT_NOT_READY", "No Agent is detected in this pane.");
+    if (!isHerdrAgentAlias(name)) {
+      throw new HerdrBridgeError(
+        "HERDR_INVALID_REQUEST",
+        "Agent name must be a lowercase slug of 1 to 64 letters, digits, underscores, or hyphens.",
+      );
+    }
+    const result = await this.requireReady().request<JsonRecord>({
+      method: HERDR_V20_METHODS.agentRename,
+      params: { target: pane.id, name },
+    });
+    if (
+      result.type !== "agent_info" ||
+      !isRecord(result.agent) ||
+      idField(result.agent, "pane_id") !== pane.id ||
+      optionalStringField(result.agent, "name", 256) !== name
+    ) {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr agent rename response is invalid.");
+    }
+    await this.refreshSnapshot();
+    return { paneId: pane.id, agentKind: pane.agent.kind, name };
+  }
+
+  async closeAgent(paneId: string): Promise<{
+    paneId: string;
+    workspaceId: string;
+    tabId: string;
+    agentKind: HerdrAgentKindDisplay;
+    paneClosed: true;
+  }> {
+    const pane = this.requirePane(paneId);
+    if (!pane.agent) throw new HerdrBridgeError("HERDR_AGENT_NOT_READY", "No Agent is detected in this pane.");
+    const agentKind = pane.agent.kind;
+    const result = await this.requireReady().request<JsonRecord>({
+      method: HERDR_V20_METHODS.paneClose,
+      params: { pane_id: pane.id },
+    });
+    if (result.type !== "ok") {
+      throw new HerdrBridgeError("HERDR_SCHEMA_INVALID", "Herdr Agent pane close response is invalid.");
+    }
+    await this.refreshSnapshot();
+    return {
+      paneId: pane.id,
+      workspaceId: pane.workspaceId,
+      tabId: pane.tabId,
+      agentKind,
+      paneClosed: true,
+    };
   }
 
   async promptAgent(paneId: string, prompt: unknown): Promise<{ accepted: true }> {

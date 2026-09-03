@@ -120,6 +120,11 @@ export interface CustomMessage {
 
 export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | CustomMessage;
 
+export type ExtensionUiConfirmLocalization =
+  | { id: "herdr.closeWorkspace"; target: string; paneCount: number }
+  | { id: "herdr.closePane"; target: string }
+  | { id: "herdr.closeAgentPane"; paneId: string; agentKind: string };
+
 export type ExtensionUiRequest =
   | {
       type: "extension_ui_request";
@@ -136,6 +141,7 @@ export type ExtensionUiRequest =
       method: "confirm";
       title: string;
       message: string;
+      localization?: ExtensionUiConfirmLocalization;
       timeout?: number;
       expiresAt?: number;
     }

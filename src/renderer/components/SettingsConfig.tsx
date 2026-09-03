@@ -91,11 +91,11 @@ export function SettingsConfig({
 
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: "general", label: t("general", "General") },
-    { id: "herdr", label: t("herdr", "Herdr") },
     { id: "models", label: t("models", "Models") },
     { id: "skills", label: t("skills", "Skills") },
     { id: "plugins", label: t("plugins", "Plugins") },
     { id: "browser", label: t("browser", "Browser") },
+    { id: "herdr", label: t("herdr", "Herdr") },
     { id: "channels", label: t("channels", "Channels") },
     { id: "tools", label: t("developerTools", "Developer Tools") },
     { id: "about", label: t("about", "About") },

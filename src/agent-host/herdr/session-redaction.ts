@@ -40,6 +40,9 @@ function redactArguments(toolName: string, value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const args = { ...(value as Record<string, unknown>) };
   if (toolName === "herdr_agent_prompt" && "prompt" in args) args.prompt = "[redacted Herdr agent prompt]";
+  if (toolName === "herdr_pane_wait_for_output" && "text" in args) {
+    args.text = "[redacted Herdr pane output match]";
+  }
   return args;
 }
 

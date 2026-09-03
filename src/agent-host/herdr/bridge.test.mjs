@@ -409,6 +409,170 @@ test("Agent start and input enforce cwd, ownership, CLI, and response semantics"
   await bridge.shutdown();
 });
 
+test("expanded semantic controls validate targets and redact Agent/process diagnostics", async () => {
+  const { HerdrBridge, __test } = await importTestBundle("src/agent-host/herdr/bridge-expanded-controls", {
+    packages: "external",
+    absWorkingDir: root,
+    entryPoints: ["src/agent-host/herdr/bridge.ts"],
+  });
+  const fixture = JSON.parse(
+    readFileSync(path.join(import.meta.dirname, "fixtures", "session-snapshot-v20.json"), "utf8"),
+  );
+  const requests = [];
+  const bridge = new HerdrBridge(fakeServer(), {
+    isAgentCliAvailable: async () => true,
+    createClient: () => ({
+      async assertSafeEndpoint() {},
+      async request({ method, params }) {
+        requests.push({ method, params });
+        if (method === "ping") return { type: "pong", version: "0.8.2", protocol: 20 };
+        if (method === "session.snapshot") return fixture;
+        if (method === "workspace.focus") return { type: "workspace_info", workspace: fixture.snapshot.workspaces[0] };
+        if (method === "workspace.rename") {
+          return {
+            type: "workspace_info",
+            workspace: { ...fixture.snapshot.workspaces[0], label: params.label },
+          };
+        }
+        if (method === "pane.focus") return { type: "pane_info", pane: fixture.snapshot.panes[0] };
+        if (method === "pane.rename") {
+          return { type: "pane_info", pane: { ...fixture.snapshot.panes[0], label: params.label } };
+        }
+        if (method === "agent.focus") return { type: "agent_info", agent: fixture.snapshot.agents[0] };
+        if (method === "agent.rename") {
+          return { type: "agent_info", agent: { ...fixture.snapshot.agents[0], name: params.name } };
+        }
+        if (method === "agent.explain") {
+          return {
+            type: "agent_explain",
+            explain: {
+              evaluated_rules: [
+                {
+                  id: "blocked_literal",
+                  state: "blocked",
+                  region: "whole_recent",
+                  evidence: { region_preview: "PRIVATE_TERMINAL_OUTPUT" },
+                },
+              ],
+              matched_rule: { id: "blocked_literal", state: "blocked", region: "whole_recent" },
+              fallback_reason: "default_known_agent_idle_fallback",
+              manifest_source: "bundled",
+              manifest_version: "2026.06.10.1",
+              visible_blocker: true,
+              warning: "/private/credential-bearing/warning",
+            },
+          };
+        }
+        if (method === "pane.process_info") {
+          return {
+            type: "pane_process_info",
+            process_info: {
+              pane_id: "w1:p1",
+              shell_pid: 10,
+              foreground_process_group_id: 20,
+              foreground_processes: [
+                {
+                  pid: 20,
+                  name: "node",
+                  argv0: "/private/bin/qwen",
+                  argv: ["qwen", "--token", "PRIVATE_TOKEN"],
+                  cmdline: "qwen --token PRIVATE_TOKEN",
+                  cwd: "/tmp/protocol-v20",
+                },
+              ],
+              tty: "/private/dev/ttys001",
+            },
+          };
+        }
+        if (method === "pane.wait_for_output") {
+          return {
+            type: "output_matched",
+            pane_id: "w1:p1",
+            revision: 8,
+            matched_line: "READY",
+            read: {
+              pane_id: "w1:p1",
+              workspace_id: "w1",
+              tab_id: "w1:t1",
+              source: "recent_unwrapped",
+              format: "text",
+              text: "PRIVATE_SURROUNDING_OUTPUT\nREADY",
+              revision: 8,
+              truncated: false,
+            },
+          };
+        }
+        if (method === "workspace.close" || method === "pane.close") return { type: "ok" };
+        assert.fail(`Unexpected Herdr method: ${method}`);
+      },
+      subscribe(_subscriptions, _onEvent, _onClose, onReady) {
+        globalThis.queueMicrotask(() => onReady?.());
+        return () => undefined;
+      },
+    }),
+  });
+  __test.applyRuntimeDescriptor(runtimeDescriptor(1));
+  await waitFor(() => bridge.getRuntime().status === "ready", "expanded controls readiness");
+
+  assert.deepEqual(await bridge.focusWorkspace("w1"), { workspaceId: "w1" });
+  assert.deepEqual(await bridge.renameWorkspace("w1", "Review"), { workspaceId: "w1", name: "Review" });
+  assert.deepEqual(await bridge.focusPane("w1:p1"), { paneId: "w1:p1", workspaceId: "w1", tabId: "w1:t1" });
+  assert.deepEqual(await bridge.renamePane("w1:p1", "Runner"), { paneId: "w1:p1", name: "Runner" });
+  assert.deepEqual(await bridge.focusAgent("w1:p1"), { paneId: "w1:p1", agentKind: "qwen" });
+  await assert.rejects(bridge.renameAgent("w1:p1", "CU Fake Pi"), (error) => error.code === "HERDR_INVALID_REQUEST");
+  assert.deepEqual(await bridge.renameAgent("w1:p1", "reviewer"), {
+    paneId: "w1:p1",
+    agentKind: "qwen",
+    name: "reviewer",
+  });
+  const explanation = await bridge.explainAgent("w1:p1");
+  assert.equal(explanation.cli.available, true);
+  assert.deepEqual(explanation.detection.matchedRule, {
+    id: "blocked_literal",
+    state: "blocked",
+    region: "whole_recent",
+  });
+  assert.doesNotMatch(JSON.stringify(explanation), /PRIVATE|credential-bearing|region_preview|warning/);
+  const processInfo = await bridge.getPaneProcessInfo("w1:p1");
+  assert.deepEqual(processInfo.foregroundProcesses, [{ name: "node", cwdMatchesPane: true }]);
+  assert.doesNotMatch(JSON.stringify(processInfo), /PRIVATE|\/tmp|\/private|argv|cmdline|tty|shell_pid/);
+  assert.deepEqual(await bridge.waitForPaneOutput("w1:p1", "READY", 2_000, "output-wait-a"), {
+    paneId: "w1:p1",
+    matched: true,
+    timedOut: false,
+    revision: 8,
+    matchedLine: "READY",
+  });
+  assert.deepEqual(await bridge.closeWorkspace("w1"), { workspaceId: "w1", closed: true });
+  assert.deepEqual(await bridge.closePane("w1:p1"), {
+    paneId: "w1:p1",
+    workspaceId: "w1",
+    tabId: "w1:t1",
+    closed: true,
+  });
+  assert.deepEqual(await bridge.closeAgent("w1:p1"), {
+    paneId: "w1:p1",
+    workspaceId: "w1",
+    tabId: "w1:t1",
+    agentKind: "qwen",
+    paneClosed: true,
+  });
+  assert.deepEqual(requests.find(({ method }) => method === "pane.wait_for_output")?.params, {
+    pane_id: "w1:p1",
+    source: "recent_unwrapped",
+    match: { type: "substring", value: "READY" },
+    lines: 1_000,
+    strip_ansi: true,
+    timeout_ms: 2_000,
+  });
+  assert.equal(
+    requests.filter(({ method }) => method === "pane.close").length,
+    2,
+    "Agent close must use the reviewed pane.close semantic method",
+  );
+  await bridge.shutdown();
+});
+
 test("an event received during the initial snapshot schedules one trailing refresh", async () => {
   const { HerdrBridge, __test } = await importTestBundle("src/agent-host/herdr/bridge-snapshot-handshake", {
     packages: "external",

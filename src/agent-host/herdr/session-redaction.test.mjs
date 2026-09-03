@@ -32,6 +32,20 @@ test("Herdr prompts and live tool results are omitted from persisted messages", 
   assert.equal(serialized.includes("SECRET_TERMINAL_OUTPUT"), false);
   assert.equal(serialized.includes("SECRET_DETAIL"), false);
   assert.match(serialized, /Sensitive Herdr result was not saved/);
+
+  const waitCall = redactHerdrPersistedMessage({
+    role: "assistant",
+    content: [
+      {
+        type: "toolCall",
+        id: "call-wait",
+        name: "herdr_pane_wait_for_output",
+        arguments: { paneId: "pane-a", text: "SECRET_OUTPUT_MARKER" },
+      },
+    ],
+  });
+  assert.equal(JSON.stringify(waitCall).includes("SECRET_OUTPUT_MARKER"), false);
+  assert.match(JSON.stringify(waitCall), /redacted Herdr pane output match/);
 });
 
 test("Herdr session redaction changes only the persisted copy and installs once", () => {

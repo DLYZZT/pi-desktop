@@ -33,7 +33,7 @@ function upstreamError(code: string, message: string): HerdrBridgeError {
   if (code === "timeout" || code === "agent_prompt_stalled") {
     return new HerdrBridgeError("HERDR_REQUEST_TIMEOUT", "The Herdr request timed out.", true);
   }
-  if (code === "agent_not_running" || code === "agent_not_found") {
+  if (code === "agent_not_running" || code === "agent_not_found" || code === "agent_explain_unavailable") {
     return new HerdrBridgeError("HERDR_AGENT_NOT_READY", "The Herdr agent is not ready.", false);
   }
   if (code === "pane_not_found")

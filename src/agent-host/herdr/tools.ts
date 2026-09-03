@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
   HERDR_AGENT_PROMPT_MAX_BYTES,
+  HERDR_AGENT_ALIAS_PATTERN,
   HERDR_AGENT_WAIT_MAX_MS,
   HERDR_PANE_READ_MAX_BYTES,
   HERDR_SAFE_AGENT_KEYS,
@@ -10,12 +11,13 @@ import {
   type HerdrAgentState,
 } from "../../contract/herdr.ts";
 import { getAgentSessionSource } from "../session-source.ts";
+import type { ExtensionUiConfirmLocalization } from "../../shared/types.ts";
 import type { HerdrBridge } from "./bridge.ts";
 import { HerdrBridgeError } from "./errors.ts";
 import { HERDR_TOOL_NAMES } from "./tool-names.ts";
 export { HERDR_TOOL_NAMES, isHerdrToolName } from "./tool-names.ts";
 
-type ToolContext = { sessionManager: { getSessionId(): string } };
+type ToolContext = Pick<ExtensionContext, "sessionManager" | "hasUI" | "ui">;
 
 const MAX_AGENT_PROMPT_CHARS = HERDR_AGENT_PROMPT_MAX_BYTES;
 const MAX_AGENT_READ_BYTES = HERDR_PANE_READ_MAX_BYTES;
@@ -46,6 +48,8 @@ const paneId = Type.String({
   maxLength: 256,
   description: "Exact Herdr pane id from herdr_list; never abbreviate it",
 });
+
+const objectName = Type.String({ minLength: 1, maxLength: 160 });
 
 function text(value: unknown) {
   return {
@@ -92,6 +96,33 @@ async function withHerdrAsync<T>(ctx: ToolContext, bridge: HerdrBridge, operatio
   }
 }
 
+async function requireDestructiveConfirmation(
+  ctx: ToolContext,
+  title: string,
+  message: string,
+  localization: ExtensionUiConfirmLocalization,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!ctx.hasUI) {
+    throw new HerdrBridgeError(
+      "HERDR_CONFIRMATION_REQUIRED",
+      "This Herdr close operation requires an interactive local confirmation.",
+    );
+  }
+  const localizedUi = ctx.ui as typeof ctx.ui & {
+    confirmLocalized?: (
+      title: string,
+      message: string,
+      localization: ExtensionUiConfirmLocalization,
+      opts?: { signal?: AbortSignal; timeout?: number },
+    ) => Promise<boolean>;
+  };
+  const confirmed = localizedUi.confirmLocalized
+    ? await localizedUi.confirmLocalized(title, message, localization, { signal, timeout: 120_000 })
+    : await ctx.ui.confirm(title, message, { signal, timeout: 120_000 });
+  if (!confirmed) throw new HerdrBridgeError("HERDR_REQUEST_CANCELLED", "The Herdr close operation was cancelled.");
+}
+
 export function herdrToolNamesForRuntime(bridge: HerdrBridge | null): string[] {
   if (!bridge) return [];
   const runtime = bridge.getRuntime();
@@ -100,6 +131,9 @@ export function herdrToolNamesForRuntime(bridge: HerdrBridge | null): string[] {
   if (runtime.capabilities.readOnly) {
     allowed.add("herdr_list");
     allowed.add("herdr_pane_read");
+    allowed.add("herdr_agent_explain");
+    allowed.add("herdr_pane_process_info");
+    allowed.add("herdr_pane_wait_for_output");
   }
   if (runtime.capabilities.agentControl) {
     allowed.add("herdr_workspace_create");
@@ -111,6 +145,15 @@ export function herdrToolNamesForRuntime(bridge: HerdrBridge | null): string[] {
     allowed.add("herdr_agent_prompt");
     allowed.add("herdr_agent_wait");
     allowed.add("herdr_agent_keys");
+    allowed.add("herdr_workspace_focus");
+    allowed.add("herdr_workspace_rename");
+    allowed.add("herdr_workspace_close");
+    allowed.add("herdr_pane_focus");
+    allowed.add("herdr_pane_rename");
+    allowed.add("herdr_pane_close");
+    allowed.add("herdr_agent_focus");
+    allowed.add("herdr_agent_rename");
+    allowed.add("herdr_agent_close");
   }
   return HERDR_TOOL_NAMES.filter((name) => allowed.has(name));
 }
@@ -361,6 +404,225 @@ export function createHerdrToolDefinitions(ownerCwd: string, bridge: HerdrBridge
       executionMode: "sequential",
       async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
         return withHerdrAsync(ctx, bridge, async () => text(await bridge.sendAgentKeys(input.paneId, input.keys)));
+      },
+    }),
+    defineTool({
+      name: "herdr_agent_explain",
+      label: "explain Herdr agent",
+      description:
+        "Explain the detected Agent state for an exact pane, including sanitized rule/fallback signals and whether Pi Desktop can locate a supported CLI. Terminal evidence, paths, and command lines are omitted.",
+      promptSnippet:
+        "herdr_agent_explain: explain blocked or unknown Agent detection without exposing raw terminal data",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({ paneId }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
+        return withHerdrAsync(ctx, bridge, async () => text(await bridge.explainAgent(input.paneId)));
+      },
+    }),
+    defineTool({
+      name: "herdr_pane_process_info",
+      label: "inspect Herdr pane process",
+      description:
+        "Inspect sanitized foreground process names and Agent detection for an exact pane. PIDs, paths, argv, command lines, TTYs, and environment values are never returned.",
+      promptSnippet: "herdr_pane_process_info: inspect sanitized foreground process and Agent detection metadata",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({ paneId }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
+        return withHerdrAsync(ctx, bridge, async () => text(await bridge.getPaneProcessInfo(input.paneId)));
+      },
+    }),
+    defineTool({
+      name: "herdr_pane_wait_for_output",
+      label: "wait for Herdr pane output",
+      description:
+        "Wait until an exact shell pane contains a literal substring. Existing recent ANSI-stripped output is checked first; use this instead of polling pane reads.",
+      promptSnippet: "herdr_pane_wait_for_output: wait for a literal substring in bounded pane output",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({
+        paneId,
+        text: Type.String({ minLength: 1, maxLength: 4_096 }),
+        timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: MAX_WAIT_MS })),
+      }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, signal, _onUpdate, ctx) {
+        const requestId = randomUUID();
+        const cancel = () => {
+          try {
+            bridge.cancelWait(requestId);
+          } catch {
+            // The wait may already have completed and removed itself.
+          }
+        };
+        signal?.addEventListener("abort", cancel, { once: true });
+        try {
+          return await withHerdrAsync(ctx, bridge, async () =>
+            text(await bridge.waitForPaneOutput(input.paneId, input.text, input.timeoutMs ?? 30_000, requestId)),
+          );
+        } finally {
+          signal?.removeEventListener("abort", cancel);
+        }
+      },
+    }),
+    defineTool({
+      name: "herdr_workspace_focus",
+      label: "focus Herdr workspace",
+      description: "Focus an existing Herdr workspace by its exact id.",
+      promptSnippet: "herdr_workspace_focus: focus an exact persistent Herdr workspace",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({ workspaceId }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
+        return withHerdrAsync(ctx, bridge, async () => text(await bridge.focusWorkspace(input.workspaceId)));
+      },
+    }),
+    defineTool({
+      name: "herdr_workspace_rename",
+      label: "rename Herdr workspace",
+      description: "Rename an existing Herdr workspace by its exact id.",
+      promptSnippet: "herdr_workspace_rename: rename an exact persistent Herdr workspace",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({ workspaceId, name: objectName }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
+        return withHerdrAsync(ctx, bridge, async () =>
+          text(await bridge.renameWorkspace(input.workspaceId, input.name)),
+        );
+      },
+    }),
+    defineTool({
+      name: "herdr_workspace_close",
+      label: "close Herdr workspace",
+      description:
+        "Close an exact persistent Herdr workspace after an interactive local confirmation. This terminates every pane and process in that workspace.",
+      promptSnippet: "herdr_workspace_close: close a workspace only after the user accepts the Pi confirmation dialog",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({ workspaceId }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, signal, _onUpdate, ctx) {
+        return withHerdrAsync(ctx, bridge, async () => {
+          const fleet = await bridge.refreshSnapshot();
+          const workspace = fleet.workspaces.find((candidate) => candidate.id === input.workspaceId);
+          if (!workspace)
+            throw new HerdrBridgeError("HERDR_INVALID_REQUEST", "Workspace is not present in the current snapshot.");
+          const paneCount = fleet.panes.filter((pane) => pane.workspaceId === workspace.id && pane.alive).length;
+          await requireDestructiveConfirmation(
+            ctx,
+            "Close Herdr workspace",
+            `Close workspace ${workspace.name ?? workspace.id}? This will terminate ${paneCount} pane(s) and all processes in them. This cannot be undone by Pi Desktop.`,
+            { id: "herdr.closeWorkspace", target: workspace.name ?? workspace.id, paneCount },
+            signal,
+          );
+          return text(await bridge.closeWorkspace(workspace.id));
+        });
+      },
+    }),
+    defineTool({
+      name: "herdr_pane_focus",
+      label: "focus Herdr pane",
+      description: "Focus an existing Herdr pane by its exact id.",
+      promptSnippet: "herdr_pane_focus: focus an exact persistent Herdr pane",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({ paneId }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
+        return withHerdrAsync(ctx, bridge, async () => text(await bridge.focusPane(input.paneId)));
+      },
+    }),
+    defineTool({
+      name: "herdr_pane_rename",
+      label: "rename Herdr pane",
+      description: "Rename an existing Herdr pane by its exact id.",
+      promptSnippet: "herdr_pane_rename: rename an exact persistent Herdr pane",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({ paneId, name: objectName }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
+        return withHerdrAsync(ctx, bridge, async () => text(await bridge.renamePane(input.paneId, input.name)));
+      },
+    }),
+    defineTool({
+      name: "herdr_pane_close",
+      label: "close Herdr pane",
+      description:
+        "Close an exact persistent Herdr pane after an interactive local confirmation. This terminates its shell, Agent, and other processes.",
+      promptSnippet: "herdr_pane_close: close a pane only after the user accepts the Pi confirmation dialog",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({ paneId }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, signal, _onUpdate, ctx) {
+        return withHerdrAsync(ctx, bridge, async () => {
+          const fleet = await bridge.refreshSnapshot();
+          const pane = fleet.panes.find((candidate) => candidate.id === input.paneId && candidate.alive);
+          if (!pane) throw new HerdrBridgeError("HERDR_PANE_NOT_FOUND", "Pane is not present in the current snapshot.");
+          await requireDestructiveConfirmation(
+            ctx,
+            "Close Herdr pane",
+            `Close pane ${pane.title ?? pane.id}? This will terminate its shell, Agent, and other processes. This cannot be undone by Pi Desktop.`,
+            { id: "herdr.closePane", target: pane.title ?? pane.id },
+            signal,
+          );
+          return text(await bridge.closePane(pane.id));
+        });
+      },
+    }),
+    defineTool({
+      name: "herdr_agent_focus",
+      label: "focus Herdr agent",
+      description: "Focus the detected Agent in an exact Herdr pane.",
+      promptSnippet: "herdr_agent_focus: focus the detected Agent in an exact pane",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({ paneId }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
+        return withHerdrAsync(ctx, bridge, async () => text(await bridge.focusAgent(input.paneId)));
+      },
+    }),
+    defineTool({
+      name: "herdr_agent_rename",
+      label: "rename Herdr agent",
+      description: "Rename the detected Agent in an exact Herdr pane.",
+      promptSnippet: "herdr_agent_rename: rename the detected Agent in an exact pane",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({
+        paneId,
+        name: Type.String({
+          minLength: 1,
+          maxLength: 64,
+          pattern: HERDR_AGENT_ALIAS_PATTERN,
+          description: "Lowercase Agent alias using letters, digits, underscores, or hyphens",
+        }),
+      }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
+        return withHerdrAsync(ctx, bridge, async () => text(await bridge.renameAgent(input.paneId, input.name)));
+      },
+    }),
+    defineTool({
+      name: "herdr_agent_close",
+      label: "close Herdr agent pane",
+      description:
+        "Terminate a detected Herdr Agent by closing its containing pane after an interactive local confirmation. Herdr v0.8.2 has no agent.stop API, so the result explicitly reports paneClosed=true.",
+      promptSnippet: "herdr_agent_close: close the Agent's pane only after the user accepts the Pi confirmation dialog",
+      promptGuidelines: GUIDELINES,
+      parameters: Type.Object({ paneId }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, signal, _onUpdate, ctx) {
+        return withHerdrAsync(ctx, bridge, async () => {
+          const fleet = await bridge.refreshSnapshot();
+          const pane = fleet.panes.find((candidate) => candidate.id === input.paneId && candidate.alive);
+          if (!pane) throw new HerdrBridgeError("HERDR_PANE_NOT_FOUND", "Pane is not present in the current snapshot.");
+          if (!pane.agent) throw new HerdrBridgeError("HERDR_AGENT_NOT_READY", "No Agent is detected in this pane.");
+          await requireDestructiveConfirmation(
+            ctx,
+            "Close Herdr Agent pane",
+            `Close the ${pane.agent.kind} Agent by closing pane ${pane.title ?? pane.id}? Herdr v0.8.2 cannot stop only the Agent; the pane and every process in it will terminate.`,
+            { id: "herdr.closeAgentPane", paneId: pane.id, agentKind: pane.agent.kind },
+            signal,
+          );
+          return text(await bridge.closeAgent(pane.id));
+        });
       },
     }),
   ];

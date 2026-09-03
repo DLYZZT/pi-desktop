@@ -71,6 +71,16 @@ Local-first · No internal server · Cross-platform
 
 Managed background processes in v0.1.14 support macOS, Linux, and Windows 11 x64. Windows ARM64, Windows Server, and 32-bit Windows are not supported.
 
+### Conversational Herdr control from Pi
+
+- Optionally connect to a local Herdr instance and use the original main conversation to inspect the Fleet; create, focus, or rename workspaces, tabs, and panes; explain Agent states; inspect sanitized process details; wait for output; and start, prompt, or wait for Agents.
+- The Pi Session sidebar and main conversation remain the primary surface. The Agent Fleet indicator stays in the title bar's right-side action area on both the initial page and active sessions; the right-side ANSI terminal remains a supporting view for status, troubleshooting, and explicit keyboard takeover.
+- Closing a workspace, pane, or Agent requires an interactive local Pi confirmation whose complete copy follows the current UI language. Herdr v0.8.2 has no `agent.stop`, so Agent close explicitly closes its containing pane rather than pretending to stop only the Agent.
+- Herdr is bundled with macOS/Linux builds. Developer Tools owns installation, version, update, repair, and removal; Managed mode activates the verified bundled copy without a separate runtime download.
+- Attach connects only to a user-started system Herdr and never stops it. Managed mode starts, monitors, restarts, and closes only Pi Desktop's private server.
+- Pi Sessions and Herdr Sessions remain separate. Closing the Pi Desktop terminal view does not close a Herdr pane or Agent, and unknown protocols fail closed.
+- In Settings, Herdr sits between Browser and Channels; installation, update, repair, and removal remain centralized under Developer Tools.
+
 ### A project-focused file experience
 
 - Select project directories natively and manage Git branches and worktrees
@@ -209,6 +219,8 @@ flowchart LR
 | `npm run smoke`                          | Run Electron smoke tests                                             |
 | `npm run test:browser-electron`          | Run the local Browser Electron integration suite                     |
 | `npm run test:managed-process-workflows` | Test managed-process lifecycle and cleanup                           |
+| `npm run test:herdr-e2e`                 | Run the isolated upstream Herdr E2E with an official binary          |
+| `npm run test:herdr-desktop-e2e`         | Run the production Electron/Renderer Herdr integration E2E           |
 | `npm run test:windows-managed-helper`    | Validate the Rust helper and Job Objects on Windows x64              |
 | `npm run verify`                         | Run the complete pre-commit quality gate                             |
 | `npm run build`                          | Build Main, preload, and Renderer                                    |
