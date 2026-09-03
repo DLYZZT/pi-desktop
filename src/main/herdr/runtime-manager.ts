@@ -148,7 +148,9 @@ function runProbeCommand(executable: string, args: string[], timeoutMs = PROBE_T
       }
     });
     child.once("error", (error) => finish(error));
-    child.once("exit", (code, signal) => {
+    // `exit` can fire before stdout/stderr pipes have drained. Wait for `close`
+    // so fast probes such as `herdr --version` cannot resolve with empty output.
+    child.once("close", (code, signal) => {
       if (code === 0) finish();
       else finish(new Error(`Herdr probe exited unsuccessfully (${code ?? signal ?? "unknown"})`));
     });

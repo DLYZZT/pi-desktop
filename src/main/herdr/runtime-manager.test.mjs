@@ -35,6 +35,25 @@ function fakeHerdr(directory, { version = "0.8.2", protocol = 20, schemaVersion 
   return executable;
 }
 
+function delayedPipeHerdr(directory) {
+  mkdirSync(directory, { recursive: true });
+  const executable = path.join(directory, "herdr-delayed-pipe");
+  writeFileSync(
+    executable,
+    [
+      "#!/bin/sh",
+      'if [ "$1" = "--version" ]; then',
+      "  (sleep 0.05; printf '%s\\n' 'herdr 0.8.2') &",
+      "  exit 0",
+      "fi",
+      `  (sleep 0.05; printf '%s\\n' '${JSON.stringify({ schema_version: 1, protocol: 20 })}') &`,
+      "exit 0",
+    ].join("\n"),
+  );
+  chmodSync(executable, 0o700);
+  return executable;
+}
+
 function settings(overrides = {}) {
   return {
     enabled: true,
@@ -79,6 +98,17 @@ function healthyInstaller() {
     async remove() {},
   };
 }
+
+test("executable probes wait for inherited stdout pipes to close before parsing output", async (t) => {
+  if (process.platform === "win32") return t.skip("POSIX pipe inheritance fixture");
+  const directory = mkdtempSync(path.join(os.tmpdir(), "pi-herdr-probe-close-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const { probeHerdrExecutable } = await loadRuntimeManager();
+  const result = await probeHerdrExecutable(delayedPipeHerdr(directory));
+  assert.equal(result.version, "0.8.2");
+  assert.equal(result.protocol, 20);
+  assert.equal(result.schemaVersion, 1);
+});
 
 test("Attach mode resolves system Herdr and an isolated named-session endpoint", async (t) => {
   const { HerdrRuntimeManager } = await loadRuntimeManager();
