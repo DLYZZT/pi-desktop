@@ -16,7 +16,7 @@ Local-first · No internal server · Cross-platform
 
 **English** · [简体中文](./README.md)
 
-[Download v0.1.14](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.14) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
+[Download v0.2.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.2.0) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
 
 </div>
 
@@ -69,7 +69,7 @@ Local-first · No internal server · Cross-platform
 - Use POSIX process groups on macOS/Linux and an integrity-verified Rust helper with Windows Job Objects on Windows x64; missing helper, reaper, or owner identity readiness fails closed
 - Keep the feature off by default and treat it as lifecycle control, not a security sandbox: child processes have the same local file, network, and environment access as Agent Bash; common LAN binds require confirmation, and Host/App failure or exit triggers bounded process-tree cleanup
 
-Managed background processes in v0.1.14 support macOS, Linux, and Windows 11 x64. Windows ARM64, Windows Server, and 32-bit Windows are not supported.
+Managed background processes in v0.2.0 support macOS, Linux, and Windows 11 x64. Windows ARM64, Windows Server, and 32-bit Windows are not supported.
 
 ### Conversational Herdr control from Pi
 
@@ -127,9 +127,9 @@ Managed background processes in v0.1.14 support macOS, Linux, and Windows 11 x64
 
 ### Use a desktop build
 
-The latest stable version is [v0.1.14](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.14), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
+The latest stable version is [v0.2.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.2.0), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
 
-Pi Agent Desktop v0.1.14 bundles the Pi Coding Agent 0.84.0 runtime. Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
+Pi Agent Desktop v0.2.0 bundles the Pi Coding Agent 0.84.0 runtime. Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
 
 The application reads sessions and configuration from `~/.pi/agent/`. If you already use the Pi CLI, your existing data is available without migration. The desktop application also works if you have never used the CLI.
 
