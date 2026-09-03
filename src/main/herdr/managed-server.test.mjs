@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import test from "node:test";
+import nodeTest from "node:test";
 import { importTestBundle } from "#test-bundle";
 
 let modulePromise;
+// Herdr integration is intentionally macOS/Linux-only until the Windows transport is implemented.
+const test = process.platform === "win32" ? nodeTest.skip : nodeTest;
 
 async function loadSupervisor() {
   modulePromise ??= importTestBundle("src/main/herdr/managed-server", {

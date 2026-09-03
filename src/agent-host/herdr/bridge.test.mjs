@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { importTestBundle } from "#test-bundle";
 
 const root = path.resolve(import.meta.dirname, "..", "..", "..");
+// Herdr integration is intentionally macOS/Linux-only until the Windows transport is implemented.
+const test = process.platform === "win32" ? nodeTest.skip : nodeTest;
 
 test("protocol 20 fixture maps Qwen and redacts session path details", async () => {
   const { __test } = await importTestBundle("src/agent-host/herdr/bridge", {

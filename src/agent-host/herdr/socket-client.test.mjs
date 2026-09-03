@@ -4,10 +4,12 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
-import test from "node:test";
+import nodeTest from "node:test";
 import { importTestBundle } from "#test-bundle";
 
 const root = path.resolve(import.meta.dirname, "..", "..", "..");
+// Herdr integration is intentionally macOS/Linux-only until the Windows transport is implemented.
+const test = process.platform === "win32" ? nodeTest.skip : nodeTest;
 let modulePromise;
 
 async function loadSocketClient() {

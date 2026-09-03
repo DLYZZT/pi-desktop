@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { importTestBundle } from "#test-bundle";
 
 const root = path.resolve(import.meta.dirname, "..", "..", "..");
+// Herdr integration is intentionally macOS/Linux-only until the Windows transport is implemented.
+const test = process.platform === "win32" ? nodeTest.skip : nodeTest;
 let modulePromise;
 
 async function loadTerminalModule() {
