@@ -45,7 +45,10 @@ test("Windows runs pure quality checks and Electron smoke without an Xvfb depend
   const helperAcceptance = stepByName("test-platforms", "Validate Windows managed process helper").run;
   assert.match(helperAcceptance, /PI_WINDOWS_HELPER_HANDLE_LOOPS = "100"/);
   assert.match(helperAcceptance, /PSNativeCommandUseErrorActionPreference = \$true/);
-  assert.equal(stepByName("test-platforms", "Install Electron binary (Windows)").if, "runner.os == 'Windows'");
+  assert.equal(
+    stepByName("test-platforms", "Install Electron binary (Linux/Windows)").if,
+    "runner.os == 'Linux' || runner.os == 'Windows'",
+  );
 
   const quality = stepByName("test-platforms", "Run cross-platform quality checks (Windows)");
   assert.equal(quality.if, "runner.os == 'Windows'");
