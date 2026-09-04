@@ -1093,8 +1093,6 @@ function NoticeShelf({
               alignItems: "center",
               gap: 10,
               minHeight: 60,
-              height: 60,
-              maxHeight: 60,
               marginBottom: index === notices.length - 1 ? 0 : 6,
               overflow: "hidden",
               borderRadius: 14,
@@ -1129,9 +1127,8 @@ function NoticeShelf({
                 padding: "14px 0",
                 minWidth: 0,
                 maxWidth: "100%",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                overflowWrap: "anywhere",
+                whiteSpace: "pre-wrap",
               }}
             >
               {notice.message}
