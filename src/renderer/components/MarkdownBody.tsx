@@ -295,7 +295,7 @@ function normalizeDisplayMath(markdown: string): string {
 
 function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boolean }) {
   const { isDark } = useTheme();
-  const [showPreview, setShowPreview] = useState(false);
+  const [showPreview, setShowPreview] = useState(true);
   const [svg, setSvg] = useState<string | null>(null);
   const [renderedKey, setRenderedKey] = useState("");
   const [failedKey, setFailedKey] = useState<string | null>(null);
