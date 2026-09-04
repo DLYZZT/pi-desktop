@@ -34,18 +34,18 @@ let installed = false;
 let completed = false;
 
 try {
-  install(previousInstaller, installPath);
+  await install(previousInstaller, installPath);
   installed = true;
   assert.equal(fileVersion(appExecutable(installPath)), previousVersion);
   assert.equal(fs.existsSync(path.join(installPath, "resources", "managed-process")), false);
   reports.push(validateStartup(appExecutable(installPath), isolated, previousVersion, "previous"));
 
-  install(currentInstaller, installPath);
+  await install(currentInstaller, installPath);
   assert.equal(fileVersion(appExecutable(installPath)), currentVersion);
   const helper = await verifyInstalledHelper(installPath);
   reports.push(validateStartup(appExecutable(installPath), isolated, currentVersion, "upgraded"));
 
-  install(previousInstaller, installPath);
+  await install(previousInstaller, installPath);
   assert.equal(fileVersion(appExecutable(installPath)), previousVersion);
   assert.equal(
     fs.existsSync(path.join(installPath, "resources", "managed-process")),
@@ -118,17 +118,30 @@ function compareVersions(left, right) {
   return 0;
 }
 
-function install(installer, directory) {
-  const result = spawnSync(installer, ["/S", `/D=${directory}`], {
-    encoding: "utf8",
-    timeout: 180_000,
-    windowsHide: true,
-  });
-  if (result.error || result.signal || result.status !== 0) {
-    throw new Error(
-      `installer failed: ${result.error?.message ?? result.signal ?? result.status}\n${result.stderr ?? ""}`,
-      { cause: result.error },
+async function install(installer, directory) {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const result = spawnSync(installer, ["/S", `/D=${directory}`], {
+      encoding: "utf8",
+      timeout: 180_000,
+      windowsHide: true,
+    });
+    if (!result.error && !result.signal && result.status === 0) return;
+
+    const accessViolation = result.status === 0xc0000005;
+    const installDirectoryRemainsEmpty =
+      !fs.existsSync(directory) || fs.readdirSync(directory, { withFileTypes: true }).length === 0;
+    if (!accessViolation || !installDirectoryRemainsEmpty || attempt === maxAttempts) {
+      throw new Error(
+        `installer failed after ${attempt} attempt${attempt === 1 ? "" : "s"}: ${result.error?.message ?? result.signal ?? result.status}\n${result.stderr ?? ""}`,
+        { cause: result.error },
+      );
+    }
+
+    console.warn(
+      `[nsis-upgrade] installer access violation before writing files; retrying (${attempt}/${maxAttempts})`,
     );
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
   }
 }
 
