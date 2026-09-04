@@ -1,7 +1,5 @@
 import type { RpcServer } from "../../contract/rpc";
 import semver from "semver";
-import { execFile } from "node:child_process";
-import { access } from "node:fs/promises";
 import path from "node:path";
 import {
   HERDR_AGENT_PROMPT_MAX_BYTES,
@@ -58,45 +56,6 @@ const MAX_TABS = 512;
 const MAX_PANES = 1_024;
 const MAX_PROCESS_INFO_ENTRIES = 128;
 const MAX_PUBLIC_PROCESS_ENTRIES = 32;
-const AGENT_CLI_VERSION_TIMEOUT_MS = 1_000;
-
-async function findExecutableOnPath(name: string, pathValue = process.env.PATH ?? ""): Promise<string | null> {
-  for (const directory of pathValue.split(path.delimiter).filter(Boolean)) {
-    const candidate = path.join(directory, name);
-    try {
-      await access(candidate, process.platform === "win32" ? undefined : 1);
-      return candidate;
-    } catch {
-      // Keep checking the fixed PATH entries without exposing them in diagnostics.
-    }
-  }
-  return null;
-}
-
-function readCliVersion(executable: string): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    execFile(
-      executable,
-      ["--version"],
-      { timeout: AGENT_CLI_VERSION_TIMEOUT_MS, maxBuffer: 16 * 1024, windowsHide: true },
-      (_error, stdout, stderr) => {
-        const version = `${stdout}\n${stderr}`.match(/\b\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b/)?.[0];
-        resolve(version?.slice(0, 80));
-      },
-    );
-  });
-}
-
-async function probeAgentClis(pathValue = process.env.PATH ?? ""): Promise<HerdrAgentCliDiagnostic[]> {
-  return Promise.all(
-    HERDR_STARTABLE_AGENT_KINDS.map(async (kind) => {
-      const executable = await findExecutableOnPath(kind, pathValue);
-      if (!executable) return { kind, available: false, errorCode: "HERDR_AGENT_BINARY_MISSING" as const };
-      const version = await readCliVersion(executable);
-      return { kind, available: true, ...(version ? { version } : {}) };
-    }),
-  );
-}
 
 function isId(value: unknown): value is string {
   return (
@@ -141,7 +100,6 @@ export const __test = {
   agentKind,
   agentState,
   safeSessionDisplay,
-  probeAgentClis,
   applyRuntimeDescriptor: (descriptor: HerdrRuntimeDescriptor) => herdrRuntimeController.apply(descriptor),
 };
 
@@ -151,7 +109,6 @@ type HerdrBridgeOptions = {
   createClient?: (endpoint: string) => HerdrSocketClientLike;
   reconnectDelayMs?: (attempt: number) => number;
   assertAllowedPath?: (target: string) => Promise<void>;
-  isAgentCliAvailable?: (kind: (typeof HERDR_STARTABLE_AGENT_KINDS)[number]) => Promise<boolean>;
 };
 
 function agentState(value: unknown): HerdrAgentState {
@@ -334,6 +291,16 @@ export class HerdrBridge {
     return structuredClone(this.fleet);
   }
 
+  private agentCliDiagnostics(): HerdrAgentCliDiagnostic[] {
+    const byKind = new Map((this.descriptor.agentClis ?? []).map((entry) => [entry.kind, entry]));
+    return HERDR_STARTABLE_AGENT_KINDS.map((kind) => {
+      const entry = byKind.get(kind);
+      return entry
+        ? structuredClone(entry)
+        : { kind, available: false, status: "missing-locally", errorCode: "HERDR_AGENT_BINARY_MISSING" };
+    });
+  }
+
   async getDiagnostics(): Promise<HerdrDiagnostics> {
     const runtime = this.getRuntime();
     const fleet = this.getFleet();
@@ -357,7 +324,7 @@ export class HerdrBridge {
       },
       terminal: this.terminals.diagnostics(),
       capabilities: runtime.capabilities,
-      agentClis: await probeAgentClis(),
+      agentClis: this.agentCliDiagnostics(),
       ...(runtime.error ? { recentErrorCode: runtime.error.code } : {}),
     };
   }
@@ -971,14 +938,6 @@ export class HerdrBridge {
     if (pane.agent) {
       throw new HerdrBridgeError("HERDR_AGENT_NOT_READY", "The Herdr pane already has a managed Agent.");
     }
-    const cliAvailable = this.options.isAgentCliAvailable
-      ? await this.options.isAgentCliAvailable(kind)
-      : Boolean(await findExecutableOnPath(kind));
-    if (!cliAvailable) {
-      throw new HerdrBridgeError("HERDR_AGENT_BINARY_MISSING", `The ${kind} Agent CLI is unavailable.`, false, false, {
-        action: "configure",
-      });
-    }
     const result = await this.requireReady().request<JsonRecord>({
       method: HERDR_V20_METHODS.agentStart,
       params: { name: kind, kind, pane_id: paneId, args: [], timeout_ms: 60_000 },
@@ -997,16 +956,14 @@ export class HerdrBridge {
       return {
         paneId: pane.id,
         detected: false,
-        cli: { startSupported: false, candidates: await probeAgentClis() },
+        cli: { startSupported: false, candidates: this.agentCliDiagnostics() },
         detection: { available: false },
       };
     }
     const startableKind = isHerdrStartableAgentKind(pane.agent.kind) ? pane.agent.kind : undefined;
     const startSupported = startableKind !== undefined;
     const cliAvailable = startableKind
-      ? this.options.isAgentCliAvailable
-        ? await this.options.isAgentCliAvailable(startableKind)
-        : Boolean(await findExecutableOnPath(startableKind))
+      ? this.agentCliDiagnostics().find((candidate) => candidate.kind === startableKind)?.available
       : undefined;
     let result: JsonRecord;
     try {

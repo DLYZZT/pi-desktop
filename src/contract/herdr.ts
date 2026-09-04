@@ -48,6 +48,20 @@ export const HERDR_PANE_READ_MAX_BYTES = 64 * 1024;
 export const HERDR_AGENT_ALIAS_PATTERN = "^[a-z][a-z0-9_-]{0,63}$" as const;
 
 export type HerdrAgentKind = (typeof HERDR_AGENT_KINDS)[number];
+export type HerdrStartableAgentKind = (typeof HERDR_STARTABLE_AGENT_KINDS)[number];
+export type HerdrAgentCliSource =
+  | "custom"
+  | "path"
+  | "official"
+  | "npm"
+  | "bun"
+  | "uv"
+  | "homebrew"
+  | "macports"
+  | "winget"
+  | "system"
+  | "version-manager";
+export type HerdrAgentCliStatus = "detected" | "missing-locally" | "ambiguous";
 export const HERDR_SAFE_AGENT_KEYS = [
   "enter",
   "esc",
@@ -167,6 +181,10 @@ export interface HerdrRuntimeDescriptor {
   protocol?: number;
   schemaVersion?: number;
   schemaSha256?: string;
+  /** Path-free Main-owned Agent CLI discovery state. Absolute paths never cross this boundary. */
+  agentClis?: HerdrAgentCliDiagnostic[];
+  agentCliEnvironmentRevision?: number;
+  agentCliRestartRequired?: boolean;
   error?: HerdrPublicError;
 }
 
@@ -335,8 +353,12 @@ export interface HerdrTerminalStatus {
 }
 
 export interface HerdrAgentCliDiagnostic {
-  kind: (typeof HERDR_STARTABLE_AGENT_KINDS)[number];
+  kind: HerdrStartableAgentKind;
   available: boolean;
+  status?: HerdrAgentCliStatus;
+  source?: HerdrAgentCliSource;
+  candidateCount?: number;
+  restartRequired?: boolean;
   version?: string;
   errorCode?: HerdrErrorCode;
 }

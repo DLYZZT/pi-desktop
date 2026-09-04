@@ -28,7 +28,8 @@ export type HerdrManagedServerEvent = {
 type ChildLike = Pick<ChildProcess, "pid" | "once" | "kill">;
 
 type ManagedServerOptions = {
-  env: NodeJS.ProcessEnv;
+  env?: NodeJS.ProcessEnv;
+  envProvider?: () => NodeJS.ProcessEnv;
   spawn?: (executable: string, args: string[], env: NodeJS.ProcessEnv) => ChildLike;
   endpointReady?: (endpoint: string) => Promise<boolean>;
   endpointOccupied?: (endpoint: string) => Promise<boolean>;
@@ -204,7 +205,8 @@ export class HerdrManagedServerSupervisor {
 
     let child: ChildLike;
     try {
-      child = this.spawnServer(target.executable, ["--session", target.sessionName, "server"], this.options.env);
+      const env = { ...(this.options.envProvider?.() ?? this.options.env ?? process.env) };
+      child = this.spawnServer(target.executable, ["--session", target.sessionName, "server"], env);
     } catch {
       const error = new HerdrManagedServerError("start-failed", "The managed Herdr server could not be started.");
       this.scheduleRestart(generation, error);

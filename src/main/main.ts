@@ -41,6 +41,7 @@ import { runPackagedCleanupFaultValidation } from "./packaged-cleanup-fault-vali
 import { HerdrRuntimeManager } from "./herdr/runtime-manager";
 import { resolveBundledHerdrRoot, resolveHerdrCatalogPath } from "./herdr/catalog";
 import { isHerdrSettings } from "../contract/herdr";
+import { discoverHerdrAgentClis, type HerdrAgentCliDiscoverySnapshot } from "./herdr/agent-cli-discovery";
 
 // Must run before app ready
 registerAppProtocol();
@@ -65,6 +66,7 @@ let browserService: BrowserService | null = null;
 let managedProcessReaper: ManagedProcessReaper | null = null;
 let windowsManagedProcessHelper: WindowsManagedProcessHelperResolution | null = null;
 let herdrRuntimeManager: HerdrRuntimeManager | null = null;
+let herdrAgentCliDiscovery: HerdrAgentCliDiscoverySnapshot | null = null;
 let isQuitting = false;
 let unreadBadge = 0;
 let pendingDeepLink: string | null = null;
@@ -79,6 +81,27 @@ let startupCheckFinished = false;
 let startupCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let quitCleanupStarted = false;
 let quitCleanupComplete = false;
+
+async function refreshHerdrAgentCliDiscovery(): Promise<void> {
+  try {
+    const snapshot = await discoverHerdrAgentClis({
+      homeDir: app.getPath("home"),
+      userDataDir: app.getPath("userData"),
+      platform: process.platform,
+      env: process.env,
+    });
+    const changed = snapshot.revision !== herdrAgentCliDiscovery?.revision;
+    herdrAgentCliDiscovery = snapshot;
+    const detected = snapshot.diagnostics.filter((entry) => entry.available).length;
+    const ambiguous = snapshot.diagnostics.filter((entry) => entry.status === "ambiguous").length;
+    appendMainLog(
+      `agent-cli scan revision=${snapshot.revision} detected=${detected} missing=${snapshot.diagnostics.length - detected} ambiguous=${ambiguous}`,
+    );
+    if (changed && herdrRuntimeManager) await herdrRuntimeManager.refresh();
+  } catch {
+    appendMainLog("agent-cli scan failed");
+  }
+}
 
 function getManagedProcessCapability(): ManagedProcessCapability {
   const status = managedProcessReaper?.status();
@@ -439,6 +462,7 @@ function startMainProcess(): void {
       onCapabilitySnapshot: (snapshot) => hostManager?.setBrowserCapabilitySnapshot(snapshot),
     });
     const ui = loadUiState();
+    await refreshHerdrAgentCliDiscovery();
     herdrRuntimeManager = new HerdrRuntimeManager({
       userDataDir: app.getPath("userData"),
       log: (message) => appendMainLog(`herdr managed server: ${message}`),
@@ -450,6 +474,15 @@ function startMainProcess(): void {
         isPackaged: app.isPackaged,
         resourcesRoot: process.resourcesPath,
       }),
+      ...(herdrAgentCliDiscovery
+        ? {
+            agentCliEnvironmentProvider: () => ({
+              revision: herdrAgentCliDiscovery!.revision,
+              diagnostics: herdrAgentCliDiscovery!.diagnostics,
+              managedPath: herdrAgentCliDiscovery!.managedPath,
+            }),
+          }
+        : {}),
     });
     herdrRuntimeManager.setListener((descriptor) => {
       hostManager?.setHerdrRuntimeDescriptor(descriptor);
@@ -593,6 +626,7 @@ function startMainProcess(): void {
         cwd ? toolchainManager!.getPublicStateForProject(cwd) : toolchainManager!.getPublicState(),
       rescanToolchains: async (cwd) => {
         await toolchainManager!.rescan({ cwd });
+        await refreshHerdrAgentCliDiscovery();
         return cwd ? toolchainManager!.getPublicStateForProject(cwd) : toolchainManager!.getPublicState();
       },
       performToolchainAction: (request) => toolchainManager!.performAction(request),

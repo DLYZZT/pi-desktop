@@ -320,7 +320,14 @@ export function HerdrSettings() {
                       fontSize: 11,
                     }}
                   >
-                    {cli.kind}: {cli.available ? cli.version || t("available", "available") : t("missing", "missing")}
+                    {cli.kind}:{" "}
+                    {cli.available
+                      ? cli.status === "ambiguous"
+                        ? t("agentCliAmbiguous", "ambiguous")
+                        : cli.version || t("agentCliDetected", "detected")
+                      : t("missing", "missing")}
+                    {cli.source ? ` · ${cli.source}` : ""}
+                    {cli.restartRequired ? ` · ${t("agentCliRestartRequired", "restart Herdr to apply")}` : ""}
                   </span>
                 ))}
               </div>

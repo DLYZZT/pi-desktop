@@ -33,6 +33,22 @@ test("Herdr prompts and live tool results are omitted from persisted messages", 
   assert.equal(serialized.includes("SECRET_DETAIL"), false);
   assert.match(serialized, /Sensitive Herdr result was not saved/);
 
+  const failed = redactHerdrPersistedMessage({
+    role: "toolResult",
+    toolName: "herdr_agent_start",
+    toolCallId: "call-error",
+    isError: true,
+    content: [
+      {
+        type: "text",
+        text: "HERDR_AGENT_BINARY_MISSING: unavailable at /private/secret/bin",
+      },
+    ],
+  });
+  assert.deepEqual(failed.details, { errorCode: "HERDR_AGENT_BINARY_MISSING" });
+  assert.match(failed.content[0].text, /HERDR_AGENT_BINARY_MISSING/u);
+  assert.doesNotMatch(JSON.stringify(failed), /private|secret/u);
+
   const waitCall = redactHerdrPersistedMessage({
     role: "assistant",
     content: [

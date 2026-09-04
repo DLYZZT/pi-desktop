@@ -23,6 +23,7 @@ import {
   HERDR_SCHEMA_VERSION,
   isHerdrSettings,
   normalizeHerdrSettings,
+  type HerdrAgentCliDiagnostic,
   type HerdrBinarySource,
   type HerdrPublicError,
   type HerdrRuntimeDescriptor,
@@ -41,6 +42,11 @@ type RuntimeManagerOptions = {
   env?: NodeJS.ProcessEnv;
   catalogPath?: string;
   bundledRoot?: string;
+  agentCliEnvironmentProvider?: () => {
+    revision: number;
+    diagnostics: readonly HerdrAgentCliDiagnostic[];
+    managedPath: string;
+  };
   installer?: {
     inspect(): PublicManagedComponentState;
     install(onProgress?: (progress: InstallerProgress) => void, signal?: AbortSignal): Promise<string>;
@@ -263,7 +269,8 @@ export class HerdrRuntimeManager {
         catalog,
       });
     this.serverSupervisor =
-      options.serverSupervisor ?? new HerdrManagedServerSupervisor({ env: this.env, log: options.log });
+      options.serverSupervisor ??
+      new HerdrManagedServerSupervisor({ envProvider: () => this.managedServerEnvironment(), log: options.log });
     this.serverSupervisor.setListener((event) => this.handleManagedServerEvent(event));
   }
 
@@ -492,13 +499,35 @@ export class HerdrRuntimeManager {
   }
 
   private baseDescriptor(settings: HerdrSettings): Omit<HerdrRuntimeDescriptor, "revision"> {
+    const agentCliEnvironment = this.options.agentCliEnvironmentProvider?.();
     return {
       enabled: settings.enabled,
       mode: settings.mode,
       sessionName: settings.sessionName,
       autoConnect: settings.autoConnect,
       releaseControlOnViewClose: settings.releaseControlOnViewClose,
+      ...(agentCliEnvironment
+        ? {
+            agentClis: agentCliEnvironment.diagnostics.map((entry) => ({ ...entry })),
+            agentCliEnvironmentRevision: agentCliEnvironment.revision,
+          }
+        : {}),
     };
+  }
+
+  private managedServerEnvironment(): NodeJS.ProcessEnv {
+    const result = { ...this.env };
+    const managedPath = this.options.agentCliEnvironmentProvider?.().managedPath;
+    if (!managedPath) return result;
+    if (this.platform === "win32") {
+      for (const key of Object.keys(result)) {
+        if (key.toLowerCase() === "path") delete result[key];
+      }
+      result.Path = managedPath;
+    } else {
+      result.PATH = managedPath;
+    }
+    return result;
   }
 
   private unsupportedPlatformDescriptor(settings: HerdrSettings): Omit<HerdrRuntimeDescriptor, "revision"> {

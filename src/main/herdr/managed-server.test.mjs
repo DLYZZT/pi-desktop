@@ -88,6 +88,36 @@ test("Managed supervisor starts an owned foreground server and stops it through 
   assert.deepEqual(children[0].signals, ["SIGTERM"]);
 });
 
+test("Managed supervisor resolves a fresh immutable environment at spawn time", async () => {
+  const { HerdrManagedServerSupervisor } = await loadSupervisor();
+  let currentPath = "/agent-overlay:/usr/bin:/bin";
+  let spawnedEnv;
+  let endpointReady = false;
+  const supervisor = new HerdrManagedServerSupervisor({
+    envProvider: () => ({ PATH: currentPath, PRIVATE_UNRELATED: "kept-local" }),
+    endpointPollMs: 1,
+    spawn(_executable, _args, env) {
+      spawnedEnv = env;
+      const child = new FakeChild();
+      globalThis.queueMicrotask(() => {
+        endpointReady = true;
+        child.emit("spawn");
+      });
+      return child;
+    },
+    async endpointReady() {
+      return endpointReady;
+    },
+  });
+  await supervisor.ensureRunning(target());
+  currentPath = "/changed-after-spawn";
+  assert.deepEqual(spawnedEnv, {
+    PATH: "/agent-overlay:/usr/bin:/bin",
+    PRIVATE_UNRELATED: "kept-local",
+  });
+  await supervisor.stop();
+});
+
 test("Managed supervisor monitors unexpected exits and restarts with a bounded backoff", async () => {
   const { HerdrManagedServerSupervisor } = await loadSupervisor();
   const children = [];

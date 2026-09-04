@@ -72,26 +72,36 @@ test("protocol 20 snapshots reject option-like identifiers and bound every colle
   );
 });
 
-test("Agent CLI diagnostics expose only fixed availability, version, and stable missing codes", async (t) => {
-  const { chmodSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
-  const os = await import("node:os");
-  const directory = mkdtempSync(path.join(os.tmpdir(), "pi-herdr-agent-cli-"));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const pi = path.join(directory, "pi");
-  writeFileSync(pi, "#!/bin/sh\nprintf '%s\\n' 'pi 1.2.3 /private/must-not-leak'\n");
-  chmodSync(pi, 0o700);
-  const { __test } = await importTestBundle("src/agent-host/herdr/bridge-agent-cli-diagnostics", {
+test("Agent CLI diagnostics use the path-free Main snapshot without probing executables", async () => {
+  const { HerdrBridge, __test } = await importTestBundle("src/agent-host/herdr/bridge-agent-cli-diagnostics", {
     packages: "external",
     absWorkingDir: root,
     entryPoints: ["src/agent-host/herdr/bridge.ts"],
   });
-  const diagnostics = await __test.probeAgentClis(directory);
+  const bridge = new HerdrBridge(fakeServer());
+  __test.applyRuntimeDescriptor(
+    runtimeDescriptor(1, {
+      agentClis: [
+        { kind: "pi", available: true, status: "detected", source: "official", candidateCount: 1 },
+        {
+          kind: "claude",
+          available: false,
+          status: "missing-locally",
+          candidateCount: 0,
+          errorCode: "HERDR_AGENT_BINARY_MISSING",
+        },
+      ],
+    }),
+  );
+  const diagnostics = (await bridge.getDiagnostics()).agentClis;
   assert.deepEqual(
     diagnostics.find((item) => item.kind === "pi"),
     {
       kind: "pi",
       available: true,
-      version: "1.2.3",
+      status: "detected",
+      source: "official",
+      candidateCount: 1,
     },
   );
   assert.deepEqual(
@@ -99,11 +109,13 @@ test("Agent CLI diagnostics expose only fixed availability, version, and stable 
     {
       kind: "claude",
       available: false,
+      status: "missing-locally",
+      candidateCount: 0,
       errorCode: "HERDR_AGENT_BINARY_MISSING",
     },
   );
-  assert.equal(JSON.stringify(diagnostics).includes(directory), false);
-  assert.equal(JSON.stringify(diagnostics).includes("private"), false);
+  assert.equal(JSON.stringify(diagnostics).includes("path"), false);
+  await bridge.shutdown();
 });
 
 test("workspace validation rejects non-string labels before checking runtime readiness", async () => {
@@ -359,7 +371,7 @@ test("an unrelated descriptor refresh cannot cancel an in-flight manual connecti
   await bridge.shutdown();
 });
 
-test("Agent start and input enforce cwd, ownership, CLI, and response semantics", async () => {
+test("Agent start and input enforce cwd and ownership while local CLI discovery never blocks Herdr", async () => {
   const { HerdrBridge, __test } = await importTestBundle("src/agent-host/herdr/bridge-agent-semantics", {
     packages: "external",
     absWorkingDir: root,
@@ -377,13 +389,13 @@ test("Agent start and input enforce cwd, ownership, CLI, and response semantics"
     assertAllowedPath: async (cwd) => {
       if (!cwdAllowed || cwd !== "/tmp/protocol-v20") throw new Error("forbidden");
     },
-    isAgentCliAvailable: async () => false,
     createClient: () => ({
       async assertSafeEndpoint() {},
       async request({ method, params }) {
         requests.push({ method, params });
         if (method === "ping") return { type: "pong", version: "0.8.2", protocol: 20 };
         if (method === "session.snapshot") return withoutAgent;
+        if (method === "agent.start") return { type: "unexpected" };
         if (method === "agent.prompt") return { type: "unexpected" };
         if (method === "agent.send_keys") return { type: "unexpected" };
         assert.fail(`Unexpected Herdr method: ${method}`);
@@ -398,10 +410,10 @@ test("Agent start and input enforce cwd, ownership, CLI, and response semantics"
   await waitFor(() => bridge.getRuntime().status === "ready", "Agent semantics readiness");
   await assert.rejects(bridge.startAgent("w1:p1", "claude"), (error) => error.code === "HERDR_CWD_FORBIDDEN");
   cwdAllowed = true;
-  await assert.rejects(bridge.startAgent("w1:p1", "claude"), (error) => error.code === "HERDR_AGENT_BINARY_MISSING");
+  await assert.rejects(bridge.startAgent("w1:p1", "claude"), (error) => error.code === "HERDR_SCHEMA_INVALID");
   assert.equal(
     requests.some(({ method }) => method === "agent.start"),
-    false,
+    true,
   );
   await assert.rejects(bridge.promptAgent("w1:p1", "hello"), (error) => error.code === "HERDR_SCHEMA_INVALID");
   await assert.rejects(bridge.sendAgentKeys("w1:p1", ["enter"]), (error) => error.code === "HERDR_SCHEMA_INVALID");
@@ -422,7 +434,6 @@ test("expanded semantic controls validate targets and redact Agent/process diagn
   );
   const requests = [];
   const bridge = new HerdrBridge(fakeServer(), {
-    isAgentCliAvailable: async () => true,
     createClient: () => ({
       async assertSafeEndpoint() {},
       async request({ method, params }) {
@@ -513,7 +524,11 @@ test("expanded semantic controls validate targets and redact Agent/process diagn
       },
     }),
   });
-  __test.applyRuntimeDescriptor(runtimeDescriptor(1));
+  __test.applyRuntimeDescriptor(
+    runtimeDescriptor(1, {
+      agentClis: [{ kind: "qwen", available: true, status: "detected", source: "official" }],
+    }),
+  );
   await waitFor(() => bridge.getRuntime().status === "ready", "expanded controls readiness");
 
   assert.deepEqual(await bridge.focusWorkspace("w1"), { workspaceId: "w1" });
