@@ -27,7 +27,10 @@ const LS_PREFIX = "pi-desktop-draft:";
 export const CHAT_DRAFT_SCHEMA_VERSION = 2;
 export const MAX_PERSISTED_DRAFT_IMAGES = 4;
 export const MAX_PERSISTED_DRAFT_FILES = 8;
-export const MAX_PERSISTED_DRAFT_IMAGE_BYTES = 1.5 * 1024 * 1024;
+// Decoded image bytes stored in localStorage. Electron's quota is typically ~10MB;
+// 4MB decoded (~5.3MB JSON) leaves headroom for text drafts and other keys.
+// Attachments are compressed first so typical retina / screenshot-tool PNGs fit.
+export const MAX_PERSISTED_DRAFT_IMAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_DRAFT_FILE_NAME_CHARS = 512;
 export const MAX_DRAFT_FILE_PATH_CHARS = 32_768;
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-import { processImageFileBatch } from "./image-file-processing.ts";
+import { DRAFT_IMAGE_TARGET_BYTES, compressDraftImage, processImageFileBatch } from "./image-file-processing.ts";
 
 function file(name) {
   return { name, type: "image/png" };
@@ -43,6 +43,31 @@ test("malformed reader output revokes every unusable preview", async () => {
   assert.equal(result.images.length, 0);
   assert.equal(result.failures.length, 2);
   assert.deepEqual(revoked.sort(), ["blob:one", "blob:two"]);
+});
+
+test("compressDraftImage leaves small images unchanged without canvas APIs", async () => {
+  const small = { data: "YQ==", mimeType: "image/png" };
+  assert.deepEqual(await compressDraftImage(small), small);
+
+  const large = {
+    data: "A".repeat(Math.ceil(((DRAFT_IMAGE_TARGET_BYTES + 1) * 4) / 3)),
+    mimeType: "image/png",
+  };
+  assert.deepEqual(await compressDraftImage(large), large);
+});
+
+test("oversized screenshots are compressed before they enter the draft", async () => {
+  const files = [file("shot")];
+  const payload = "A".repeat(Math.ceil(((DRAFT_IMAGE_TARGET_BYTES + 1) * 4) / 3));
+  const result = await processImageFileBatch(files, {
+    readAsDataUrl: async () => `data:image/png;base64,${payload}`,
+    createObjectUrl: (item) => `blob:${item.name}`,
+    revokeObjectUrl() {},
+    compressImage: async () => ({ data: "YQ==", mimeType: "image/jpeg" }),
+  });
+
+  assert.equal(result.failures.length, 0);
+  assert.deepEqual(result.images, [{ data: "YQ==", mimeType: "image/jpeg", previewUrl: "blob:shot" }]);
 });
 
 test("ChatInput preserves successes, reports failures, and owns pending previews", () => {
