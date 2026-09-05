@@ -410,10 +410,13 @@ test("Agent start and input enforce cwd and ownership while local CLI discovery 
   await waitFor(() => bridge.getRuntime().status === "ready", "Agent semantics readiness");
   await assert.rejects(bridge.startAgent("w1:p1", "claude"), (error) => error.code === "HERDR_CWD_FORBIDDEN");
   cwdAllowed = true;
-  await assert.rejects(bridge.startAgent("w1:p1", "claude"), (error) => error.code === "HERDR_SCHEMA_INVALID");
-  assert.equal(
-    requests.some(({ method }) => method === "agent.start"),
-    true,
+  await assert.rejects(bridge.startAgent("w1:p1", "agy"), (error) => error.code === "HERDR_SCHEMA_INVALID");
+  assert.deepEqual(
+    requests.find(({ method }) => method === "agent.start"),
+    {
+      method: "agent.start",
+      params: { name: "agy", kind: "agy", pane_id: "w1:p1", args: [], timeout_ms: 60_000 },
+    },
   );
   await assert.rejects(bridge.promptAgent("w1:p1", "hello"), (error) => error.code === "HERDR_SCHEMA_INVALID");
   await assert.rejects(bridge.sendAgentKeys("w1:p1", ["enter"]), (error) => error.code === "HERDR_SCHEMA_INVALID");

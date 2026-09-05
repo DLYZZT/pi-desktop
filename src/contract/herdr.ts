@@ -34,6 +34,7 @@ export const HERDR_STARTABLE_AGENT_KINDS = [
   "claude",
   "codex",
   "gemini",
+  "agy",
   "omp",
   "opencode",
   "copilot",

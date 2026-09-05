@@ -38,6 +38,18 @@ test("Agent CLI catalog exactly matches the current startable Herdr allowlist", 
     catalog.HERDR_AGENT_CLI_CATALOG.some(({ command }) => command === "antigravity"),
     false,
   );
+  assert.deepEqual(
+    catalog.HERDR_AGENT_CLI_CATALOG.find(({ kind }) => kind === "agy"),
+    {
+      kind: "agy",
+      command: "agy",
+      posixHomeRelativeDirectories: [[".local", "bin"]],
+      windowsHomeRelativeDirectories: [],
+      windowsLocalAppDataRelativeDirectories: [["agy", "bin"]],
+      environmentDirectories: [],
+      runtimeHints: [],
+    },
+  );
 });
 
 test("sparse-PATH discovery finds official user locations without executing Agent binaries", async (t) => {
@@ -53,6 +65,7 @@ test("sparse-PATH discovery finds official user locations without executing Agen
   for (const bin of [localBin, openCodeBin, grokBin]) mkdirSync(bin, { recursive: true });
   for (const [name, bin] of [
     ["codex", localBin],
+    ["agy", localBin],
     ["opencode", openCodeBin],
     ["grok", grokBin],
   ]) {
@@ -72,7 +85,7 @@ test("sparse-PATH discovery finds official user locations without executing Agen
   });
 
   assert.equal(existsSync(marker), false, "discovery must not execute --version or any Agent binary");
-  for (const kind of ["codex", "opencode", "grok"]) {
+  for (const kind of ["codex", "agy", "opencode", "grok"]) {
     const diagnostic = snapshot.diagnostics.find((entry) => entry.kind === kind);
     assert.equal(diagnostic?.available, true, kind);
     assert.equal(["detected", "ambiguous"].includes(diagnostic?.status), true, kind);
@@ -104,6 +117,7 @@ test("Windows seed collection includes official per-user installation roots with
     "c:\\users\\ada\\.opencode\\bin",
     "c:\\users\\ada\\bin",
     "c:\\users\\ada\\appdata\\local\\omp",
+    "c:\\users\\ada\\appdata\\local\\agy\\bin",
     "c:\\users\\ada\\appdata\\local\\qwen-code\\bin",
     "c:\\users\\ada\\appdata\\local\\programs\\openai\\codex\\bin",
     "c:\\users\\ada\\appdata\\roaming\\npm",

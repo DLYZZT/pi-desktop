@@ -169,6 +169,7 @@ export async function collectAgentCliDirectorySeeds(
       [pathApi.join(homeDir, ".grok", "bin"), "official"],
       [pathApi.join(homeDir, ".opencode", "bin"), "official"],
       [pathApi.join(homeDir, "bin"), "official"],
+      [pathApi.join(localAppData, "agy", "bin"), "official"],
       [pathApi.join(localAppData, "omp"), "official"],
       [pathApi.join(localAppData, "qwen-code", "bin"), "official"],
       [pathApi.join(localAppData, "Programs", "OpenAI", "Codex", "bin"), "official"],

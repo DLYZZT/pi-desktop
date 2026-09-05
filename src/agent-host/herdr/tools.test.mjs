@@ -205,10 +205,10 @@ test("Herdr workspace and tab creation are fixed to the Pi project cwd and agent
     undefined,
     toolContext(),
   );
-  await start.execute("start-a", { paneId: "pane-a", kind: "codex" }, undefined, undefined, toolContext());
+  await start.execute("start-a", { paneId: "pane-a", kind: "agy" }, undefined, undefined, toolContext());
   assert.deepEqual(bridge.calls[0], ["create", "/project", "review"]);
   assert.deepEqual(bridge.calls[1], ["tab-create", "workspace-a", "/project", "review tab", true]);
-  assert.deepEqual(bridge.calls[2], ["start", "pane-a", "codex"]);
+  assert.deepEqual(bridge.calls[2], ["start", "pane-a", "agy"]);
   assert.equal("cwd" in createTab.parameters.properties, false);
   assert.equal("env" in createTab.parameters.properties, false);
 });

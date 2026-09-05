@@ -62,6 +62,15 @@ export const HERDR_AGENT_CLI_CATALOG = [
     runtimeHints: ["node"],
   },
   {
+    kind: "agy",
+    command: "agy",
+    posixHomeRelativeDirectories: [[".local", "bin"]],
+    windowsHomeRelativeDirectories: [],
+    windowsLocalAppDataRelativeDirectories: [["agy", "bin"]],
+    environmentDirectories: [],
+    runtimeHints: [],
+  },
+  {
     kind: "omp",
     command: "omp",
     posixHomeRelativeDirectories: [[".local", "bin"]],
