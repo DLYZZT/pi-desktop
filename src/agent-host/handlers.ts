@@ -28,6 +28,8 @@ import {
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type AuthInteraction } from "@earendil-works/pi-ai";
+import { readSessionSnapshot, assertSessionWritable } from "./session-readonly.ts";
+import { getDesktopSessionToolNames } from "./session-tool-store.ts";
 import {
   AUTO_TITLE_MAX_LENGTH,
   makeFallbackTitle,
@@ -509,7 +511,7 @@ async function hasSessionName(sessionId: string): Promise<boolean> {
   try {
     const filePath = await resolveSessionPath(sessionId);
     if (!filePath) return false;
-    const storedName = SessionManager.open(filePath, undefined).getSessionName();
+    const storedName = readSessionSnapshot(filePath).getSessionName();
     return typeof storedName === "string" && storedName.trim().length > 0;
   } catch {
     return false;
@@ -543,6 +545,7 @@ export async function applySessionNameIfEmpty(sessionId: string, name: string): 
   const liveResultAfterLookup = applyLiveSessionNameIfEmpty(sessionId, normalized);
   if (liveResultAfterLookup !== null) return liveResultAfterLookup;
 
+  assertSessionWritable(filePath);
   const manager = SessionManager.open(filePath, undefined);
   const storedName = manager.getSessionName();
   if (typeof storedName === "string" && storedName.trim().length > 0) return false;
@@ -572,7 +575,7 @@ async function resolveTitleSessionTarget(
 
   const filePath = await resolveSessionPath(sessionId);
   if (!filePath) return null;
-  const cwd = SessionManager.open(filePath, undefined).getHeader()?.cwd;
+  const cwd = readSessionSnapshot(filePath).getHeader()?.cwd;
   const dir = validateExistingDirectory(cwd);
   return dir.ok ? { cwd: dir.path } : null;
 }
@@ -1111,8 +1114,10 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         ]);
         const infoMs = performance.now() - infoStartedAt;
 
+        const toolNames = getDesktopSessionToolNames(id);
         const detail: SessionDetail = {
           sessionId: id,
+          ...(toolNames === undefined ? {} : { toolNames }),
           filePath,
           info,
           leafId,
@@ -1221,7 +1226,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         return { content: raw, suggestedName: `session-${id}.json` };
       }
       // Simple markdown export of session file content
-      const sm = SessionManager.open(filePath);
+      const sm = readSessionSnapshot(filePath);
       const context = buildSessionContext(sm.getEntries() as never);
       const lines: string[] = [`# Session ${id}`, ""];
       for (const msg of context.messages as Array<{ role: string; content: unknown }>) {
@@ -1297,6 +1302,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       } else {
         const filePath = await resolveSessionPath(id);
         if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+        assertSessionWritable(filePath);
         const sm = SessionManager.open(filePath);
         // ISSUE-014: SDK uses appendSessionInfo, not setSessionName
         sm.appendSessionInfo(name.trim());
@@ -1433,7 +1439,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       }
       const filePath = await resolveSessionPath(sessionId);
       if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
-      const cwd = SessionManager.open(filePath).getHeader()?.cwd ?? process.cwd();
+      const cwd = readSessionSnapshot(filePath).getHeader()?.cwd ?? process.cwd();
       const { session } = await startRpcSession(sessionId, filePath, cwd);
       ensureSessionEvents(server, session, sessionId);
       return session.send(command);

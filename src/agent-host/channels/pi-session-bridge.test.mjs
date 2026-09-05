@@ -61,6 +61,7 @@ const mocks = new Map([
     `,
   ],
   ["file-access", "export function allowFileRoot() {}"],
+  ["session-readonly", "export function assertSessionWritable() {}"],
   [
     "pi-coding-agent",
     `
@@ -93,6 +94,10 @@ const { PiSessionBridge, getExternalCommandCalls, getStartCalls, setResolvedSess
       {
         name: "pi-session-bridge-mocks",
         setup(builder) {
+          builder.onResolve({ filter: /^\.\.\/session-readonly\.ts$/ }, () => ({
+            path: "session-readonly",
+            namespace: "pi-session-bridge-test",
+          }));
           builder.onResolve({ filter: /^\.\.\/rpc-manager$/ }, () => ({
             path: "rpc-manager",
             namespace: "pi-session-bridge-test",

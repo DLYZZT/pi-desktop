@@ -1,6 +1,16 @@
 import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+  chmodSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -125,13 +135,35 @@ test("unchanged invalid files are recorded without repeated parsing", async () =
   assert.equal(index.getMetrics().invalidFiles, 1);
 });
 
+test("indexing a read-only log with no trailing newline keeps it visible without source writes", async () => {
+  const file = writeSession("read-only");
+  const raw = readFileSync(file, "utf8").trimEnd();
+  writeFileSync(file, raw);
+  if (process.platform !== "win32") chmodSync(file, 0o444);
+  const before = statSync(file);
+  try {
+    const index = new SessionIndex();
+    const info = await index.refreshPath(file);
+    assert.equal(info.id, "read-only");
+    assert.equal(info.path, file);
+    assert.equal(info.messageCount, 1);
+    assert.equal(readFileSync(file, "utf8"), raw);
+    assert.equal(statSync(file).mtimeMs, before.mtimeMs);
+    await index.refreshPath(file);
+    assert.equal(readFileSync(file, "utf8"), raw);
+  } finally {
+    chmodSync(file, 0o600);
+    unlinkSync(file);
+  }
+});
+
 test("a file appended during parsing is retried before its info is committed", async (t) => {
   const racingPath = writeSession("racing");
-  const originalOpen = SessionManager.open;
+  const originalOpen = SessionManager.inMemory;
   let appended = false;
-  SessionManager.open = (filePath) => {
-    const manager = originalOpen.call(SessionManager, filePath);
-    if (filePath !== racingPath || appended) return manager;
+  SessionManager.inMemory = (...args) => {
+    const manager = originalOpen.call(SessionManager, ...args);
+    if (manager.getSessionId() !== "racing" || appended) return manager;
     const originalGetEntries = manager.getEntries.bind(manager);
     manager.getEntries = () => {
       const result = originalGetEntries();
@@ -159,7 +191,7 @@ test("a file appended during parsing is retried before its info is committed", a
     return manager;
   };
   t.after(() => {
-    SessionManager.open = originalOpen;
+    SessionManager.inMemory = originalOpen;
   });
 
   const index = new SessionIndex();

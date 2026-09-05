@@ -1,14 +1,21 @@
 #!/usr/bin/env node
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { validatePiPackageGraph, probePiRuntime } from "./pi-runtime-contract.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const targetVersion = "0.84.0";
-const directPackages = ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"];
+const targetVersion = "0.85.0";
+// pi-server is temporary: 0.85.0's public SDK imports it without declaring it (#9132).
+const directPackages = [
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-coding-agent",
+  "@earendil-works/pi-server",
+  "@earendil-works/pi-telemetry",
+];
 
 function fail(message) {
-  console.error(`[pi-084-compat] ${message}`);
+  console.error(`[pi-085-compat] ${message}`);
   process.exit(1);
 }
 
@@ -18,6 +25,27 @@ function readJson(relativePath) {
 
 const packageJson = readJson("package.json");
 const lockfile = readJson("package-lock.json");
+const graph = validatePiPackageGraph({
+  readPackage: readJson,
+  exists: (entry) => existsSync(path.join(root, entry)),
+  version: targetVersion,
+});
+for (const [entry, version] of graph) {
+  if (lockfile.packages?.[entry]?.version !== version) fail(`installed Pi package differs from lockfile: ${entry}`);
+}
+for (const [entry, metadata] of Object.entries(lockfile.packages ?? {})) {
+  if (/node_modules\/@earendil-works\/(?:pi-[^/]+|chord)$/.test(entry) && metadata.version !== targetVersion)
+    fail(`mixed Pi lockfile version: ${entry}`);
+}
+probePiRuntime(
+  root,
+  path.join(
+    root,
+    "node_modules/@earendil-works/pi-coding-agent",
+    readJson("node_modules/@earendil-works/pi-coding-agent/package.json").bin.pi,
+  ),
+  targetVersion,
+);
 for (const packageName of directPackages) {
   if (packageJson.dependencies?.[packageName] !== targetVersion) {
     fail(`${packageName} must be pinned exactly to ${targetVersion}`);
@@ -53,6 +81,8 @@ function sourceFiles(directory) {
 }
 
 const forbidden = [
+  ["removed GoogleThinkingLevel", /\bGoogleThinkingLevel\b/],
+  ["removed createGatewayBindingFetch", /\bcreateGatewayBindingFetch\s*\(/],
   ["removed ModelRuntime.reloadConfig", /\.reloadConfig\s*\(/],
   ["removed ModelsStreamTransforms", /\bModelsStreamTransforms\b/],
   ["removed TypeBox helper", /\bType\.(?:Base|Awaited|Promise|AsyncIterator|Iterator|Options)\s*\(/],
@@ -79,6 +109,8 @@ const requiredMarkers = [
   ["src/agent-host/credential-sync.ts", "recoverCommittedCredential"],
   ["src/renderer/lib/models-config-state.ts", "samplingParams"],
   ["src/agent-host/rpc-manager.ts", "services.diagnostics"],
+  ["src/agent-host/rpc-manager.ts", "excludeTools: [...EXCLUDED_PI_TOOLS]"],
+  ["src/agent-host/session-readonly.ts", "SessionManager.inMemory"],
 ];
 for (const [relativePath, marker] of requiredMarkers) {
   if (!readFileSync(path.join(root, relativePath), "utf8").includes(marker)) {
@@ -87,5 +119,5 @@ for (const [relativePath, marker] of requiredMarkers) {
 }
 
 console.log(
-  `[pi-084-compat] exact dependencies, removed APIs, model refresh, credential/config, and extension diagnostics passed (${targetVersion})`,
+  `[pi-085-compat] exact dependencies, removed APIs, model refresh, credential/config, and extension diagnostics passed (${targetVersion})`,
 );

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
 import { createWindowsSbom } from "./generate-windows-sbom.mjs";
 
@@ -143,4 +144,28 @@ test("Windows SBOM fails closed on helper bytes or release provenance drift", ()
   const development = facts();
   development.helperManifest.provenance = "windows-native-dev";
   assert.throws(() => createWindowsSbom(development), /manifest does not match/);
+});
+
+test("current production lock includes the complete Pi 0.85 graph in the Windows SBOM", () => {
+  const input = facts();
+  input.packageLock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
+  const sbom = createWindowsSbom(input);
+  for (const name of [
+    "pi-ai",
+    "pi-coding-agent",
+    "pi-server",
+    "pi-agent-core",
+    "pi-client",
+    "pi-protocol",
+    "pi-telemetry",
+    "pi-tui",
+    "chord",
+  ]) {
+    const matches = sbom.components.filter((entry) => entry.name === `@earendil-works/${name}`);
+    assert.ok(matches.length > 0, name);
+    assert.ok(
+      matches.every((entry) => entry.version === "0.85.0"),
+      name,
+    );
+  }
 });

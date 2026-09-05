@@ -31,7 +31,13 @@ test("editing one model preserves v0.84 sampling, nullable headers, and unknown 
             id: "model-one",
             name: "Old name",
             samplingParams: { temperature: 0.25, thinking_token_budget: 2048 },
-            compat: { futureCompat: "preserved" },
+            compat: {
+              futureCompat: "preserved",
+              vllmPriority: 2,
+              supportsMaxOutputTokens: false,
+              thinkingTokenBudgetField: "thinking_budget",
+              supportsMidConvoEffort: true,
+            },
             futureModelField: [1, 2, 3],
           },
         ],
@@ -43,6 +49,7 @@ test("editing one model preserves v0.84 sampling, nullable headers, and unknown 
 
   assert.equal(updated.providers.custom.models[0].name, "New name");
   assert.deepEqual(updated.providers.custom.models[0].samplingParams, selected.samplingParams);
+  assert.deepEqual(updated.providers.custom.models[0].compat, selected.compat);
   assert.deepEqual(updated.providers.custom.models[0].futureModelField, selected.futureModelField);
   assert.deepEqual(updated.providers.custom.headers, original.providers.custom.headers);
   assert.deepEqual(updated.providers.custom.futureProviderField, original.providers.custom.futureProviderField);

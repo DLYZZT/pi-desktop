@@ -33,7 +33,7 @@
     "test": "node scripts/test.mjs",
     "bench:sessions": "node scripts/bench-sessions.mjs",
     "check:contract": "node scripts/check-contract-coverage.mjs",
-    "check:pi-compat": "node scripts/check-pi-084-compatibility.mjs",
+    "check:pi-compat": "node scripts/check-pi-085-compatibility.mjs",
     "check:toolchain-contract": "node scripts/check-toolchain-contract.mjs",
     "check:toolchain-catalog": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/verify-toolchain-catalog.mjs",
     "check:toolchain-catalog:upstream": "node scripts/verify-toolchain-catalog-upstream.mjs",
@@ -64,9 +64,10 @@
     "dist:mac:notarized": "node scripts/build-mac-release.mjs --notarize"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.0",
-    "@earendil-works/pi-coding-agent": "0.84.0",
-    "@earendil-works/pi-telemetry": "0.84.0",
+    "@earendil-works/pi-ai": "0.85.0",
+    "@earendil-works/pi-coding-agent": "0.85.0",
+    "@earendil-works/pi-server": "0.85.0",
+    "@earendil-works/pi-telemetry": "0.85.0",
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "@lobehub/icons": "^5.6.0",
     "@rc-component/qrcode": "^2.0.0",
@@ -92,7 +93,7 @@
     "yauzl": "3.4.0"
   },
   "overrides": {
-    "@earendil-works/pi-telemetry": "0.84.0"
+    "@earendil-works/pi-telemetry": "0.85.0"
   },
   "devDependencies": {
     "@electron/asar": "3.2.18",

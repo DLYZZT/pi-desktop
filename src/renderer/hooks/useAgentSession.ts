@@ -26,7 +26,7 @@ import {
   subscribeAgentEvents,
   subscribeSessionsChanged,
 } from "@/lib/api-client";
-import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
+import { getToolNamesForPreset, getPresetFromTools, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { subscribeActiveSessionLiveSync } from "./active-session-live-sync";
 import {
@@ -520,6 +520,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
 
         setData(d);
+        if (d.toolNames !== undefined) {
+          setToolPresetState(getPresetFromTools(d.toolNames.map((name) => ({ name, description: "", active: true }))));
+        }
         setActiveLeafId(d.leafId);
         const replacedCommitTrace = pendingSessionLoadTraceRef.current;
         if (replacedCommitTrace && replacedCommitTrace !== trace) failSessionLoadTrace(replacedCommitTrace);
@@ -565,7 +568,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (showLoading) setLoading(false);
       }
     },
-    [commitHistory, t, updatePagingState],
+    [commitHistory, t, updatePagingState, setToolPresetState],
   );
 
   useEffect(() => {
@@ -721,8 +724,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     async (sid: string) => {
       try {
         const tools = await sendAgentCommand<ToolEntry[]>(sid, { type: "get_tools" });
-        if (tools) {
-          const { getPresetFromTools } = await import("@/lib/tool-presets");
+        if (tools && sessionIdRef.current === sid) {
           setToolPresetState(getPresetFromTools(tools));
         }
       } catch (e) {

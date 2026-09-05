@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import path from "node:path";
+import { filterDesktopToolNames, validateDesktopToolNames } from "../../shared/pi-tool-policy.ts";
 import type { ChannelAccountConfig, ChannelBinding, ChannelId, FeishuDomain } from "../../shared/channel-types";
 
 type ChannelConfigFile = {
@@ -80,7 +81,7 @@ function normalizeAccount(value: ChannelAccountConfig, touchUpdatedAt = false): 
     requireMention: value.requireMention !== false,
     commandsEnabled: value.commandsEnabled === true,
     ...(value.defaultCwd?.trim() ? { defaultCwd: path.resolve(value.defaultCwd.trim()) } : {}),
-    toolNames: readStringArray(value.toolNames),
+    toolNames: filterDesktopToolNames(readStringArray(value.toolNames)),
     createdAt: value.createdAt || now,
     updatedAt: touchUpdatedAt ? now : value.updatedAt || now,
   };
@@ -97,7 +98,7 @@ function normalizeBinding(value: ChannelBinding): ChannelBinding {
     ...(value.threadId?.trim() ? { threadId: value.threadId.trim() } : {}),
     ...(value.sessionId?.trim() ? { sessionId: value.sessionId.trim() } : {}),
     cwd: path.resolve(value.cwd),
-    toolNames: readStringArray(value.toolNames),
+    toolNames: filterDesktopToolNames(readStringArray(value.toolNames)),
     createdAt: value.createdAt || now,
     lastUsedAt: value.lastUsedAt || now,
   };
@@ -150,6 +151,7 @@ export class ChannelConfigStore {
   }
 
   upsertAccount(account: ChannelAccountConfig): ChannelAccountConfig {
+    validateDesktopToolNames(account.toolNames);
     const normalized = normalizeAccount(account, true);
     if (!normalized.id) throw new Error("Channel account id is required");
     const index = this.data.accounts.findIndex((item) => item.id === normalized.id);
@@ -174,6 +176,7 @@ export class ChannelConfigStore {
   }
 
   upsertBinding(binding: ChannelBinding): ChannelBinding {
+    validateDesktopToolNames(binding.toolNames);
     const normalized = normalizeBinding(binding);
     if (!normalized.id || !normalized.accountId || !normalized.peerId) throw new Error("Invalid channel binding");
     const index = this.data.bindings.findIndex((item) => item.id === normalized.id);

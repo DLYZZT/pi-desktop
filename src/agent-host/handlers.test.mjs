@@ -21,7 +21,12 @@ async function loadHandlersModule() {
     return importTestBundle("src/agent-host/handlers", {
       packages: "external",
       absWorkingDir: root,
-      entryPoints: ["src/agent-host/handlers.ts"],
+      stdin: {
+        contents:
+          'export * from "./handlers.ts"; export { setDesktopSessionToolNames } from "./session-tool-store.ts";',
+        resolveDir: import.meta.dirname,
+        loader: "ts",
+      },
     });
   })();
   return modulePromise;
@@ -633,6 +638,11 @@ test("sessions.get returns the contract shape without rescanning known session p
   assert.equal(detail.info.firstMessage, "hello");
   assert.deepEqual(detail.context.entryIds, ["user-one", "assistant-one", "user-two", "assistant-two"]);
   assert.equal(detail.context.messages.length, 4);
+  const { setDesktopSessionToolNames } = await loadHandlersModule();
+  setDesktopSessionToolNames(sessionId, []);
+  const restoredSelection = await handlers["sessions.get"]({ id: sessionId, includeState: true });
+  assert.deepEqual(restoredSelection.toolNames, []);
+  assert.equal(restoredSelection.agentState.running, false);
 
   const paged = await handlers["sessions.get"]({ id: sessionId, historyWindow: { maxTurns: 1, maxBytes: 64 * 1024 } });
   assert.deepEqual(paged.context.entryIds, ["user-two", "assistant-two"]);

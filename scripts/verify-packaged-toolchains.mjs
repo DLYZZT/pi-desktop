@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { darwinCodeDigest } from "../src/main/toolchains/darwin-binary-integrity.ts";
 import { extractFile, listPackage } from "@electron/asar";
 import { verifyWindowsHelperPe } from "./windows-helper-pe.mjs";
+import { validatePiPackageGraph } from "./pi-runtime-contract.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const expectedPiVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).dependencies?.[
@@ -263,6 +264,18 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
   const entries = new Set(listPackage(asarPath).map((entry) => entry.replace(/^[/\\]+/u, "").replaceAll("\\", "/")));
   const codingAgentRoot = "node_modules/@earendil-works/pi-coding-agent";
   const nested = `${codingAgentRoot}/node_modules`;
+  const graph = validatePiPackageGraph({
+    readPackage: (entry) => JSON.parse(extractAsarFile(asarPath, entry).toString("utf8")),
+    exists: (entry) => entries.has(entry),
+    version: expectedPiVersion,
+  });
+  for (const [entry, version] of graph) {
+    // electron-builder can hoist a nested dependency; every artifact must correspond to a locked instance.
+    const candidates = [entry, `${codingAgentRoot}/${entry}`];
+    if (!candidates.some((candidate) => lockfile.packages?.[candidate]?.version === version)) {
+      throw new Error(`Packaged Pi runtime differs from lockfile: ${entry}`);
+    }
+  }
   const required = [
     `${codingAgentRoot}/package.json`,
     `${codingAgentRoot}/dist/index.js`,

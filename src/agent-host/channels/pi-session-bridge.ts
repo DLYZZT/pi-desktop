@@ -19,6 +19,7 @@ import type { ChannelTurnProgressEvent, StagedInboundAttachment } from "./types"
 import { resolveSessionPath } from "../session-reader";
 import { collectOutboundFiles } from "./outbound-files";
 import { setDesktopSessionToolNames } from "../session-tool-store";
+import { assertSessionWritable } from "../session-readonly.ts";
 
 const OUTBOUND_FILE_CONTEXT = [
   "This IM transport can send files from the current workspace when the user explicitly asks to receive them.",
@@ -73,6 +74,7 @@ export class PiSessionBridge {
       }
       const sessionFile = await resolveSessionPath(binding.sessionId);
       if (sessionFile) {
+        assertSessionWritable(sessionFile);
         const cwd = SessionManager.open(sessionFile).getHeader()?.cwd ?? binding.cwd;
         const started = await startRpcSession(binding.sessionId, sessionFile, cwd, binding.toolNames);
         this.onSession(started.session, started.realSessionId);

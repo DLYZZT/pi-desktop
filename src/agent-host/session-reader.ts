@@ -17,6 +17,7 @@ import { normalizeToolCalls } from "../shared/normalize";
 import { resolveProject, type ProjectInfo } from "../shared/worktree";
 import { skillInvocationCommandText } from "../shared/skill-invocation";
 import { sessionIndex } from "./session-index";
+import { readSessionSnapshot } from "./session-readonly.ts";
 
 export { getAgentDir };
 
@@ -177,7 +178,7 @@ export async function buildSessionInfoFromManager(
 }
 
 export function getSessionEntries(filePath: string): SessionEntry[] {
-  const entries = SessionManager.open(filePath).getEntries();
+  const entries = readSessionSnapshot(filePath).getEntries();
   return entries as unknown as SessionEntry[];
 }
 
