@@ -156,6 +156,24 @@ export interface ModelsConfig {
   [key: string]: unknown;
 }
 
+export interface DiscoveredModel {
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+  input?: ("text" | "image")[];
+}
+
+export interface ModelsConfigDiscoverResult {
+  ok: boolean;
+  models?: DiscoveredModel[];
+  format?: "openai" | "anthropic";
+  endpoint?: string;
+  error?: string;
+  status?: number;
+}
+
 export interface ModelsConfigSnapshot {
   config: ModelsConfig;
   version: string;
