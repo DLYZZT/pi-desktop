@@ -103,7 +103,7 @@ export interface ShowFileContextMenuRequest {
   href: string;
   cwd?: string;
   source: FileContextMenuSource;
-  language?: "en-US" | "zh-CN";
+  language?: "en-US" | "zh-CN" | "zh-TW";
 }
 
 export type ShowFileContextMenuResult = { shown: true } | { shown: false; code: FileContextMenuErrorCode };
@@ -171,7 +171,7 @@ export interface PiBridge {
   browserRequestConfirmation: (
     kind: BrowserConfirmationKind,
     payload?: BrowserSettingsPatch,
-    language?: "en-US" | "zh-CN",
+    language?: "en-US" | "zh-CN" | "zh-TW",
   ) => Promise<BrowserConfirmationProof | null>;
   browserUpdateSettings: (
     patch: BrowserSettingsPatch,

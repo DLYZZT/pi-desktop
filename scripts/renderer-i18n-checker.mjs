@@ -13,8 +13,16 @@ const LOCALIZED_OWNER_SUFFIXES = [
   "hooks/useAgentSession.ts",
 ];
 const VISIBLE_ATTRIBUTE_NAMES = new Set(["title", "aria-label", "aria-valuetext", "placeholder", "alt"]);
+const LOCALIZED_DICTIONARIES = [
+  { name: "zhCN", tag: "zh-CN" },
+];
 
-export function checkRendererI18n({ root, rendererRoot, dictionariesPath }) {
+export function checkRendererI18n({
+  root,
+  rendererRoot,
+  dictionariesPath,
+  localizedDictionaries = LOCALIZED_DICTIONARIES,
+}) {
   const failures = [];
   const translations = new Map();
 
@@ -67,12 +75,18 @@ export function checkRendererI18n({ root, rendererRoot, dictionariesPath }) {
   }
 
   const enUS = readDictionary({ failures, dictionariesPath, name: "enUS" });
-  const zhCN = readDictionary({ failures, dictionariesPath, name: "zhCN" });
-  checkDictionaryParity(failures, enUS, zhCN);
+  const localized = localizedDictionaries.map((dictionary) => ({
+    tag: dictionary.tag,
+    values: readDictionary({ failures, dictionariesPath, name: dictionary.name }),
+  }));
+  for (const dictionary of localized) checkDictionaryParity(failures, enUS, dictionary.values, dictionary.tag);
 
   for (const [key, usage] of translations) {
     if (!enUS.has(key)) failures.push(`en-US is missing ${key} used at ${usage.location}`);
-    if (!zhCN.has(key)) failures.push(`zh-CN is missing ${key} used at ${usage.location}`);
+    for (const dictionary of localized) {
+      if (!dictionary.values.has(key))
+        failures.push(`${dictionary.tag} is missing ${key} used at ${usage.location}`);
+    }
     if (enUS.get(key) !== usage.fallback) {
       failures.push(`${key} fallback at ${usage.location} does not match the registered en-US value`);
     }
@@ -135,19 +149,19 @@ function readDictionary({ failures, dictionariesPath, name }) {
   return values;
 }
 
-function checkDictionaryParity(failures, enUS, zhCN) {
+function checkDictionaryParity(failures, enUS, localized, tag) {
   for (const [key, english] of enUS) {
-    if (!zhCN.has(key)) {
-      failures.push(`zh-CN is missing ${key}`);
+    if (!localized.has(key)) {
+      failures.push(`${tag} is missing ${key}`);
       continue;
     }
     const expected = placeholders(english);
-    const actual = placeholders(zhCN.get(key));
+    const actual = placeholders(localized.get(key));
     if (expected.join(",") !== actual.join(",")) {
-      failures.push(`${key} placeholder mismatch: en=[${expected}] zh-CN=[${actual}]`);
+      failures.push(`${key} placeholder mismatch: en=[${expected}] ${tag}=[${actual}]`);
     }
   }
-  for (const key of zhCN.keys()) {
+  for (const key of localized.keys()) {
     if (!enUS.has(key)) failures.push(`en-US is missing ${key}`);
   }
 }

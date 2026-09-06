@@ -322,7 +322,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   browserHandler("desktop:browser:get-settings", (browser) => browser.getSettings());
   browserHandler(
     "desktop:browser:request-confirmation",
-    (browser, kind: BrowserConfirmationKind, payload?: BrowserSettingsPatch, language?: "en-US" | "zh-CN") =>
+    (browser, kind: BrowserConfirmationKind, payload?: BrowserSettingsPatch, language?: "en-US" | "zh-CN" | "zh-TW") =>
       browser.requestConfirmation(kind, payload, language),
   );
   browserHandler(

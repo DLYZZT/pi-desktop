@@ -37,6 +37,25 @@ async function getBoundedFileAssociations(filePath: string) {
 }
 
 function fileMenuLabels(language: ShowFileContextMenuRequest["language"]) {
+  if (language === "zh-TW") {
+    return {
+      openFile: "開啟檔案",
+      openIn: (name: string) => `使用 ${name} 開啟`,
+      openWith: "開啟方式",
+      chooseAnother: "選擇其他應用程式…",
+      saveAs: "另存新檔…",
+      copyPath: "複製路徑",
+      copyContents: "複製檔案內容",
+      showInFolder: "在檔案總管中顯示",
+      cut: "剪下",
+      copy: "複製",
+      paste: "貼上",
+      selectAll: "全選",
+      openBrowser: "在瀏覽器中開啟",
+      copyLink: "複製連結",
+      search: (text: string) => `以 Google 搜尋「${text}」`,
+    };
+  }
   if (language === "zh-CN") {
     return {
       openFile: "打开文件",

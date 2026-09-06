@@ -32,6 +32,26 @@ test("accepts static calls with exact bilingual dictionary and placeholder parit
   }
 });
 
+test("enforces parity for every registered localized dictionary", () => {
+  const entry = fixture(
+    'export const value = t("greeting", "Hello {name}");',
+    'export const enUS = { greeting: "Hello {name}" }; export const zhCN = { greeting: "你好 {name}" }; export const zhTW = { other: "其他" };',
+  );
+  try {
+    const output = checkRendererI18n({
+      ...entry.options,
+      localizedDictionaries: [
+        { name: "zhCN", tag: "zh-CN" },
+        { name: "zhTW", tag: "zh-TW" },
+      ],
+    }).failures.join("\n");
+    assert.match(output, /zh-TW is missing greeting/);
+    assert.match(output, /en-US is missing other/);
+  } finally {
+    entry.cleanup();
+  }
+});
+
 test("rejects visible literals and hardcoded session notification sinks in migrated owners", () => {
   const component = fixture(
     'export function AppShell() { return <button aria-label="Open panel">Open panel</button>; }',

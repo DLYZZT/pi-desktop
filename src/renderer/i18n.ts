@@ -1,7 +1,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { dictionaries } from "./i18n-dictionaries.ts";
 
-export type AppLanguage = "en-US" | "zh-CN";
+export type AppLanguage = "en-US" | "zh-CN" | "zh-TW";
 
 const LANGUAGE_STORAGE_KEY = "pi-desktop:language";
 const listeners = new Set<() => void>();
@@ -10,11 +10,13 @@ function detectLanguage(): AppLanguage {
   if (typeof window === "undefined") return "en-US";
   try {
     const saved = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    if (saved === "en-US" || saved === "zh-CN") return saved;
+    if (saved === "en-US" || saved === "zh-CN" || saved === "zh-TW") return saved;
   } catch {
     // Storage can be unavailable in privacy-restricted renderer contexts.
   }
-  return window.navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+  const browserLanguage = window.navigator.language.toLowerCase();
+  if (!browserLanguage.startsWith("zh")) return "en-US";
+  return /(?:hant|tw|hk|mo)/.test(browserLanguage) ? "zh-TW" : "zh-CN";
 }
 
 let currentLanguage = detectLanguage();
@@ -50,15 +52,21 @@ export function setAppLanguage(language: AppLanguage): void {
   listeners.forEach((listener) => listener());
 }
 
+function lookup(language: AppLanguage, key: string, fallback: string): string {
+  const value =
+    dictionaries[language][key] ?? (language === "zh-TW" ? dictionaries["zh-CN"][key] : undefined);
+  return value ?? fallback;
+}
+
 export function translate(key: string, fallback: string): string {
-  return dictionaries[currentLanguage][key] ?? fallback;
+  return lookup(currentLanguage, key, fallback);
 }
 
 export function useI18n() {
   const language = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const t = useCallback(
     (key: string, fallback: string) => {
-      return dictionaries[language][key] ?? fallback;
+      return lookup(language, key, fallback);
     },
     [language],
   );
