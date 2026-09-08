@@ -102,6 +102,8 @@ export interface ToolCandidate {
   argvPrefix?: string[];
   binDir: string;
   version?: string;
+  /** Execution path semantics established by the capability probe. */
+  cwdSemantics?: "native" | "msys" | "posix";
   componentId?: ManagedComponentId;
   componentRoot?: string;
   health: ToolHealth;
