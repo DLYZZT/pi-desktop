@@ -1,8 +1,10 @@
+import { isAppLanguage } from "../shared/app-language.ts";
 import type { DesktopUiStatePatch } from "../contract/desktop";
 import { isChatAppearancePreferences } from "../shared/chat-appearance.ts";
 import { isHerdrSettings } from "../contract/herdr.ts";
 
 const RENDERER_WRITABLE_UI_STATE_FIELDS = new Set([
+  "language",
   "backgroundMode",
   "managedProcessesEnabled",
   "chatAppearance",
@@ -17,6 +19,10 @@ export function validateDesktopUiStatePatch(value: unknown): DesktopUiStatePatch
   }
 
   const validated: DesktopUiStatePatch = {};
+  if ("language" in patch) {
+    if (!isAppLanguage(patch.language)) throw new Error("Invalid app language");
+    validated.language = patch.language;
+  }
   if ("backgroundMode" in patch) {
     if (typeof patch.backgroundMode !== "boolean") throw new Error("Background mode must be a boolean");
     validated.backgroundMode = patch.backgroundMode;

@@ -3,6 +3,7 @@
  * Responsibilities: window lifecycle, menus, tray/badge, deep link,
  * Host supervision, system IPC. No business logic.
  */
+import { getNativeLanguage } from "./native-language";
 import { app, BrowserWindow, crashReporter, dialog, nativeTheme, nativeImage, net, Notification } from "electron";
 import fs from "node:fs";
 import os from "node:os";
@@ -13,7 +14,7 @@ import { installAppMenu } from "./menu";
 import { handleAppProtocol, registerAppProtocol, rendererRootPath } from "./protocol";
 import { acquireSingleInstanceLock } from "./single-instance";
 import { loadUiState, saveUiStateStrict } from "./window-state";
-import { createTray, destroyTray, setTrayManagedProcessCount, setTrayRunningCount } from "./tray";
+import { createTray, destroyTray, updateTrayMenu, setTrayManagedProcessCount, setTrayRunningCount } from "./tray";
 import { createMainWindow } from "./window";
 import { installDesktopIpc } from "./ipc";
 import { createCredentialRequestHandler, CredentialVault } from "./credential-vault";
@@ -213,7 +214,27 @@ function managedProcessDialogCopy(): {
   quitDetail: string;
   stopAndQuitButton: string;
 } {
-  if (app.getLocale().toLowerCase().startsWith("zh")) {
+  const language = getNativeLanguage();
+  if (language === "zh-TW") {
+    return {
+      stopAllTitle: "停止背景程序",
+      stopAllMessage: (count) => `確認停止 ${count} 個受管背景程序？`,
+      stopAllDetail: "開發伺服器和 watcher 將連同完整程序樹一起停止。",
+      stopAllButton: "全部停止",
+      cancelButton: "取消",
+      lanTitle: "允許綁定區域網路？",
+      lanMessage: "Agent 命令似乎會把受管程序綁定到所有網路介面。",
+      lanDetail: "這可能把開發伺服器暴露給區域網路內的其他裝置。除非確實需要區域網路存取，否則請使用 127.0.0.1。",
+      allowOnceButton: "僅允許本次",
+      exportTitle: "匯出受管程序記錄",
+      exportFilter: "記錄檔案",
+      quitTitle: "結束 Pi Agent Desktop",
+      quitMessage: (count) => `仍有 ${count} 個受管背景程序正在執行。`,
+      quitDetail: "結束會停止所有開發伺服器和 watcher，並清理其完整程序樹。",
+      stopAndQuitButton: "停止並結束",
+    };
+  }
+  if (language === "zh-CN") {
     return {
       stopAllTitle: "停止后台进程",
       stopAllMessage: (count) => `确认停止 ${count} 个受管后台进程？`,
@@ -636,6 +657,7 @@ function startMainProcess(): void {
       getBrowserService: () => browserService,
       getManagedProcessCapability,
       onUiStatePatch: (patch) => {
+        if (patch.language) updateTrayMenu(getMainWindow);
         if (patch.herdrSettings) {
           void herdrRuntimeManager!.configure(patch.herdrSettings).catch((error) => {
             appendMainLog(`Herdr settings refresh failed: ${error instanceof Error ? error.message : String(error)}`);

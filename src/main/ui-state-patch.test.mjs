@@ -33,3 +33,12 @@ test("renderer UI state rejects unknown fields and malformed background mode", (
   assert.throws(() => validateDesktopUiStatePatch({ backgroundMode: "yes" }), /must be a boolean/);
   assert.throws(() => validateDesktopUiStatePatch({ managedProcessesEnabled: "yes" }), /must be a boolean/);
 });
+
+test("language preference permits only supported locales across the IPC boundary", () => {
+  for (const language of ["en-US", "zh-CN", "zh-TW"]) {
+    assert.deepEqual(validateDesktopUiStatePatch({ language }), { language });
+  }
+  for (const language of [null, undefined, {}, "zh-HK", "", 42]) {
+    assert.throws(() => validateDesktopUiStatePatch({ language }), /Invalid app language/);
+  }
+});
