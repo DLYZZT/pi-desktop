@@ -1,3 +1,4 @@
+import { getNativeLanguage } from "../native-language";
 import path from "node:path";
 import { createHmac, randomBytes } from "node:crypto";
 import { app, dialog, safeStorage, session, shell, type BrowserWindow, type Session } from "electron";
@@ -1156,8 +1157,9 @@ export class BrowserService {
   private async defaultConfirmRouteBypass(origin: string): Promise<boolean> {
     const win = this.options.getWindow();
     if (!win || win.isDestroyed()) return false;
-    const zh = app.getLocale().toLowerCase().startsWith("zh");
-    const tw = /(?:hant|tw|hk|mo)/.test(app.getLocale().toLowerCase());
+    const language = getNativeLanguage();
+    const zh = language !== "en-US";
+    const tw = language === "zh-TW";
     const response = await dialog.showMessageBox(win, {
       type: "warning",
       title: zh ? (tw ? "瀏覽器路徑已封鎖" : "浏览器路径已阻止") : "Browser route blocked",
@@ -1343,7 +1345,7 @@ function confirmationCopy(language: BrowserConfirmationLanguage) {
     return {
       title: "啟用進階瀏覽器模式",
       message:
-        "進階瀏覽器模式會一併開放任意 JavaScript、網路內容與請求重播、身分覆寫、憑證放行、同原限制弱化與不受限 CDP。",
+        "進階瀏覽器模式會一併開放任意 JavaScript、網路內容與請求重播、身分覆寫、憑證放行、同源限制弱化與不受限 CDP。",
       detail: "該模式可能存取已登入帳號的資料並觸發第三方風控。請在理解風險後再繼續；網頁或 Agent 無法自行啟用此模式。",
       cancel: "取消",
       continue: "本次啟動啟用",

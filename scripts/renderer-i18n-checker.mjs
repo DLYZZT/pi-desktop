@@ -13,9 +13,7 @@ const LOCALIZED_OWNER_SUFFIXES = [
   "hooks/useAgentSession.ts",
 ];
 const VISIBLE_ATTRIBUTE_NAMES = new Set(["title", "aria-label", "aria-valuetext", "placeholder", "alt"]);
-const LOCALIZED_DICTIONARIES = [
-  { name: "zhCN", tag: "zh-CN" },
-];
+const LOCALIZED_DICTIONARIES = [{ name: "zhCN", tag: "zh-CN" }];
 
 export function checkRendererI18n({
   root,
@@ -84,8 +82,7 @@ export function checkRendererI18n({
   for (const [key, usage] of translations) {
     if (!enUS.has(key)) failures.push(`en-US is missing ${key} used at ${usage.location}`);
     for (const dictionary of localized) {
-      if (!dictionary.values.has(key))
-        failures.push(`${dictionary.tag} is missing ${key} used at ${usage.location}`);
+      if (!dictionary.values.has(key)) failures.push(`${dictionary.tag} is missing ${key} used at ${usage.location}`);
     }
     if (enUS.get(key) !== usage.fallback) {
       failures.push(`${key} fallback at ${usage.location} does not match the registered en-US value`);

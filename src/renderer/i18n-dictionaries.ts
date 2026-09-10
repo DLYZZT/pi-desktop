@@ -2376,19 +2376,24 @@ export const zhTW: Record<string, string> = {
   herdrAutoConnect: "自動連線",
   herdrAutoConnectDescription: "Agent Host 重新啟動或 socket 復原後自動重新連線。",
   herdrConnectHint: "請啟動所選的 Herdr Session，然後重新嘗試連線。",
-  herdrCloseAgentPaneMessage: "要關閉 pane {paneId} 以終止 {agentKind} Agent 嗎？Herdr v0.8.2 無法只停止 Agent；該 pane 及其中的所有程序都會被終止。",
+  herdrCloseAgentPaneMessage:
+    "要關閉 pane {paneId} 以終止 {agentKind} Agent 嗎？Herdr v0.8.2 無法只停止 Agent；該 pane 及其中的所有程序都會被終止。",
   herdrCloseAgentPaneTitle: "關閉 Herdr Agent 所在的 pane",
-  herdrClosePaneMessage: "要關閉 pane「{target}」嗎？這將終止其中的 shell、Agent 與其他程序。Pi Desktop 無法復原此操作。",
+  herdrClosePaneMessage:
+    "要關閉 pane「{target}」嗎？這將終止其中的 shell、Agent 與其他程序。Pi Desktop 無法復原此操作。",
   herdrClosePaneTitle: "關閉 Herdr pane",
-  herdrCloseWorkspaceMessage: "要關閉工作區「{target}」嗎？這將終止其中的 {paneCount} 個 pane 及所有程序。Pi Desktop 無法復原此操作。",
+  herdrCloseWorkspaceMessage:
+    "要關閉工作區「{target}」嗎？這將終止其中的 {paneCount} 個 pane 及所有程序。Pi Desktop 無法復原此操作。",
   herdrCloseWorkspaceTitle: "關閉 Herdr 工作區",
   herdrIntegration: "Herdr 整合",
-  herdrIntegrationDescription: "設定 Pi Desktop 如何連線本機的 Herdr Session。安裝、版本與更新統一在「開發工具」中管理。",
+  herdrIntegrationDescription:
+    "設定 Pi Desktop 如何連線本機的 Herdr Session。安裝、版本與更新統一在「開發工具」中管理。",
   herdrManaged: "Managed（自動管理 server）",
   herdrManagedConnectHint: "Pi Desktop 會自動啟動此 Session。請檢查執行階段狀態，或在「開發工具」中修復 Herdr。",
   herdrMode: "模式",
   herdrReleaseControl: "關閉檢視時釋放終端機控制權",
-  herdrReleaseControlDescription: "啟用後，關閉檢視會釋放 Pi Desktop 的 controller；關閉此選項時只會關閉本機 bridge，Herdr 可能仍保留 controller。pane 一律繼續執行。",
+  herdrReleaseControlDescription:
+    "啟用後，關閉檢視會釋放 Pi Desktop 的 controller；關閉此選項時只會關閉本機 bridge，Herdr 可能仍保留 controller。pane 一律繼續執行。",
   herdrRuntimeStatus: "執行階段狀態",
   herdrSession: "Session 名稱",
   herdrSnapshotStale: "狀態快照已過期",
@@ -2477,7 +2482,8 @@ export const zhTW: Record<string, string> = {
   approve: "核準",
   assistant: "助理",
   attachLocalFiles: "新增圖片或本機檔案參考",
-  attachLocalFilesDescription: "新增圖片或本機檔案參考。Agent 會讀取本機絕對路徑；檔案移動後、遠端 Agent 或沙盒環境可能無法存取。",
+  attachLocalFilesDescription:
+    "新增圖片或本機檔案參考。Agent 會讀取本機絕對路徑；檔案移動後、遠端 Agent 或沙盒環境可能無法存取。",
   author: "作者",
   automaticUpdateChecks: "自動檢查更新",
   automaticUpdateChecksDescription: "應用程式會定期檢查，但不會自動下載更新。",
@@ -2488,7 +2494,8 @@ export const zhTW: Record<string, string> = {
   backgroundModeLoadFailed: "無法讀取背景執行設定，已保留目前的預設選項。",
   backgroundModeSaveFailed: "無法儲存背景執行設定，已還原先前的選項。",
   managedProcesses: "受管背景程序",
-  managedProcessesDescription: "允許 Agent 在應用程式管理的生命週期內執行開發伺服器與 watcher。這些程序擁有與 Bash 相同的主機存取權限，並非安全沙盒。",
+  managedProcessesDescription:
+    "允許 Agent 在應用程式管理的生命週期內執行開發伺服器與 watcher。這些程序擁有與 Bash 相同的主機存取權限，並非安全沙盒。",
   managedProcessesEnable: "啟用受管背景程序",
   managedProcessesLoadFailed: "無法讀取受管程序設定，功能維持關閉。",
   managedProcessesSaveFailed: "無法儲存受管程序設定，已還原先前的設定。",
@@ -2574,8 +2581,10 @@ export const zhTW: Record<string, string> = {
   browserAddress: "瀏覽器位址",
   browserAdvancedMode: "進階瀏覽器模式",
   browserAdvancedModeBadge: "進階模式",
-  browserAdvancedModeWarning: "這單一開關會同時啟用 JavaScript、身分覆寫、可信輸入、網路內文與寫入請求重播、移除網站安全限制、憑證放行與不受限 CDP。僅在本次啟動期間有效。",
-  browserAdvancedPrompt: "這會同時啟用 JavaScript、身分覆寫、可信輸入、網路內文與寫入請求重播、移除網站安全限制、憑證放行與不受限 CDP。請輸入 ENABLE ADVANCED BROWSER 以繼續。",
+  browserAdvancedModeWarning:
+    "這單一開關會同時啟用 JavaScript、身分覆寫、可信輸入、網路內文與寫入請求重播、移除網站安全限制、憑證放行與不受限 CDP。僅在本次啟動期間有效。",
+  browserAdvancedPrompt:
+    "這會同時啟用 JavaScript、身分覆寫、可信輸入、網路內文與寫入請求重播、移除網站安全限制、憑證放行與不受限 CDP。請輸入 ENABLE ADVANCED BROWSER 以繼續。",
   browserAdvancedPromptMismatch: "進階瀏覽器的確認片語不符。",
   browserAdvancedRuntimeConfirmations: "高風險操作仍會在執行時個別確認。",
   browserAdvancedTabs: "{count} 個進階分頁",
@@ -2672,7 +2681,8 @@ export const zhTW: Record<string, string> = {
   browserForward: "前進",
   browserHeader: "標頭",
   browserHeaderRules: "進階標頭規則",
-  browserHeaderRulesDescription: "規則依 Profile、URL 模式與選用的 Chromium 資源類型生效。機密值僅可寫入不可讀取，並使用 Electron safeStorage 儲存。",
+  browserHeaderRulesDescription:
+    "規則依 Profile、URL 模式與選用的 Chromium 資源類型生效。機密值僅可寫入不可讀取，並使用 Electron safeStorage 儲存。",
   browserHeaderValue: "值（存入安全儲存後不會回讀）",
   browserHighlightTarget: "點擊前突顯 Agent 的目標",
   browserHomepage: "首頁",
@@ -2753,7 +2763,8 @@ export const zhTW: Record<string, string> = {
   browserSecureValue: "（安全值）",
   browserSensitiveActions: "Agent 敏感操作",
   browserSessionPermanentPermission: "此會話的永久瀏覽器權限",
-  browserSettingsDescription: "網站執行在主進程持有、且已啟用沙盒的 Electron WebContentsView 中。Agent 存取權限獨立控制，預設關閉。",
+  browserSettingsDescription:
+    "網站執行在主進程持有、且已啟用沙盒的 Electron WebContentsView 中。Agent 存取權限獨立控制，預設關閉。",
   browserSettingsTitle: "內建瀏覽器",
   browserSnippetCapacity: "每個主機的 JavaScript 經驗數",
   browserStop: "停止",
@@ -2868,7 +2879,8 @@ export const zhTW: Record<string, string> = {
   developerTool: "開發工具",
   developerTools: "開發工具",
   diff: "差異",
-  diffTooLarge: "差異過大，無法安全渲染。檔案從 {oldLines} 行變為 {newLines} 行；目前顯示最新原始碼以避免應用程式凍結。",
+  diffTooLarge:
+    "差異過大，無法安全渲染。檔案從 {oldLines} 行變為 {newLines} 行；目前顯示最新原始碼以避免應用程式凍結。",
   disableSkillInModelPrompt: "在模型提示詞中停用此技能",
   disableWordWrap: "關閉自動換行",
   docxPreview: "DOCX 預覽",
@@ -2900,23 +2912,27 @@ export const zhTW: Record<string, string> = {
   feishuChina: "飛書（中國）",
   feishuConnectionMethod: "接入方式",
   feishuCreateQrCode: "飛書/Lark 應用建立 QR Code",
-  feishuCredentialDescription: "透過官方 WebSocket 長連接接入企業自建應用。App Secret 使用系統加密儲存，且不會回傳到介面。",
+  feishuCredentialDescription:
+    "透過官方 WebSocket 長連接接入企業自建應用。App Secret 使用系統加密儲存，且不會回傳到介面。",
   feishuCredentialHint: "更換 App Secret、App ID 或網域後會驗證機器人並熱重新載入 WebSocket，無需重新啟動 Pi Desktop。",
   feishuExistingApp: "既有應用",
   feishuLark: "飛書 / Lark",
   feishuPermissionCopyFailed: "複製失敗，請手動選取並複製上方的 JSON。",
   feishuPermissionJsonCopied: "權限 JSON 已複製",
-  feishuRichCardHint: "Markdown 最終回覆使用卡片 JSON 2.0；串流回覆還需要 cardkit:card:write 與飛書 7.20+。缺少卡片權限會安全地退回僅傳送最終回覆。",
+  feishuRichCardHint:
+    "Markdown 最終回覆使用卡片 JSON 2.0；串流回覆還需要 cardkit:card:write 與飛書 7.20+。缺少卡片權限會安全地退回僅傳送最終回覆。",
   feishuScanCreate: "掃描 QR Code 建立（建議）",
   feishuScanCreatesNew: "將建立一個新的機器人",
   feishuScanCreateTitle: "掃描 QR Code 建立飛書 / Lark 機器人",
-  feishuScanDescription: "使用飛書/Lark 官方流程掃描 QR Code 建立新機器人。認證資料僅在 Agent Host 中處理並透過系統加密儲存，不會進入介面。",
+  feishuScanDescription:
+    "使用飛書/Lark 官方流程掃描 QR Code 建立新機器人。認證資料僅在 Agent Host 中處理並透過系統加密儲存，不會進入介面。",
   feishuScanExistingHint: "既有應用請切換到「既有應用」；掃描 QR Code 不會讀取既有應用的 App Secret。",
   feishuScanSecurityDefaults: "預設僅允許掃描者的私人對話；群組聊天、命令與 Agent 工具保持關閉，需由您後續明確啟用。",
   feishuSetupBot: "建立企業自建應用並啟用機器人功能。",
   feishuSetupChecklist: "快速設定",
   feishuSetupConnection: "在「事件與回呼」中選擇長連接模式，並訂閱 im.message.receive_v1 與 application.bot.menu_v6。",
-  feishuSetupMenu: "選用原生命令選單：先在該帳號設定中啟用命令，再到「機器人 → 自訂選單」新增事件操作，事件 Key 依次為 pi_help、pi_status、pi_new、pi_compact、pi_reload。",
+  feishuSetupMenu:
+    "選用原生命令選單：先在該帳號設定中啟用命令，再到「機器人 → 自訂選單」新增事件操作，事件 Key 依次為 pi_help、pi_status、pi_new、pi_compact、pi_reload。",
   feishuSetupPermissionImport: "複製下方的權限 JSON，在「權限管理 → 批次匯入/匯出權限」中貼上並申請開通。",
   feishuSetupPublish: "發布新的應用版本、設定可用範圍，並將機器人加入需要允許的群組聊天。",
   feishuTenantRegion: "帳號區域",
@@ -3004,7 +3020,8 @@ export const zhTW: Record<string, string> = {
   modelCodeExpires: "將在 {minutes} 分鐘後過期。",
   modelCompatibleProvider: "相容 OpenAI / Anthropic",
   modelCompleteSignIn: "請在瀏覽器中完成登入，然後複製位址列中的重新導向 URL 並貼到下方。",
-  modelConfigConflict: "models.json 已在此編輯器之外被修改。您的編輯仍保留在此處；重新載入磁碟上的版本前，請先複製或比對這些內容並手動合併。",
+  modelConfigConflict:
+    "models.json 已在此編輯器之外被修改。您的編輯仍保留在此處；重新載入磁碟上的版本前，請先複製或比對這些內容並手動合併。",
   modelConnectAccount: "連線您的 {provider} 帳號。",
   modelConnected: "已連線",
   modelConnectedSuccessfully: "連線成功。",
@@ -3309,8 +3326,10 @@ export const zhTW: Record<string, string> = {
   switchToLight: "切換為淺色模式",
   telegramBotToken: "BotFather Token",
   telegramBridgeUnavailable: "桌面執行階段尚未載入 Telegram 認證介面。請完全結束後重新啟動 Pi Desktop 再試一次。",
-  telegramGroupSetupHint: "一般群組與超級群組皆支援；Topic 僅限論壇超級群組。請先在群組內傳送 /status@機器人使用者名稱，再從「近期活動」複製 Chat ID 到「允許的群組 ID」。",
-  telegramTokenDescription: "透過 @BotFather 建立機器人並貼上 Token。Pi Desktop 會使用 getMe 驗證，並透過系統加密安全儲存。",
+  telegramGroupSetupHint:
+    "一般群組與超級群組皆支援；Topic 僅限論壇超級群組。請先在群組內傳送 /status@機器人使用者名稱，再從「近期活動」複製 Chat ID 到「允許的群組 ID」。",
+  telegramTokenDescription:
+    "透過 @BotFather 建立機器人並貼上 Token。Pi Desktop 會使用 getMe 驗證，並透過系統加密安全儲存。",
   testConnection: "測試連線",
   testingConnection: "測試中…",
   testSend: "測試傳送",
@@ -3350,7 +3369,8 @@ export const zhTW: Record<string, string> = {
   toolDiscoveryPrivacy: "掃描不會執行 shell 設定檔或存取網路。Pi Desktop 不會修改系統 PATH、shell 設定檔或登錄檔。",
   toolDiscoveryStarting: "工具探索正在啟動…",
   toolDiskUsage: "磁碟佔用",
-  toolDownloadPrivacy: "受管安裝會連線頁面所示的官方來源，並會揭露 IP 位址、平台與架構。下載內容僅儲存於 Pi Desktop 資料目錄。",
+  toolDownloadPrivacy:
+    "受管安裝會連線頁面所示的官方來源，並會揭露 IP 位址、平台與架構。下載內容僅儲存於 Pi Desktop 資料目錄。",
   toolDownloadSize: "下載大小",
   toolErrorBroken: "下載的工具未通過啟動驗證。",
   toolErrorBusy: "此元件正在安裝，或仍可能被執行中的 Agent 命令使用。請稍後重試。",
@@ -3416,10 +3436,12 @@ export const zhTW: Record<string, string> = {
   toolSource: "來源",
   herdrBundledSize: "內建複本大小",
   herdrBundledVersion: "內建版本",
-  herdrBundledUpdateNote: "Herdr 版本隨 Pi Desktop 更新。解除安裝私人執行階段不會刪除 Herdr Session，也不會移除應用程式內的復原複本。",
+  herdrBundledUpdateNote:
+    "Herdr 版本隨 Pi Desktop 更新。解除安裝私人執行階段不會刪除 Herdr Session，也不會移除應用程式內的復原複本。",
   herdrInstalledVersion: "已安裝版本",
   herdrPrivateDiskUsage: "私人磁碟佔用",
-  herdrToolchainDescription: "統一安裝、更新、修復或解除安裝 Pi Desktop 的 Herdr 私人執行階段。已驗證的執行階段隨應用程式內建，這些操作不會單獨下載 Herdr。",
+  herdrToolchainDescription:
+    "統一安裝、更新、修復或解除安裝 Pi Desktop 的 Herdr 私人執行階段。已驗證的執行階段隨應用程式內建，這些操作不會單獨下載 Herdr。",
   toolSourceUnknown: "官方來源",
   toolStateReadOnly: "這些工具設定是由較新版本的 Pi Desktop 寫入；目前版本不會修改或刪除它們。",
   toolVersion: "版本",

@@ -1,3 +1,4 @@
+import type { AppLanguage } from "../shared/app-language.ts";
 import type { ChannelId } from "../shared/channel-types";
 import type { ManagedProcessCapability } from "./processes";
 import type { ChatAppearancePreferences } from "../shared/chat-appearance";
@@ -121,6 +122,7 @@ export interface LocalFileInspection {
 }
 
 export interface DesktopUiState {
+  language?: AppLanguage;
   backgroundMode?: boolean;
   managedProcessesEnabled?: boolean;
   chatAppearance?: ChatAppearancePreferences;

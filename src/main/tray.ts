@@ -1,6 +1,7 @@
 /**
  * System tray — shows running session count; click focuses main window.
  */
+import { getNativeLanguage } from "./native-language";
 import { app, BrowserWindow, Menu, Tray, nativeImage, shell } from "electron";
 import path from "path";
 import { APP_DOCS_URL } from "../shared/app-links";
@@ -58,30 +59,39 @@ export function createTray(
 export function setTrayRunningCount(count: number, getMainWindow: () => BrowserWindow | null): void {
   runningCount = Math.max(0, count);
   if (!tray) return;
-  tray.setToolTip(runningCount > 0 ? `Pi Agent Desktop — ${runningCount} running` : "Pi Agent Desktop");
   updateTrayMenu(getMainWindow);
 }
 
 export function setTrayManagedProcessCount(count: number, getMainWindow: () => BrowserWindow | null): void {
   managedProcessCount = Math.max(0, count);
   if (!tray) return;
-  const total = runningCount + managedProcessCount;
-  tray.setToolTip(total > 0 ? `Pi Agent Desktop — ${total} running` : "Pi Agent Desktop");
   updateTrayMenu(getMainWindow);
 }
 
-function updateTrayMenu(getMainWindow: () => BrowserWindow | null): void {
+export function updateTrayMenu(getMainWindow: () => BrowserWindow | null): void {
   if (!tray) return;
-  const chinese = app.getLocale().toLowerCase().startsWith("zh");
+  const language = getNativeLanguage();
+  const chinese = language !== "en-US";
+  const traditional = language === "zh-TW";
+  const total = runningCount + managedProcessCount;
+  tray.setToolTip(
+    total > 0
+      ? `Pi Agent Desktop — ${total} ${traditional ? "執行中" : chinese ? "运行中" : "running"}`
+      : "Pi Agent Desktop",
+  );
   const menu = Menu.buildFromTemplate([
     {
       label:
         runningCount > 0
           ? chinese
-            ? `运行中的任务：${runningCount}`
+            ? traditional
+              ? `執行中的工作：${runningCount}`
+              : `运行中的任务：${runningCount}`
             : `Running sessions: ${runningCount}`
           : chinese
-            ? "没有运行中的任务"
+            ? traditional
+              ? "沒有執行中的工作"
+              : "没有运行中的任务"
             : "No running sessions",
       enabled: false,
     },
@@ -89,24 +99,28 @@ function updateTrayMenu(getMainWindow: () => BrowserWindow | null): void {
       label:
         managedProcessCount > 0
           ? chinese
-            ? `后台进程：${managedProcessCount}`
+            ? traditional
+              ? `背景程序：${managedProcessCount}`
+              : `后台进程：${managedProcessCount}`
             : `Background processes: ${managedProcessCount}`
           : chinese
-            ? "没有后台进程"
+            ? traditional
+              ? "沒有背景程序"
+              : "没有后台进程"
             : "No background processes",
       enabled: false,
     },
     ...(managedProcessCount > 0
       ? [
           {
-            label: chinese ? "停止所有后台进程" : "Stop All Background Processes",
+            label: chinese ? (traditional ? "停止所有背景程序" : "停止所有后台进程") : "Stop All Background Processes",
             click: () => stopAllManagedProcesses?.(),
           } as const,
         ]
       : []),
     { type: "separator" },
     {
-      label: "Show Window",
+      label: traditional ? "顯示視窗" : chinese ? "显示窗口" : "Show Window",
       click: () => {
         const win = getMainWindow();
         if (win) {
@@ -116,7 +130,7 @@ function updateTrayMenu(getMainWindow: () => BrowserWindow | null): void {
       },
     },
     {
-      label: "New Session",
+      label: traditional ? "建立新會話" : chinese ? "新建会话" : "New Session",
       click: () => {
         const win = getMainWindow();
         if (win) {
@@ -128,14 +142,14 @@ function updateTrayMenu(getMainWindow: () => BrowserWindow | null): void {
     },
     { type: "separator" },
     {
-      label: "Help",
+      label: traditional ? "說明" : chinese ? "帮助" : "Help",
       click: () => {
         void shell.openExternal(APP_DOCS_URL);
       },
     },
     { type: "separator" },
     {
-      label: "Quit",
+      label: traditional ? "結束" : chinese ? "退出" : "Quit",
       click: () => {
         app.quit();
       },

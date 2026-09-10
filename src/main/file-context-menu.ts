@@ -1,3 +1,4 @@
+import { getNativeLanguage } from "./native-language";
 import { copyFile, open } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -46,7 +47,7 @@ function fileMenuLabels(language: ShowFileContextMenuRequest["language"]) {
       saveAs: "另存新檔…",
       copyPath: "複製路徑",
       copyContents: "複製檔案內容",
-      showInFolder: "在檔案總管中顯示",
+      showInFolder: process.platform === "darwin" ? "在 Finder 中顯示" : "在檔案總管中顯示",
       cut: "剪下",
       copy: "複製",
       paste: "貼上",
@@ -216,7 +217,7 @@ export async function showFileContextMenu(win: BrowserWindow, request: unknown):
   const validation = await validateFileContextRequestResult(request);
   if (!validation.ok) return { shown: false, code: validation.code };
   const target = validation.target;
-  const language = (request as ShowFileContextMenuRequest).language;
+  const language = (request as ShowFileContextMenuRequest).language ?? getNativeLanguage();
   try {
     const template = await buildValidatedFileContextMenu(win, target, language);
     if (win.isDestroyed()) return { shown: false, code: "UNAVAILABLE" };
@@ -229,12 +230,13 @@ export async function showFileContextMenu(win: BrowserWindow, request: unknown):
 
 export function setupContextMenu(win: BrowserWindow): void {
   win.webContents.on("context-menu", (_event, params) => {
-    const labels = fileMenuLabels("en-US");
+    const language = getNativeLanguage();
+    const labels = fileMenuLabels(language);
     if (/^file:/i.test(params.linkURL)) {
-      void validateFileContextRequest({ href: params.linkURL, source: "rendered-agent-text", language: "en-US" })
+      void validateFileContextRequest({ href: params.linkURL, source: "rendered-agent-text", language })
         .then(async (target) => {
           if (!target || win.isDestroyed()) return;
-          const template = await buildValidatedFileContextMenu(win, target, "en-US", params);
+          const template = await buildValidatedFileContextMenu(win, target, language, params);
           if (!win.isDestroyed()) Menu.buildFromTemplate(template).popup({ window: win });
         })
         .catch(() => undefined);
