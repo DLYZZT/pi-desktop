@@ -3,13 +3,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { importTestBundle } from "#test-bundle";
 
 test("native UI reads persisted language on restart and subsequent changes", async (t) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "pi-native-language-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const { getNativeLanguage } = await importTestBundle("native-language", {
-    entryPoints: [new URL("./native-language.ts", import.meta.url).pathname],
+    entryPoints: [fileURLToPath(new URL("./native-language.ts", import.meta.url))],
     plugins: [
       {
         name: "electron-language",
