@@ -110,6 +110,11 @@ html.dark {
 .chat-appearance-scope {
   --chat-font-scale: 1;
   --chat-content-max-width: 760px;
+  --chat-assistant-max-width: 68ch;
+}
+
+html[data-chat-assistant-width="full"] .chat-appearance-scope {
+  --chat-assistant-max-width: 100%;
 }
 
 html[data-chat-font-size="small"] .chat-appearance-scope {

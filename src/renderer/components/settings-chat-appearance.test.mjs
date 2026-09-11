@@ -10,17 +10,26 @@ const chatInputSource = readFileSync(new URL("./ChatInput.tsx", import.meta.url)
 const messageViewSource = readFileSync(new URL("./MessageView.tsx", import.meta.url), "utf8");
 
 test("General settings exposes complete accessible chat appearance controls", () => {
-  for (const id of ["chatFontSizeControlId", "chatLayoutControlId"]) assert.match(settingsSource, new RegExp(id));
-  for (const value of ["small", "standard", "large", "extra-large", "fixed", "wide"]) {
+  for (const id of ["chatFontSizeControlId", "chatLayoutControlId", "chatAssistantWidthControlId"])
+    assert.match(settingsSource, new RegExp(id));
+  for (const value of ["small", "standard", "large", "extra-large", "fixed", "wide", "comfortable", "full"]) {
     assert.match(settingsSource, new RegExp(`<option value="${value}">`));
   }
   assert.match(settingsSource, /chatLayoutFixed", "Comfortable width"/);
   assert.match(settingsSource, /chatLayoutWide", "Expanded width"/);
   assert.match(dictionariesSource, /chatLayoutFixed:\s*"舒适宽度"/);
   assert.match(dictionariesSource, /chatLayoutWide:\s*"扩展宽度"/);
+  assert.match(dictionariesSource, /chatAssistantWidth:\s*"模型回复宽度"/);
+  assert.match(settingsSource, /assistantWidth:\s*event.target.value as ChatAssistantWidth/);
   assert.match(settingsSource, /disabled=\{chatAppearanceSaving\}/);
   assert.match(settingsSource, /role="alert"[\s\S]*?chatAppearanceSaveFailed/);
   assert.match(settingsSource, /onChatAppearanceChange\(next\)/);
+});
+
+test("reply width is scoped to assistant messages independently of the conversation column", () => {
+  assert.match(cssSource, /data-chat-assistant-width="full"[^}]*--chat-assistant-max-width:\s*100%/);
+  assert.doesNotMatch(cssSource, /data-chat-assistant-width="full"[^}]*--chat-content-max-width/);
+  assert.match(messageViewSource, /maxWidth:\s*"var\(--chat-assistant-max-width, 68ch\)"/);
 });
 
 test("chat appearance CSS defines scoped font scales and both width modes", () => {

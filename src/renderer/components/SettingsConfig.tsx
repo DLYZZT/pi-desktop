@@ -9,7 +9,7 @@ import { ToolchainsConfig } from "./ToolchainsConfig";
 import { BrowserSettings } from "./browser/BrowserSettings";
 import { ChannelsConfig } from "./channels/ChannelsConfig";
 import type { ChannelsSnapshot } from "@shared/channel-types";
-import type { ChatAppearancePreferences, ChatFontSize, ChatLayout } from "@shared/chat-appearance";
+import type { ChatAppearancePreferences, ChatAssistantWidth, ChatFontSize, ChatLayout } from "@shared/chat-appearance";
 import { APP_WEBSITE_URL } from "@shared/app-links";
 import type { DesktopUpdateState } from "../../contract/desktop";
 import type { ManagedProcessCapability } from "../../contract/processes";
@@ -984,6 +984,7 @@ function GeneralSettings({
   const autoSessionTitleControlId = useId();
   const chatFontSizeControlId = useId();
   const chatLayoutControlId = useId();
+  const chatAssistantWidthControlId = useId();
   const themeControlId = useId();
   useEffect(() => {
     let disposed = false;
@@ -1290,6 +1291,23 @@ function GeneralSettings({
             >
               <option value="fixed">{t("chatLayoutFixed", "Comfortable width")}</option>
               <option value="wide">{t("chatLayoutWide", "Expanded width")}</option>
+            </select>
+          </SettingRow>
+          <SettingRow label={t("chatAssistantWidth", "Model reply width")} controlId={chatAssistantWidthControlId}>
+            <select
+              id={chatAssistantWidthControlId}
+              value={chatAppearance.assistantWidth ?? "comfortable"}
+              disabled={chatAppearanceSaving}
+              onChange={(event) => {
+                void saveChatAppearance({
+                  ...chatAppearance,
+                  assistantWidth: event.target.value as ChatAssistantWidth,
+                });
+              }}
+              style={{ ...selectStyle, cursor: chatAppearanceSaving ? "wait" : "pointer" }}
+            >
+              <option value="comfortable">{t("chatAssistantWidthComfortable", "Comfortable width")}</option>
+              <option value="full">{t("chatAssistantWidthFull", "Fill conversation column")}</option>
             </select>
           </SettingRow>
         </div>

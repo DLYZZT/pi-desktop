@@ -769,7 +769,7 @@ function AssistantMessageView({
 
   return (
     <div
-      style={{ marginBottom: 14, maxWidth: "68ch" }}
+      style={{ marginBottom: 14, maxWidth: "var(--chat-assistant-max-width, 68ch)" }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >

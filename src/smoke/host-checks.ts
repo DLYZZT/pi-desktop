@@ -269,23 +269,29 @@ export async function runSmokeHostChecks(
                 let channelsButton;
                 let chatFontSizeSelect;
                 let chatLayoutSelect;
-                while ((!channelsButton || !chatFontSizeSelect || !chatLayoutSelect) && Date.now() < settingsDeadline) {
+                let chatAssistantWidthSelect;
+                while ((!channelsButton || !chatFontSizeSelect || !chatLayoutSelect || !chatAssistantWidthSelect) && Date.now() < settingsDeadline) {
                   channelsButton = findButton("Channels") || findButton("消息渠道");
                   const labels = Array.from(document.querySelectorAll("label"));
                   const fontLabel = labels.find((label) => ["Chat text size", "聊天字号"].includes(label.textContent?.trim() || ""));
                   const layoutLabel = labels.find((label) => ["Conversation width", "对话宽度"].includes(label.textContent?.trim() || ""));
+                  const assistantWidthLabel = labels.find((label) => ["Model reply width", "模型回复宽度"].includes(label.textContent?.trim() || ""));
                   chatFontSizeSelect = fontLabel?.htmlFor ? document.getElementById(fontLabel.htmlFor) : undefined;
                   chatLayoutSelect = layoutLabel?.htmlFor ? document.getElementById(layoutLabel.htmlFor) : undefined;
-                  if (!channelsButton || !chatFontSizeSelect || !chatLayoutSelect) {
+                  chatAssistantWidthSelect = assistantWidthLabel?.htmlFor ? document.getElementById(assistantWidthLabel.htmlFor) : undefined;
+                  if (!channelsButton || !chatFontSizeSelect || !chatLayoutSelect || !chatAssistantWidthSelect) {
                     await new Promise((wait) => setTimeout(wait, 25));
                   }
                 }
                 if (!channelsButton) throw new Error("Channels settings tab is unavailable");
-                if (!(chatFontSizeSelect instanceof HTMLSelectElement) || !(chatLayoutSelect instanceof HTMLSelectElement)) {
+                if (!(chatFontSizeSelect instanceof HTMLSelectElement) || !(chatLayoutSelect instanceof HTMLSelectElement) || !(chatAssistantWidthSelect instanceof HTMLSelectElement)) {
                   throw new Error("Chat appearance settings are unavailable or unlabeled");
                 }
                 const expectedFontOptions = ["small", "standard", "large", "extra-large"];
                 const expectedLayoutOptions = ["fixed", "wide"];
+                if (JSON.stringify(Array.from(chatAssistantWidthSelect.options, (option) => option.value)) !== JSON.stringify(["comfortable", "full"])) {
+                  throw new Error("Model reply width options do not match the public contract");
+                }
                 if (JSON.stringify(Array.from(chatFontSizeSelect.options, (option) => option.value)) !== JSON.stringify(expectedFontOptions)) {
                   throw new Error("Chat font-size options do not match the public contract");
                 }
@@ -314,22 +320,32 @@ export async function runSmokeHostChecks(
                   document.body.appendChild(chatFixture);
                   chatScope = chatFixture;
                 }
+                const assistantBubble = document.createElement("div");
+                Object.assign(assistantBubble.style, {
+                  maxWidth: "var(--chat-assistant-max-width, 68ch)",
+                  height: "0",
+                  overflow: "hidden",
+                });
+                chatColumn.appendChild(assistantBubble);
                 const changeSelect = (select, value) => {
                   const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
                   valueSetter?.call(select, value);
                   select.dispatchEvent(new Event("change", { bubbles: true }));
                 };
-                const waitForAppearance = async (fontSize, layout) => {
+                const waitForAppearance = async (fontSize, layout, assistantWidth = chatAssistantWidthSelect.value) => {
                   const appearanceDeadline = Date.now() + 3000;
                   while (Date.now() < appearanceDeadline) {
                     const state = await window.piBridge.getUiState();
                     if (
                       document.documentElement.dataset.chatFontSize === fontSize &&
                       document.documentElement.dataset.chatLayout === layout &&
+                      document.documentElement.dataset.chatAssistantWidth === assistantWidth &&
                       state.chatAppearance?.fontSize === fontSize &&
                       state.chatAppearance?.layout === layout &&
+                      state.chatAppearance?.assistantWidth === assistantWidth &&
                       !chatFontSizeSelect.disabled &&
-                      !chatLayoutSelect.disabled
+                      !chatLayoutSelect.disabled &&
+                      !chatAssistantWidthSelect.disabled
                     ) {
                       return;
                     }
@@ -351,11 +367,32 @@ export async function runSmokeHostChecks(
                 const extraLargeInputFontSize = Number.parseFloat(getComputedStyle(chatInput).fontSize);
                 const wideColumnWidth = chatColumn.getBoundingClientRect().width;
                 const chatScopeStyle = getComputedStyle(chatScope);
+                for (const layout of ["fixed", "wide"]) {
+                  changeSelect(chatLayoutSelect, layout);
+                  await waitForAppearance("extra-large", layout);
+                  const columnWidth = chatColumn.getBoundingClientRect().width;
+                  const comfortableWidth = assistantBubble.getBoundingClientRect().width;
+                  changeSelect(chatAssistantWidthSelect, "full");
+                  await waitForAppearance("extra-large", layout, "full");
+                  if (
+                    Math.abs(assistantBubble.getBoundingClientRect().width - columnWidth) > 1 ||
+                    assistantBubble.getBoundingClientRect().width <= comfortableWidth ||
+                    Math.abs(chatColumn.getBoundingClientRect().width - columnWidth) > 1
+                  ) throw new Error("Full reply width must fill, but not resize, the conversation column");
+                  changeSelect(chatAssistantWidthSelect, "comfortable");
+                  await waitForAppearance("extra-large", layout, "comfortable");
+                  if (Math.abs(assistantBubble.getBoundingClientRect().width - comfortableWidth) > 1) {
+                    throw new Error("Comfortable reply width was not restored");
+                  }
+                }
+                changeSelect(chatAssistantWidthSelect, "full");
+                await waitForAppearance("extra-large", "wide", "full");
                 window.resizeTo(900, 700);
                 await new Promise((wait) => setTimeout(wait, 50));
                 const narrowLayout =
                   document.documentElement.clientWidth <= 900 &&
                   document.documentElement.scrollWidth <= document.documentElement.clientWidth &&
+                  Math.abs(assistantBubble.getBoundingClientRect().width - chatColumn.getBoundingClientRect().width) <= 1 &&
                   chatColumn.getBoundingClientRect().width <= chatScope.getBoundingClientRect().width;
                 window.resizeTo(1440, 900);
                 await new Promise((wait) => setTimeout(wait, 50));
@@ -371,6 +408,9 @@ export async function runSmokeHostChecks(
                   document.documentElement.scrollWidth <= document.documentElement.clientWidth &&
                   (chatFixture ? chatFixture : document.querySelector(".chat-appearance-scope")) === chatScope &&
                   (chatFixture ? chatFixture.querySelector("textarea") : document.querySelector("textarea")) === chatInput;
+                changeSelect(chatAssistantWidthSelect, "comfortable");
+                await waitForAppearance("extra-large", "wide", "comfortable");
+                assistantBubble.remove();
                 chatFixture?.remove();
                 changeSelect(chatFontSizeSelect, "standard");
                 await waitForAppearance("standard", "wide");

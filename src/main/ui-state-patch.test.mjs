@@ -16,11 +16,18 @@ test("renderer UI state accepts only complete, known appearance preferences", ()
     },
   );
 
+  for (const assistantWidth of ["comfortable", "full"]) {
+    const chatAppearance = { fontSize: "standard", layout: "wide", assistantWidth };
+    assert.deepEqual(validateDesktopUiStatePatch({ chatAppearance }), { chatAppearance });
+  }
+
   for (const chatAppearance of [
     { fontSize: "large" },
     { layout: "wide" },
     { fontSize: "large", layout: "full" },
     { fontSize: "future", layout: "full" },
+    { fontSize: "standard", layout: "wide", assistantWidth: "max" },
+    { fontSize: "standard", layout: "wide", assistantWidth: null },
     null,
   ]) {
     assert.throws(() => validateDesktopUiStatePatch({ chatAppearance }), /Invalid chat appearance/);

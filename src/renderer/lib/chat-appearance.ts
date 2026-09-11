@@ -8,6 +8,7 @@ export interface ChatAppearanceAttributeTarget {
   dataset: {
     chatFontSize?: string;
     chatLayout?: string;
+    chatAssistantWidth?: string;
   };
 }
 
@@ -30,6 +31,7 @@ export function applyChatAppearance(
   const normalized = normalizeChatAppearance(preferences);
   target.dataset.chatFontSize = normalized.fontSize;
   target.dataset.chatLayout = normalized.layout;
+  target.dataset.chatAssistantWidth = normalized.assistantWidth;
 }
 
 export function scaledChatFont(px: number): string {
