@@ -46,6 +46,7 @@ import {
   type ModelCatalogWarning,
   type ModelPreferencesResult,
   type ModelsListResult,
+  type DiscoveredModel,
   type SessionDetail,
   type SessionRuntimeState,
 } from "../contract/types";
@@ -1915,6 +1916,221 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
           }
         }
       }
+    },
+
+    "modelsConfig.discover": async (params) => {
+      const body = params as unknown as {
+        providerName?: string;
+        provider?: Record<string, unknown>;
+        providerId?: string;
+      };
+      const DISCOVER_TIMEOUT_MS = 20_000;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), DISCOVER_TIMEOUT_MS);
+
+      // Resolve auth + baseUrl + api + provider-specific headers.
+      // Two sources:
+      //   1) Custom provider edited in UI: providerName + provider config (may be unsaved).
+      //      Use a temp ModelRuntime (same pattern as modelsConfig.test) to resolve getAuth.
+      //   2) Built-in/official provider: providerId only. Use shared runtime's real auth.
+      let apiKey: string | undefined;
+      let authHeaders: Record<string, string> | undefined;
+      let baseUrl: string | undefined;
+      let api: string | undefined;
+      let tempDir: string | undefined;
+
+      try {
+        let providerIdForAuth: string;
+        if (body.providerName && body.provider) {
+          providerIdForAuth = body.providerName.trim();
+          api = typeof body.provider.api === "string" ? body.provider.api : undefined;
+          baseUrl = typeof body.provider.baseUrl === "string" ? body.provider.baseUrl.trim() || undefined : undefined;
+          // Temp runtime: write provider with a probe model so getAuth can resolve.
+          tempDir = mkdtempSync(path.join(tmpdir(), "pi-desktop-model-discover-"));
+          const modelsPath = path.join(tempDir, "models.json");
+          writeFileSync(
+            modelsPath,
+            JSON.stringify(
+              {
+                providers: {
+                  [providerIdForAuth]: {
+                    ...body.provider,
+                    models: [{ id: "__probe__" }],
+                  },
+                },
+              },
+              null,
+              2,
+            ),
+            "utf8",
+          );
+          const tempRuntime = await ModelRuntime.create({ modelsPath, allowModelNetwork: false });
+          const probeModel = tempRuntime.getModel(providerIdForAuth, "__probe__");
+          if (!probeModel) return { ok: false, error: `Probe model not found for provider "${providerIdForAuth}"` };
+          const auth = await tempRuntime.getAuth(probeModel);
+          apiKey = auth?.auth.apiKey;
+          authHeaders = auth?.auth.headers as Record<string, string> | undefined;
+          if (auth?.auth.baseUrl) baseUrl = auth.auth.baseUrl;
+        } else if (body.providerId) {
+          providerIdForAuth = body.providerId.trim();
+          const modelRuntime = await getSharedModelRuntime();
+          const provider = modelRuntime.getProvider(providerIdForAuth);
+          if (!provider) return { ok: false, error: `Unknown provider: ${providerIdForAuth}` };
+          const cfg = modelRuntime.getRegisteredProviderConfig(providerIdForAuth);
+          api = (cfg?.api as string | undefined) ?? undefined;
+          baseUrl = provider.baseUrl ?? cfg?.baseUrl;
+          // Aggregation providers (opencode/opencode-go) carry baseUrl on each model,
+          // not on the provider. Fall back to any model's baseUrl as the discovery endpoint.
+          if (!baseUrl) {
+            const sample = modelRuntime.getModels(providerIdForAuth).find((m) => m.baseUrl);
+            if (sample?.baseUrl) baseUrl = sample.baseUrl;
+          }
+          const auth = await modelRuntime.getAuth(providerIdForAuth);
+          if (!auth) return { ok: false, error: `No auth configured for "${providerIdForAuth}". Log in or set an API key first.` };
+          apiKey = auth.auth.apiKey;
+          authHeaders = auth.auth.headers as Record<string, string> | undefined;
+          if (auth.auth.baseUrl) baseUrl = auth.auth.baseUrl;
+        } else {
+          return { ok: false, error: "providerName+provider or providerId is required" };
+        }
+
+        if (!baseUrl) {
+          return {
+            ok: false,
+            error:
+              "This provider has no discoverable model-list endpoint (no baseUrl exposed). " +
+              "Aggregation providers like opencode route each model to a different backend and don't expose a unified /v1/models. " +
+              "Add models manually instead.",
+          };
+        }
+        const trimmedBase = baseUrl.replace(/\/+$/, "");
+
+        // Build request headers per API type.
+        const headers: Record<string, string> = {};
+        if (api === "anthropic-messages") {
+          if (apiKey) headers["x-api-key"] = apiKey;
+          headers["anthropic-version"] = "2023-06-01";
+        } else {
+          if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+        }
+        if (authHeaders) for (const [k, v] of Object.entries(authHeaders)) if (typeof v === "string") headers[k] = v;
+
+        // Try /v1/models then /models; accept first 200 with data array.
+        const candidates = [`${trimmedBase}/v1/models`, `${trimmedBase}/models`];
+        let payload: unknown = null;
+        let usedEndpoint: string | undefined;
+        let status: number | undefined;
+        let lastError: string | undefined;
+        for (const url of candidates) {
+          try {
+            const res = await fetch(url, { headers, signal: controller.signal });
+            status = res.status;
+            if (!res.ok) {
+              lastError = `${url} → HTTP ${res.status}`;
+              continue;
+            }
+            const json = (await res.json().catch(() => null)) as { data?: unknown[] } | null;
+            if (json && Array.isArray(json.data)) {
+              payload = json;
+              usedEndpoint = url;
+              break;
+            }
+            lastError = `${url} → no \`data\` array in response`;
+          } catch (e) {
+            if (controller.signal.aborted) throw e;
+            lastError = e instanceof Error ? `${url} → ${e.message}` : String(e);
+          }
+        }
+        if (!payload) {
+          return { ok: false, error: lastError ?? "Failed to list models from the endpoint.", status };
+        }
+
+        const data = (payload as { data: Record<string, unknown>[] }).data;
+        // Format detection: anthropic entries carry capabilities/display_name.
+        const isAnthropic = data.some(
+          (m) => m && ("capabilities" in m || "display_name" in m),
+        );
+        const format = isAnthropic ? "anthropic" : "openai";
+        const models: DiscoveredModel[] = data
+          .filter((m) => m && typeof m.id === "string")
+          .map((m) => {
+            const id = String(m.id);
+            const out: DiscoveredModel = { id };
+            if (typeof m.display_name === "string") out.name = m.display_name;
+            else if (typeof m.name === "string" && m.name !== id) out.name = String(m.name);
+            if (isAnthropic) {
+              const caps = m.capabilities as { thinking?: unknown } | undefined;
+              if (caps && caps.thinking) out.reasoning = true;
+              if (typeof m.max_input_tokens === "number") out.contextWindow = m.max_input_tokens;
+              if (typeof m.max_tokens === "number") out.maxTokens = m.max_tokens;
+            }
+            return out;
+          });
+
+        return { ok: true as const, models, format, endpoint: usedEndpoint };
+      } catch (e) {
+        const aborted = controller.signal.aborted;
+        return {
+          ok: false as const,
+          error: aborted
+            ? `Model discovery timed out after ${DISCOVER_TIMEOUT_MS}ms`
+            : e instanceof Error
+              ? e.message
+              : String(e),
+        };
+      } finally {
+        clearTimeout(timeout);
+        if (tempDir) {
+          try {
+            rmSync(tempDir, { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    },
+
+    "modelsConfig.upsertModels": async (params) => {
+      const body = params as {
+        providerId?: string;
+        models?: unknown;
+        expectedVersion?: string;
+      };
+      const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
+      if (!providerId) throw new RpcError({ code: "BAD_REQUEST", message: "providerId is required" });
+      if (!Array.isArray(body.models)) throw new RpcError({ code: "BAD_REQUEST", message: "models must be an array" });
+      if (typeof body.expectedVersion !== "string" || !body.expectedVersion) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "expectedVersion is required" });
+      }
+      const incoming = body.models as Array<Record<string, unknown>>;
+      const normalized = incoming
+        .filter((m) => m && typeof m.id === "string")
+        .map((m) => {
+          const entry: Record<string, unknown> = { id: String(m.id) };
+          if (typeof m.name === "string") entry.name = m.name;
+          if (typeof m.reasoning === "boolean") entry.reasoning = m.reasoning;
+          if (typeof m.contextWindow === "number") entry.contextWindow = m.contextWindow;
+          if (typeof m.maxTokens === "number") entry.maxTokens = m.maxTokens;
+          if (Array.isArray(m.input)) entry.input = m.input;
+          return entry;
+        });
+
+      const snapshot = readModelsJsonSnapshot();
+      const config = snapshot.config as { providers?: Record<string, { models?: Array<{ id: string }> }> };
+      const providers = { ...(config.providers ?? {}) };
+      const provider = { ...(providers[providerId] ?? {}) };
+      const existing = provider.models ?? [];
+      const byId = new Map<string, { id: string } & Record<string, unknown>>(existing.map((m) => [m.id, m]));
+      for (const m of normalized) {
+        const id = m.id as string;
+        byId.set(id, { ...byId.get(id), ...m } as { id: string } & Record<string, unknown>);
+      }
+      provider.models = [...byId.values()];
+      providers[providerId] = provider;
+      const nextConfig = { ...config, providers };
+      const version = writeModelsJson(nextConfig, body.expectedVersion as string);
+      await reloadSharedModelRuntimeConfig();
+      return { ok: true as const, version };
     },
 
     "auth.providers": async () => {
