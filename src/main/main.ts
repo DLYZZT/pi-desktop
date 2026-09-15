@@ -657,7 +657,10 @@ function startMainProcess(): void {
       getBrowserService: () => browserService,
       getManagedProcessCapability,
       onUiStatePatch: (patch) => {
-        if (patch.language) updateTrayMenu(getMainWindow);
+        if (patch.language) {
+          updateTrayMenu(getMainWindow);
+          installAppMenu(getMainWindow, () => openUpdateSettings(true), isDev);
+        }
         if (patch.herdrSettings) {
           void herdrRuntimeManager!.configure(patch.herdrSettings).catch((error) => {
             appendMainLog(`Herdr settings refresh failed: ${error instanceof Error ? error.message : String(error)}`);
