@@ -75,8 +75,8 @@
     "@xterm/xterm": "6.0.0",
     "electron-updater": "6.8.9",
     "katex": "^0.16.47",
-    "mammoth": "^1.12.0",
-    "mermaid": "^11.14.0",
+    "mammoth": "^1.12.3",
+    "mermaid": "^11.17.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
@@ -88,15 +88,16 @@
     "remark-math": "^6.0.0",
     "semver": "7.8.5",
     "silk-wasm": "^3.7.1",
-    "tar": "7.5.20",
+    "tar": "7.5.22",
     "yaml": "2.9.0",
     "yauzl": "3.4.0"
   },
   "overrides": {
-    "@earendil-works/pi-telemetry": "0.85.0"
+    "@earendil-works/pi-telemetry": "0.85.0",
+    "@xmldom/xmldom": "0.8.15"
   },
   "devDependencies": {
-    "@electron/asar": "3.2.18",
+    "@electron/asar": "3.4.1",
     "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
     "@eslint/js": "^10.0.1",
     "@tailwindcss/postcss": "^4.2.2",
@@ -109,7 +110,7 @@
     "@types/yauzl": "3.4.0",
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "43.1.1",
-    "electron-builder": "26.0.12",
+    "electron-builder": "26.15.3",
     "esbuild": "0.27.7",
     "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
