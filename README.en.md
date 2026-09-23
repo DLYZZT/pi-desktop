@@ -16,7 +16,7 @@ Local-first · No internal server · Cross-platform
 
 **English** · [简体中文](./README.md)
 
-[Download v0.1.14](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.14) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
+[Download v0.2.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.2.3) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
 
 </div>
 
@@ -69,7 +69,17 @@ Local-first · No internal server · Cross-platform
 - Use POSIX process groups on macOS/Linux and an integrity-verified Rust helper with Windows Job Objects on Windows x64; missing helper, reaper, or owner identity readiness fails closed
 - Keep the feature off by default and treat it as lifecycle control, not a security sandbox: child processes have the same local file, network, and environment access as Agent Bash; common LAN binds require confirmation, and Host/App failure or exit triggers bounded process-tree cleanup
 
-Managed background processes in v0.1.14 support macOS, Linux, and Windows 11 x64. Windows ARM64, Windows Server, and 32-bit Windows are not supported.
+Managed background processes in v0.2.3 support macOS, Linux, and Windows 11 x64. Windows ARM64, Windows Server, and 32-bit Windows are not supported.
+
+### Conversational Herdr control from Pi
+
+- Optionally connect to a local Herdr instance and use the original main conversation to inspect the Fleet; create, focus, or rename workspaces, tabs, and panes; explain Agent states; inspect sanitized process details; wait for output; and start, prompt, or wait for Agents.
+- The Pi Session sidebar and main conversation remain the primary surface. The Agent Fleet indicator stays in the title bar's right-side action area on both the initial page and active sessions; the right-side ANSI terminal remains a supporting view for status, troubleshooting, and explicit keyboard takeover.
+- Closing a workspace, pane, or Agent requires an interactive local Pi confirmation whose complete copy follows the current UI language. Herdr v0.8.2 has no `agent.stop`, so Agent close explicitly closes its containing pane rather than pretending to stop only the Agent.
+- Herdr is bundled with macOS/Linux builds. Developer Tools owns installation, version, update, repair, and removal; Managed mode activates the verified bundled copy without a separate runtime download.
+- Attach connects only to a user-started system Herdr and never stops it. Managed mode starts, monitors, restarts, and closes only Pi Desktop's private server.
+- Pi Sessions and Herdr Sessions remain separate. Closing the Pi Desktop terminal view does not close a Herdr pane or Agent, and unknown protocols fail closed.
+- In Settings, Herdr sits between Browser and Channels; installation, update, repair, and removal remain centralized under Developer Tools.
 
 ### A project-focused file experience
 
@@ -80,7 +90,7 @@ Managed background processes in v0.1.14 support macOS, Linux, and Windows 11 x64
 
 ### Unified model and extension management
 
-- Bundle Pi Coding Agent 0.84.0 and manage model providers and model configurations
+- Bundle Pi Coding Agent 0.85.0 and manage model providers and model configurations
 - Prefer the local model directory when sessions start; explicitly refresh the remote directory when needed while preserving cached models across offline, timeout, or partial-provider failures
 - Sign in through browser-based OAuth flows
 - Search for, install, and configure Skills; normal installs keep npm's default concurrency, with one isolated-cache retry for network, timeout, or cache-lock failures
@@ -117,9 +127,9 @@ Managed background processes in v0.1.14 support macOS, Linux, and Windows 11 x64
 
 ### Use a desktop build
 
-The latest stable version is [v0.1.14](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.14), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
+The latest stable version is [v0.2.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.2.3), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
 
-Pi Agent Desktop v0.1.14 bundles the Pi Coding Agent 0.84.0 runtime. Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
+Pi Agent Desktop v0.2.3 bundles the Pi Coding Agent 0.85.0 runtime. Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
 
 The application reads sessions and configuration from `~/.pi/agent/`. If you already use the Pi CLI, your existing data is available without migration. The desktop application also works if you have never used the CLI.
 
@@ -209,6 +219,8 @@ flowchart LR
 | `npm run smoke`                          | Run Electron smoke tests                                             |
 | `npm run test:browser-electron`          | Run the local Browser Electron integration suite                     |
 | `npm run test:managed-process-workflows` | Test managed-process lifecycle and cleanup                           |
+| `npm run test:herdr-e2e`                 | Run the isolated upstream Herdr E2E with an official binary          |
+| `npm run test:herdr-desktop-e2e`         | Run the production Electron/Renderer Herdr integration E2E           |
 | `npm run test:windows-managed-helper`    | Validate the Rust helper and Job Objects on Windows x64              |
 | `npm run verify`                         | Run the complete pre-commit quality gate                             |
 | `npm run build`                          | Build Main, preload, and Renderer                                    |

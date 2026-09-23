@@ -9,15 +9,17 @@ import { ToolchainsConfig } from "./ToolchainsConfig";
 import { BrowserSettings } from "./browser/BrowserSettings";
 import { ChannelsConfig } from "./channels/ChannelsConfig";
 import type { ChannelsSnapshot } from "@shared/channel-types";
-import type { ChatAppearancePreferences, ChatFontSize, ChatLayout } from "@shared/chat-appearance";
+import type { ChatAppearancePreferences, ChatAssistantWidth, ChatFontSize, ChatLayout } from "@shared/chat-appearance";
 import { APP_WEBSITE_URL } from "@shared/app-links";
 import type { DesktopUpdateState } from "../../contract/desktop";
 import type { ManagedProcessCapability } from "../../contract/processes";
 import { APP_AUTHOR, APP_DISPLAY_NAME, APP_GITHUB_URL, APP_VERSION, PI_VERSION } from "@/lib/app-version";
 import appIconUrl from "../../../build/icon.png";
 import { isAutoSessionTitleEnabled, setAutoSessionTitleEnabled } from "../lib/auto-session-title";
+import { HerdrSettings } from "./herdr/HerdrSettings";
 
-export type SettingsTab = "general" | "browser" | "channels" | "models" | "tools" | "skills" | "plugins" | "about";
+export type SettingsTab =
+  "general" | "herdr" | "browser" | "channels" | "models" | "tools" | "skills" | "plugins" | "about";
 
 interface SettingsConfigProps {
   cwd: string | null;
@@ -93,6 +95,7 @@ export function SettingsConfig({
     { id: "skills", label: t("skills", "Skills") },
     { id: "plugins", label: t("plugins", "Plugins") },
     { id: "browser", label: t("browser", "Browser") },
+    { id: "herdr", label: t("herdr", "Herdr") },
     { id: "channels", label: t("channels", "Channels") },
     { id: "tools", label: t("developerTools", "Developer Tools") },
     { id: "about", label: t("about", "About") },
@@ -298,6 +301,7 @@ export function SettingsConfig({
               />
             )}
             {activeTab === "browser" && <BrowserSettings sessionId={sessionId} />}
+            {activeTab === "herdr" && <HerdrSettings />}
             {activeTab === "models" && (
               <ModelsConfig embedded cwd={cwd} onClose={() => undefined} onChanged={onModelsChanged} />
             )}
@@ -980,6 +984,7 @@ function GeneralSettings({
   const autoSessionTitleControlId = useId();
   const chatFontSizeControlId = useId();
   const chatLayoutControlId = useId();
+  const chatAssistantWidthControlId = useId();
   const themeControlId = useId();
   useEffect(() => {
     let disposed = false;
@@ -1092,6 +1097,7 @@ function GeneralSettings({
           >
             <option value="en-US">English</option>
             <option value="zh-CN">简体中文</option>
+            <option value="zh-TW">繁體中文</option>
           </select>
         </SettingRow>
       </section>
@@ -1285,6 +1291,23 @@ function GeneralSettings({
             >
               <option value="fixed">{t("chatLayoutFixed", "Comfortable width")}</option>
               <option value="wide">{t("chatLayoutWide", "Expanded width")}</option>
+            </select>
+          </SettingRow>
+          <SettingRow label={t("chatAssistantWidth", "Model reply width")} controlId={chatAssistantWidthControlId}>
+            <select
+              id={chatAssistantWidthControlId}
+              value={chatAppearance.assistantWidth ?? "comfortable"}
+              disabled={chatAppearanceSaving}
+              onChange={(event) => {
+                void saveChatAppearance({
+                  ...chatAppearance,
+                  assistantWidth: event.target.value as ChatAssistantWidth,
+                });
+              }}
+              style={{ ...selectStyle, cursor: chatAppearanceSaving ? "wait" : "pointer" }}
+            >
+              <option value="comfortable">{t("chatAssistantWidthComfortable", "Comfortable width")}</option>
+              <option value="full">{t("chatAssistantWidthFull", "Fill conversation column")}</option>
             </select>
           </SettingRow>
         </div>

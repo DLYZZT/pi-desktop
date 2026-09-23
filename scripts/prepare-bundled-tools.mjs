@@ -5,8 +5,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseRuntimeCatalog } from "../src/shared/toolchains/catalog-schema.ts";
+import { parseHerdrRuntimeCatalog } from "../src/main/herdr/catalog.ts";
 import { findComponentEntrypoint } from "../src/main/toolchains/component-entrypoint.ts";
-import { downloadRuntimeArtifact, hashFile, verifyDownloadedArtifact } from "../src/main/toolchains/downloader.ts";
+import {
+  assertRuntimeRedirectUrl,
+  downloadRuntimeArtifact,
+  hashFile,
+  MAX_RUNTIME_REDIRECTS,
+  verifyDownloadedArtifact,
+} from "../src/main/toolchains/downloader.ts";
 import { extractRuntimeArchive } from "../src/main/toolchains/secure-extractor.ts";
 import { darwinCodeDigest } from "../src/main/toolchains/darwin-binary-integrity.ts";
 import { parseBundledToolTargets } from "./bundled-tools-targets.mjs";
@@ -15,6 +22,15 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const catalogPath = path.join(root, "build", "toolchains", "core-catalog.json");
 const outputRoot = path.join(root, "build", "toolchains", "core");
 const cacheRoot = path.join(root, "build", "toolchains", ".core-cache");
+const herdrCatalogPath = path.join(root, "build", "herdr", "runtime-catalog.json");
+const herdrOutputRoot = path.join(root, "build", "herdr", "bin");
+const herdrCacheRoot = path.join(root, "build", "herdr", ".cache");
+const herdrLicense = {
+  name: "Herdr-LICENSE",
+  url: "https://raw.githubusercontent.com/herdrdev/herdr/v0.8.2/LICENSE",
+  bytes: 11357,
+  sha256: "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+};
 const licenseFiles = {
   ripgrep: [
     {
@@ -60,24 +76,45 @@ async function downloadFixedFile(definition, destination) {
   fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
   const controller = new globalThis.AbortController();
   const timer = setTimeout(() => controller.abort(), 60_000);
+  const temporary = `${destination}.${randomUUID()}.partial`;
   try {
-    const response = await globalThis.fetch(definition.url, {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: { "User-Agent": "Pi-Agent-Desktop-Bundled-Tools-Build" },
-    });
+    let current = assertRuntimeRedirectUrl(definition.url);
+    let response;
+    for (let redirects = 0; redirects <= MAX_RUNTIME_REDIRECTS; redirects += 1) {
+      response = await globalThis.fetch(current, {
+        redirect: "manual",
+        signal: controller.signal,
+        headers: { "User-Agent": "Pi-Agent-Desktop-Bundled-Tools-Build", "Accept-Encoding": "identity" },
+      });
+      if (response.status < 300 || response.status >= 400) break;
+      const location = response.headers.get("location");
+      if (!location || redirects === MAX_RUNTIME_REDIRECTS) fail(`${definition.url} exceeded redirect limits`);
+      current = assertRuntimeRedirectUrl(new URL(location, current).href);
+    }
     if (!response.ok) fail(`${definition.url} returned HTTP ${response.status}`);
-    const content = Buffer.from(await response.arrayBuffer());
-    const digest = createHash("sha256").update(content).digest("hex");
-    if (content.length !== definition.bytes || digest !== definition.sha256) {
+    if (!response.body) fail(`${definition.url} returned an empty body`);
+    const hash = createHash("sha256");
+    let bytes = 0;
+    const descriptor = fs.openSync(temporary, "wx", 0o600);
+    try {
+      for await (const value of response.body) {
+        const chunk = Buffer.from(value);
+        bytes += chunk.length;
+        if (bytes > definition.bytes) fail(`${definition.name} exceeded its fixed size`);
+        hash.update(chunk);
+        fs.writeSync(descriptor, chunk);
+      }
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    if (bytes !== definition.bytes || hash.digest("hex") !== definition.sha256) {
       fail(`${definition.name} failed fixed license verification`);
     }
-    const temporary = `${destination}.${randomUUID()}.partial`;
-    fs.writeFileSync(temporary, content, { mode: 0o600 });
     fs.rmSync(destination, { force: true });
     fs.renameSync(temporary, destination);
   } finally {
     clearTimeout(timer);
+    fs.rmSync(temporary, { force: true });
   }
 }
 
@@ -175,5 +212,79 @@ async function prepareTarget(catalog, target) {
   }
 }
 
+async function prepareHerdrTarget(catalog, target) {
+  if (target === "win32-x64") {
+    console.log(`[bundled-tools] Herdr remains unsupported for ${target}; no runtime was bundled`);
+    return;
+  }
+  const separator = target.lastIndexOf("-");
+  const platform = target.slice(0, separator);
+  const arch = target.slice(separator + 1);
+  const artifact = catalog.artifacts[target];
+  if (!artifact) fail(`${target} is missing a Herdr runtime artifact`);
+
+  fs.mkdirSync(herdrOutputRoot, { recursive: true, mode: 0o755 });
+  fs.mkdirSync(herdrCacheRoot, { recursive: true, mode: 0o700 });
+  const staging = fs.mkdtempSync(path.join(herdrOutputRoot, `.${target}-staging-`));
+  try {
+    const cachedBinary = path.join(herdrCacheRoot, `herdr-${catalog.version}-${target}`);
+    await downloadFixedFile(
+      {
+        name: `herdr-${catalog.version}-${target}`,
+        url: artifact.url,
+        bytes: artifact.downloadBytes,
+        sha256: artifact.sha256,
+      },
+      cachedBinary,
+    );
+    const executable = path.join(staging, "herdr");
+    fs.copyFileSync(cachedBinary, executable, fs.constants.COPYFILE_EXCL);
+    fs.chmodSync(executable, 0o755);
+    const binary = await hashFile(executable);
+    if (binary.bytes !== artifact.downloadBytes || binary.sha256 !== artifact.sha256) {
+      fail(`Herdr ${target} failed bundled binary verification`);
+    }
+    const darwinCode = platform === "darwin" ? darwinCodeDigest(fs.readFileSync(executable)) : undefined;
+    if (platform === "darwin" && !darwinCode) fail(`Herdr ${target} is not a supported Mach-O executable`);
+
+    const cachedLicense = path.join(herdrCacheRoot, herdrLicense.name);
+    await downloadFixedFile(herdrLicense, cachedLicense);
+    fs.copyFileSync(cachedLicense, path.join(staging, "LICENSE"), fs.constants.COPYFILE_EXCL);
+    const manifest = {
+      schemaVersion: 1,
+      version: catalog.version,
+      protocol: catalog.protocol,
+      apiSchemaVersion: catalog.apiSchemaVersion,
+      apiSchemaSha256: catalog.apiSchemaSha256,
+      platform,
+      arch,
+      executable: "herdr",
+      sha256: binary.sha256,
+      bytes: binary.bytes,
+      artifactSha256: artifact.sha256,
+      ...(darwinCode ? { darwinCodeSha256: darwinCode.sha256, darwinCodeBytes: darwinCode.bytes } : {}),
+    };
+    fs.writeFileSync(path.join(staging, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+
+    const destination = path.join(herdrOutputRoot, target);
+    const previous = `${destination}.previous-${randomUUID()}`;
+    if (fs.existsSync(destination)) fs.renameSync(destination, previous);
+    try {
+      fs.renameSync(staging, destination);
+      fs.rmSync(previous, { recursive: true, force: true });
+    } catch (error) {
+      if (!fs.existsSync(destination) && fs.existsSync(previous)) fs.renameSync(previous, destination);
+      throw error;
+    }
+    console.log(`[bundled-tools] prepared ${target}: herdr@${catalog.version}`);
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 const catalog = parseRuntimeCatalog(JSON.parse(fs.readFileSync(catalogPath, "utf8")));
-for (const target of parseBundledToolTargets(process.argv.slice(2))) await prepareTarget(catalog, target);
+const herdrCatalog = parseHerdrRuntimeCatalog(JSON.parse(fs.readFileSync(herdrCatalogPath, "utf8")));
+for (const target of parseBundledToolTargets(process.argv.slice(2))) {
+  await prepareTarget(catalog, target);
+  await prepareHerdrTarget(herdrCatalog, target);
+}

@@ -1,4 +1,6 @@
 import { app, Menu, shell, type BrowserWindow } from "electron";
+import { getNativeLanguage } from "./native-language";
+import { localizeMenuTemplate } from "./menu-labels";
 import { developerViewRoles } from "./menu-policy";
 import { sendWindowMenuCommand } from "./window-menu-command";
 
@@ -153,5 +155,5 @@ export function installAppMenu(
     },
   ];
 
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  Menu.setApplicationMenu(Menu.buildFromTemplate(localizeMenuTemplate(template, getNativeLanguage())));
 }

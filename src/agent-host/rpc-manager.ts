@@ -8,6 +8,8 @@ import {
   type AgentSessionRuntimeDiagnostic,
 } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "crypto";
+import { EXCLUDED_PI_TOOLS, filterDesktopToolNames, validateDesktopToolNames } from "../shared/pi-tool-policy.ts";
+import { assertSessionWritable } from "./session-readonly.ts";
 import { cacheSessionPath } from "./session-reader";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "../shared/pi-types";
@@ -34,6 +36,9 @@ import { getDesktopSessionToolNames, setDesktopSessionToolNames } from "./sessio
 import { peekManagedProcessService } from "./managed-process/runtime";
 import { createManagedProcessToolDefinitions } from "./managed-process/tools";
 import { installManagedProcessSessionRedaction } from "./managed-process/session-redaction";
+import { peekHerdrBridge } from "./herdr/runtime";
+import { createHerdrToolDefinitions, herdrToolNamesForRuntime, isHerdrToolName } from "./herdr/tools";
+import { installHerdrSessionRedaction } from "./herdr/session-redaction";
 
 // ============================================================================
 // Types
@@ -86,7 +91,7 @@ type ExtensionBindingOptions = {
 
 export type ExternalSessionCommand = "compact" | "reload";
 
-const CODING_TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const CODING_TOOL_NAMES = ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"];
 const SESSION_TOOLS_ENTRY = "pi-desktop-session-tools";
 const LEGACY_CHANNEL_PROMPT = /^\[外部消息来源：(微信|Telegram|飞书 \/ Lark)\]\n/;
 const LEGACY_CHANNEL_PROMPT_DELIMITER = "\n---\n";
@@ -106,7 +111,7 @@ function parsePersistedSessionTools(value: unknown): string[] | undefined {
   ) {
     return undefined;
   }
-  return [...new Set(state.toolNames.map((name) => name.trim()).filter(Boolean))];
+  return filterDesktopToolNames(state.toolNames);
 }
 
 export function getLegacySessionToolNames(sessionManager: Pick<SessionManager, "getEntries">): string[] | undefined {
@@ -159,7 +164,7 @@ export function withExtensionTools(session: AgentSessionLike, toolNames: string[
     .map((t) => t.name)
     .filter((name) => !codingToolNames.has(name) && !isBrowserToolName(name));
 
-  return [...new Set([...toolNames, ...extensionToolNames])];
+  return filterDesktopToolNames([...toolNames, ...extensionToolNames]);
 }
 
 // ============================================================================
@@ -209,8 +214,8 @@ export class AgentSessionWrapper {
   ) {
     this.inner = inner;
     this.persistToolNames = persistToolNames;
-    this.requestedToolNames = requestedToolNames ? [...requestedToolNames] : requestedToolNames;
-    this.forceEmptySystemPrompt = requestedToolNames?.length === 0;
+    this.requestedToolNames = requestedToolNames ? filterDesktopToolNames(requestedToolNames) : requestedToolNames;
+    this.forceEmptySystemPrompt = this.requestedToolNames?.length === 0;
     const messages = this.inner.agent.state?.messages;
     if (Array.isArray(messages)) this.inner.agent.state!.messages = stripLegacyChannelPrompts(messages);
     this.applyForcedEmptySystemPrompt();
@@ -258,14 +263,21 @@ export class AgentSessionWrapper {
     notifyRunningChange();
   }
 
-  syncBrowserToolActivation(): void {
+  syncDesktopToolActivation(): void {
     if (this.forceEmptySystemPrompt) {
       this.inner.setActiveToolsByName([]);
       return;
     }
-    const current = this.inner.getActiveToolNames().filter((name) => !isBrowserToolName(name));
+    const current = this.inner
+      .getActiveToolNames()
+      .filter((name) => !isBrowserToolName(name) && !isHerdrToolName(name));
     const browserTools = browserToolNamesForSnapshot(browserCapabilityRuntime.getSnapshot());
-    this.inner.setActiveToolsByName([...new Set([...current, ...browserTools])]);
+    const herdrTools = herdrToolNamesForRuntime(peekHerdrBridge());
+    this.inner.setActiveToolsByName(filterDesktopToolNames([...current, ...browserTools, ...herdrTools]));
+  }
+
+  syncBrowserToolActivation(): void {
+    this.syncDesktopToolActivation();
   }
 
   private withExternalChannelSource(event: AgentEvent): AgentEvent {
@@ -405,7 +417,7 @@ export class AgentSessionWrapper {
     this.requestedToolNames = [...toolNames];
     this.forceEmptySystemPrompt = toolNames.length === 0;
     this.inner.setActiveToolsByName(withExtensionTools(this.inner, toolNames));
-    this.syncBrowserToolActivation();
+    this.syncDesktopToolActivation();
     this.applyForcedEmptySystemPrompt();
   }
 
@@ -672,6 +684,10 @@ export class AgentSessionWrapper {
         }
 
         const newSessionId = SessionManager.open(newSessionFile, sessionDir).getSessionId();
+        this.persistToolNames(
+          newSessionId,
+          filterDesktopToolNames(this.requestedToolNames ?? this.inner.getActiveToolNames()),
+        );
         cacheSessionPath(newSessionId, newSessionFile);
         await this.dispose({ abort: true, reason: "fork" });
         return { cancelled: false, newSessionId };
@@ -787,7 +803,8 @@ export class AgentSessionWrapper {
       }
 
       case "set_tools": {
-        const toolNames = command.toolNames as string[];
+        validateDesktopToolNames(command.toolNames);
+        const toolNames = filterDesktopToolNames(command.toolNames);
         this.applyRequestedTools(toolNames);
         this.persistToolNames(this.sessionId, toolNames);
         return null;
@@ -795,7 +812,7 @@ export class AgentSessionWrapper {
 
       case "reload": {
         await this.enqueueTurn(() => this.reloadSessionResources());
-        this.syncBrowserToolActivation();
+        this.syncDesktopToolActivation();
         return { success: true };
       }
 
@@ -1147,6 +1164,20 @@ export class AgentSessionWrapper {
           opts?.timeout,
           opts?.signal,
         ),
+      confirmLocalized: (title, message, localization, opts) =>
+        this.requestExtensionUi(
+          {
+            method: "confirm",
+            title,
+            message,
+            localization,
+            ...(opts?.timeout ? { timeout: opts.timeout } : {}),
+          },
+          false,
+          (response) => ("confirmed" in response ? response.confirmed : false),
+          opts?.timeout,
+          opts?.signal,
+        ),
       input: (title, placeholder, opts) =>
         this.requestExtensionUi(
           {
@@ -1345,7 +1376,11 @@ export async function disposeAllRpcSessions(reason = "host-shutdown"): Promise<v
 }
 
 export function syncBrowserToolsForAllSessions(): void {
-  for (const session of getRegistry().values()) session.syncBrowserToolActivation();
+  syncDesktopToolsForAllSessions();
+}
+
+export function syncDesktopToolsForAllSessions(): void {
+  for (const session of getRegistry().values()) session.syncDesktopToolActivation();
 }
 
 export function getRunningRpcSessionIds(): string[] {
@@ -1408,6 +1443,7 @@ export async function startRpcSession(
   cwd: string,
   toolNames?: string[],
 ): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
+  if (toolNames !== undefined) validateDesktopToolNames(toolNames);
   const registry = getRegistry();
   const locks = getLocks();
 
@@ -1420,10 +1456,16 @@ export async function startRpcSession(
   const starting = (async () => {
     const agentDir = getAgentDir();
 
+    if (sessionFile) assertSessionWritable(sessionFile);
+
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, undefined)
       : SessionManager.create(cwd, undefined);
+    // Unknown provenance is fail-closed for desktop tools. A session becomes
+    // local only at this explicit desktop-owned construction boundary.
+    setBrowserSessionSource(sessionManager, "local");
     installManagedProcessSessionRedaction(sessionManager);
+    installHerdrSessionRedaction(sessionManager);
 
     // Desktop-owned session choices live outside Pi's shared JSONL so the CLI
     // remains unaffected. Read the old custom entry only for one-way migration.
@@ -1451,6 +1493,7 @@ export async function startRpcSession(
       createBashToolDefinition(cwd, bashOptions),
       ...createDesktopSearchToolDefinitions(cwd, executionContext, toolchainRuntime),
       ...createBrowserToolDefinitions(),
+      ...(peekHerdrBridge() ? createHerdrToolDefinitions(cwd, peekHerdrBridge()!) : []),
       ...(peekManagedProcessService()
         ? createManagedProcessToolDefinitions(
             cwd,
@@ -1463,6 +1506,7 @@ export async function startRpcSession(
       services,
       sessionManager,
       customTools,
+      excludeTools: [...EXCLUDED_PI_TOOLS],
     });
     const realSessionId = inner.sessionId as string;
 
@@ -1477,7 +1521,7 @@ export async function startRpcSession(
     wrapper.setRuntimeDiagnostics(services.diagnostics);
     wrapper.setToolchainSummary(executionContext.inventoryRevision, executionContext.summary);
     wrapper.start();
-    wrapper.syncBrowserToolActivation();
+    wrapper.syncDesktopToolActivation();
 
     const realSessionFile = inner.sessionFile as string | undefined;
     if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);

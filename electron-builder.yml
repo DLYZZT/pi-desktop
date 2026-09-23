@@ -108,8 +108,13 @@ extraResources:
     to: toolchains/core-catalog.json
   - from: build/toolchains/core/${platform}-${arch}
     to: toolchains/core/${platform}-${arch}
+  - from: build/herdr/runtime-catalog.json
+    to: herdr/runtime-catalog.json
 
 mac:
+  extraResources:
+    - from: build/herdr/bin/${platform}-${arch}
+      to: herdr/bin/${platform}-${arch}
   category: public.app-category.developer-tools
   hardenedRuntime: true
   gatekeeperAssess: false
@@ -150,6 +155,9 @@ nsis:
   shortcutName: Pi Agent Desktop
 
 linux:
+  extraResources:
+    - from: build/herdr/bin/${platform}-${arch}
+      to: herdr/bin/${platform}-${arch}
   executableName: pi-agent-desktop
   # Override electron-builder's unsafe default AppImage argument. Keep Chromium
   # sandboxing enabled and use an app-owned inert launch marker instead.

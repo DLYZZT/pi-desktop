@@ -30,6 +30,8 @@ import { MessageRenderKeyRegistry, type MessageRenderRole } from "@/lib/message-
 import { buildToolMessageIndex } from "@/lib/tool-message-index";
 import { useI18n } from "@/i18n";
 import type { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
+import { skillInvocationCommandText } from "@shared/skill-invocation";
+import { localizedExtensionConfirmCopy } from "@/lib/extension-ui-copy";
 
 interface Props {
   session: SessionInfo | null;
@@ -77,12 +79,13 @@ function toMinimapMessage(message: AgentMessage | Partial<AgentMessage>): ChatMi
   if (message.role !== "user" && message.role !== "assistant") return null;
   const content = message.content;
   if (message.role === "user") {
-    const preview =
+    const rawPreview =
       typeof content === "string"
         ? content
         : Array.isArray(content)
           ? content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(" ")
           : "";
+    const preview = skillInvocationCommandText(rawPreview);
     return { role: "user", preview: preview.slice(0, 200), hasText: true };
   }
   const blocks = Array.isArray(content) ? content : [];
@@ -1090,8 +1093,6 @@ function NoticeShelf({
               alignItems: "center",
               gap: 10,
               minHeight: 60,
-              height: 60,
-              maxHeight: 60,
               marginBottom: index === notices.length - 1 ? 0 : 6,
               overflow: "hidden",
               borderRadius: 14,
@@ -1126,9 +1127,8 @@ function NoticeShelf({
                 padding: "14px 0",
                 minWidth: 0,
                 maxWidth: "100%",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                overflowWrap: "anywhere",
+                whiteSpace: "pre-wrap",
               }}
             >
               {notice.message}
@@ -1152,7 +1152,9 @@ function ExtensionDialog({
     response: { value: string } | { confirmed: boolean } | { cancelled: true },
   ) => void;
 }) {
+  const { t } = useI18n();
   const [value, setValue] = useState(request.method === "editor" ? (request.prefill ?? "") : "");
+  const confirmCopy = request.method === "confirm" ? localizedExtensionConfirmCopy(request, t) : null;
 
   useEffect(() => {
     setValue(request.method === "editor" ? (request.prefill ?? "") : "");
@@ -1192,7 +1194,9 @@ function ExtensionDialog({
         }}
       >
         <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ color: "var(--text)", fontSize: scaledChatFont(14), fontWeight: 650 }}>{request.title}</div>
+          <div style={{ color: "var(--text)", fontSize: scaledChatFont(14), fontWeight: 650 }}>
+            {confirmCopy?.title ?? request.title}
+          </div>
           <div
             style={{
               marginTop: 3,
@@ -1201,7 +1205,7 @@ function ExtensionDialog({
               fontFamily: "var(--font-mono)",
             }}
           >
-            extension request
+            {t("extensionRequest", "Extension request")}
           </div>
         </div>
 
@@ -1215,7 +1219,7 @@ function ExtensionDialog({
                 whiteSpace: "pre-wrap",
               }}
             >
-              {request.message}
+              {confirmCopy?.message ?? request.message}
             </div>
           )}
           {request.method === "select" && (
@@ -1311,7 +1315,7 @@ function ExtensionDialog({
               cursor: "pointer",
             }}
           >
-            Cancel
+            {t("cancel", "Cancel")}
           </button>
           {request.method === "confirm" ? (
             <button
@@ -1325,7 +1329,7 @@ function ExtensionDialog({
                 cursor: "pointer",
               }}
             >
-              Confirm
+              {t("confirm", "Confirm")}
             </button>
           ) : request.method !== "select" ? (
             <button
@@ -1339,7 +1343,7 @@ function ExtensionDialog({
                 cursor: "pointer",
               }}
             >
-              Submit
+              {t("submit", "Submit")}
             </button>
           ) : null}
         </div>

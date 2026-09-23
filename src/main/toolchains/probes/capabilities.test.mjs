@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import { probeExecutableSeed } from "./capabilities.ts";
+import { commandDescriptorFromCandidate, selectDefaultCandidates } from "../public-state.ts";
+import { ToolchainRuntime } from "../../../agent-host/toolchain-runtime.ts";
 
 const capabilities = [
   "shell.bash",
@@ -225,11 +228,111 @@ test("classifies noexec and executable permission failures without presenting an
   assert.equal(candidates[0].version, undefined);
 });
 
-test("does not auto-select Cygwin, standalone MSYS2, or legacy WSL bash", async () => {
+async function probeWindowsBash(
+  executable,
+  { provider = "system", root, gitVersion = "2.54.0.windows.1", failBash = false } = {},
+) {
+  const files = new Set(
+    root
+      ? ["bin/bash.exe", "usr/bin/bash.exe", "usr/bin/msys-2.0.dll", "cmd/git.exe"].map((entry) =>
+          path.win32.join(root, entry),
+        )
+      : [executable],
+  );
+  return probeExecutableSeed(
+    {
+      capability: "shell.bash",
+      provider,
+      discovery: "test",
+      executable,
+      argvPrefix: [],
+      binDir: path.win32.dirname(executable),
+      rank: 1,
+      ...(provider === "managed" ? { componentId: "portable-git", componentRoot: root } : {}),
+    },
+    {
+      platform: "win32",
+      arch: "x64",
+      env: {},
+      fileSystem: {
+        isFile: (file) => files.has(file),
+        isDirectory: () => true,
+        readDirectoryNames: () => [],
+        realpath: (file) => file,
+      },
+      executor: {
+        async run(command) {
+          const result = successfulResult(command);
+          if (command.args[0] === "--version") {
+            result.stdout =
+              command.executable === executable
+                ? "GNU bash, version 5.3.9(1)-release (x86_64-pc-msys)\n"
+                : `git version ${gitVersion}\n`;
+          } else if (failBash) {
+            result.exitCode = 1;
+          }
+          return result;
+        },
+      },
+    },
+  );
+}
+
+test("resolves Git Bash in versioned and custom directories through the Windows execution context", async () => {
+  for (const root of [
+    String.raw`D:\Soft\Tool\PortableGit-2.54.0-64-bit.7z`,
+    String.raw`D:\开发工具\my shell`,
+    String.raw`C:\Program Files\Git`,
+    String.raw`C:\Users\pi\scoop\apps\git\current`,
+    String.raw`C:\Users\pi\toolchains\staging\portable-git-random`,
+  ]) {
+    for (const entry of ["bin/bash.exe", "usr/bin/bash.exe"]) {
+      for (const provider of ["system", "custom", "managed"]) {
+        const executable = path.win32.join(root, entry);
+        const candidates = await probeWindowsBash(executable, { root, provider });
+        const selected = selectDefaultCandidates(candidates, { "shell.bash": provider });
+        assert.equal(candidates[0].health, "healthy", executable);
+        assert.equal(candidates[0].version, "5.3.9");
+        assert.ok(selected["shell.bash"], executable);
+        const descriptor = commandDescriptorFromCandidate(selected["shell.bash"], "win32");
+        assert.equal(descriptor.cwdSemantics, "msys");
+        const runtime = new ToolchainRuntime({
+          platform: "win32",
+          baseEnv: {},
+          fetchSnapshot: async () => ({ revision: 1 }),
+          resolveProject: async () => ({
+            id: "git-bash-test",
+            inventoryRevision: 1,
+            workspaceKey: "test",
+            commands: { "shell.bash": descriptor },
+            summary: [],
+          }),
+        });
+        const context = await runtime.createExecutionContext({ cwd: String.raw`D:\项目`, intent: "agent-shell" });
+        assert.equal(runtime.requireFromContext("shell.bash", context).executable, executable);
+        assert.equal(context.shellEnv.PI_DESKTOP_WORKSPACE_MSYS_PATH, "/d/项目");
+        assert.equal(context.nativeEnv.Path, "");
+        assert.equal(context.shellEnv.Path, path.win32.dirname(executable));
+      }
+    }
+  }
+});
+
+test("does not accept a broken Git Bash or a non-Windows Git distribution", async () => {
+  const root = String.raw`D:\tools\PortableGit`;
+  const executable = path.win32.join(root, "bin/bash.exe");
+  const broken = await probeWindowsBash(executable, { root, failBash: true });
+  assert.equal(broken[0].health, "broken");
+  const msys = await probeWindowsBash(executable, { root, gitVersion: "2.54.0" });
+  assert.equal(msys[0].health, "unverified");
+});
+
+test("does not auto-select Cygwin, standalone MSYS2, legacy WSL, or a directory merely named Git", async () => {
   for (const executable of [
     "C:\\cygwin64\\bin\\bash.exe",
     "C:\\msys64\\usr\\bin\\bash.exe",
     "C:\\Windows\\System32\\bash.exe",
+    "C:\\Git\\bin\\bash.exe",
   ]) {
     const candidates = await probeExecutableSeed(
       {

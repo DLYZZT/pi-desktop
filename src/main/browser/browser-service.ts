@@ -1,3 +1,4 @@
+import { getNativeLanguage } from "../native-language";
 import path from "node:path";
 import { createHmac, randomBytes } from "node:crypto";
 import { app, dialog, safeStorage, session, shell, type BrowserWindow, type Session } from "electron";
@@ -53,7 +54,7 @@ import { countAdvancedProfileTabs, toBrowserRestoreRecords } from "./browser-tab
 
 const RESTORE_DEBOUNCE_MS = 500;
 const RUNTIME_GRANT_TTL_MS = 8 * 60 * 60 * 1_000;
-type BrowserConfirmationLanguage = "en-US" | "zh-CN";
+type BrowserConfirmationLanguage = "en-US" | "zh-CN" | "zh-TW";
 
 export interface BrowserServiceOptions {
   userDataDir: string;
@@ -221,7 +222,8 @@ export class BrowserService {
       kind === "advanced-browser-mode" && payload
         ? prepareBrowserSettingsUpdate(this.policy.getSettings(), payload).canonicalPatch
         : (payload ?? null);
-    const normalizedLanguage = language === "zh-CN" ? "zh-CN" : "en-US";
+    const normalizedLanguage: BrowserConfirmationLanguage =
+      language === "zh-CN" || language === "zh-TW" ? language : "en-US";
     const accepted = await (this.options.confirm?.(kind, normalizedLanguage) ??
       this.defaultConfirmation(kind, normalizedLanguage));
     return accepted ? this.confirmations.issue(kind, confirmationPayload) : null;
@@ -1155,17 +1157,23 @@ export class BrowserService {
   private async defaultConfirmRouteBypass(origin: string): Promise<boolean> {
     const win = this.options.getWindow();
     if (!win || win.isDestroyed()) return false;
-    const zh = app.getLocale().toLowerCase().startsWith("zh");
+    const language = getNativeLanguage();
+    const zh = language !== "en-US";
+    const tw = language === "zh-TW";
     const response = await dialog.showMessageBox(win, {
       type: "warning",
-      title: zh ? "浏览器路径已阻止" : "Browser route blocked",
+      title: zh ? (tw ? "瀏覽器路徑已封鎖" : "浏览器路径已阻止") : "Browser route blocked",
       message: zh
-        ? "浏览器策略阻止该目标后，Agent 正尝试改用其他工具。"
+        ? tw
+          ? "瀏覽器策略已封鎖該目標後，Agent 正嘗試改用其他工具。"
+          : "浏览器策略阻止该目标后，Agent 正尝试改用其他工具。"
         : "The Agent is trying to use another tool after Browser policy blocked this target.",
       detail: zh
-        ? `目标：${origin}\n是否仅允许这一次命令？这不会更改浏览器或网络策略。`
+        ? tw
+          ? `目標：${origin}\n是否僅允許這一次命令？這不會更改瀏覽器或網路策略。`
+          : `目标：${origin}\n是否仅允许这一次命令？这不会更改浏览器或网络策略。`
         : `Target: ${origin}\nAllow this one command only? This does not change Browser or network policy.`,
-      buttons: zh ? ["取消", "仅允许一次"] : ["Cancel", "Allow once"],
+      buttons: zh ? (tw ? ["取消", "僅允許一次"] : ["取消", "仅允许一次"]) : ["Cancel", "Allow once"],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
@@ -1333,6 +1341,16 @@ export class BrowserService {
 }
 
 function confirmationCopy(language: BrowserConfirmationLanguage) {
+  if (language === "zh-TW") {
+    return {
+      title: "啟用進階瀏覽器模式",
+      message:
+        "進階瀏覽器模式會一併開放任意 JavaScript、網路內容與請求重播、身分覆寫、憑證放行、同源限制弱化與不受限 CDP。",
+      detail: "該模式可能存取已登入帳號的資料並觸發第三方風控。請在理解風險後再繼續；網頁或 Agent 無法自行啟用此模式。",
+      cancel: "取消",
+      continue: "本次啟動啟用",
+    };
+  }
   if (language === "zh-CN") {
     return {
       title: "启用高级浏览器模式",

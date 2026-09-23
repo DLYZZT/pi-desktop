@@ -1,6 +1,8 @@
+import type { AppLanguage } from "../shared/app-language.ts";
 import type { ChannelId } from "../shared/channel-types";
 import type { ManagedProcessCapability } from "./processes";
 import type { ChatAppearancePreferences } from "../shared/chat-appearance";
+import type { HerdrSettings } from "./herdr";
 import type { PublicToolchainState, ToolchainActionRequest } from "../shared/toolchains/types";
 import type {
   BrowserBoundsInput,
@@ -102,7 +104,7 @@ export interface ShowFileContextMenuRequest {
   href: string;
   cwd?: string;
   source: FileContextMenuSource;
-  language?: "en-US" | "zh-CN";
+  language?: "en-US" | "zh-CN" | "zh-TW";
 }
 
 export type ShowFileContextMenuResult = { shown: true } | { shown: false; code: FileContextMenuErrorCode };
@@ -120,9 +122,11 @@ export interface LocalFileInspection {
 }
 
 export interface DesktopUiState {
+  language?: AppLanguage;
   backgroundMode?: boolean;
   managedProcessesEnabled?: boolean;
   chatAppearance?: ChatAppearancePreferences;
+  herdrSettings?: HerdrSettings;
 }
 
 export type DesktopUiStatePatch = Partial<DesktopUiState>;
@@ -169,7 +173,7 @@ export interface PiBridge {
   browserRequestConfirmation: (
     kind: BrowserConfirmationKind,
     payload?: BrowserSettingsPatch,
-    language?: "en-US" | "zh-CN",
+    language?: "en-US" | "zh-CN" | "zh-TW",
   ) => Promise<BrowserConfirmationProof | null>;
   browserUpdateSettings: (
     patch: BrowserSettingsPatch,

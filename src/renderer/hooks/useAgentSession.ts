@@ -26,7 +26,7 @@ import {
   subscribeAgentEvents,
   subscribeSessionsChanged,
 } from "@/lib/api-client";
-import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
+import { getToolNamesForPreset, getPresetFromTools, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { subscribeActiveSessionLiveSync } from "./active-session-live-sync";
 import {
@@ -73,6 +73,7 @@ import {
 import { NOTICE_VISIBLE_MS, noticeExpiryDelay, noticeReducer, type NoticeType } from "@/lib/notice-queue";
 import { useI18n } from "@/i18n";
 import { sessionClientErrorMessage } from "@/lib/session-error-message";
+import { skillInvocationCommandText } from "@shared/skill-invocation";
 
 export type SessionData = SessionDetail;
 type AgentStateResponse = SessionRuntimeState;
@@ -119,7 +120,10 @@ export interface QueuedMessages {
 }
 
 function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null): QueuedMessages {
-  return { steering: q?.steering ?? [], followUp: q?.followUp ?? [] };
+  return {
+    steering: (q?.steering ?? []).map(skillInvocationCommandText),
+    followUp: (q?.followUp ?? []).map(skillInvocationCommandText),
+  };
 }
 
 type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
@@ -516,6 +520,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
 
         setData(d);
+        if (d.toolNames !== undefined) {
+          setToolPresetState(getPresetFromTools(d.toolNames.map((name) => ({ name, description: "", active: true }))));
+        }
         setActiveLeafId(d.leafId);
         const replacedCommitTrace = pendingSessionLoadTraceRef.current;
         if (replacedCommitTrace && replacedCommitTrace !== trace) failSessionLoadTrace(replacedCommitTrace);
@@ -561,7 +568,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (showLoading) setLoading(false);
       }
     },
-    [commitHistory, t, updatePagingState],
+    [commitHistory, t, updatePagingState, setToolPresetState],
   );
 
   useEffect(() => {
@@ -717,8 +724,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     async (sid: string) => {
       try {
         const tools = await sendAgentCommand<ToolEntry[]>(sid, { type: "get_tools" });
-        if (tools) {
-          const { getPresetFromTools } = await import("@/lib/tool-presets");
+        if (tools && sessionIdRef.current === sid) {
           setToolPresetState(getPresetFromTools(tools));
         }
       } catch (e) {
@@ -1760,7 +1766,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // clearQueue also emits an empty queue_update, but that only reaches us
       // while the stream is connected — clear locally so idle recalls update the UI.
       setQueuedMessages({ steering: [], followUp: [] });
-      const texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])];
+      const texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])].map(skillInvocationCommandText);
       if (texts.length > 0) {
         opts.chatInputRef?.current?.prependText(texts.join("\n\n"));
       }

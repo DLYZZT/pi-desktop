@@ -16,7 +16,7 @@
 
 [English](./README.en.md) · **简体中文**
 
-[下载 v0.1.14](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.14) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
+[下载 v0.2.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.2.3) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
 
 </div>
 
@@ -69,7 +69,17 @@
 - macOS/Linux 使用 POSIX process group；Windows x64 使用经过完整性校验的 Rust helper 和 Job Object，helper、reaper 或 owner identity 未就绪时会 fail-closed
 - 功能默认关闭且不是安全沙箱：子进程拥有与 Agent Bash 相同的本机文件、网络和环境权限；常见 LAN bind 需要确认，Host/App 故障或退出时会有界清理进程树
 
-v0.1.14 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows ARM64、Windows Server 和 32 位 Windows 暂不支持。
+v0.2.3 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows ARM64、Windows Server 和 32 位 Windows 暂不支持。
+
+### Pi 对话式控制 Herdr
+
+- 可选连接本机 Herdr，可在原主对话中查看 Fleet，创建、聚焦或重命名 workspace/tab/pane，解释 Agent 状态，脱敏查看进程，等待输出，并启动、提示或等待 Agent
+- Pi Session 侧栏和主对话始终是主入口；Agent Fleet 在初始页和激活会话中都位于标题栏右侧，右侧 ANSI terminal 仅用于观察、故障排查和显式接管
+- workspace/pane/Agent close 均需要 Pi 本机确认，确认框随界面语言显示完整中英文；Herdr v0.8.2 没有 `agent.stop`，因此 Agent close 会明确关闭其所在 pane，不会静默伪造停止语义
+- Herdr 随 macOS/Linux 应用内置；安装、版本、更新、修复和卸载统一在“开发工具”中管理，Managed 模式从已校验内置副本激活且不单独联网下载
+- Attach 只连接用户手动启动的系统 Herdr，Pi Desktop 永不停止它；Managed 由 Pi Desktop 自动启动、监控、重启并在禁用、切换模式、卸载或应用退出时关闭私有 server
+- Pi Session 与 Herdr Session 完全并存；关闭 Pi Desktop terminal 不关闭 Herdr pane/Agent，未知协议会 fail-closed
+- 设置导航中的 Herdr 位于“浏览器”和“消息渠道”之间；安装、更新、修复和卸载仍统一在“开发工具”中管理
 
 ### 围绕项目工作的文件体验
 
@@ -80,7 +90,7 @@ v0.1.14 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows A
 
 ### 模型与扩展统一管理
 
-- 内置 Pi Coding Agent 0.84.0，管理模型提供商和模型配置
+- 内置 Pi Coding Agent 0.85.0，管理模型提供商和模型配置
 - 会话启动优先使用本地模型目录；需要时可显式刷新远程目录，离线、超时或部分 provider 失败时继续保留缓存模型
 - 支持浏览器 OAuth 登录流程
 - 搜索、安装和配置 Skills；正常安装沿用 npm 默认并发，遇到网络、超时或 cache lock 故障时使用隔离缓存重试一次
@@ -117,9 +127,9 @@ v0.1.14 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows A
 
 ### 使用桌面安装包
 
-最新稳定版为 [v0.1.14](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.1.14)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
+最新稳定版为 [v0.2.3](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.2.3)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
 
-Pi Agent Desktop v0.1.14 已内置 Pi Coding Agent 0.84.0 运行时。普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
+Pi Agent Desktop v0.2.3 已内置 Pi Coding Agent 0.85.0 运行时。普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
 
 应用会读取 `~/.pi/agent/` 中的会话与配置。如果你已经使用 Pi CLI，可以直接复用现有数据，无需迁移；此前没有使用过 Pi CLI 也不影响使用。
 
@@ -200,22 +210,24 @@ flowchart LR
 
 ### 常用命令
 
-| 命令                                     | 说明                                          |
-| ---------------------------------------- | --------------------------------------------- |
-| `npm run dev`                            | 启动 Vite、主进程构建监听与 Electron          |
-| `npm run typecheck`                      | 执行 TypeScript 类型检查                      |
-| `npm run test`                           | 运行自动化测试套件                            |
-| `npm run check:contract`                 | 检查 API 方法与 Host handler 覆盖关系         |
-| `npm run smoke`                          | 运行 Electron 冒烟测试                        |
-| `npm run test:browser-electron`          | 运行本地 Browser Electron 集成测试            |
-| `npm run test:managed-process-workflows` | 运行受管进程生命周期与清理测试                |
-| `npm run test:windows-managed-helper`    | 在 Windows x64 验收 Rust helper 与 Job Object |
-| `npm run verify`                         | 执行提交前的完整质量检查                      |
-| `npm run build`                          | 构建 main、preload 与 renderer                |
-| `npm run pack`                           | 生成未封装的应用目录                          |
-| `npm run dist`                           | 生成当前平台配置的全部架构安装包              |
-| `npm run dist:mac:signed`                | 生成当前 Mac 架构的 Developer ID 签名包       |
-| `npm run dist:mac:notarized`             | 生成签名并经 Apple 公证的 macOS 包            |
+| 命令                                     | 说明                                             |
+| ---------------------------------------- | ------------------------------------------------ |
+| `npm run dev`                            | 启动 Vite、主进程构建监听与 Electron             |
+| `npm run typecheck`                      | 执行 TypeScript 类型检查                         |
+| `npm run test`                           | 运行自动化测试套件                               |
+| `npm run check:contract`                 | 检查 API 方法与 Host handler 覆盖关系            |
+| `npm run smoke`                          | 运行 Electron 冒烟测试                           |
+| `npm run test:browser-electron`          | 运行本地 Browser Electron 集成测试               |
+| `npm run test:managed-process-workflows` | 运行受管进程生命周期与清理测试                   |
+| `npm run test:herdr-e2e`                 | 使用指定官方 binary 运行隔离 Herdr E2E           |
+| `npm run test:herdr-desktop-e2e`         | 运行 production Electron/Renderer Herdr 集成 E2E |
+| `npm run test:windows-managed-helper`    | 在 Windows x64 验收 Rust helper 与 Job Object    |
+| `npm run verify`                         | 执行提交前的完整质量检查                         |
+| `npm run build`                          | 构建 main、preload 与 renderer                   |
+| `npm run pack`                           | 生成未封装的应用目录                             |
+| `npm run dist`                           | 生成当前平台配置的全部架构安装包                 |
+| `npm run dist:mac:signed`                | 生成当前 Mac 架构的 Developer ID 签名包          |
+| `npm run dist:mac:notarized`             | 生成签名并经 Apple 公证的 macOS 包               |
 
 ### 项目结构
 

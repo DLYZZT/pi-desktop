@@ -28,6 +28,8 @@ export interface SessionInfo {
 
 export interface SessionDetail {
   sessionId: string;
+  /** Desktop-owned selection, available without starting a writable Agent session. */
+  toolNames?: string[];
   filePath: string;
   info: SessionInfo | null;
   tree: SessionTreeNode[];

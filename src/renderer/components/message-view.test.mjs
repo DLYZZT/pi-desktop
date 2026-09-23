@@ -73,6 +73,32 @@ test("legacy attachment placeholders without metadata disable copy", () => {
   assert.match(html, /disabled=""/);
 });
 
+test("renders persisted skill invocations collapsed without exposing their instructions", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: {
+        role: "user",
+        content: `<skill name="review" location="/home/test/.pi/skills/review/SKILL.md">
+References are relative to /home/test/.pi/skills/review.
+
+# Review
+
+Private implementation instructions.
+</skill>
+
+Check the current change`,
+      },
+    }),
+  );
+
+  assert.match(html, /data-testid="skill-invocation"/);
+  assert.match(html, /data-skill-name="review"/);
+  assert.match(html, /aria-expanded="false"/);
+  assert.match(html, /Check the current change/);
+  assert.doesNotMatch(html, /Private implementation instructions/);
+  assert.doesNotMatch(html, /\/home\/test\/\.pi\/skills/);
+});
+
 function assistant(overrides = {}) {
   return {
     role: "assistant",

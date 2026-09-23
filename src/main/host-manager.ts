@@ -8,6 +8,7 @@ import path from "path";
 import { appendMainLog, appendMainLogs } from "./logger";
 import type { ToolchainSnapshot } from "../shared/toolchains/types";
 import type { BrowserCapabilitySnapshot } from "../contract/browser";
+import type { HerdrRuntimeDescriptor } from "../contract/herdr";
 import { BrowserError } from "./browser/browser-error";
 import { createHostExitSignal, reserveHostRestart, trySpawnHost, type HostExitSignal } from "./host-restart-core";
 import { HostOutputLineBuffer } from "./logger-core";
@@ -29,6 +30,7 @@ export type HostMessage =
   | { type: "agent-end"; sessionId: string; eventType?: string }
   | { type: "toolchain:ack"; revision: number }
   | { type: "browser:ack"; revision: number }
+  | { type: "herdr:ack"; revision: number; hostGeneration: number }
   | { type: "managed-process-owner:ack"; version: 1; hostInstanceId: string }
   | { type: string; [key: string]: unknown };
 
@@ -50,8 +52,12 @@ export class HostManager {
   private toolchainAckRevision = -1;
   private browserCapabilitySnapshot: BrowserCapabilitySnapshot | null = null;
   private browserAckRevision = -1;
+  private herdrRuntimeDescriptor: HerdrRuntimeDescriptor | null = null;
+  private herdrAckRevision = -1;
+  private herdrDeliveryTimer: ReturnType<typeof setTimeout> | null = null;
   private piVersion: string | null = null;
   private hostInstanceId: string | null = null;
+  private hostGeneration = 0;
   private managedProcessOwnerReady = false;
 
   constructor(private readonly hostEntry: string) {}
@@ -104,6 +110,15 @@ export class HostManager {
     return this.browserAckRevision;
   }
 
+  setHerdrRuntimeDescriptor(descriptor: HerdrRuntimeDescriptor): void {
+    this.herdrRuntimeDescriptor = structuredClone(descriptor);
+    if (this.child && this.status === "ready") this.postHerdrSnapshot("herdr:runtime:changed");
+  }
+
+  getHerdrAckRevision(): number {
+    return this.herdrAckRevision;
+  }
+
   start(): void {
     if (this.child) return;
     this.spawn();
@@ -112,6 +127,7 @@ export class HostManager {
   stop(): Promise<void> {
     const exitPromise = this.childExitSignal?.promise ?? Promise.resolve();
     this.clearPing();
+    this.clearHerdrDeliveryRetry();
     this.status = "stopped";
     if (this.child) {
       try {
@@ -212,6 +228,9 @@ export class HostManager {
     // itself; an acknowledgement from the previous Host is not transferable.
     this.toolchainAckRevision = -1;
     this.browserAckRevision = -1;
+    this.herdrAckRevision = -1;
+    this.clearHerdrDeliveryRetry();
+    this.hostGeneration += 1;
     this.hostInstanceId = randomUUID();
     this.managedProcessOwnerReady = false;
     this.setStatus("starting");
@@ -269,6 +288,7 @@ export class HostManager {
         this.wasReadyBeforeExit = false;
         this.postToolchainSnapshot("toolchain:init");
         this.postBrowserSnapshot("browser:init");
+        this.postHerdrSnapshot("herdr:runtime:init");
         this.postManagedProcessOwnerIdentity();
         this.setStatus("ready");
         this.startPing();
@@ -290,6 +310,20 @@ export class HostManager {
         if (Number.isSafeInteger(revision) && revision >= 0) {
           this.browserAckRevision = Math.max(this.browserAckRevision, revision);
           appendMainLog(`agent-host browser ack revision=${revision}`);
+        }
+      } else if (m?.type === "herdr:ack") {
+        const revision = Number(m.revision);
+        if (
+          this.child === child &&
+          m.hostGeneration === this.hostGeneration &&
+          Number.isSafeInteger(revision) &&
+          revision >= 0
+        ) {
+          this.herdrAckRevision = Math.max(this.herdrAckRevision, revision);
+          appendMainLog(`agent-host Herdr runtime ack revision=${revision}`);
+          if (this.herdrRuntimeDescriptor && this.herdrAckRevision >= this.herdrRuntimeDescriptor.revision) {
+            this.clearHerdrDeliveryRetry();
+          }
         }
       } else if (m?.type === "managed-process-owner:ack") {
         if (m.version === 1 && m.hostInstanceId === this.hostInstanceId && this.child === child) {
@@ -431,6 +465,37 @@ export class HostManager {
     } catch (error) {
       appendMainLog(`browser snapshot delivery failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private postHerdrSnapshot(type: "herdr:runtime:init" | "herdr:runtime:changed"): void {
+    const child = this.child;
+    if (!child || !this.herdrRuntimeDescriptor) return;
+    try {
+      child.postMessage({
+        type,
+        descriptor: { ...this.herdrRuntimeDescriptor, hostGeneration: this.hostGeneration },
+      });
+    } catch (error) {
+      appendMainLog(`Herdr runtime delivery failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    this.scheduleHerdrDeliveryRetry(child);
+  }
+
+  private scheduleHerdrDeliveryRetry(child: UtilityProcess): void {
+    this.clearHerdrDeliveryRetry();
+    if (!this.herdrRuntimeDescriptor || this.herdrAckRevision >= this.herdrRuntimeDescriptor.revision) return;
+    this.herdrDeliveryTimer = setTimeout(() => {
+      this.herdrDeliveryTimer = null;
+      if (this.child !== child || this.status !== "ready") return;
+      this.postHerdrSnapshot("herdr:runtime:changed");
+    }, 1_000);
+    this.herdrDeliveryTimer.unref();
+  }
+
+  private clearHerdrDeliveryRetry(): void {
+    if (!this.herdrDeliveryTimer) return;
+    clearTimeout(this.herdrDeliveryTimer);
+    this.herdrDeliveryTimer = null;
   }
 
   private postManagedProcessOwnerIdentity(): void {

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.2",
+  "protocol": 20,
+  "apiSchemaVersion": 1,
+  "apiSchemaSha256": "c48f1f54ee0150ca27e11fd44455fe94aeadb20fdf4e4a62393ed822a4e5b150",
+  "license": "Apache-2.0",
+  "artifacts": {
+    "darwin-arm64": {
+      "upstreamPlatform": "macos-aarch64",
+      "url": "https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-macos-aarch64",
+      "downloadBytes": 18969952,
+      "sha256": "a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574"
+    },
+    "darwin-x64": {
+      "upstreamPlatform": "macos-x86_64",
+      "url": "https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-macos-x86_64",
+      "downloadBytes": 20551504,
+      "sha256": "ab50262c8190cd7aa9056d249d255c08c328c3e8716de9cfa29db4f131b8e2c1"
+    },
+    "linux-x64": {
+      "upstreamPlatform": "linux-x86_64",
+      "url": "https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64",
+      "downloadBytes": 22733040,
+      "sha256": "976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4"
+    },
+    "win32-x64": {
+      "upstreamPlatform": "windows-x86_64",
+      "url": "https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-windows-x86_64.zip",
+      "downloadBytes": 8382621,
+      "sha256": "0ab3d0fe1434d55757997542b978c771d642987bb15a7130f4160f0db38821d5"
+    }
+  },
+  "fixturesOnly": {
+    "linux-arm64": {
+      "upstreamPlatform": "linux-aarch64",
+      "sha256": "f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d"
+    }
+  }
+}

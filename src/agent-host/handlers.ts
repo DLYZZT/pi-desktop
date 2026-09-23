@@ -28,6 +28,8 @@ import {
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type AuthInteraction } from "@earendil-works/pi-ai";
+import { readSessionSnapshot, assertSessionWritable } from "./session-readonly.ts";
+import { getDesktopSessionToolNames } from "./session-tool-store.ts";
 import {
   AUTO_TITLE_MAX_LENGTH,
   makeFallbackTitle,
@@ -56,6 +58,7 @@ import {
   getRunningRpcSessionIds,
   startRpcSession,
   subscribeRunningSessions,
+  syncDesktopToolsForAllSessions,
 } from "./rpc-manager";
 import {
   buildSessionContext,
@@ -120,6 +123,9 @@ import type {
   ManagedProcessWaitParams,
   ManagedProcessWriteParams,
 } from "../contract/processes";
+import { HerdrBridgeError } from "./herdr/errors";
+import { clearHerdrBridge, initializeHerdrBridge } from "./herdr/runtime";
+import type { HerdrSettings } from "../contract/herdr";
 
 const IGNORED_NAMES = new Set([
   "node_modules",
@@ -506,7 +512,7 @@ async function hasSessionName(sessionId: string): Promise<boolean> {
   try {
     const filePath = await resolveSessionPath(sessionId);
     if (!filePath) return false;
-    const storedName = SessionManager.open(filePath, undefined).getSessionName();
+    const storedName = readSessionSnapshot(filePath).getSessionName();
     return typeof storedName === "string" && storedName.trim().length > 0;
   } catch {
     return false;
@@ -540,6 +546,7 @@ export async function applySessionNameIfEmpty(sessionId: string, name: string): 
   const liveResultAfterLookup = applyLiveSessionNameIfEmpty(sessionId, normalized);
   if (liveResultAfterLookup !== null) return liveResultAfterLookup;
 
+  assertSessionWritable(filePath);
   const manager = SessionManager.open(filePath, undefined);
   const storedName = manager.getSessionName();
   if (typeof storedName === "string" && storedName.trim().length > 0) return false;
@@ -569,7 +576,7 @@ async function resolveTitleSessionTarget(
 
   const filePath = await resolveSessionPath(sessionId);
   if (!filePath) return null;
-  const cwd = SessionManager.open(filePath, undefined).getHeader()?.cwd;
+  const cwd = readSessionSnapshot(filePath).getHeader()?.cwd;
   const dir = validateExistingDirectory(cwd);
   return dir.ok ? { cwd: dir.path } : null;
 }
@@ -699,6 +706,19 @@ export function initializeChannels(
   void manager.initialize().catch((error) => report(safeChannelError(error)));
 }
 
+export function assertHerdrParamKeys(value: unknown, allowedKeys: readonly string[]): Record<string, unknown> {
+  if (value === undefined && allowedKeys.length === 0) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HerdrBridgeError("HERDR_INVALID_REQUEST", "Herdr request parameters are invalid.");
+  }
+  const params = value as Record<string, unknown>;
+  const allowed = new Set(allowedKeys);
+  if (Object.keys(params).some((key) => !allowed.has(key))) {
+    throw new HerdrBridgeError("HERDR_INVALID_REQUEST", "Herdr request contains an unsupported parameter.");
+  }
+  return params;
+}
+
 export function registerHandlers(server: RpcServer): () => Promise<void> {
   const fileWatch = createFileWatchService(server);
   const authLogin = createAuthLoginService(server);
@@ -707,6 +727,8 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
   );
   initializeChannels(channelManager);
   const managedProcesses = initializeManagedProcessService(server);
+  const herdr = initializeHerdrBridge(server, { assertAllowedPath: (target) => assertPathAllowed(target) });
+  const stopHerdrToolSync = herdr.subscribeRuntime(() => syncDesktopToolsForAllSessions());
 
   const managedCall = async <T>(operation: () => T | Promise<T>): Promise<T> => {
     try {
@@ -714,6 +736,16 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     } catch (error) {
       if (error instanceof ManagedProcessError) {
         throw new RpcError({ code: error.code, message: error.message, detail: error.details });
+      }
+      throw error;
+    }
+  };
+  const herdrCall = async <T>(operation: () => T | Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof HerdrBridgeError) {
+        throw new RpcError({ code: error.code, message: error.message, detail: error.toPublic() });
       }
       throw error;
     }
@@ -736,6 +768,202 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
   server.handle({
     "host.ping": () => ({ ok: true as const, ts: Date.now() }),
+
+    "herdr.runtime.get": (params) =>
+      herdrCall(() => {
+        assertHerdrParamKeys(params, []);
+        return herdr.getRuntime();
+      }),
+
+    "herdr.runtime.configure": (params) =>
+      herdrCall(() => {
+        const body = assertHerdrParamKeys(params, ["settings"]) as { settings: HerdrSettings };
+        return herdr.configure(body.settings);
+      }),
+
+    "herdr.runtime.probe": (params) =>
+      herdrCall(() => {
+        assertHerdrParamKeys(params, []);
+        return herdr.probe();
+      }),
+
+    "herdr.runtime.connect": (params) =>
+      herdrCall(() => {
+        assertHerdrParamKeys(params, []);
+        return herdr.connect();
+      }),
+
+    "herdr.runtime.disconnect": (params) =>
+      herdrCall(async () => {
+        assertHerdrParamKeys(params, []);
+        await herdr.disconnect(false);
+        return { ok: true as const };
+      }),
+
+    "herdr.diagnostics": (params) =>
+      herdrCall(() => {
+        assertHerdrParamKeys(params, []);
+        return herdr.getDiagnostics();
+      }),
+
+    "herdr.snapshot": (params) =>
+      herdrCall(() => {
+        assertHerdrParamKeys(params, []);
+        return herdr.refreshSnapshot();
+      }),
+
+    "herdr.workspace.create": async (params) => {
+      return herdrCall(async () => {
+        const body = assertHerdrParamKeys(params, ["cwd", "name"]) as { cwd: string; name?: string };
+        if (
+          typeof body.cwd !== "string" ||
+          !body.cwd ||
+          body.cwd.length > 4_096 ||
+          /[\0\r\n]/.test(body.cwd) ||
+          (body.name !== undefined &&
+            (typeof body.name !== "string" ||
+              !body.name.trim() ||
+              body.name.length > 256 ||
+              /[\0\r\n]/.test(body.name)))
+        ) {
+          throw new HerdrBridgeError("HERDR_INVALID_REQUEST", "Workspace parameters are invalid.");
+        }
+        await assertPathAllowed(body.cwd);
+        return herdr.createWorkspace(body.cwd, body.name);
+      });
+    },
+
+    "herdr.pane.split": async (params) => {
+      return herdrCall(async () => {
+        const body = assertHerdrParamKeys(params, ["paneId", "direction", "cwd"]) as {
+          paneId?: string;
+          direction?: "horizontal" | "vertical";
+          cwd?: string;
+        };
+        if (body.cwd !== undefined) {
+          if (typeof body.cwd !== "string" || !body.cwd || body.cwd.length > 4_096 || /[\0\r\n]/.test(body.cwd)) {
+            throw new HerdrBridgeError("HERDR_INVALID_REQUEST", "Pane split parameters are invalid.");
+          }
+          await assertPathAllowed(body.cwd);
+        }
+        return herdr.splitPane(body.paneId!, body.direction!, body.cwd);
+      });
+    },
+
+    "herdr.pane.read": (params) => {
+      return herdrCall(() => {
+        const body = assertHerdrParamKeys(params, ["paneId", "maxBytes"]) as {
+          paneId?: string;
+          maxBytes?: number;
+        };
+        return herdr.readPane(body.paneId!, body.maxBytes);
+      });
+    },
+
+    "herdr.agent.start": (params) => {
+      return herdrCall(() => {
+        const body = assertHerdrParamKeys(params, ["paneId", "kind"]);
+        return herdr.startAgent(body.paneId as string, body.kind);
+      });
+    },
+
+    "herdr.agent.prompt": (params) => {
+      return herdrCall(() => {
+        const body = assertHerdrParamKeys(params, ["paneId", "prompt"]);
+        return herdr.promptAgent(body.paneId as string, body.prompt);
+      });
+    },
+
+    "herdr.agent.sendKeys": (params) => {
+      return herdrCall(() => {
+        const body = assertHerdrParamKeys(params, ["paneId", "keys"]);
+        return herdr.sendAgentKeys(body.paneId as string, body.keys);
+      });
+    },
+
+    "herdr.agent.wait": (params) => {
+      return herdrCall(() => {
+        const body = assertHerdrParamKeys(params, ["paneId", "states", "timeoutMs", "requestId"]);
+        return herdr.waitAgent(body.paneId as string, body.states, body.timeoutMs, body.requestId);
+      });
+    },
+
+    "herdr.agent.waitCancel": (params) => {
+      return herdrCall(() => {
+        const body = assertHerdrParamKeys(params, ["requestId"]);
+        herdr.cancelWait(body.requestId);
+        return { ok: true as const };
+      });
+    },
+
+    "herdr.terminal.open": (params, context) => {
+      return herdrCall(async () => {
+        const body = assertHerdrParamKeys(params, ["paneId", "mode", "cols", "rows", "takeover"]) as {
+          paneId?: string;
+          mode?: "observe" | "control";
+          cols?: number;
+          rows?: number;
+          takeover?: boolean;
+        };
+        if (body.takeover !== undefined && typeof body.takeover !== "boolean") {
+          throw new HerdrBridgeError("HERDR_INVALID_REQUEST", "Terminal takeover must be a boolean.");
+        }
+        const result = await herdr.openTerminal(body.paneId!, body.mode!, body.cols!, body.rows!, body.takeover);
+        context?.setLease(`herdr.terminal:${result.terminalId}`, () => {
+          herdr.getTerminals().scheduleOrphanRelease(result.terminalId);
+        });
+        return result;
+      });
+    },
+
+    "herdr.terminal.input": (params) => {
+      return herdrCall(() => {
+        const body = assertHerdrParamKeys(params, ["terminalId", "bytes"]) as {
+          terminalId?: string;
+          bytes?: Uint8Array;
+        };
+        herdr.getTerminals().get(body.terminalId!).input(body.bytes!);
+        return { accepted: true as const };
+      });
+    },
+
+    "herdr.terminal.resize": (params) => {
+      return herdrCall(() => {
+        const body = assertHerdrParamKeys(params, ["terminalId", "cols", "rows"]) as {
+          terminalId?: string;
+          cols?: number;
+          rows?: number;
+        };
+        herdr.getTerminals().get(body.terminalId!).resize(body.cols!, body.rows!);
+        return { accepted: true as const };
+      });
+    },
+
+    "herdr.terminal.ack": (params) => {
+      return herdrCall(() => {
+        const body = assertHerdrParamKeys(params, ["terminalId", "seq"]) as {
+          terminalId?: string;
+          seq?: number;
+        };
+        herdr.getTerminals().get(body.terminalId!).ack(body.seq!);
+        return { ok: true as const };
+      });
+    },
+
+    "herdr.terminal.close": (params, context) => {
+      return herdrCall(async () => {
+        const body = assertHerdrParamKeys(params, ["terminalId", "release"]) as {
+          terminalId?: string;
+          release?: boolean;
+        };
+        if (typeof body.release !== "boolean") {
+          throw new HerdrBridgeError("HERDR_INVALID_REQUEST", "Terminal release must be a boolean.");
+        }
+        context?.releaseLease(`herdr.terminal:${body.terminalId!}`);
+        await herdr.getTerminals().close(body.terminalId!, body.release === true);
+        return { ok: true as const };
+      });
+    },
 
     "host.toolchain": async (params) => {
       const { cwd } = params as { cwd: string };
@@ -887,8 +1115,10 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         ]);
         const infoMs = performance.now() - infoStartedAt;
 
+        const toolNames = getDesktopSessionToolNames(id);
         const detail: SessionDetail = {
           sessionId: id,
+          ...(toolNames === undefined ? {} : { toolNames }),
           filePath,
           info,
           leafId,
@@ -997,7 +1227,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         return { content: raw, suggestedName: `session-${id}.json` };
       }
       // Simple markdown export of session file content
-      const sm = SessionManager.open(filePath);
+      const sm = readSessionSnapshot(filePath);
       const context = buildSessionContext(sm.getEntries() as never);
       const lines: string[] = [`# Session ${id}`, ""];
       for (const msg of context.messages as Array<{ role: string; content: unknown }>) {
@@ -1073,6 +1303,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       } else {
         const filePath = await resolveSessionPath(id);
         if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+        assertSessionWritable(filePath);
         const sm = SessionManager.open(filePath);
         // ISSUE-014: SDK uses appendSessionInfo, not setSessionName
         sm.appendSessionInfo(name.trim());
@@ -1209,7 +1440,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       }
       const filePath = await resolveSessionPath(sessionId);
       if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
-      const cwd = SessionManager.open(filePath).getHeader()?.cwd ?? process.cwd();
+      const cwd = readSessionSnapshot(filePath).getHeader()?.cwd ?? process.cwd();
       const { session } = await startRpcSession(sessionId, filePath, cwd);
       ensureSessionEvents(server, session, sessionId);
       return session.send(command);
@@ -2165,6 +2396,9 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
   return async () => {
     modelCatalogRefreshCoordinator.cancelAll();
+    stopHerdrToolSync();
+    await herdr.shutdown();
+    clearHerdrBridge(herdr);
     await managedProcesses.stopAll("host");
     await channelManager.shutdown();
     stopAllFileWatches();

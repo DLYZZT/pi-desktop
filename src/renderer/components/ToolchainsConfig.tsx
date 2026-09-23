@@ -78,6 +78,7 @@ const COMPONENT_LABELS: Record<ManagedComponentId, string> = {
   fd: "fd",
   jq: "jq",
   bun: "Bun",
+  herdr: "Herdr",
 };
 
 const CACHE_LABELS: Record<ToolchainCacheId, string> = {
@@ -88,6 +89,7 @@ const CACHE_LABELS: Record<ToolchainCacheId, string> = {
 };
 
 type Translate = (key: string, fallback: string) => string;
+type DeveloperToolSelection = ToolCapabilityId | "component.herdr";
 
 function toolCategoryTitle(category: (typeof TOOL_CATEGORIES)[number]["id"], t: Translate): string {
   switch (category) {
@@ -193,11 +195,17 @@ export function ToolchainStateView({
 }) {
   const isMobile = useIsMobile();
   const { language, t } = useI18n();
-  const [selected, setSelected] = useState<ToolCapabilityId>("js.node");
-  const capabilityState = state?.capabilities[selected];
-  const componentId = CAPABILITY_COMPONENTS[selected];
+  const [selected, setSelected] = useState<DeveloperToolSelection>("js.node");
+  const herdrSelected = selected === "component.herdr";
+  const selectedCapability = herdrSelected ? undefined : selected;
+  const capabilityState = selectedCapability ? state?.capabilities[selectedCapability] : undefined;
+  const componentId = herdrSelected
+    ? "herdr"
+    : selectedCapability
+      ? CAPABILITY_COMPONENTS[selectedCapability]
+      : undefined;
   const component = componentId ? state?.components[componentId] : undefined;
-  const cacheId = CAPABILITY_CACHES[selected];
+  const cacheId = selectedCapability ? CAPABILITY_CACHES[selectedCapability] : undefined;
   const cache = cacheId ? state?.caches?.[cacheId] : undefined;
   const operation = componentId ? latestOperation(state?.operations ?? [], componentId) : undefined;
   const disabled = !state || Boolean(pendingAction) || state.stateReadOnly === true;
@@ -316,6 +324,78 @@ export function ToolchainStateView({
               </div>
             );
           })}
+          <div style={{ marginBottom: 6 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+                padding: "4px 8px 3px",
+                fontSize: 10,
+                fontWeight: 600,
+                color: "var(--text-dim)",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              <span>{t("toolGroupAgentRuntimes", "Agent runtimes")}</span>
+              <span style={{ letterSpacing: 0, fontWeight: 500 }}>
+                {state ? `${state.components.herdr?.health === "healthy" ? 1 : 0}/1` : "–"}
+              </span>
+            </div>
+            <button
+              type="button"
+              data-tool-id="component.herdr"
+              aria-label={`Herdr · ${healthLabel(state?.components.herdr?.health ?? "missing", t)}`}
+              aria-current={herdrSelected ? "true" : undefined}
+              onClick={() => setSelected("component.herdr")}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "8px 8px",
+                border: "none",
+                borderRadius: 5,
+                cursor: "pointer",
+                background: herdrSelected ? "var(--bg-selected)" : "transparent",
+                color: "var(--text)",
+                textAlign: "left",
+              }}
+              onMouseEnter={(event) => {
+                if (!herdrSelected) event.currentTarget.style.background = "var(--bg-hover)";
+              }}
+              onMouseLeave={(event) => {
+                if (!herdrSelected) event.currentTarget.style.background = "transparent";
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  flexShrink: 0,
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: healthColor(state?.components.herdr?.health ?? "missing"),
+                }}
+              />
+              <span
+                style={{
+                  minWidth: 0,
+                  flex: 1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 12,
+                  fontWeight: herdrSelected ? 600 : 400,
+                }}
+              >
+                Herdr
+              </span>
+            </button>
+          </div>
         </div>
 
         <div style={{ padding: "8px 8px 9px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
@@ -365,24 +445,211 @@ export function ToolchainStateView({
       </aside>
 
       <main style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: isMobile ? 16 : 20 }}>
-        <ToolDetail
-          capability={selected}
-          state={capabilityState}
-          component={component}
-          operation={operation}
-          cacheId={cacheId}
-          cache={cache}
-          downloadsCache={state?.caches?.downloads}
-          projectSummary={state?.projectSummary}
-          stateReadOnly={state?.stateReadOnly === true}
-          failed={failed}
-          actionError={actionError}
-          pendingAction={pendingAction}
-          disabled={disabled}
-          onAction={onAction}
-          t={t}
-        />
+        {herdrSelected ? (
+          <HerdrComponentDetail
+            component={component}
+            operation={operation}
+            stateReadOnly={state?.stateReadOnly === true}
+            failed={failed}
+            actionError={actionError}
+            pendingAction={pendingAction}
+            disabled={disabled}
+            onAction={onAction}
+            t={t}
+          />
+        ) : (
+          <ToolDetail
+            capability={selectedCapability!}
+            state={capabilityState}
+            component={component}
+            operation={operation}
+            cacheId={cacheId}
+            cache={cache}
+            downloadsCache={state?.caches?.downloads}
+            projectSummary={state?.projectSummary}
+            stateReadOnly={state?.stateReadOnly === true}
+            failed={failed}
+            actionError={actionError}
+            pendingAction={pendingAction}
+            disabled={disabled}
+            onAction={onAction}
+            t={t}
+          />
+        )}
       </main>
+    </div>
+  );
+}
+
+function HerdrComponentDetail({
+  component,
+  operation,
+  stateReadOnly,
+  failed,
+  actionError,
+  pendingAction,
+  disabled,
+  onAction,
+  t,
+}: {
+  component?: PublicManagedComponentState;
+  operation?: PublicToolchainOperation;
+  stateReadOnly: boolean;
+  failed: boolean;
+  actionError: string | null;
+  pendingAction: string | null;
+  disabled: boolean;
+  onAction?: (request: ToolchainActionRequest) => void;
+  t: Translate;
+}) {
+  const health = component?.health ?? "missing";
+  const installKey = "component:herdr:install";
+  const repairKey = "component:herdr:repair";
+  const removeKey = "component:herdr:remove";
+  const updateAvailable = Boolean(
+    component?.installed && component.canInstall && component.activeVersion !== component.availableVersion,
+  );
+  const cancellable = Boolean(operation && ["queued", "verifying", "probing", "activating"].includes(operation.phase));
+  const operationVisible = Boolean(operation && (isActiveOperation(operation) || operation.phase === "error"));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 680 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <span
+          style={{
+            padding: "2px 6px",
+            borderRadius: 3,
+            background: "rgba(120,120,120,0.12)",
+            color: "var(--text-dim)",
+            fontSize: 10,
+          }}
+        >
+          {t("toolProviderBundled", "Bundled")}
+        </span>
+        <span
+          style={{
+            marginLeft: "auto",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 11,
+            color: healthColor(health),
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{ width: 7, height: 7, borderRadius: "50%", background: healthColor(health) }}
+          />
+          {healthLabel(health, t)}
+        </span>
+      </div>
+
+      <div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 18, fontWeight: 700, color: "var(--text)" }}>Herdr</div>
+        <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.6, color: "var(--text-muted)" }}>
+          {t(
+            "herdrToolchainDescription",
+            "Install, update, repair, or remove Pi Desktop's private Herdr runtime. The verified runtime is included with the app, so these actions do not download Herdr separately.",
+          )}
+        </div>
+      </div>
+
+      {(failed || actionError) && (
+        <div role="alert" style={{ color: "var(--danger)", fontSize: 12 }}>
+          {actionError ??
+            t("toolDiscoveryFailed", "Tool discovery failed. Existing selections were not changed; try rescanning.")}
+        </div>
+      )}
+      {stateReadOnly && (
+        <div role="alert" style={{ color: "var(--warning)", fontSize: 12 }}>
+          {t(
+            "toolStateReadOnly",
+            "These tool settings were written by a newer Pi Desktop. This version will not modify or delete them.",
+          )}
+        </div>
+      )}
+
+      <DetailSection title={t("managedRuntime", "Managed runtime")}>
+        <DetailGrid>
+          <DetailPair
+            label={t("toolHealth", "Status")}
+            value={healthLabel(health, t)}
+            valueColor={healthColor(health)}
+          />
+          <DetailPair
+            label={t("herdrInstalledVersion", "Installed version")}
+            value={component?.activeVersion ? `v${component.activeVersion}` : "—"}
+            mono
+          />
+          <DetailPair
+            label={t("herdrBundledVersion", "Bundled version")}
+            value={component?.availableVersion ? `v${component.availableVersion}` : "—"}
+            mono
+          />
+          <DetailPair label={t("toolPlatform", "Platform")} value={component?.platformArch ?? "—"} mono />
+          <DetailPair label={t("herdrBundledSize", "Bundled size")} value={formatBytes(component?.installedBytes, t)} />
+          <DetailPair
+            label={t("herdrPrivateDiskUsage", "Private disk usage")}
+            value={formatBytes(component?.diskBytes, t)}
+          />
+          <DetailPair label={t("toolSource", "Source")} value={t("toolProviderBundled", "Bundled")} />
+        </DetailGrid>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {component?.canInstall && (
+            <ActionButton
+              primary
+              disabled={disabled}
+              busy={pendingAction === installKey}
+              onClick={() => onAction?.({ action: "install-component", componentId: "herdr" })}
+            >
+              {updateAvailable ? t("updateManagedTool", "Update") : t("installManagedTool", "Install")}
+            </ActionButton>
+          )}
+          {component?.canRepair && (
+            <ActionButton
+              disabled={disabled}
+              busy={pendingAction === repairKey}
+              onClick={() => onAction?.({ action: "repair-component", componentId: "herdr" })}
+            >
+              {t("repairManagedTool", "Repair")}
+            </ActionButton>
+          )}
+          {component?.canRemove && (
+            <ActionButton
+              disabled={disabled}
+              busy={pendingAction === removeKey}
+              onClick={() => onAction?.({ action: "remove-component", componentId: "herdr" })}
+            >
+              {t("removeManagedTool", "Remove")}
+            </ActionButton>
+          )}
+          {component?.licenseUrl && (
+            <ActionButton onClick={() => void window.piBridge.openExternal(component.licenseUrl!)}>
+              {t("viewToolLicense", "License")}
+            </ActionButton>
+          )}
+          {cancellable && (
+            <ActionButton onClick={() => onAction?.({ action: "cancel-component-install", componentId: "herdr" })}>
+              {t("cancel", "Cancel")}
+            </ActionButton>
+          )}
+        </div>
+        {operationVisible && operation && (
+          <div style={{ marginTop: 4 }}>
+            <div style={{ fontSize: 11, color: operation.error ? "var(--danger)" : "var(--text-muted)" }}>
+              {operationPhase(operation.phase, t)}
+            </div>
+            <OperationProgress operation={operation} t={t} />
+          </div>
+        )}
+      </DetailSection>
+
+      <p style={{ margin: 0, paddingTop: 2, fontSize: 10, lineHeight: 1.65, color: "var(--text-dim)" }}>
+        {t(
+          "herdrBundledUpdateNote",
+          "Herdr version updates arrive with Pi Desktop updates. Removing the private runtime does not remove Herdr Sessions or the bundled recovery copy inside the app.",
+        )}
+      </p>
     </div>
   );
 }
@@ -986,6 +1253,8 @@ function friendlyErrorCode(code: string, t: Translate): string {
     );
   if (code === "TOOLCHAIN_PERMISSION_DENIED")
     return t("toolErrorPermission", "Pi Desktop cannot write or execute its private tool directory.");
+  if (code === "TOOLCHAIN_DISK_FULL")
+    return t("toolErrorDiskFull", "There is not enough disk space to install this developer tool.");
   if (code === "TOOLCHAIN_UNSUPPORTED")
     return t("toolErrorUnsupported", "This managed tool is not available for the current platform and architecture.");
   if (code === "TOOLCHAIN_MODIFIED")

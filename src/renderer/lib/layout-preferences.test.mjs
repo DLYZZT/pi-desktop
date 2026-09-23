@@ -81,6 +81,13 @@ test("allows the panel to become narrower only when the viewport cannot fit all 
   assert.equal(shouldCollapseSidebarForRightPanel(980), false);
 });
 
+test("allows terminal workbench layouts to opt into a wider panel without changing the default", () => {
+  assert.equal(getRightPanelWidthBounds(1514, false, 0.55).maxWidth, Math.floor(1514 * 0.55));
+  assert.equal(getRightPanelWidthBounds(1514, false, 0.72).maxWidth, Math.floor(1514 * 0.72));
+  assert.equal(clampRightPanelWidth(2_000, 1514, false, 0.72), Math.floor(1514 * 0.72));
+  assert.equal(getRightPanelWidthBounds(1514, false).maxWidth, Math.floor(1514 * 0.4));
+});
+
 test("keyboard resizing follows the separator direction and respects bounds", () => {
   assert.equal(getKeyboardAdjustedRightPanelWidth(360, "ArrowLeft", 1514, true), 376);
   assert.equal(getKeyboardAdjustedRightPanelWidth(360, "ArrowRight", 1514, true), 344);

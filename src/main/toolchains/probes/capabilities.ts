@@ -63,6 +63,31 @@ async function withProbeDirectory<T>(
   }
 }
 
+async function isGitForWindowsBash(seed: ExecutableSeed, options: CapabilityProbeOptions): Promise<boolean> {
+  // Both the bin wrapper and usr/bin executable belong to the same distribution.
+  // Directory names are user-controlled (PortableGit commonly includes a version).
+  const executable = path.win32.normalize(options.fileSystem.realpath(seed.executable));
+  const suffix = /\\(?:usr\\)?bin\\bash\.exe$/i;
+  if (!suffix.test(executable)) return false;
+  const root = executable.replace(suffix, "");
+  if (
+    !["cmd/git.exe", "usr/bin/bash.exe", "usr/bin/msys-2.0.dll"].every((entry) =>
+      options.fileSystem.isFile(path.win32.join(root, entry)),
+    )
+  ) {
+    return false;
+  }
+  // Probe the adjacent Git, never an unrelated Git on PATH. Standalone MSYS2
+  // and Cygwin shells must not become selectable just because Bash can run.
+  const git = path.win32.join(root, "cmd", "git.exe");
+  const result = await options.executor.run({
+    executable: git,
+    args: ["--version"],
+    env: buildProbeEnvironment(options.env, path.win32.dirname(git), options.platform),
+  });
+  return probeSucceeded(result) && /^git version \d+\.\d+\.\d+(?:\S*)\.windows\.\d+\s*$/m.test(result.stdout);
+}
+
 async function probeBash(seed: ExecutableSeed, options: CapabilityProbeOptions): Promise<ToolCandidate> {
   const versionResult = await run(seed, options, ["--version"]);
   if (!probeSucceeded(versionResult)) return failedCandidate(seed, versionResult);
@@ -72,15 +97,15 @@ async function probeBash(seed: ExecutableSeed, options: CapabilityProbeOptions):
       cwd: directory,
     });
     if (!probeSucceeded(result) || !result.stdout.includes(sentinel)) return failedCandidate(seed, result);
-    if (
-      options.platform === "win32" &&
-      !/(?:[\\/](?:Git|PortableGit)[\\/]|[\\/]scoop[\\/]apps[\\/]git[\\/])/i.test(seed.executable)
-    ) {
-      return candidateFromSeed(seed, {
-        version: firstVersion(versionResult.stdout || versionResult.stderr),
-        health: "unverified",
-        reasonCode: "TOOLCHAIN_UNVERIFIED",
-      });
+    if (options.platform === "win32") {
+      if (!(await isGitForWindowsBash(seed, options))) {
+        return candidateFromSeed(seed, {
+          version: firstVersion(versionResult.stdout || versionResult.stderr),
+          health: "unverified",
+          reasonCode: "TOOLCHAIN_UNVERIFIED",
+        });
+      }
+      return { ...versionCandidate(seed, versionResult.stdout || versionResult.stderr), cwdSemantics: "msys" };
     }
     return versionCandidate(seed, versionResult.stdout || versionResult.stderr);
   });

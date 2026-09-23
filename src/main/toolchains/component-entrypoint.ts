@@ -23,6 +23,7 @@ const COMPONENT_ENTRYPOINTS: Record<ManagedComponentId, readonly EntrypointDefin
   fd: [{ capability: "search.fd", names: ["fd.exe", "fd"] }],
   jq: [{ capability: "data.jq", names: ["jq.exe", "jq"] }],
   bun: [{ capability: "js.bun", names: ["bun.exe", "bun"] }],
+  herdr: [],
 };
 
 function findEntrypoint(runtimeRoot: string, definition: EntrypointDefinition): string {

@@ -45,6 +45,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     title: "Pi Agent Desktop",
     backgroundColor: nativeTheme.shouldUseDarkColors ? DARK_BACKGROUND : LIGHT_BACKGROUND,
     show: false,
+    autoHideMenuBar: process.platform !== "darwin",
     webPreferences: {
       preload: resolvePreloadPath(options.runtimeMainDirectory),
       contextIsolation: true,

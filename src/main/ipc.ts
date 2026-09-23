@@ -1,3 +1,4 @@
+import { getNativeLanguage } from "./native-language";
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell } from "electron";
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron";
 import type {
@@ -56,6 +57,7 @@ export type DesktopIpcOptions = {
   setChannelCredential: (payload: ChannelCredentialWrite) => void;
   getBrowserService: () => BrowserService | null;
   getManagedProcessCapability: () => ManagedProcessCapability;
+  onUiStatePatch?: (patch: ReturnType<typeof validateDesktopUiStatePatch>) => void | Promise<void>;
   updateManager: {
     getState: () => DesktopUpdateState;
     checkForUpdates: () => Promise<DesktopUpdateState>;
@@ -78,6 +80,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     setChannelCredential,
     getBrowserService,
     getManagedProcessCapability,
+    onUiStatePatch,
     updateManager,
   } = options;
   const assertTrustedSender = (event: IpcMainInvokeEvent): void => {
@@ -298,9 +301,11 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   trustedOn("desktop:set-badge-count", (_event, count: number) => applyBadgeCount(count));
   trustedHandle("desktop:get-ui-state", () => loadUiState());
   trustedHandle("desktop:managed-process-capability", () => getManagedProcessCapability());
-  trustedHandle("desktop:set-ui-state", (_event, patch: unknown) =>
-    saveUiStateStrict(validateDesktopUiStatePatch(patch)),
-  );
+  trustedHandle("desktop:set-ui-state", async (_event, patch: unknown) => {
+    const validated = validateDesktopUiStatePatch(patch);
+    saveUiStateStrict(validated);
+    await onUiStatePatch?.(validated);
+  });
   trustedHandle("desktop:get-theme-source", () => nativeTheme.themeSource);
   trustedHandle("desktop:set-theme-source", (_event, source: "system" | "light" | "dark") => {
     nativeTheme.themeSource = source;
@@ -318,7 +323,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   browserHandler("desktop:browser:get-settings", (browser) => browser.getSettings());
   browserHandler(
     "desktop:browser:request-confirmation",
-    (browser, kind: BrowserConfirmationKind, payload?: BrowserSettingsPatch, language?: "en-US" | "zh-CN") =>
+    (browser, kind: BrowserConfirmationKind, payload?: BrowserSettingsPatch, language?: "en-US" | "zh-CN" | "zh-TW") =>
       browser.requestConfirmation(kind, payload, language),
   );
   browserHandler(
@@ -404,7 +409,27 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
 }
 
 function toolchainActionConfirmation(request: ToolchainActionRequest): Electron.MessageBoxOptions | undefined {
-  const chinese = app.getLocale().toLowerCase().startsWith("zh");
+  const language = getNativeLanguage();
+  const chinese = language !== "en-US";
+  const traditional = language === "zh-TW";
+  if (
+    (request.action === "install-component" || request.action === "repair-component") &&
+    request.componentId === "herdr"
+  ) {
+    return {
+      type: "question",
+      title: chinese ? "管理 Herdr" : "Manage Herdr",
+      message: chinese
+        ? traditional
+          ? "從 Pi Desktop 內建的已驗證複本安裝或修復 Herdr？此操作不會連線網路，也不會修改系統 PATH。"
+          : "从 Pi Desktop 内置的已校验副本安装或修复 Herdr？此操作不会联网，也不会修改系统 PATH。"
+        : "Install or repair Herdr from the verified copy included with Pi Desktop? This action does not access the network or modify system PATH.",
+      buttons: chinese ? ["取消", traditional ? "繼續" : "继续"] : ["Cancel", "Continue"],
+      defaultId: 1,
+      cancelId: 0,
+      noLink: true,
+    };
+  }
   if (
     request.action === "install-profile" ||
     request.action === "install-component" ||
@@ -412,23 +437,44 @@ function toolchainActionConfirmation(request: ToolchainActionRequest): Electron.
   ) {
     return {
       type: "warning",
-      title: chinese ? "安装开发工具" : "Install developer tools",
+      title: chinese ? (traditional ? "安裝開發工具" : "安装开发工具") : "Install developer tools",
       message: chinese
-        ? "Pi Desktop 将从界面所示的官方来源下载固定版本。来源会收到你的 IP 地址、平台和架构；文件仅保存在应用私有数据中，也不会修改系统 PATH。是否继续？"
+        ? traditional
+          ? "Pi Desktop 將從介面所示的官方來源下載固定版本。來源會收到你的 IP 位址、平台和架構；檔案僅保存在應用程式私人資料中，也不會修改系統 PATH。是否繼續？"
+          : "Pi Desktop 将从界面所示的官方来源下载固定版本。来源会收到你的 IP 地址、平台和架构；文件仅保存在应用私有数据中，也不会修改系统 PATH。是否继续？"
         : "Pi Desktop will download fixed releases from the official sources shown in Developer Tools. The sources receive your IP address, platform, and architecture. Files stay in private app data and system PATH is not changed.",
-      buttons: chinese ? ["取消", "继续"] : ["Cancel", "Continue"],
+      buttons: chinese ? ["取消", traditional ? "繼續" : "继续"] : ["Cancel", "Continue"],
       defaultId: 1,
       cancelId: 0,
       noLink: true,
     };
   }
   if (request.action === "remove-component") {
+    const herdr = request.componentId === "herdr";
     return {
       type: "warning",
-      title: chinese ? "移除托管工具" : "Remove managed tool",
+      title: chinese
+        ? herdr
+          ? traditional
+            ? "解除安裝 Herdr"
+            : "卸载 Herdr"
+          : traditional
+            ? "移除受管工具"
+            : "移除托管工具"
+        : herdr
+          ? "Uninstall Herdr"
+          : "Remove managed tool",
       message: chinese
-        ? "移除此 Pi Desktop 托管运行时？系统工具和自定义工具不会受影响。"
-        : "Remove this Pi Desktop-managed runtime? System and custom tools are not affected.",
+        ? herdr
+          ? traditional
+            ? "移除 Pi Desktop 的 Herdr 私人執行階段？Herdr Session 和應用程式內建的復原複本會保留。"
+            : "移除 Pi Desktop 的 Herdr 私有运行时？Herdr Session 和应用内置的恢复副本会保留。"
+          : traditional
+            ? "移除此 Pi Desktop 受管執行階段？系統工具和自訂工具不會受影響。"
+            : "移除此 Pi Desktop 托管运行时？系统工具和自定义工具不会受影响。"
+        : herdr
+          ? "Remove Pi Desktop's private Herdr runtime? Herdr Sessions and the bundled recovery copy are kept."
+          : "Remove this Pi Desktop-managed runtime? System and custom tools are not affected.",
       buttons: chinese ? ["取消", "移除"] : ["Cancel", "Remove"],
       defaultId: 0,
       cancelId: 0,
@@ -438,9 +484,11 @@ function toolchainActionConfirmation(request: ToolchainActionRequest): Electron.
   if (request.action === "clear-cache") {
     return {
       type: "question",
-      title: chinese ? "清理工具缓存" : "Clear tool cache",
+      title: chinese ? (traditional ? "清理工具快取" : "清理工具缓存") : "Clear tool cache",
       message: chinese
-        ? "清除此应用私有缓存？已安装的运行时不会被移除。"
+        ? traditional
+          ? "清除此應用程式私人快取？已安裝的執行階段不會被移除。"
+          : "清除此应用私有缓存？已安装的运行时不会被移除。"
         : "Clear this private app cache? Installed runtimes are not removed.",
       buttons: chinese ? ["取消", "清理"] : ["Cancel", "Clear"],
       defaultId: 0,

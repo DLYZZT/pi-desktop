@@ -39,12 +39,19 @@ export function saveRightPanelPreferredWidth(storage: StorageLike | null | undef
   }
 }
 
-export function getRightPanelWidthBounds(viewportWidth: number, sidebarOpen: boolean): RightPanelWidthBounds {
+export function getRightPanelWidthBounds(
+  viewportWidth: number,
+  sidebarOpen: boolean,
+  maxViewportRatio = RIGHT_PANEL_MAX_VIEWPORT_RATIO,
+): RightPanelWidthBounds {
   if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) {
     return { minWidth: RIGHT_PANEL_MIN_WIDTH, maxWidth: RIGHT_PANEL_DEFAULT_WIDTH };
   }
 
-  const ratioLimit = Math.floor(viewportWidth * RIGHT_PANEL_MAX_VIEWPORT_RATIO);
+  const safeRatio = Number.isFinite(maxViewportRatio)
+    ? Math.min(1, Math.max(RIGHT_PANEL_MAX_VIEWPORT_RATIO, maxViewportRatio))
+    : RIGHT_PANEL_MAX_VIEWPORT_RATIO;
+  const ratioLimit = Math.floor(viewportWidth * safeRatio);
   const reservedWidth = CHAT_MIN_WIDTH + (sidebarOpen ? SIDEBAR_WIDTH : 0);
   const availableLimit = Math.floor(viewportWidth - reservedWidth);
   const maxWidth = Math.max(0, Math.min(ratioLimit, availableLimit));
@@ -55,8 +62,13 @@ export function getRightPanelWidthBounds(viewportWidth: number, sidebarOpen: boo
   };
 }
 
-export function clampRightPanelWidth(width: number, viewportWidth: number, sidebarOpen: boolean): number {
-  const { minWidth, maxWidth } = getRightPanelWidthBounds(viewportWidth, sidebarOpen);
+export function clampRightPanelWidth(
+  width: number,
+  viewportWidth: number,
+  sidebarOpen: boolean,
+  maxViewportRatio = RIGHT_PANEL_MAX_VIEWPORT_RATIO,
+): number {
+  const { minWidth, maxWidth } = getRightPanelWidthBounds(viewportWidth, sidebarOpen, maxViewportRatio);
   if (maxWidth <= 0) return 0;
   const candidate = Number.isFinite(width) ? width : RIGHT_PANEL_DEFAULT_WIDTH;
   return Math.round(Math.min(maxWidth, Math.max(minWidth, candidate)));
@@ -73,8 +85,9 @@ export function getKeyboardAdjustedRightPanelWidth(
   viewportWidth: number,
   sidebarOpen: boolean,
   largeStep = false,
+  maxViewportRatio = RIGHT_PANEL_MAX_VIEWPORT_RATIO,
 ): number {
-  const bounds = getRightPanelWidthBounds(viewportWidth, sidebarOpen);
+  const bounds = getRightPanelWidthBounds(viewportWidth, sidebarOpen, maxViewportRatio);
   const step = largeStep ? RIGHT_PANEL_KEYBOARD_LARGE_STEP : RIGHT_PANEL_KEYBOARD_STEP;
 
   if (key === "Home") return bounds.minWidth;
@@ -82,5 +95,5 @@ export function getKeyboardAdjustedRightPanelWidth(
 
   // The separator is on the panel's left edge: moving left grows the panel.
   const nextWidth = key === "ArrowLeft" ? currentWidth + step : currentWidth - step;
-  return clampRightPanelWidth(nextWidth, viewportWidth, sidebarOpen);
+  return clampRightPanelWidth(nextWidth, viewportWidth, sidebarOpen, maxViewportRatio);
 }

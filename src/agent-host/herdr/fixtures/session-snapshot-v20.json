@@ -1,0 +1,73 @@
+{
+  "type": "session_snapshot",
+  "snapshot": {
+    "version": "0.8.2",
+    "protocol": 20,
+    "focused_workspace_id": "w1",
+    "focused_tab_id": "w1:t1",
+    "focused_pane_id": "w1:p1",
+    "workspaces": [
+      {
+        "workspace_id": "w1",
+        "label": "protocol-v20",
+        "focused": true,
+        "active_tab_id": "w1:t1",
+        "number": 1,
+        "pane_count": 1,
+        "tab_count": 1,
+        "agent_status": "working"
+      }
+    ],
+    "tabs": [
+      {
+        "workspace_id": "w1",
+        "tab_id": "w1:t1",
+        "label": "1",
+        "focused": true,
+        "number": 1,
+        "pane_count": 1,
+        "agent_status": "working"
+      }
+    ],
+    "panes": [
+      {
+        "workspace_id": "w1",
+        "tab_id": "w1:t1",
+        "pane_id": "w1:p1",
+        "terminal_id": "term_fixture",
+        "focused": true,
+        "cwd": "/tmp/protocol-v20",
+        "foreground_cwd": "/tmp/protocol-v20",
+        "agent_status": "working",
+        "revision": 7,
+        "scroll": {
+          "max_offset_from_bottom": 0,
+          "offset_from_bottom": 0,
+          "viewport_rows": 40
+        }
+      }
+    ],
+    "agents": [
+      {
+        "workspace_id": "w1",
+        "tab_id": "w1:t1",
+        "pane_id": "w1:p1",
+        "terminal_id": "term_fixture",
+        "name": "qwen-fixture",
+        "agent": "qwen-code",
+        "agent_status": "working",
+        "focused": true,
+        "interactive_ready": true,
+        "state_change_seq": 9,
+        "revision": 7,
+        "agent_session": {
+          "source": "screen",
+          "agent": "qwen",
+          "kind": "path",
+          "value": "/private/credential-bearing/session/path/session.json"
+        }
+      }
+    ],
+    "layouts": []
+  }
+}

@@ -29,7 +29,7 @@ test("managed process tools activate only with a non-empty local tool selection"
 });
 
 test("managed process tools reject messaging-channel turns and bound literal waits", () => {
-  assert.match(toolsSource, /getBrowserSessionSource\(ctx\.sessionManager\) === "channel"/);
+  assert.match(toolsSource, /getBrowserSessionSource\(ctx\.sessionManager\) !== "local"/);
   assert.match(toolsSource, /maxLength: 256/);
   assert.match(toolsSource, /same runId and returned nextCursor/);
 });

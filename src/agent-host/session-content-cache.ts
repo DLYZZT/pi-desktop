@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import { readSessionSnapshot } from "./session-readonly.ts";
 import type { SessionEntry } from "../shared/types";
 
 const MAX_CACHED_SESSIONS = 2;
@@ -66,7 +67,7 @@ export function getSessionContentSnapshot(filePath: string): SessionContentSnaps
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const before = fingerprint(filePath);
-    const manager = SessionManager.open(filePath);
+    const manager = readSessionSnapshot(filePath);
     const entries = manager.getEntries() as unknown as SessionEntry[];
     const after = fingerprint(filePath);
     if (!fingerprintsEqual(before, after)) {

@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { filterDesktopToolNames } from "../shared/pi-tool-policy.ts";
 
 type StoredSessionTools = {
   toolNames: string[];
@@ -16,7 +17,7 @@ const EMPTY_STATE: SessionToolStateFile = { version: 1, sessions: {} };
 
 function normalizeToolNames(value: unknown): string[] | undefined {
   if (!Array.isArray(value) || !value.every((name) => typeof name === "string")) return undefined;
-  return [...new Set(value.map((name) => name.trim()).filter(Boolean))];
+  return filterDesktopToolNames(value);
 }
 
 function normalizeState(value: unknown): SessionToolStateFile {

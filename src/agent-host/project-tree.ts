@@ -1,4 +1,5 @@
 import type { SessionTreeNode } from "../shared/types";
+import { skillInvocationCommandText } from "../shared/skill-invocation.ts";
 
 export const MAX_PROJECTED_TREE_DEPTH = 200;
 
@@ -88,7 +89,7 @@ function treeEntryPreview(entry: Record<string, unknown>): SessionTreeNode["entr
             )
             .join(" ")
         : "";
-  const preview = text.trim().replace(/\s+/g, " ").slice(0, 80);
+  const preview = skillInvocationCommandText(text).trim().replace(/\s+/g, " ").slice(0, 80);
   return {
     id: String(entry.id),
     type,

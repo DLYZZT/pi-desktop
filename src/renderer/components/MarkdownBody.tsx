@@ -288,14 +288,17 @@ function normalizeDisplayMath(markdown: string): string {
       const math = displayMathMatch[2].trim();
       if (!math) return line;
 
-      return `${displayMathMatch[1]}$$${lineBreak}${math}${lineBreak}${displayMathMatch[1]}$$`;
+      // Keep the body in the same list item as its fences; dedenting it turns
+      // the closing fence into a new block that consumes subsequent Markdown.
+      const indent = displayMathMatch[1];
+      return `${indent}$$${lineBreak}${indent}${math}${lineBreak}${indent}$$`;
     })
     .join(lineBreak);
 }
 
 function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boolean }) {
   const { isDark } = useTheme();
-  const [showPreview, setShowPreview] = useState(false);
+  const [showPreview, setShowPreview] = useState(true);
   const [svg, setSvg] = useState<string | null>(null);
   const [renderedKey, setRenderedKey] = useState("");
   const [failedKey, setFailedKey] = useState<string | null>(null);

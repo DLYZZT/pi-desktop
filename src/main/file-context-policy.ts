@@ -56,7 +56,10 @@ export async function validateFileContextRequestResult(request: unknown): Promis
     typeof candidate.href !== "string" ||
     !allowedSource(candidate.source) ||
     (candidate.cwd !== undefined && typeof candidate.cwd !== "string") ||
-    (candidate.language !== undefined && candidate.language !== "en-US" && candidate.language !== "zh-CN")
+    (candidate.language !== undefined &&
+      candidate.language !== "en-US" &&
+      candidate.language !== "zh-CN" &&
+      candidate.language !== "zh-TW")
   ) {
     return { ok: false, code: "INVALID_REQUEST" };
   }

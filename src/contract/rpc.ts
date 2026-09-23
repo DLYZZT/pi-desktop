@@ -59,6 +59,11 @@ export interface PiRpc {
     method: M,
     ...args: ApiParams<M> extends void ? [] | [void] : [ApiParams<M>]
   ): Promise<ApiResult<M>>;
+  callWithTimeout<M extends ApiMethod>(
+    method: M,
+    timeoutMs: number,
+    ...args: ApiParams<M> extends void ? [] | [void] : [ApiParams<M>]
+  ): Promise<ApiResult<M>>;
   subscribe<T extends StreamTopic>(topic: T, key: string, on: (ev: Streams[T]) => void): () => void;
   close(): void;
 }
@@ -152,34 +157,43 @@ export function createRpcClient(port: RpcClientPort, options: RpcClientOptions =
   port.addEventListener("close", onClose);
   port.start();
 
+  const invoke = <M extends ApiMethod>(method: M, params: unknown, timeoutMs: number): Promise<ApiResult<M>> =>
+    new Promise((resolve, reject) => {
+      const id = makeId();
+      const timer = setTimeout(() => {
+        if (!pending.delete(id)) return;
+        reject(new RpcError({ code: "TIMEOUT", message: `RPC call timed out: ${String(method)}` }));
+      }, timeoutMs);
+      pending.set(id, {
+        resolve: resolve as (v: unknown) => void,
+        reject,
+        timer,
+      });
+      const req: WireRequest = {
+        kind: "request",
+        id,
+        method: method as string,
+        params,
+      };
+      try {
+        port.postMessage(req);
+      } catch (err) {
+        pending.delete(id);
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+
   return {
     call(method, ...args) {
       const params = (args[0] ?? undefined) as unknown;
-      const id = makeId();
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          if (!pending.delete(id)) return;
-          reject(new RpcError({ code: "TIMEOUT", message: `RPC call timed out: ${String(method)}` }));
-        }, callTimeoutMs);
-        pending.set(id, {
-          resolve: resolve as (v: unknown) => void,
-          reject,
-          timer,
-        });
-        const req: WireRequest = {
-          kind: "request",
-          id,
-          method: method as string,
-          params,
-        };
-        try {
-          port.postMessage(req);
-        } catch (err) {
-          pending.delete(id);
-          clearTimeout(timer);
-          reject(err instanceof Error ? err : new Error(String(err)));
-        }
-      });
+      return invoke(method, params, callTimeoutMs);
+    },
+
+    callWithTimeout(method, timeoutMs, ...args) {
+      const params = (args[0] ?? undefined) as unknown;
+      const safeTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : callTimeoutMs;
+      return invoke(method, params, safeTimeout);
     },
 
     subscribe(topic, key, on) {

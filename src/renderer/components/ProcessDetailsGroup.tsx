@@ -17,13 +17,13 @@ export function ProcessDetailsGroup({ messageCount, toolCallCount, children, sta
   const { language, t } = useI18n();
   const parts = [
     t("processDetails", "Process details"),
-    language === "zh-CN"
+    language !== "en-US"
       ? `${messageCount} ${t("messagesCount", "messages")}`
       : `${messageCount} ${messageCount === 1 ? "message" : "messages"}`,
   ];
   if (toolCallCount > 0) {
     parts.push(
-      language === "zh-CN"
+      language !== "en-US"
         ? `${toolCallCount} ${t("toolCallsCount", "tool calls")}`
         : `${toolCallCount} ${toolCallCount === 1 ? "tool call" : "tool calls"}`,
     );

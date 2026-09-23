@@ -12,6 +12,7 @@ const REDIRECT_HOSTS = new Set([
   "github.com",
   "release-assets.githubusercontent.com",
   "objects.githubusercontent.com",
+  "raw.githubusercontent.com",
   "nodejs.org",
   "releases.astral.sh",
 ]);

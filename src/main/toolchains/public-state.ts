@@ -23,10 +23,6 @@ const MISSING_REASON: Partial<Record<ToolCapabilityId, PublicCapabilityState["re
 };
 
 export function commandDescriptorFromCandidate(candidate: ToolCandidate, platform: NodeJS.Platform): CommandDescriptor {
-  const isWindowsMsysBash =
-    platform === "win32" &&
-    candidate.capability === "shell.bash" &&
-    (candidate.componentId === "portable-git" || /(?:^|[\\/])git(?:[\\/]|$)/i.test(candidate.executable));
   return {
     capability: candidate.capability,
     provider: candidate.provider,
@@ -36,7 +32,7 @@ export function commandDescriptorFromCandidate(candidate: ToolCandidate, platfor
     componentId: candidate.componentId,
     componentRoot: candidate.componentRoot,
     version: candidate.version,
-    cwdSemantics: isWindowsMsysBash ? "msys" : platform === "win32" ? "native" : "posix",
+    cwdSemantics: candidate.cwdSemantics ?? (platform === "win32" ? "native" : "posix"),
     envPatch: {},
     shellEnvPatch: {},
   };
