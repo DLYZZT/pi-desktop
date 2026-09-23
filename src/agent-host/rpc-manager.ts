@@ -39,6 +39,9 @@ import { installManagedProcessSessionRedaction } from "./managed-process/session
 import { peekHerdrBridge } from "./herdr/runtime";
 import { createHerdrToolDefinitions, herdrToolNamesForRuntime, isHerdrToolName } from "./herdr/tools";
 import { installHerdrSessionRedaction } from "./herdr/session-redaction";
+import { createDesktopPromptExtension, SessionPromptPolicy } from "./session-prompt-policy";
+import { createEphemeralContextExtension, SessionEphemeralContext } from "./session-ephemeral-context";
+import { createLegacyChannelContextExtension } from "./legacy-channel-context";
 
 // ============================================================================
 // Types
@@ -93,8 +96,6 @@ export type ExternalSessionCommand = "compact" | "reload";
 
 const CODING_TOOL_NAMES = ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"];
 const SESSION_TOOLS_ENTRY = "pi-desktop-session-tools";
-const LEGACY_CHANNEL_PROMPT = /^\[外部消息来源：(微信|Telegram|飞书 \/ Lark)\]\n/;
-const LEGACY_CHANNEL_PROMPT_DELIMITER = "\n---\n";
 
 type PersistedSessionTools = {
   version: 1;
@@ -123,36 +124,6 @@ export function getLegacySessionToolNames(sessionManager: Pick<SessionManager, "
     if (toolNames !== undefined) return toolNames;
   }
   return undefined;
-}
-
-function stripLegacyChannelPromptText(text: string): string {
-  if (!LEGACY_CHANNEL_PROMPT.test(text)) return text;
-  const delimiter = text.indexOf(LEGACY_CHANNEL_PROMPT_DELIMITER);
-  return delimiter < 0 ? text : text.slice(delimiter + LEGACY_CHANNEL_PROMPT_DELIMITER.length);
-}
-
-function stripLegacyChannelPrompts(messages: unknown[]): unknown[] {
-  return messages.map((message) => {
-    if (!message || typeof message !== "object" || (message as { role?: unknown }).role !== "user") return message;
-    const user = message as { content?: unknown };
-    if (typeof user.content === "string") {
-      const content = stripLegacyChannelPromptText(user.content);
-      return content === user.content ? message : { ...message, content };
-    }
-    if (!Array.isArray(user.content)) return message;
-
-    let changed = false;
-    const content = user.content.map((block) => {
-      if (!block || typeof block !== "object" || (block as { type?: unknown }).type !== "text") return block;
-      const text = (block as { text?: unknown }).text;
-      if (typeof text !== "string") return block;
-      const stripped = stripLegacyChannelPromptText(text);
-      if (stripped === text) return block;
-      changed = true;
-      return { ...block, text: stripped };
-    });
-    return changed ? { ...message, content } : message;
-  });
 }
 
 export function withExtensionTools(session: AgentSessionLike, toolNames: string[]): string[] {
@@ -198,7 +169,7 @@ export class AgentSessionWrapper {
   private extensionBindingError: unknown = null;
   private extensionBindingAttempt = 0;
   private forceEmptySystemPrompt = false;
-  private toolchainPrompt = "";
+  private readonly promptPolicy: SessionPromptPolicy;
   private unsubscribe: (() => void) | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyCallbacks = new Set<() => void>();
@@ -211,14 +182,14 @@ export class AgentSessionWrapper {
     inner: AgentSessionLike,
     requestedToolNames?: string[],
     persistToolNames: (sessionId: string, toolNames: string[]) => void = setDesktopSessionToolNames,
+    promptPolicy?: SessionPromptPolicy,
+    private readonly ephemeralContext?: SessionEphemeralContext,
   ) {
     this.inner = inner;
     this.persistToolNames = persistToolNames;
     this.requestedToolNames = requestedToolNames ? filterDesktopToolNames(requestedToolNames) : requestedToolNames;
     this.forceEmptySystemPrompt = this.requestedToolNames?.length === 0;
-    const messages = this.inner.agent.state?.messages;
-    if (Array.isArray(messages)) this.inner.agent.state!.messages = stripLegacyChannelPrompts(messages);
-    this.applyForcedEmptySystemPrompt();
+    this.promptPolicy = promptPolicy ?? new SessionPromptPolicy(this.forceEmptySystemPrompt);
   }
 
   get sessionId(): string {
@@ -295,12 +266,7 @@ export class AgentSessionWrapper {
   }
 
   setToolchainSummary(revision: number, summary: readonly string[]): void {
-    this.toolchainPrompt = [
-      `<pi-desktop-toolchain revision="${revision}">`,
-      ...summary,
-      "</pi-desktop-toolchain>",
-    ].join("\n");
-    this.applyToolchainSummary();
+    this.promptPolicy.setToolchainSummary(revision, summary);
   }
 
   setRuntimeDiagnostics(diagnostics: readonly AgentSessionRuntimeDiagnostic[]): void {
@@ -319,9 +285,11 @@ export class AgentSessionWrapper {
   }
 
   private ensureExtensionsBound(options: ExtensionBindingOptions = {}): Promise<void> {
-    if (options.forceEmptySystemPrompt) this.forceEmptySystemPrompt = true;
+    if (options.forceEmptySystemPrompt) {
+      this.forceEmptySystemPrompt = true;
+      this.promptPolicy.setForceEmpty(true);
+    }
     if (this.extensionsBound) {
-      this.applyForcedEmptySystemPrompt();
       return Promise.resolve();
     }
     if (this.extensionBindingPromise) return this.extensionBindingPromise;
@@ -364,7 +332,6 @@ export class AgentSessionWrapper {
         this.inner.extensionRunner.setUIContext?.(uiContext, "rpc");
       }
       this.extensionsBound = true;
-      this.applyForcedEmptySystemPrompt();
       console.log(`[pi-desktop] session_start dispatched to extensions for session ${this.inner.sessionId}`);
     })()
       .catch((err) => {
@@ -407,27 +374,12 @@ export class AgentSessionWrapper {
     }
   }
 
-  private applyForcedEmptySystemPrompt(): void {
-    if (this.forceEmptySystemPrompt && this.inner.agent.state) {
-      this.inner.agent.state.systemPrompt = "";
-    }
-  }
-
   private applyRequestedTools(toolNames: string[]): void {
     this.requestedToolNames = [...toolNames];
     this.forceEmptySystemPrompt = toolNames.length === 0;
+    this.promptPolicy.setForceEmpty(this.forceEmptySystemPrompt);
     this.inner.setActiveToolsByName(withExtensionTools(this.inner, toolNames));
     this.syncDesktopToolActivation();
-    this.applyForcedEmptySystemPrompt();
-  }
-
-  private applyToolchainSummary(): void {
-    if (this.forceEmptySystemPrompt || !this.toolchainPrompt || !this.inner.agent.state) return;
-    const marker = /\n*<pi-desktop-toolchain revision="\d+">[\s\S]*?<\/pi-desktop-toolchain>\n*/g;
-    const base = String(this.inner.agent.state.systemPrompt ?? "")
-      .replace(marker, "")
-      .trimEnd();
-    this.inner.agent.state.systemPrompt = `${base}\n\n${this.toolchainPrompt}`.trim();
   }
 
   private emit(event: AgentEvent): void {
@@ -473,6 +425,7 @@ export class AgentSessionWrapper {
       this.externalTurnChannel = params.channel;
       this.externalTurnAttachments = params.channelAttachments ?? null;
       setBrowserSessionSource(this.inner.sessionManager, "channel");
+      this.ephemeralContext?.beginChannelTurn(params.runId);
       browserAgentRuntime.beginTurn(this.sessionId, "channel");
       this.externalTurnProgress = params.onProgress ?? null;
       try {
@@ -516,6 +469,7 @@ export class AgentSessionWrapper {
         this.externalTurnActive = false;
         this.externalTurnChannel = null;
         this.externalTurnAttachments = null;
+        this.ephemeralContext?.endChannelTurn();
         setBrowserSessionSource(this.inner.sessionManager, "local");
       }
     });
@@ -534,11 +488,10 @@ export class AgentSessionWrapper {
     this.extensionBindingError = null;
     this.extensionStatuses.clear();
     this.extensionWidgets.clear();
+    this.ephemeralContext?.clear();
     await this.inner.reload();
     await this.ensureExtensionsBound();
     if (this.requestedToolNames !== undefined) this.applyRequestedTools(this.requestedToolNames);
-    this.applyForcedEmptySystemPrompt();
-    this.applyToolchainSummary();
   }
 
   async runExternalCommand(params: { command: ExternalSessionCommand; customInstructions?: string }): Promise<void> {
@@ -592,31 +545,39 @@ export class AgentSessionWrapper {
     switch (type) {
       case "prompt": {
         // Fire and forget — events come via subscribe
+        const clientRunId =
+          typeof command.clientRunId === "number" && Number.isSafeInteger(command.clientRunId)
+            ? command.clientRunId
+            : undefined;
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
         if (!streamingBehavior) browserAgentRuntime.beginTurn(this.sessionId, "local");
-        const invokePrompt = () =>
-          this.inner.prompt(command.message as string, {
+        const invokePrompt = () => {
+          if (!streamingBehavior) this.ephemeralContext?.beginLocalTurn();
+          return this.inner.prompt(command.message as string, {
             ...(promptImages?.length ? { images: promptImages } : {}),
             ...(streamingBehavior ? { streamingBehavior } : {}),
             source: "rpc",
           });
+        };
         const operation = streamingBehavior ? invokePrompt() : this.enqueueTurn(invokePrompt);
         operation
           .then(() => {
-            if (!streamingBehavior) this.emit({ type: "prompt_done" });
+            if (!streamingBehavior) this.emit({ type: "prompt_done", clientRunId });
           })
           .catch((error) => {
             this.emit({
               type: "prompt_error",
+              clientRunId,
               errorMessage: error instanceof Error ? error.message : String(error),
             });
-            if (!streamingBehavior) this.emit({ type: "prompt_done" });
+            if (!streamingBehavior) this.emit({ type: "prompt_done", clientRunId });
           });
         return null;
       }
 
       case "abort":
+        this.ephemeralContext?.suspendAfterAbort();
         await this.withFinalRunningNotification(() => this.inner.abort());
         return null;
 
@@ -641,7 +602,9 @@ export class AgentSessionWrapper {
           contextUsage: contextUsage
             ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow, tokens: contextUsage.tokens }
             : null,
-          systemPrompt: this.inner.agent.state?.systemPrompt ?? "",
+          systemPrompt: this.promptPolicy.resolve(
+            this.inner.systemPrompt ?? this.inner.agent.state?.systemPrompt ?? "",
+          ),
           thinkingLevel: this.inner.agent.state?.thinkingLevel ?? "off",
           extensionStatuses: this.getExtensionStatuses(),
           extensionWidgets: this.getExtensionWidgets(),
@@ -695,6 +658,7 @@ export class AgentSessionWrapper {
 
       case "navigate_tree": {
         const result = await this.inner.navigateTree(command.targetId as string, {});
+        if (!result.cancelled) this.ephemeralContext?.clear();
         return { cancelled: result.cancelled };
       }
 
@@ -730,8 +694,10 @@ export class AgentSessionWrapper {
       }
 
       case "get_session_stats": {
+        const stats = this.inner.getSessionStats();
         return {
-          ...this.inner.getSessionStats(),
+          ...stats,
+          totalMessages: stats.userMessages + stats.assistantMessages + stats.toolResults,
           sessionName: this.inner.sessionManager.getSessionName(),
         };
       }
@@ -905,6 +871,7 @@ export class AgentSessionWrapper {
   destroy(): void {
     if (!this._alive) return;
     this._alive = false;
+    this.ephemeralContext?.dispose();
     browserAgentRuntime.clearSession(this.sessionId);
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.unsubscribe?.();
@@ -1323,6 +1290,7 @@ export class AgentSessionWrapper {
       },
       navigateTree: async (targetId, options) => {
         const result = await this.inner.navigateTree(targetId, { summarize: options?.summarize });
+        if (!result.cancelled) this.ephemeralContext?.clear();
         return { cancelled: result.cancelled };
       },
       switchSession: async () => {
@@ -1332,12 +1300,12 @@ export class AgentSessionWrapper {
       reload: async () => {
         this.extensionStatuses.clear();
         this.extensionWidgets.clear();
+        this.ephemeralContext?.clear();
         await this.inner.reload({
           beforeSessionStart: () => {
             this.inner.extensionRunner.setUIContext?.(this.createExtensionUiContext(), "rpc");
           },
         });
-        this.applyForcedEmptySystemPrompt();
       },
     };
   }
@@ -1381,6 +1349,24 @@ export function syncBrowserToolsForAllSessions(): void {
 
 export function syncDesktopToolsForAllSessions(): void {
   for (const session of getRegistry().values()) session.syncDesktopToolActivation();
+}
+
+/** Reconcile active SDK timers after a persisted global cache-warming change. */
+export async function syncCacheWarmingForAllSessions(mode: "off" | "streaming" | "idle"): Promise<number> {
+  let pendingSessionCount = 0;
+  for (const session of getRegistry().values()) {
+    if (!session.isAlive()) continue;
+    try {
+      session.inner.setCacheWarmingMode(mode);
+      await session.inner.settingsManager.flush();
+      if (session.inner.settingsManager.drainErrors().some((error) => error.scope === "global")) {
+        pendingSessionCount++;
+      }
+    } catch {
+      pendingSessionCount++;
+    }
+  }
+  return pendingSessionCount;
 }
 
 export function getRunningRpcSessionIds(): string[] {
@@ -1466,6 +1452,8 @@ export async function startRpcSession(
     setBrowserSessionSource(sessionManager, "local");
     installManagedProcessSessionRedaction(sessionManager);
     installHerdrSessionRedaction(sessionManager);
+    const ephemeralContext = new SessionEphemeralContext(sessionManager);
+    ephemeralContext.install();
 
     // Desktop-owned session choices live outside Pi's shared JSONL so the CLI
     // remains unaffected. Read the old custom entry only for one-way migration.
@@ -1477,7 +1465,18 @@ export async function startRpcSession(
 
     // Build services first so extension-registered providers are available
     // before the SDK restores the saved model from the session file.
-    const services = await createAgentSessionServices({ cwd, agentDir });
+    const promptPolicy = new SessionPromptPolicy(sessionToolNames?.length === 0);
+    const services = await createAgentSessionServices({
+      cwd,
+      agentDir,
+      resourceLoaderOptions: {
+        extensionFactories: [
+          createLegacyChannelContextExtension(),
+          createEphemeralContextExtension(ephemeralContext),
+          createDesktopPromptExtension(promptPolicy),
+        ],
+      },
+    });
     const executionContext = await toolchainRuntime.createExecutionContext({
       cwd,
       intent: "agent-shell",
@@ -1517,7 +1516,7 @@ export async function startRpcSession(
       if (desktopToolNames === undefined) setDesktopSessionToolNames(realSessionId, sessionToolNames);
     }
 
-    const wrapper = new AgentSessionWrapper(inner, sessionToolNames);
+    const wrapper = new AgentSessionWrapper(inner, sessionToolNames, undefined, promptPolicy, ephemeralContext);
     wrapper.setRuntimeDiagnostics(services.diagnostics);
     wrapper.setToolchainSummary(executionContext.inventoryRevision, executionContext.summary);
     wrapper.start();

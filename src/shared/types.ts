@@ -106,6 +106,7 @@ export interface ToolResultMessage {
   content: (TextContent | ImageContent)[];
   isError?: boolean;
   details?: unknown;
+  usage?: Usage;
   timestamp?: number;
 }
 
@@ -119,6 +120,25 @@ export interface CustomMessage {
 }
 
 export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | CustomMessage;
+
+/** Raw Pi transcript metadata; never rendered as a chat message. */
+export interface SessionSystemMessage {
+  role: "system";
+  content: string;
+  sections?: Record<string, string | null>;
+  toolsAdded?: unknown[];
+  toolsRemoved?: unknown[];
+  timestamp?: number;
+}
+
+export interface Usage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens?: number;
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+}
 
 export type ExtensionUiConfirmLocalization =
   | { id: "herdr.closeWorkspace"; target: string; paneCount: number }
@@ -223,7 +243,7 @@ export interface ExtensionWidgetItem {
 
 export interface SessionMessageEntry extends SessionEntryBase {
   type: "message";
-  message: AgentMessage;
+  message: AgentMessage | SessionSystemMessage;
 }
 
 export interface ThinkingLevelChangeEntry extends SessionEntryBase {
@@ -244,6 +264,8 @@ export interface CompactionEntry extends SessionEntryBase {
   tokensBefore: number;
   details?: unknown;
   fromHook?: boolean;
+  systemMessage?: SessionSystemMessage;
+  usage?: Usage;
 }
 
 export interface BranchSummaryEntry extends SessionEntryBase {
@@ -252,6 +274,22 @@ export interface BranchSummaryEntry extends SessionEntryBase {
   summary: string;
   details?: unknown;
   fromHook?: boolean;
+  usage?: Usage;
+}
+
+export interface UsageEntry extends SessionEntryBase {
+  type: "usage";
+  kind: string;
+  provider: string;
+  model: string;
+  usage: Usage;
+  note?: string;
+}
+
+export interface ContextEditEntry extends SessionEntryBase {
+  type: "context_edit";
+  targetId: string;
+  replacement: { content: string | unknown[] } | null;
 }
 
 export interface CustomEntry extends SessionEntryBase {
@@ -285,6 +323,8 @@ export type SessionEntry =
   | ModelChangeEntry
   | CompactionEntry
   | BranchSummaryEntry
+  | UsageEntry
+  | ContextEditEntry
   | CustomEntry
   | CustomMessageEntry
   | LabelEntry

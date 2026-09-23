@@ -264,6 +264,13 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
   const entries = new Set(listPackage(asarPath).map((entry) => entry.replace(/^[/\\]+/u, "").replaceAll("\\", "/")));
   const codingAgentRoot = "node_modules/@earendil-works/pi-coding-agent";
   const nested = `${codingAgentRoot}/node_modules`;
+  const agentCoreRoot =
+    [`${nested}/@earendil-works/pi-agent-core`, "node_modules/@earendil-works/pi-agent-core"].find((root) =>
+      entries.has(`${root}/package.json`),
+    ) ?? `${nested}/@earendil-works/pi-agent-core`;
+  const grokRoot =
+    [`${nested}/grok-mermaid`, "node_modules/grok-mermaid"].find((root) => entries.has(`${root}/package.json`)) ??
+    `${nested}/grok-mermaid`;
   const graph = validatePiPackageGraph({
     readPackage: (entry) => JSON.parse(extractAsarFile(asarPath, entry).toString("utf8")),
     exists: (entry) => entries.has(entry),
@@ -286,35 +293,29 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
     "node_modules/@earendil-works/pi-telemetry/package.json",
     "node_modules/@earendil-works/pi-telemetry/dist/index.js",
     "node_modules/@earendil-works/pi-telemetry/dist/index.d.ts",
-    "node_modules/@earendil-works/pi-agent-core/package.json",
-    "node_modules/@earendil-works/pi-agent-core/dist/index.js",
+    `${agentCoreRoot}/package.json`,
+    `${agentCoreRoot}/dist/index.js`,
+    "node_modules/typebox/package.json",
+    "node_modules/typebox/build/index.mjs",
     `${nested}/@earendil-works/pi-ai/package.json`,
     `${nested}/@earendil-works/pi-ai/dist/index.js`,
     `${nested}/@earendil-works/pi-ai/dist/index.d.ts`,
     `${nested}/@earendil-works/pi-ai/dist/providers/data/amazon-bedrock.json`,
-    `${nested}/@earendil-works/pi-client/package.json`,
-    `${nested}/@earendil-works/pi-client/dist/index.js`,
-    `${nested}/@earendil-works/pi-client/dist/index.d.ts`,
-    `${nested}/@earendil-works/pi-protocol/package.json`,
-    `${nested}/@earendil-works/pi-protocol/dist/index.js`,
-    `${nested}/@earendil-works/pi-protocol/dist/index.d.ts`,
     `${nested}/@earendil-works/pi-telemetry/package.json`,
     `${nested}/@earendil-works/pi-telemetry/dist/index.js`,
     `${nested}/@earendil-works/pi-telemetry/dist/index.d.ts`,
     `${nested}/@earendil-works/pi-tui/package.json`,
     `${nested}/@earendil-works/pi-tui/dist/index.js`,
     `${nested}/@earendil-works/pi-tui/dist/index.d.ts`,
-    "node_modules/grok-mermaid/package.json",
-    "node_modules/grok-mermaid/dist/index.js",
+    `${grokRoot}/package.json`,
+    `${grokRoot}/dist/index.js`,
   ];
   if (platform === "darwin") {
-    required.push(`${nested}/@earendil-works/pi-tui/native/darwin/prebuilds/darwin-${arch}/darwin-modifiers.node`);
+    required.push(`${nested}/@earendil-works/pi-tui/native/darwin/prebuilds/darwin-${arch}/darwin-platform.node`);
   } else if (platform === "win32") {
-    required.push(`${nested}/@earendil-works/pi-tui/native/win32/prebuilds/win32-${arch}/win32-console-mode.node`);
-    required.push(
-      "node_modules/@mariozechner/clipboard-win32-x64-msvc/package.json",
-      "node_modules/@mariozechner/clipboard-win32-x64-msvc/clipboard.win32-x64-msvc.node",
-    );
+    required.push(`${nested}/@earendil-works/pi-tui/native/win32/prebuilds/win32-${arch}/win32-platform.node`);
+  } else if (platform === "linux") {
+    required.push(`${nested}/@earendil-works/pi-tui/native/linux/prebuilds/linux-${arch}/linux-platform-x11.node`);
   }
   const missing = required.filter((entry) => !entries.has(entry));
   if (missing.length > 0) throw new Error(`Packaged Pi runtime/authoring assets are missing: ${missing.join(", ")}`);
@@ -330,13 +331,12 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
     [codingAgentRoot],
     ["node_modules/@earendil-works/pi-ai"],
     ["node_modules/@earendil-works/pi-telemetry"],
-    ["node_modules/@earendil-works/pi-agent-core", `${nested}/@earendil-works/pi-agent-core`],
+    [agentCoreRoot, lockfile.packages?.[agentCoreRoot] ? agentCoreRoot : `${nested}/@earendil-works/pi-agent-core`],
+    ["node_modules/typebox"],
     [`${nested}/@earendil-works/pi-ai`],
-    [`${nested}/@earendil-works/pi-client`],
-    [`${nested}/@earendil-works/pi-protocol`],
     [`${nested}/@earendil-works/pi-telemetry`],
     [`${nested}/@earendil-works/pi-tui`],
-    ["node_modules/grok-mermaid", `${nested}/grok-mermaid`],
+    [grokRoot, lockfile.packages?.[grokRoot] ? grokRoot : `${nested}/grok-mermaid`],
   ]) {
     const packaged = JSON.parse(extractAsarFile(asarPath, `${packageRoot}/package.json`).toString("utf8"));
     const locked = lockfile.packages?.[lockRoot]?.version;

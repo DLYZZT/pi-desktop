@@ -39,6 +39,8 @@ test("an idle active session subscribes before local prompts and refreshes only 
   assert.equal(refreshes, 0);
   onSessionChange({ cwd: "/tmp/one", sessionId: "session-one" });
   assert.equal(refreshes, 1);
+  onSessionChange({ cwd: null, fullRefresh: true });
+  assert.equal(refreshes, 2);
 
   unsubscribe();
   unsubscribe();

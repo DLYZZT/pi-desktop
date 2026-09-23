@@ -11,6 +11,7 @@ import type {
   ThinkingContent,
   ToolCallContent,
 } from "../shared/types";
+import type { SessionStatsInfo } from "../shared/pi-types";
 
 export interface SessionInfo {
   path: string;
@@ -35,6 +36,8 @@ export interface SessionDetail {
   tree: SessionTreeNode[];
   leafId: string | null;
   context: PagedContextInfo;
+  /** Full-session totals, independent of the requested display page. */
+  stats?: SessionStatsInfo;
   agentState?: {
     running: boolean;
     state?: SessionRuntimeState;

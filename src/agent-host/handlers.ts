@@ -112,6 +112,8 @@ import {
   StaleHistoryCursorError,
 } from "./session-history";
 import { getSessionContentSnapshot, invalidateSessionContent } from "./session-content-cache";
+import { buildSessionStats } from "./session-stats";
+import { cacheWarmingSettings, isCacheWarmingMode } from "./cache-warming-settings";
 import { sessionIndex } from "./session-index";
 import { credentialStateMatches, recoverCommittedCredential, type CredentialTarget } from "./credential-sync";
 import { FileSuggestionRequestError, fileSuggestionService } from "./file-suggestions";
@@ -1123,6 +1125,11 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
           leafId,
           tree,
           context,
+          stats: buildSessionStats(entries, {
+            sessionId: id,
+            sessionFile: filePath,
+            sessionName: sm.getSessionName(),
+          }),
           ...(agentState !== undefined ? { agentState } : {}),
         };
         const responseBytes = sessionPerformanceBytesEnabled()
@@ -1735,6 +1742,18 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
           throw new RpcError({ code: "BAD_REQUEST", message: error.message });
         }
         throw error;
+      }
+    },
+
+    "settings.getCacheWarming": async () => cacheWarmingSettings.get(),
+
+    "settings.setCacheWarming": async (params) => {
+      const mode = (params as { mode?: unknown } | undefined)?.mode;
+      if (!isCacheWarmingMode(mode)) throw new RpcError({ code: "BAD_REQUEST", message: "Invalid cache warming mode" });
+      try {
+        return await cacheWarmingSettings.set(mode);
+      } catch {
+        throw new RpcError({ code: "INTERNAL", message: "Global Pi cache warming setting could not be saved" });
       }
     },
 

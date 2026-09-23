@@ -34,13 +34,11 @@ export function validatePiPackageGraph({ readPackage, exists, version }) {
     if (manifest.name === "@earendil-works/pi-coding-agent") {
       // 0.85.0 has an undeclared static server import through main.js.
       if (version === "0.85.0") visit(resolvePackage(root, "@earendil-works/pi-server"));
-      for (const entry of [
-        manifest.bin?.pi,
-        manifest.exports?.["./rpc-entry"]?.import,
-        manifest.exports?.["./client"]?.import,
-      ]) {
+      const publishedEntries = [manifest.bin?.pi, manifest.exports?.["./rpc-entry"]?.import];
+      if (version === "0.85.0") publishedEntries.push(manifest.exports?.["./client"]?.import);
+      for (const entry of publishedEntries) {
         if (typeof entry !== "string" || !exists(path.posix.normalize(`${root}/${entry}`))) {
-          throw new Error("Pi coding-agent CLI/RPC/client entry is missing");
+          throw new Error("Pi coding-agent published CLI/RPC entry is missing");
         }
       }
     }

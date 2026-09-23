@@ -2,21 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { validatePiPackageGraph } from "../../scripts/pi-runtime-contract.mjs";
 
-function fixture() {
+function fixture(version = "0.85.0") {
   const packages = new Map();
   const files = new Set();
   const add = (name, dependencies = {}, prefix = "") => {
     const root = `${prefix}node_modules/@earendil-works/${name}`;
-    const manifest = { name: `@earendil-works/${name}`, version: "0.85.0", main: "dist/index.js", dependencies };
+    const manifest = { name: `@earendil-works/${name}`, version, main: "dist/index.js", dependencies };
     if (name === "pi-coding-agent") {
       manifest.bin = { pi: "dist/bundle/cli.js" };
       manifest.exports = {
         "./rpc-entry": { import: "./dist/bundle/rpc-entry.js" },
-        "./client": { import: "./dist/client/index.js" },
+        "./client": version === "0.85.0" ? { import: "./dist/client/index.js" } : { source: "./src/client/index.ts" },
       };
       files.add(`${root}/dist/bundle/cli.js`);
       files.add(`${root}/dist/bundle/rpc-entry.js`);
-      files.add(`${root}/dist/client/index.js`);
+      if (version === "0.85.0") files.add(`${root}/dist/client/index.js`);
     }
     packages.set(`${root}/package.json`, manifest);
     files.add(`${root}/dist/index.js`);
@@ -33,7 +33,7 @@ function fixture() {
       validatePiPackageGraph({
         readPackage: (p) => packages.get(p),
         exists: (p) => packages.has(p) || files.has(p),
-        version: "0.85.0",
+        version,
       }),
   };
 }
@@ -56,5 +56,17 @@ test("runtime graph rejects metadata-only half packages and missing bundled entr
   assert.throws(f.check, /entry is missing/);
   f.files.add(`${server}/dist/index.js`);
   f.files.delete("node_modules/@earendil-works/pi-coding-agent/dist/bundle/rpc-entry.js");
-  assert.throws(f.check, /CLI\/RPC\/client/);
+  assert.throws(f.check, /CLI\/RPC/);
+});
+
+test("0.87.1 graph accepts source-only client and still requires published CLI/RPC entries", () => {
+  const f = fixture("0.87.1");
+  const codingRoot = "node_modules/@earendil-works/pi-coding-agent";
+  const coding = f.packages.get(`${codingRoot}/package.json`);
+  coding.dependencies = { "@earendil-works/pi-agent-core": "^0.87.1" };
+  const agentRoot = f.add("pi-agent-core", { "@earendil-works/chord": "^0.87.1" }, `${codingRoot}/`);
+  f.add("chord", {}, `${agentRoot}/`);
+  assert.equal(f.check().has(agentRoot), true);
+  f.files.delete(`${codingRoot}/dist/bundle/rpc-entry.js`);
+  assert.throws(f.check, /CLI\/RPC entry is missing/);
 });

@@ -132,10 +132,11 @@ export interface AgentSessionLike {
   readonly autoRetryEnabled: boolean;
   readonly model: ModelLike | undefined;
   readonly sessionName: string | undefined;
+  readonly systemPrompt?: string;
   readonly modelRuntime: { getModel: (provider: string, modelId: string) => ModelLike | undefined };
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
-  readonly agent: { state?: { systemPrompt?: string; thinkingLevel?: string; messages?: unknown[] } };
+  readonly agent: { state?: { readonly systemPrompt?: string; thinkingLevel?: string; messages?: unknown[] } };
   readonly extensionRunner: ExtensionRunnerLike;
   readonly promptTemplates: readonly PromptTemplateLike[];
   readonly resourceLoader: ResourceLoaderLike;
@@ -171,6 +172,7 @@ export interface AgentSessionLike {
   getLastAssistantText(): string | undefined;
   setAutoCompactionEnabled(enabled: boolean): void;
   setAutoRetryEnabled(enabled: boolean): void;
+  setCacheWarmingMode(mode: "off" | "streaming" | "idle"): void;
   steer(text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): Promise<void>;
   followUp(text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): Promise<void>;
   readonly pendingMessageCount: number;

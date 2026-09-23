@@ -397,6 +397,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
+  const externalTurnRunIdRef = useRef<string | null>(null);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
   const pendingSessionLoadTraceRef = useRef<SessionLoadTrace | null>(null);
   const historyGenerationRef = useRef(0);
@@ -417,41 +418,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const sessionStats = (() => {
     if (sessionStatsOverride) return sessionStatsOverride;
-    const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
-    let cost = 0;
-    let userMessages = 0;
-    let assistantMessages = 0;
-    let toolResults = 0;
-    let toolCalls = 0;
-    for (const msg of messages) {
-      if (msg.role === "user") userMessages += 1;
-      if (msg.role === "toolResult") toolResults += 1;
-      if (msg.role !== "assistant") continue;
-      assistantMessages += 1;
-      const u = (msg as import("@/lib/types").AssistantMessage).usage;
-      toolCalls += (msg as import("@/lib/types").AssistantMessage).content.filter((c) => c.type === "toolCall").length;
-      if (!u) continue;
-      tokens.input += u.input ?? 0;
-      tokens.output += u.output ?? 0;
-      tokens.cacheRead += u.cacheRead ?? 0;
-      tokens.cacheWrite += u.cacheWrite ?? 0;
-      cost += u.cost?.total ?? 0;
-    }
-    tokens.total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
-    if (tokens.total === 0 && messages.length === 0) return null;
+    if (!data?.stats) return null;
     return {
-      sessionFile: data?.filePath || undefined,
-      sessionId: sessionIdRef.current ?? session?.id ?? "",
-      sessionName: session?.name,
-      userMessages,
-      assistantMessages,
-      toolCalls,
-      toolResults,
-      totalMessages: messages.length,
-      tokens,
-      cost,
+      ...data.stats,
+      sessionName: session?.name ?? data.stats.sessionName,
       ...(contextUsage ? { contextUsage } : {}),
-    } satisfies SessionStatsInfo;
+    };
   })();
 
   const commitHistory = useCallback((nextMessages: AgentMessage[], nextEntryIds: string[]) => {
@@ -520,6 +492,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
 
         setData(d);
+        setSessionStatsOverride(null);
         if (d.toolNames !== undefined) {
           setToolPresetState(getPresetFromTools(d.toolNames.map((name) => ({ name, description: "", active: true }))));
         }
@@ -934,7 +907,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // must not overwrite the messages of the run currently streaming.
       if (runId !== undefined && promptRunIdRef.current !== runId) return;
       try {
-        if (sid) await loadSession(sid);
+        if (sid) await loadSession(sid, false, true);
       } finally {
         if (runId !== undefined && promptRunIdRef.current !== runId) return;
         optimisticUserMessageKeyRef.current = null;
@@ -1046,6 +1019,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     (event: AgentEvent) => {
       switch (event.type) {
         case "channel_turn_start": {
+          externalTurnRunIdRef.current = typeof event.runId === "string" ? event.runId : null;
           const container = scrollContainerRef.current;
           const shouldFollow = container ? isNearBottomExcludingSpacer(container) : true;
           externalTurnAutoFollowRef.current = shouldFollow;
@@ -1054,9 +1028,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           break;
         }
         case "channel_turn_end":
-        case "channel_turn_error":
+        case "channel_turn_error": {
+          if (externalTurnRunIdRef.current !== event.runId) break;
+          externalTurnRunIdRef.current = null;
           externalTurnAutoFollowRef.current = false;
+          if (agentRunningRef.current) void finishPromptWithoutStream(sessionIdRef.current);
           break;
+        }
         case "agent_start":
           agentRunningRef.current = true;
           setAgentRunning(true);
@@ -1064,34 +1042,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           dispatch({ type: "start" });
           break;
         case "agent_end":
-          // A late agent_end can arrive over the stream after reconcileAgentState
-          // already finished this run — don't re-trigger completion.
-          if (!agentRunningRef.current) break;
-          agentRunningRef.current = false;
-          setAgentRunning(false);
-          setAgentPhase(null);
-          setRetryInfo(null);
-          dispatch({ type: "end" });
-          if (sessionIdRef.current) {
-            void loadSession(sessionIdRef.current);
-            void agentState(sessionIdRef.current)
-              .then((d) => {
-                const state = d.state as AgentStateResponse | undefined;
-                if (state?.contextUsage !== undefined) setContextUsage(state.contextUsage ?? null);
-                if (state?.systemPrompt !== undefined) setSystemPrompt(state.systemPrompt ?? null);
-                if (state?.extensionStatuses !== undefined) setExtensionStatuses(state.extensionStatuses ?? []);
-                if (state?.extensionWidgets !== undefined) setExtensionWidgets(state.extensionWidgets ?? []);
-                setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages));
-              })
-              .catch(() => {});
-          }
-          onAgentEnd?.();
+          // One Desktop prompt may have several SDK runs (retry, boundary continuation).
+          // The wrapper emits prompt_done only after the whole operation settles.
           break;
-        case "prompt_done":
+        case "prompt_done": {
+          const clientRunId = typeof event.clientRunId === "number" ? event.clientRunId : undefined;
+          if (clientRunId !== undefined && clientRunId !== promptRunIdRef.current) break;
           if (!agentRunningRef.current) break;
-          void finishPromptWithoutStream(sessionIdRef.current);
+          void finishPromptWithoutStream(sessionIdRef.current, clientRunId);
           break;
+        }
         case "prompt_error":
+          if (typeof event.clientRunId === "number" && event.clientRunId !== promptRunIdRef.current) break;
           addNotice({
             type: "error",
             message: (event.errorMessage as string | undefined) ?? t("commandFailed", "Command failed"),
@@ -1109,6 +1071,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           // (e.g. stream data buffered while the tab was frozen, flushed after
           // reconcile) — they would resurrect a ghost streaming bubble.
           if (!agentRunningRef.current) break;
+          if ((event.message as { role?: unknown } | undefined)?.role === "system") break;
           const msg = event.message as Partial<AgentMessage> | undefined;
           if (msg?.role === "user") {
             break;
@@ -1124,6 +1087,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           // loadSession already loaded this message from the session file —
           // appending it again would duplicate it.
           if (!agentRunningRef.current) break;
+          if ((event.message as { role?: unknown } | undefined)?.role === "system") break;
           const completed = event.message as AgentMessage | undefined;
           if (completed && completed.role === "user") {
             // Delivered steering/follow-up messages surface here as user
@@ -1206,7 +1170,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           break;
       }
     },
-    [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd, t, updateHistory],
+    [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, t, updateHistory],
   );
   handleAgentEventRef.current = handleAgentEvent;
 
@@ -1232,6 +1196,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       updateHistory((current) => appendLocalHistoryMessage(current, userMsg));
       optimisticUserMessageKeyRef.current = userMessageKey(userMsg);
       promptRunIdRef.current = promptRunId;
+      externalTurnRunIdRef.current = null;
       agentRunningRef.current = true;
       setAgentRunning(true);
       setAgentPhase(isSlashCommandPrompt ? { kind: "running_command" } : { kind: "waiting_model" });
@@ -1264,6 +1229,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             await sendAgentCommand(sid, {
               type: "prompt",
               message,
+              clientRunId: promptRunId,
               ...(piImages?.length ? { images: piImages } : {}),
             });
             promoteNewSession(1, message);
@@ -1285,6 +1251,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           await sendAgentCommand(session.id, {
             type: "prompt",
             message,
+            clientRunId: promptRunId,
             ...(piImages?.length ? { images: piImages } : {}),
           });
         }

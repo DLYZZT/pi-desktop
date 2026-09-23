@@ -344,6 +344,24 @@ export interface Api {
   };
 
   // Config
+  "settings.getCacheWarming": {
+    params: void;
+    result: {
+      mode: "off" | "streaming" | "idle";
+      scope: "global";
+      loadFailed: boolean;
+      pendingSessionCount: number;
+    };
+  };
+  "settings.setCacheWarming": {
+    params: { mode: "off" | "streaming" | "idle" };
+    result: {
+      mode: "off" | "streaming" | "idle";
+      scope: "global";
+      loadFailed: boolean;
+      pendingSessionCount: number;
+    };
+  };
   "models.list": {
     params: { cwd?: string } | void;
     result: ModelsListResult;

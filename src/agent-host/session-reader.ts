@@ -146,7 +146,7 @@ export async function buildSessionInfoFromManager(
   let firstMessage = "";
   let lastActivityTime: number | undefined;
   for (const entry of entries) {
-    if (entry.type !== "message") continue;
+    if (entry.type !== "message" || !["user", "assistant", "toolResult"].includes(entry.message.role)) continue;
     messageCount += 1;
     const activityTime = getMessageActivityTime(entry);
     if (activityTime !== undefined) lastActivityTime = Math.max(lastActivityTime ?? 0, activityTime);
@@ -349,6 +349,7 @@ function parseEntryTimestamp(timestamp: string): number | undefined {
 export function entryToUiMessage(entry: SessionEntry): AgentMessage | null {
   switch (entry.type) {
     case "message":
+      if (entry.message.role === "system") return null;
       return normalizeToolCalls(entry.message);
     case "compaction":
       return {

@@ -85,7 +85,6 @@ test("UI prompts and messaging-channel turns share one serial session scheduler"
   };
   const wrapper = new AgentSessionWrapper(inner);
   assert.equal(wrapper.cwd, "/tmp/shared-workspace");
-  assert.equal(inner.agent.state.messages[0].content[0].text, "legacy text");
   wrapper.extensionsBound = true;
   wrapper.start();
   t.after(() => wrapper.destroy());
@@ -164,7 +163,7 @@ test("session tool changes use Desktop persistence and can enable tools after an
   });
   t.after(() => wrapper.destroy());
 
-  assert.equal(inner.agent.state.systemPrompt, "");
+  assert.equal(inner.agent.state.systemPrompt, "initial");
   await wrapper.send({ type: "set_tools", toolNames: ["read", "bash"] });
   assert.deepEqual(activeToolNames, ["read", "bash"]);
   assert.equal(inner.agent.state.systemPrompt, "tools enabled");
@@ -172,7 +171,7 @@ test("session tool changes use Desktop persistence and can enable tools after an
 
   await wrapper.send({ type: "set_tools", toolNames: [] });
   assert.deepEqual(activeToolNames, []);
-  assert.equal(inner.agent.state.systemPrompt, "");
+  assert.equal(inner.agent.state.systemPrompt, "no tools");
   assert.deepEqual(persistedStates.at(-1), { sessionId: "session-tools", toolNames: [] });
 });
 

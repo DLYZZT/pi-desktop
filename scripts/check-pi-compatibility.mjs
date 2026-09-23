@@ -5,17 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const targetVersion = "0.85.0";
-// pi-server is temporary: 0.85.0's public SDK imports it without declaring it (#9132).
-const directPackages = [
-  "@earendil-works/pi-ai",
-  "@earendil-works/pi-coding-agent",
-  "@earendil-works/pi-server",
-  "@earendil-works/pi-telemetry",
-];
+const directPackages = ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-telemetry"];
 
 function fail(message) {
-  console.error(`[pi-085-compat] ${message}`);
+  console.error(`[pi-compat] ${message}`);
   process.exit(1);
 }
 
@@ -25,6 +18,13 @@ function readJson(relativePath) {
 
 const packageJson = readJson("package.json");
 const lockfile = readJson("package-lock.json");
+const targetVersion = packageJson.dependencies?.["@earendil-works/pi-coding-agent"];
+if (typeof targetVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(targetVersion)) {
+  fail("@earendil-works/pi-coding-agent must use an exact release version");
+}
+if (packageJson.dependencies?.["@earendil-works/pi-server"] !== undefined) {
+  fail("the temporary pi-server dependency must be removed");
+}
 const graph = validatePiPackageGraph({
   readPackage: readJson,
   exists: (entry) => existsSync(path.join(root, entry)),
@@ -71,6 +71,11 @@ if (telemetryLocks.length === 0 || telemetryLocks.some(([, entry]) => entry.vers
 if (lockfile.packages?.["node_modules/@earendil-works/pi-telemetry"]?.version !== targetVersion) {
   fail(`the root @earendil-works/pi-telemetry lock entry must be ${targetVersion}`);
 }
+if (packageJson.dependencies?.typebox !== "1.3.27") fail("typebox must be an exact root dependency at 1.3.27");
+if (lockfile.packages?.[""]?.dependencies?.typebox !== "1.3.27") fail("lockfile root typebox declaration is missing");
+if (readJson("node_modules/typebox/package.json").version !== "1.3.27") {
+  fail("installed root typebox version mismatch");
+}
 
 function sourceFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -88,6 +93,7 @@ const forbidden = [
   ["removed TypeBox helper", /\bType\.(?:Base|Awaited|Promise|AsyncIterator|Iterator|Options)\s*\(/],
   ["removed Value.Mutate", /\bValue\.Mutate\s*\(/],
   ["legacy extension context.store", /\bcontext\.store\b/],
+  ["readonly AgentState.systemPrompt assignment", /\.agent\.state\.systemPrompt\s*=/],
 ];
 for (const file of [
   ...sourceFiles(path.join(root, "src")),
@@ -119,5 +125,5 @@ for (const [relativePath, marker] of requiredMarkers) {
 }
 
 console.log(
-  `[pi-085-compat] exact dependencies, removed APIs, model refresh, credential/config, and extension diagnostics passed (${targetVersion})`,
+  `[pi-compat] exact dependencies, removed APIs, model refresh, credential/config, and extension diagnostics passed (${targetVersion})`,
 );

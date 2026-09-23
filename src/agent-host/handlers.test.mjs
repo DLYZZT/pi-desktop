@@ -50,7 +50,7 @@ async function captureHandlers() {
 test("registerHandlers exposes every contract method exactly once", async () => {
   const { handlers } = await captureHandlers();
   // Keep in sync with src/contract/api.ts: one handler per contract method.
-  assert.equal(Object.keys(handlers).length, 101);
+  assert.equal(Object.keys(handlers).length, 103);
   for (const method of [
     "host.ping",
     "host.toolchain",
@@ -437,25 +437,31 @@ test("session, model configuration, and auth handlers isolate state and preserve
   assert.equal(firstSave.ok, true);
   assert.match(firstSave.version, /^sha256:/);
 
-  const v084Config = {
+  const v087Config = {
     providers: {
       custom: {
         headers: { Authorization: "Bearer test", "X-Remove-Me": null },
         models: [
           {
             id: "model-one",
+            inputLimits: { maxRequestBytes: 4_000_000, images: { maxPerMessage: 4, maxPerRequest: 8 } },
+            promptCache: { short: 300, long: 3600 },
             samplingParams: { temperature: 0.2, thinking_token_budget: 1024 },
+            compat: { supportsStrictMode: false, supportsMidConvoSystemMessages: true },
             futureField: { preserved: true },
           },
         ],
       },
+    },
+    modelOverrides: {
+      "openai/gpt-6-sol": { inputLimits: { maxRequestBytes: 2_000_000 }, promptCache: { long: 3600 } },
     },
     futureTopLevel: "preserved",
   };
   const editorOne = await handlers["modelsConfig.get"]();
   const editorTwo = await handlers["modelsConfig.get"]();
   const winningSave = await handlers["modelsConfig.set"]({
-    config: v084Config,
+    config: v087Config,
     expectedVersion: editorOne.version,
   });
   assert.equal(winningSave.ok, true);
@@ -471,7 +477,7 @@ test("session, model configuration, and auth handlers isolate state and preserve
       error.detail.currentVersion === winningSave.version,
   );
   const winningSnapshot = await handlers["modelsConfig.get"]();
-  assert.deepEqual(winningSnapshot.config, v084Config);
+  assert.deepEqual(winningSnapshot.config, v087Config);
   assert.equal(winningSnapshot.version, winningSave.version);
 
   const models = await handlers["models.list"]({ cwd: root });
@@ -630,12 +636,14 @@ test("sessions.get returns the contract shape without rescanning known session p
   });
 
   const detail = await handlers["sessions.get"]({ id: sessionId });
-  assert.deepEqual(Object.keys(detail).sort(), ["context", "filePath", "info", "leafId", "sessionId", "tree"]);
+  assert.deepEqual(Object.keys(detail).sort(), ["context", "filePath", "info", "leafId", "sessionId", "stats", "tree"]);
   assert.equal(detail.sessionId, sessionId);
   assert.equal(detail.filePath, sessionPath);
   assert.equal(detail.info.id, sessionId);
   assert.equal(detail.info.messageCount, 4);
   assert.equal(detail.info.firstMessage, "hello");
+  assert.equal(detail.stats.totalMessages, 4);
+  assert.equal(detail.stats.cost, 0);
   assert.deepEqual(detail.context.entryIds, ["user-one", "assistant-one", "user-two", "assistant-two"]);
   assert.equal(detail.context.messages.length, 4);
   const { setDesktopSessionToolNames } = await loadHandlersModule();

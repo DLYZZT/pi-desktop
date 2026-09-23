@@ -114,6 +114,24 @@ export async function runSmokeHostChecks(
       throw new Error(`Agent Host toolchain snapshot mismatch: ${JSON.stringify(hostToolchain)}`);
     }
     await call("sessions.list");
+    const smokeRoot = process.env.PI_DESKTOP_SMOKE_USER_DATA;
+    const smokeAgentDir = process.env.PI_CODING_AGENT_DIR;
+    if (!smokeRoot || !smokeAgentDir || !smokeAgentDir.startsWith(smokeRoot + path.sep)) {
+      throw new Error("Smoke Pi settings must be isolated under temporary user data");
+    }
+    const initialWarming = await call<{ mode?: string; scope?: string }>("settings.getCacheWarming");
+    if (initialWarming.mode !== "streaming" || initialWarming.scope !== "global") {
+      throw new Error("Pi cache warming default did not load from isolated global settings");
+    }
+    const updatedWarming = await call<{ mode?: string; pendingSessionCount?: number }>("settings.setCacheWarming", {
+      mode: "off",
+    });
+    if (updatedWarming.mode !== "off" || updatedWarming.pendingSessionCount !== 0) {
+      throw new Error("Pi cache warming change did not persist before active sessions were opened");
+    }
+    if ((await call<{ mode?: string }>("settings.getCacheWarming")).mode !== "off") {
+      throw new Error("Pi cache warming setting did not round-trip over Host RPC");
+    }
     const channels = await call<{ accounts?: unknown[]; statuses?: unknown[]; bindings?: unknown[] }>("channels.list");
     if (!Array.isArray(channels.accounts) || !Array.isArray(channels.statuses) || !Array.isArray(channels.bindings)) {
       throw new Error("channels.list returned an invalid shape");
@@ -122,6 +140,12 @@ export async function runSmokeHostChecks(
     const status = await call<{ isGit?: boolean }>("git.status", { path: process.cwd() });
     if (typeof status.isGit !== "boolean") throw new Error("git.status returned an invalid shape");
     const fs = await import("fs");
+    const savedWarming = JSON.parse(fs.readFileSync(path.join(smokeAgentDir, "settings.json"), "utf8")) as {
+      cacheWarming?: string;
+    };
+    if (savedWarming.cacheWarming !== "off") {
+      throw new Error("Pi cache warming setting did not reach the isolated settings.json");
+    }
     const packagePath = path.join(process.cwd(), "package.json");
     const download = await call<{ base64?: string; size?: number }>("files.download", { path: packagePath });
     const expected = fs.readFileSync(packagePath);
@@ -236,6 +260,57 @@ export async function runSmokeHostChecks(
       }
     }
 
+    const statsSessionId = "pi-smoke-usage";
+    const statsSessionTitle = "Smoke usage stats";
+    const statsSessionDir = path.join(smokeAgentDir, "sessions", "smoke-usage");
+    fs.mkdirSync(statsSessionDir, { recursive: true });
+    const statsTimestamp = new Date().toISOString();
+    const statsFile = path.join(statsSessionDir, `${statsTimestamp.replace(/[:.]/g, "-")}_${statsSessionId}.jsonl`);
+    const initialUsage = {
+      input: 10,
+      output: 2,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 12,
+      cost: { input: 0.02, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.02 },
+    };
+    fs.writeFileSync(
+      statsFile,
+      [
+        { type: "session", version: 3, id: statsSessionId, timestamp: statsTimestamp, cwd: process.cwd() },
+        {
+          type: "message",
+          id: "smoke-user",
+          parentId: null,
+          timestamp: statsTimestamp,
+          message: { role: "user", content: statsSessionTitle, timestamp: Date.now() },
+        },
+        {
+          type: "message",
+          id: "smoke-assistant",
+          parentId: "smoke-user",
+          timestamp: statsTimestamp,
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Ready" }],
+            api: "anthropic-messages",
+            provider: "anthropic",
+            model: "smoke-fixture",
+            stopReason: "stop",
+            timestamp: Date.now(),
+            usage: initialUsage,
+          },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
+      { flag: "wx" },
+    );
+    const indexedSessions = await call<{ sessions?: Array<{ id?: string }> }>("sessions.list", { cwd: process.cwd() });
+    if (!indexedSessions.sessions?.some((session) => session.id === statsSessionId)) {
+      throw new Error("Smoke usage session was not indexed before Renderer load");
+    }
+
     const smokeWindow = createWindow((message) => {
       if (/Content Security Policy/i.test(message)) rendererSecurityViolation = message;
     });
@@ -332,6 +407,31 @@ export async function runSmokeHostChecks(
                   valueSetter?.call(select, value);
                   select.dispatchEvent(new Event("change", { bubbles: true }));
                 };
+                const cacheLabel = Array.from(document.querySelectorAll("label")).find((label) =>
+                  ["Prompt cache warming", "提示缓存预热", "提示快取預熱"].includes(label.textContent?.trim() || ""),
+                );
+                const cacheSelect = cacheLabel?.htmlFor ? document.getElementById(cacheLabel.htmlFor) : undefined;
+                if (!(cacheSelect instanceof HTMLSelectElement)) {
+                  throw new Error("Cache warming setting is unavailable or unlabeled");
+                }
+                if (JSON.stringify(Array.from(cacheSelect.options, (option) => option.value)) !== JSON.stringify(["off", "streaming", "idle"])) {
+                  throw new Error("Cache warming setting has the wrong modes");
+                }
+                const cacheDeadline = Date.now() + 3000;
+                while ((cacheSelect.disabled || cacheSelect.value !== "off") && Date.now() < cacheDeadline) {
+                  await new Promise((wait) => setTimeout(wait, 25));
+                }
+                if (cacheSelect.disabled || cacheSelect.value !== "off") {
+                  throw new Error("Cache warming setting did not load the isolated global value");
+                }
+                changeSelect(cacheSelect, "idle");
+                await new Promise((wait) => setTimeout(wait, 0));
+                const cacheSaveDeadline = Date.now() + 3000;
+                while ((cacheSelect.disabled || cacheSelect.value !== "idle") && Date.now() < cacheSaveDeadline) {
+                  await new Promise((wait) => setTimeout(wait, 25));
+                }
+                const cacheWarming = cacheSelect.value === "idle" && !cacheSelect.disabled;
+                if (!cacheWarming) throw new Error("Cache warming setting did not finish its UI save");
                 const waitForAppearance = async (fontSize, layout, assistantWidth = chatAssistantWidthSelect.value) => {
                   const appearanceDeadline = Date.now() + 3000;
                   while (Date.now() < appearanceDeadline) {
@@ -474,6 +574,7 @@ export async function runSmokeHostChecks(
                   gitStatus: typeof status.isGit === "boolean",
                   htmlPreview: previewRendered,
                   chatAppearance,
+                  cacheWarming,
                   channelSettings: Boolean(weixinConnectButton && telegramConnectButton),
                   channelCredentialWrite: typeof window.piBridge.setChannelCredential === "function",
                 });
@@ -494,6 +595,7 @@ export async function runSmokeHostChecks(
         gitStatus?: boolean;
         htmlPreview?: boolean;
         chatAppearance?: boolean;
+        cacheWarming?: boolean;
         channelSettings?: boolean;
         channelCredentialWrite?: boolean;
       };
@@ -503,10 +605,100 @@ export async function runSmokeHostChecks(
         !rendererResult.gitStatus ||
         !rendererResult.htmlPreview ||
         !rendererResult.chatAppearance ||
+        !rendererResult.cacheWarming ||
         !rendererResult.channelSettings ||
         !rendererResult.channelCredentialWrite
       ) {
         throw new Error(`Renderer smoke returned invalid result: ${JSON.stringify(rendererResult)}`);
+      }
+      const initialStatsVisible = (await smokeWindow.webContents.executeJavaScript(`
+        (async () => {
+          const until = async (read, label) => {
+            const deadline = Date.now() + 7000;
+            while (Date.now() < deadline) {
+              const value = read();
+              if (value) return value;
+              await new Promise((resolve) => setTimeout(resolve, 25));
+            }
+            throw new Error(label);
+          };
+          const dialog = document.querySelector('[role="dialog"]');
+          const close = dialog && Array.from(dialog.querySelectorAll('button[aria-label]')).find((button) =>
+            ["Close", "关闭", "關閉"].includes(button.getAttribute("aria-label"))
+          );
+          if (!close) throw new Error("Smoke settings dialog close button is unavailable");
+          close.click();
+          await until(() => !document.querySelector('[role="dialog"]'), "Smoke settings dialog did not close");
+          const sessionButton = await until(
+            () => Array.from(document.querySelectorAll('button[aria-label]')).find((button) =>
+              button.getAttribute("aria-label")?.includes(${JSON.stringify(statsSessionTitle)})
+            ),
+            "Smoke usage session did not appear in the sidebar",
+          );
+          sessionButton.click();
+          const statsButton = await until(
+            () => Array.from(document.querySelectorAll('button[title]')).find((button) =>
+              button.getAttribute("title")?.includes("$0.0200")
+            ),
+            "Initial full-session cost did not reach the top bar",
+          );
+          statsButton.click();
+          await until(
+            () => document.querySelector('.session-info-popover')?.textContent?.includes("$0.0200"),
+            "Initial full-session cost did not reach the stats panel",
+          );
+          return true;
+        })()
+      `)) as boolean;
+      if (!initialStatsVisible) throw new Error("Initial smoke usage stats were not visible");
+      fs.appendFileSync(
+        statsFile,
+        JSON.stringify({
+          type: "usage",
+          id: "smoke-idle-usage",
+          parentId: "smoke-assistant",
+          timestamp: new Date().toISOString(),
+          kind: "cache_warm",
+          provider: "anthropic",
+          model: "smoke-fixture",
+          usage: {
+            input: 7,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 7,
+            cost: { input: 0.25, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 },
+          },
+        }) + "\n",
+      );
+      const updatedStats = await call<{ stats?: { cost?: number; totalMessages?: number } }>("sessions.get", {
+        id: statsSessionId,
+      });
+      if (Math.abs((updatedStats.stats?.cost ?? -1) - 0.27) > 1e-9 || updatedStats.stats?.totalMessages !== 2) {
+        throw new Error("Host did not aggregate idle usage separately from displayed messages");
+      }
+      const updatedStatsVisible = (await smokeWindow.webContents.executeJavaScript(`
+        new Promise((resolve, reject) => {
+          const deadline = Date.now() + 7000;
+          const check = () => {
+            const panel = document.querySelector('.session-info-popover');
+            const topBar = Array.from(document.querySelectorAll('button[title]')).find((button) =>
+              button.getAttribute("title")?.includes("$0.2700")
+            );
+            if (panel?.textContent?.includes("$0.2700") && topBar) return resolve(true);
+            if (Date.now() >= deadline) return reject(new Error("Idle usage did not refresh the open stats panel"));
+            setTimeout(check, 25);
+          };
+          check();
+        })
+      `)) as boolean;
+      if (!updatedStatsVisible) throw new Error("Renderer did not display the updated idle usage cost");
+      const finalWarming = await call<{ mode?: string }>("settings.getCacheWarming");
+      const finalSettings = JSON.parse(fs.readFileSync(path.join(smokeAgentDir, "settings.json"), "utf8")) as {
+        cacheWarming?: string;
+      };
+      if (finalWarming.mode !== "idle" || finalSettings.cacheWarming !== "idle") {
+        throw new Error("Renderer cache warming choice did not persist through Host RPC");
       }
       if (rendererSecurityViolation) {
         throw new Error(`Renderer security violation: ${rendererSecurityViolation}`);

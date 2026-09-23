@@ -17,7 +17,7 @@ async function loadModule() {
   return modulePromise;
 }
 
-test("editing one model preserves v0.84 sampling, nullable headers, and unknown fields", async () => {
+test("editing one model preserves 0.87.1 limits, cache, overrides, sampling, and unknown fields", async () => {
   const { replaceModelEntry } = await loadModule();
   const original = {
     revision: 7,
@@ -30,6 +30,8 @@ test("editing one model preserves v0.84 sampling, nullable headers, and unknown 
           {
             id: "model-one",
             name: "Old name",
+            inputLimits: { maxRequestBytes: 4_000_000, images: { maxPerMessage: 4, maxPerRequest: 8 } },
+            promptCache: { short: 300, long: 3600 },
             samplingParams: { temperature: 0.25, thinking_token_budget: 2048 },
             compat: {
               futureCompat: "preserved",
@@ -43,16 +45,22 @@ test("editing one model preserves v0.84 sampling, nullable headers, and unknown 
         ],
       },
     },
+    modelOverrides: {
+      "openai/gpt-6-sol": { inputLimits: { maxRequestBytes: 2_000_000 }, promptCache: { long: 3600 } },
+    },
   };
   const selected = original.providers.custom.models[0];
   const updated = replaceModelEntry(original, "custom", 0, { ...selected, name: "New name" });
 
   assert.equal(updated.providers.custom.models[0].name, "New name");
+  assert.deepEqual(updated.providers.custom.models[0].inputLimits, selected.inputLimits);
+  assert.deepEqual(updated.providers.custom.models[0].promptCache, selected.promptCache);
   assert.deepEqual(updated.providers.custom.models[0].samplingParams, selected.samplingParams);
   assert.deepEqual(updated.providers.custom.models[0].compat, selected.compat);
   assert.deepEqual(updated.providers.custom.models[0].futureModelField, selected.futureModelField);
   assert.deepEqual(updated.providers.custom.headers, original.providers.custom.headers);
   assert.deepEqual(updated.providers.custom.futureProviderField, original.providers.custom.futureProviderField);
+  assert.deepEqual(updated.modelOverrides, original.modelOverrides);
   assert.equal(updated.revision, 7);
   assert.equal(original.providers.custom.models[0].name, "Old name");
 });

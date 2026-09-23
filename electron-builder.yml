@@ -37,6 +37,7 @@ files:
     to: node_modules/@earendil-works/pi-coding-agent
     filter:
       - README.md
+      - CHANGELOG.md
       - "docs/**/*"
       - "examples/**/*"
       # Public declarations let the agent inspect exact APIs when the prose and
@@ -72,21 +73,6 @@ files:
       - "dist/**/*.js"
       - "dist/**/*.d.ts"
       - "native/**/*"
-  - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-client
-    to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-client
-    filter:
-      - package.json
-      - README.md
-      - CHANGELOG.md
-      - "dist/**/*.js"
-      - "dist/**/*.d.ts"
-  - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-protocol
-    to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-protocol
-    filter:
-      - package.json
-      - README.md
-      - "dist/**/*.js"
-      - "dist/**/*.d.ts"
   - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-telemetry
     to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-telemetry
     filter:

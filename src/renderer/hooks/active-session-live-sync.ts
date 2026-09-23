@@ -19,7 +19,7 @@ export async function subscribeActiveSessionLiveSync(options: ActiveSessionLiveS
   let unsubscribeChanges: Unsubscribe | undefined;
   try {
     unsubscribeChanges = await options.subscribeSessionChanges((event) => {
-      if (event.sessionId === options.sessionId) options.onSessionChanged(event);
+      if (event.sessionId === options.sessionId || event.fullRefresh === true) options.onSessionChanged(event);
     });
   } catch (error) {
     unsubscribeAgent();

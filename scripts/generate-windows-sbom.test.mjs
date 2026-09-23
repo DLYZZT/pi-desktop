@@ -146,26 +146,23 @@ test("Windows SBOM fails closed on helper bytes or release provenance drift", ()
   assert.throws(() => createWindowsSbom(development), /manifest does not match/);
 });
 
-test("current production lock includes the complete Pi 0.85 graph in the Windows SBOM", () => {
+test("current production lock includes the complete Pi 0.87.1 graph in the Windows SBOM", () => {
   const input = facts();
   input.packageLock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
   const sbom = createWindowsSbom(input);
-  for (const name of [
-    "pi-ai",
-    "pi-coding-agent",
-    "pi-server",
-    "pi-agent-core",
-    "pi-client",
-    "pi-protocol",
-    "pi-telemetry",
-    "pi-tui",
-    "chord",
-  ]) {
+  for (const name of ["pi-ai", "pi-coding-agent", "pi-agent-core", "pi-telemetry", "pi-tui", "chord"]) {
     const matches = sbom.components.filter((entry) => entry.name === `@earendil-works/${name}`);
     assert.ok(matches.length > 0, name);
     assert.ok(
-      matches.every((entry) => entry.version === "0.85.0"),
+      matches.every((entry) => entry.version === "0.87.1"),
       name,
+    );
+  }
+  assert.ok(sbom.components.some((entry) => entry.name === "typebox" && entry.version === "1.3.27"));
+  for (const name of ["pi-server", "pi-client", "pi-protocol"]) {
+    assert.equal(
+      sbom.components.some((entry) => entry.name === "@earendil-works/" + name),
+      false,
     );
   }
 });

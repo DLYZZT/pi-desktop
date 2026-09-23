@@ -6,7 +6,7 @@
  * exact binary download, and safe Skill editing.
  */
 import { spawn, spawnSync } from "child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -33,6 +33,8 @@ if (!existsSync(main)) {
 
 const electronBin = resolveElectronBinary(root);
 const smokeUserData = mkdtempSync(path.join(tmpdir(), "pi-desktop-smoke-"));
+const smokeAgentDir = path.join(smokeUserData, "pi-agent");
+mkdirSync(smokeAgentDir, { recursive: true, mode: 0o700 });
 let smokeUserDataRemoved = false;
 
 function removeSmokeUserData() {
@@ -47,6 +49,7 @@ const child = spawn(electronBin, [main], {
     ...process.env,
     ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
     PI_DESKTOP_SMOKE_USER_DATA: smokeUserData,
+    PI_CODING_AGENT_DIR: smokeAgentDir,
   },
   stdio: "inherit",
   detached: process.platform !== "win32",

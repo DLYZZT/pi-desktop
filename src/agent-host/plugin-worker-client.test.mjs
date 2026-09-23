@@ -117,7 +117,8 @@ test("timeout terminates the Plugin worker process tree before rejecting", async
     const pending = runPluginWorker({ body: { action: "update", cwd: directory } }, context(), {
       entryPath,
       execPath: process.execPath,
-      timeoutMs: 250,
+      // Allow the nested Node process to start under translated Linux x64 before testing tree cleanup.
+      timeoutMs: 2_000,
       terminationGraceMs: 100,
     });
     await assert.rejects(pending, (error) => error.code === "TOOLCHAIN_INTERNAL" && /timed out/.test(error.message));

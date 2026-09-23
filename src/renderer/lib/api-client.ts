@@ -218,6 +218,14 @@ export async function agentState(sessionId: string) {
   return call("agent.state", { sessionId });
 }
 
+export async function getCacheWarmingStatus() {
+  return call("settings.getCacheWarming");
+}
+
+export async function setCacheWarmingMode(mode: "off" | "streaming" | "idle") {
+  return call("settings.setCacheWarming", { mode });
+}
+
 export async function listModels(cwd?: string) {
   return call("models.list", cwd ? { cwd } : undefined);
 }
