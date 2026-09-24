@@ -761,14 +761,21 @@ async function run() {
     "Herdr pane did not survive app restart",
   );
 
-  const leaks = await findSensitiveLeaks(
-    [userData, sessionDir],
-    [
-      { label: "terminal marker", value: "PI_DESKTOP_HERDR_PRODUCT_OK" },
-      { label: "agent prompt marker", value: "PI_HERDR_AGENT_PROMPT_OK" },
-      { label: "Herdr endpoint", value: endpoint },
-      { label: "isolated home", value: home },
-    ],
+  const crashpadRoot = `${path.join(userData, "Crashpad")}${path.sep}`;
+  const leaks = (
+    await findSensitiveLeaks(
+      [userData, sessionDir],
+      [
+        { label: "terminal marker", value: "PI_DESKTOP_HERDR_PRODUCT_OK" },
+        { label: "agent prompt marker", value: "PI_HERDR_AGENT_PROMPT_OK" },
+        { label: "Herdr endpoint", value: endpoint },
+        { label: "isolated home", value: home },
+      ],
+    )
+  ).filter(
+    // The intentional Host SIGKILL can create a Crashpad dump containing its inherited HOME.
+    // Keep scanning dumps for terminal/prompt content and the Herdr endpoint.
+    ({ file, label }) => label !== "isolated home" || !file.startsWith(crashpadRoot),
   );
   assert.deepEqual(
     leaks.map(({ file, label }) => ({ file: path.relative(tempRoot, file), label })),
