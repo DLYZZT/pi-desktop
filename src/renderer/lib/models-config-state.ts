@@ -196,3 +196,44 @@ export function replaceModelEntry(
     },
   };
 }
+
+export interface DiscoveredModelInput {
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+  input?: string[];
+}
+
+/**
+ * Insert discovered models (minus ids that already exist) into a provider's
+ * model list. Creates the provider entry if missing — used to upsert custom
+ * models into built-in providers like deepseek/anthropic via models.json.
+ */
+export function insertDiscoveredModelsTransition(
+  config: ModelsJson,
+  providerName: string,
+  discovered: DiscoveredModelInput[],
+): { config: ModelsJson; selection: ModelsConfigSelection } {
+  const providers = { ...(config.providers ?? {}) };
+  const provider = { ...(providers[providerName] ?? {}) };
+  const existing = new Set((provider.models ?? []).map((m) => m.id));
+  const additions: ModelEntry[] = [];
+  for (const d of discovered) {
+    if (!d.id || existing.has(d.id)) continue;
+    const entry: ModelEntry = { id: d.id };
+    if (d.name !== undefined) entry.name = d.name;
+    if (d.reasoning !== undefined) entry.reasoning = d.reasoning;
+    if (d.contextWindow !== undefined) entry.contextWindow = d.contextWindow;
+    if (d.maxTokens !== undefined) entry.maxTokens = d.maxTokens;
+    if (d.input !== undefined) entry.input = d.input;
+    additions.push(entry);
+  }
+  const models = [...(provider.models ?? []), ...additions];
+  providers[providerName] = { ...provider, models };
+  return {
+    config: { ...config, providers },
+    selection: { type: "provider", name: providerName },
+  };
+}
