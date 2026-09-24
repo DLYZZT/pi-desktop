@@ -88,7 +88,11 @@ export class WindowsHerdrTerminalChild extends EventEmitter {
   private failed = false;
   private started = false;
 
-  constructor(private readonly executable: string, private readonly args: string[], private readonly terminalId: string) {
+  constructor(
+    private readonly executable: string,
+    private readonly args: string[],
+    private readonly terminalId: string,
+  ) {
     super();
     this.stdin = new Writable({
       highWaterMark: 256 * 1024,
@@ -105,11 +109,22 @@ export class WindowsHerdrTerminalChild extends EventEmitter {
     const settings = await callMain<HelperSettings>("managedProcesses.getSettings", undefined, 5_000);
     const owner = getManagedProcessOwnerIdentity();
     const descriptor = settings.windowsHelper;
-    if (!settings.reaperReady || settings.capability?.backend !== "windows-job" || !settings.capability.ready || !descriptor || !owner) {
+    if (
+      !settings.reaperReady ||
+      settings.capability?.backend !== "windows-job" ||
+      !settings.capability.ready ||
+      !descriptor ||
+      !owner
+    ) {
       throw new Error("Windows terminal containment is unavailable");
     }
     const canonical = await realpath(descriptor.path);
-    if (canonical !== descriptor.path || createHash("sha256").update(await readFile(canonical)).digest("hex") !== descriptor.sha256) {
+    if (
+      canonical !== descriptor.path ||
+      createHash("sha256")
+        .update(await readFile(canonical))
+        .digest("hex") !== descriptor.sha256
+    ) {
       throw new Error("Windows terminal helper integrity check failed");
     }
     const nonce = randomBytes(32).toString("hex");
@@ -137,8 +152,11 @@ export class WindowsHerdrTerminalChild extends EventEmitter {
       hostInstanceId: owner.hostInstanceId,
     };
     const helper = spawn(descriptor.path, ["--owner-stdio-v1"], {
-      cwd: path.dirname(descriptor.path), env: helperEnvironment(), shell: false,
-      windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+      cwd: path.dirname(descriptor.path),
+      env: helperEnvironment(),
+      shell: false,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
     });
     this.helper = helper;
     helper.stdout.on("data", (chunk: Buffer) => this.handleBytes(chunk));
@@ -151,31 +169,60 @@ export class WindowsHerdrTerminalChild extends EventEmitter {
     this.stderr.on("drain", () => helper.stderr.resume());
     helper.once("error", (error) => this.fail(error));
     helper.once("close", (code) => void this.onHelperClose(code));
-    const hello = parseWindowsHelperJson(await bounded(this.waitFor(WINDOWS_HELPER_KIND.hello), "Windows helper hello"));
-    if (hello.protocolVersion !== 1 || hello.buildId !== descriptor.buildId || hello.provenance !== descriptor.provenance || hello.arch !== "x64" ||
-        !Array.isArray(hello.capabilities) || hello.capabilities.join("\0") !== "job\0two-phase\0owner-watchdog\0reaper") {
+    const hello = parseWindowsHelperJson(
+      await bounded(this.waitFor(WINDOWS_HELPER_KIND.hello), "Windows helper hello"),
+    );
+    if (
+      hello.protocolVersion !== 1 ||
+      hello.buildId !== descriptor.buildId ||
+      hello.provenance !== descriptor.provenance ||
+      hello.arch !== "x64" ||
+      !Array.isArray(hello.capabilities) ||
+      hello.capabilities.join("\0") !== "job\0two-phase\0owner-watchdog\0reaper"
+    ) {
       throw new Error("Windows helper hello mismatch");
     }
     this.sendJson(WINDOWS_HELPER_KIND.bootstrap, bootstrap);
-    const prepared = parseWindowsHelperJson(await bounded(this.waitFor(WINDOWS_HELPER_KIND.prepared), "Windows helper prepare"));
-    if (prepared.jobName !== jobName || prepared.nonce !== nonce || prepared.helperBuildId !== descriptor.buildId ||
-        prepared.hostInstanceId !== owner.hostInstanceId || !Number.isSafeInteger(prepared.helperPid) ||
-        typeof prepared.helperStartFingerprint !== "string") {
+    const prepared = parseWindowsHelperJson(
+      await bounded(this.waitFor(WINDOWS_HELPER_KIND.prepared), "Windows helper prepare"),
+    );
+    if (
+      prepared.jobName !== jobName ||
+      prepared.nonce !== nonce ||
+      prepared.helperBuildId !== descriptor.buildId ||
+      prepared.hostInstanceId !== owner.hostInstanceId ||
+      !Number.isSafeInteger(prepared.helperPid) ||
+      typeof prepared.helperStartFingerprint !== "string"
+    ) {
       throw new Error("Windows helper prepared identity mismatch");
     }
     this.pid = prepared.helperPid as number;
     const reaper: WindowsManagedProcessReaperRecord = {
-      version: 2, platform: "win32", processId, runId, hostInstanceId: owner.hostInstanceId,
-      helperPid: this.pid, helperStartFingerprint: prepared.helperStartFingerprint,
-      jobName, helperBuildId: descriptor.buildId, nonce, createdAt: Date.now(),
+      version: 2,
+      platform: "win32",
+      processId,
+      runId,
+      hostInstanceId: owner.hostInstanceId,
+      helperPid: this.pid,
+      helperStartFingerprint: prepared.helperStartFingerprint,
+      jobName,
+      helperBuildId: descriptor.buildId,
+      nonce,
+      createdAt: Date.now(),
     };
-    const registered = await callMain<{ journalRevision?: number }>("managedProcesses.register", { record: reaper }, 5_000);
+    const registered = await callMain<{ journalRevision?: number }>(
+      "managedProcesses.register",
+      { record: reaper },
+      5_000,
+    );
     if (!Number.isSafeInteger(registered.journalRevision) || (registered.journalRevision ?? 0) <= 0) {
       throw new Error("Windows terminal crash recovery registration failed");
     }
     this.reaper = reaper;
     this.sendJson(WINDOWS_HELPER_KIND.commit, { nonce, journalRevision: registered.journalRevision });
-    const started = parseWindowsHelperJson(await bounded(this.waitFor(WINDOWS_HELPER_KIND.started), "Windows helper start"));
+    const started = parseWindowsHelperJson(
+      await bounded(this.waitFor(WINDOWS_HELPER_KIND.started), "Windows helper start"),
+    );
     if (started.hostInstanceId !== owner.hostInstanceId || started.journalRevision !== registered.journalRevision) {
       throw new Error("Windows helper started identity mismatch");
     }
@@ -194,10 +241,16 @@ export class WindowsHerdrTerminalChild extends EventEmitter {
   private handleBytes(chunk: Buffer): void {
     try {
       for (const frame of this.decoder.push(chunk)) {
-        if (frame.kind === WINDOWS_HELPER_KIND.hello || frame.kind === WINDOWS_HELPER_KIND.prepared || frame.kind === WINDOWS_HELPER_KIND.started) {
+        if (
+          frame.kind === WINDOWS_HELPER_KIND.hello ||
+          frame.kind === WINDOWS_HELPER_KIND.prepared ||
+          frame.kind === WINDOWS_HELPER_KIND.started
+        ) {
           const waiter = this.waiters.get(frame.kind);
-          if (waiter) { this.waiters.delete(frame.kind); waiter.resolve(frame); }
-          else this.pending.set(frame.kind, [frame]);
+          if (waiter) {
+            this.waiters.delete(frame.kind);
+            waiter.resolve(frame);
+          } else this.pending.set(frame.kind, [frame]);
         } else if (frame.kind === WINDOWS_HELPER_KIND.stdout) {
           if (!this.stdout.write(frame.payload)) this.helper?.stdout.pause();
         } else if (frame.kind === WINDOWS_HELPER_KIND.stderr) {
@@ -218,9 +271,13 @@ export class WindowsHerdrTerminalChild extends EventEmitter {
   private async writeInput(bytes: Buffer): Promise<void> {
     if (!this.started || !this.helper?.stdin.writable) throw new Error("Windows terminal input is closed");
     for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
-      const frame = encodeWindowsHelperFrame(WINDOWS_HELPER_KIND.stdin, this.sendSequence++, bytes.subarray(offset, offset + INPUT_CHUNK_BYTES));
+      const frame = encodeWindowsHelperFrame(
+        WINDOWS_HELPER_KIND.stdin,
+        this.sendSequence++,
+        bytes.subarray(offset, offset + INPUT_CHUNK_BYTES),
+      );
       await new Promise<void>((resolve, reject) => {
-        this.helper!.stdin.write(frame, (error) => error ? reject(error) : resolve());
+        this.helper!.stdin.write(frame, (error) => (error ? reject(error) : resolve()));
       });
     }
   }
@@ -264,10 +321,16 @@ export class WindowsHerdrTerminalChild extends EventEmitter {
     if (this.cleanExit && this.activeZero && this.reaper) {
       const reaper = this.reaper;
       try {
-        await callMain("managedProcesses.unregister", {
-          hostInstanceId: reaper.hostInstanceId, processId: reaper.processId,
-          runId: reaper.runId, nonce: reaper.nonce,
-        }, 5_000);
+        await callMain(
+          "managedProcesses.unregister",
+          {
+            hostInstanceId: reaper.hostInstanceId,
+            processId: reaper.processId,
+            runId: reaper.runId,
+            nonce: reaper.nonce,
+          },
+          5_000,
+        );
         this.reaper = null;
       } catch {
         // Keep the journal record for Main's crash reaper.

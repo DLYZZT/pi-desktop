@@ -455,9 +455,11 @@ export class HerdrBridge {
             capability?: { backend?: string; ready?: boolean };
             windowsHelper?: unknown;
           }>("managedProcesses.getSettings", undefined, 2_000);
-          this.windowsTerminalReady = containment.reaperReady === true &&
+          this.windowsTerminalReady =
+            containment.reaperReady === true &&
             containment.capability?.backend === "windows-job" &&
-            containment.capability.ready === true && Boolean(containment.windowsHelper);
+            containment.capability.ready === true &&
+            Boolean(containment.windowsHelper);
         } catch {
           this.windowsTerminalReady = false;
         }

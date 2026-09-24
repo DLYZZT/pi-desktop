@@ -138,14 +138,15 @@ export class HerdrTerminalSession {
     this.closedPromise = new Promise<void>((resolve) => {
       this.resolveClosed = resolve;
     });
-    this.child = process.platform === "win32"
-      ? new WindowsHerdrTerminalChild(descriptor.executable, args, this.terminalId)
-      : spawn(descriptor.executable, args, {
-          detached: true,
-          shell: false,
-          windowsHide: true,
-          stdio: ["pipe", "pipe", "pipe"],
-        });
+    this.child =
+      process.platform === "win32"
+        ? new WindowsHerdrTerminalChild(descriptor.executable, args, this.terminalId)
+        : spawn(descriptor.executable, args, {
+            detached: true,
+            shell: false,
+            windowsHide: true,
+            stdio: ["pipe", "pipe", "pipe"],
+          });
     this.emitStatus("opening");
     this.child.stdout.on("data", (chunk: Buffer) => {
       if (!this.readyForFrames) {
@@ -170,9 +171,10 @@ export class HerdrTerminalSession {
       this.flushPendingCommands();
     });
     this.child.once("spawn", () => {
-      const recovery = this.child instanceof WindowsHerdrTerminalChild
-        ? Promise.resolve(async () => undefined)
-        : crashRecovery(this.child, this.terminalId);
+      const recovery =
+        this.child instanceof WindowsHerdrTerminalChild
+          ? Promise.resolve(async () => undefined)
+          : crashRecovery(this.child, this.terminalId);
       void recovery
         .then((unregister) => {
           this.unregisterCrashRecovery = unregister;
