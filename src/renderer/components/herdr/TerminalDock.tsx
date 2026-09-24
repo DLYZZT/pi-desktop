@@ -14,6 +14,7 @@ import type { HerdrPane, HerdrTerminalState, HerdrTerminalStatus } from "@contra
 
 const TERMINAL_RESIZE_DEBOUNCE_MS = 180;
 const COPY_BUFFER_LINES = 240;
+type TerminalFrameEvent = { terminalId: string; seq: number; full: boolean; bytes: Uint8Array };
 
 interface TerminalDockProps {
   pane: HerdrPane | null;
@@ -27,6 +28,7 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
   const { t } = useI18n();
   const { runtime } = useHerdrRuntime();
   const runtimeReady = runtime?.status === "ready";
+  const snapshotMode = Boolean(runtimeReady && runtime?.capabilities.readOnly && !runtime.capabilities.terminalObserve);
   const { fleet, refresh: refreshFleet } = useHerdrFleet(runtimeReady && Boolean(pane));
   const mountRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -44,8 +46,13 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
   const followingRef = useRef(true);
   const dimensionsRef = useRef({ cols: 0, rows: 0 });
   const renderedPaneIdRef = useRef<string | null>(null);
+  const snapshotPaneIdRef = useRef<string | null>(null);
   const lastSeqRef = useRef<number | null>(null);
   const streamRecoveryRef = useRef(false);
+  const openingStreamRef = useRef(false);
+  const earlyFramesRef = useRef<TerminalFrameEvent[]>([]);
+  const frameHandlerRef = useRef<(frame: TerminalFrameEvent) => void>(() => undefined);
+  const snapshotTextRef = useRef("");
   const frameSubscriptionRef = useRef<(() => void) | null>(null);
   const statusSubscriptionRef = useRef<(() => void) | null>(null);
   const frameSubscriptionGenerationRef = useRef(0);
@@ -57,10 +64,11 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
   const [subscriptionsReady, setSubscriptionsReady] = useState(false);
   const [frameSubscriptionReady, setFrameSubscriptionReady] = useState(false);
   const [statusSubscriptionReady, setStatusSubscriptionReady] = useState(false);
-  const [streamTerminalId, setStreamTerminalId] = useState<string | null>(null);
   const [dimensions, setDimensions] = useState({ cols: 0, rows: 0 });
   const [following, setFollowing] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [snapshotText, setSnapshotText] = useState("");
+  const [snapshotRefreshToken, setSnapshotRefreshToken] = useState(0);
   const paneId = pane?.id;
   visibleRef.current = visible;
   paneIdRef.current = paneId;
@@ -83,10 +91,11 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
     async (release = true) => {
       const operation = ++openGenerationRef.current;
       const terminalId = terminalIdRef.current;
+      openingStreamRef.current = false;
+      earlyFramesRef.current = [];
       terminalIdRef.current = null;
       lastSeqRef.current = null;
       streamRecoveryRef.current = false;
-      setStreamTerminalId(null);
       if (resizeTimerRef.current) {
         clearTimeout(resizeTimerRef.current);
         resizeTimerRef.current = null;
@@ -109,6 +118,8 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
     async (mode: "observe" | "control", takeover = false, preserveOwnership = false) => {
       if (!visibleRef.current || !paneId || !terminalRef.current || !fitRef.current) return;
       const operation = ++openGenerationRef.current;
+      openingStreamRef.current = false;
+      earlyFramesRef.current = [];
       const requestedPaneId = paneId;
       setOpening(true);
       setStatus(null);
@@ -136,6 +147,7 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
       setDimensions(dimensionsRef.current);
       setFollowingState(true);
       try {
+        openingStreamRef.current = true;
         const result = await call("herdr.terminal.open", {
           paneId: requestedPaneId,
           mode,
@@ -150,12 +162,15 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
         terminalIdRef.current = result.terminalId;
         lastSeqRef.current = null;
         streamRecoveryRef.current = false;
-        setStreamTerminalId(result.terminalId);
+        openingStreamRef.current = false;
+        const initialFrames = earlyFramesRef.current.filter((frame) => frame.terminalId === result.terminalId);
+        earlyFramesRef.current = [];
         modeRef.current = mode;
         terminal.options.disableStdin = mode !== "control";
         terminal.options.cursorBlink = mode === "control";
         terminal.options.cursorInactiveStyle = mode === "control" ? "outline" : "none";
-        if (mode === "observe") terminal.blur();
+        if (mode === "control") terminal.focus();
+        else terminal.blur();
         const nextState =
           mode === "control" ? (result.controller ? "controlling" : "controlled-elsewhere") : "observing";
         setOwnershipState(nextState === "controlled-elsewhere" ? nextState : null);
@@ -167,6 +182,7 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
           controller: result.controller,
           ansiOnly: true,
         });
+        for (const frame of initialFrames) frameHandlerRef.current(frame);
       } catch (nextError) {
         if (operation === openGenerationRef.current && mountedRef.current) {
           setError(herdrErrorLabel(nextError, t));
@@ -175,7 +191,11 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
           ? String((nextError as { code?: unknown }).code)
           : "HERDR_INTERNAL";
       } finally {
-        if (operation === openGenerationRef.current && mountedRef.current) setOpening(false);
+        if (operation === openGenerationRef.current) {
+          openingStreamRef.current = false;
+          earlyFramesRef.current = [];
+          if (mountedRef.current) setOpening(false);
+        }
       }
     },
     [closeTerminalById, paneId, setFollowingState, t],
@@ -305,9 +325,12 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
   }, [setFollowingState, t]);
 
   const handleTerminalFrame = useCallback(
-    (frame: { terminalId: string; seq: number; full: boolean; bytes: Uint8Array }) => {
+    (frame: TerminalFrameEvent) => {
       const terminal = terminalRef.current;
-      if (frame.terminalId !== terminalIdRef.current || !terminal) return;
+      if (frame.terminalId !== terminalIdRef.current || !terminal) {
+        if (openingStreamRef.current && earlyFramesRef.current.length < 32) earlyFramesRef.current.push(frame);
+        return;
+      }
       const previousSeq = lastSeqRef.current;
       const disposition = terminalFrameDisposition(previousSeq, frame.seq, frame.full);
       if (disposition === "duplicate") {
@@ -321,7 +344,6 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
           const terminalId = frame.terminalId;
           terminalIdRef.current = null;
           lastSeqRef.current = null;
-          setStreamTerminalId(null);
           void closeTerminalById(terminalId, true).finally(() => {
             if (!visibleRef.current || !paneIdRef.current) return;
             void reopenObserveRef.current();
@@ -338,6 +360,7 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
     },
     [closeTerminalById, t],
   );
+  frameHandlerRef.current = handleTerminalFrame;
 
   const handleTerminalStatus = useCallback(
     (nextStatus: HerdrTerminalStatus) => {
@@ -356,7 +379,6 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
         setOwnershipState(terminalCloseOwnershipState(controllerWasHeld ? "control" : "observe", nextStatus.state));
         terminalIdRef.current = null;
         lastSeqRef.current = null;
-        setStreamTerminalId(null);
         if (terminalRef.current) {
           terminalRef.current.options.disableStdin = true;
           terminalRef.current.options.cursorBlink = false;
@@ -379,7 +401,9 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
   useEffect(() => {
     const generation = ++frameSubscriptionGenerationRef.current;
     let disposed = false;
-    void subscribe("herdr.terminal.frame", streamTerminalId ?? "*", handleTerminalFrame)
+    // Stay on the wildcard while a replacement terminal opens: its first full
+    // frame can arrive before the open RPC returns with the new terminal ID.
+    void subscribe("herdr.terminal.frame", "*", handleTerminalFrame)
       .then((release) => {
         if (disposed || generation !== frameSubscriptionGenerationRef.current) {
           release();
@@ -396,12 +420,12 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
     return () => {
       disposed = true;
     };
-  }, [handleTerminalFrame, streamTerminalId, t]);
+  }, [handleTerminalFrame, t]);
 
   useEffect(() => {
     const generation = ++statusSubscriptionGenerationRef.current;
     let disposed = false;
-    void subscribe("herdr.terminal.status", streamTerminalId ?? "*", handleTerminalStatus)
+    void subscribe("herdr.terminal.status", "*", handleTerminalStatus)
       .then((release) => {
         if (disposed || generation !== statusSubscriptionGenerationRef.current) {
           release();
@@ -418,7 +442,7 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
     return () => {
       disposed = true;
     };
-  }, [handleTerminalStatus, streamTerminalId, t]);
+  }, [handleTerminalStatus, t]);
 
   useEffect(() => {
     setSubscriptionsReady(frameSubscriptionReady && statusSubscriptionReady);
@@ -437,13 +461,60 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
   );
 
   useEffect(() => {
-    if (!visible || !paneId || !terminalRef.current || !subscriptionsReady || !runtimeReady) {
+    if (!visible || !paneId || !terminalRef.current || !subscriptionsReady || !runtimeReady || snapshotMode) {
       if (modeRef.current === "control" && terminalIdRef.current) setOwnershipState("controller-lost");
       void close(releaseControlOnViewCloseRef.current);
       return;
     }
     void open("observe");
-  }, [close, open, paneId, runtimeReady, subscriptionsReady, visible]);
+  }, [close, open, paneId, runtimeReady, snapshotMode, subscriptionsReady, visible]);
+
+  useEffect(() => {
+    if (!snapshotMode || !visible || !paneId) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const selectedPaneId = paneId;
+    renderedPaneIdRef.current = null;
+    if (snapshotPaneIdRef.current !== selectedPaneId) {
+      snapshotPaneIdRef.current = selectedPaneId;
+      snapshotTextRef.current = "";
+      setSnapshotText("");
+    }
+    setOpening(true);
+    const readSnapshot = async () => {
+      try {
+        const result = await call("herdr.pane.read", { paneId: selectedPaneId });
+        if (disposed || selectedPaneId !== paneIdRef.current || !visibleRef.current) return;
+        if (snapshotTextRef.current !== result.text) {
+          snapshotTextRef.current = result.text;
+          setSnapshotText(result.text);
+        }
+        setStatus({
+          terminalId: `pane-read:${selectedPaneId}`,
+          paneId: selectedPaneId,
+          state: "observing",
+          mode: "observe",
+          controller: false,
+          ansiOnly: true,
+        });
+        setError(null);
+      } catch (nextError) {
+        if (disposed) return;
+        setStatus(null);
+        setError(herdrErrorLabel(nextError, t));
+      } finally {
+        if (!disposed) {
+          setOpening(false);
+          timer = setTimeout(() => void readSnapshot(), 1_000);
+        }
+      }
+    };
+    void readSnapshot();
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [paneId, snapshotMode, snapshotRefreshToken, t, visible]);
 
   useEffect(() => {
     if (!paneId || !runtimeReady || !fleet || fleet.stale) return;
@@ -490,6 +561,19 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
   );
 
   const copyRecentOutput = useCallback(async () => {
+    if (snapshotMode) {
+      const text = snapshotTextRef.current.trimEnd();
+      if (!text) return;
+      try {
+        await copyText(text);
+        setCopied(true);
+        if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+        copiedTimerRef.current = setTimeout(() => setCopied(false), 1_400);
+      } catch (nextError) {
+        setError(nextError instanceof Error ? nextError.message : String(nextError));
+      }
+      return;
+    }
     const terminal = terminalRef.current;
     if (!terminal) return;
     const buffer = terminal.buffer.active;
@@ -508,7 +592,7 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     }
-  }, []);
+  }, [snapshotMode]);
 
   const jumpToLatest = useCallback(() => {
     terminalRef.current?.scrollToBottom();
@@ -581,32 +665,36 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-            {controlling ? (
-              <button
-                type="button"
-                disabled={opening}
-                style={toolbarButtonStyle("neutral", opening)}
-                onClick={() => void open("observe")}
-              >
-                {t("releaseControl", "Release control")}
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={opening}
-                style={toolbarButtonStyle("control", opening)}
-                onClick={() => void takeControl()}
-              >
-                {t("takeControl", "Take control")}
-              </button>
-            )}
+            {!snapshotMode &&
+              (controlling ? (
+                <button
+                  type="button"
+                  disabled={opening}
+                  style={toolbarButtonStyle("neutral", opening)}
+                  onClick={() => void open("observe")}
+                >
+                  {t("releaseControl", "Release control")}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={opening}
+                  style={toolbarButtonStyle("control", opening)}
+                  onClick={() => void takeControl()}
+                >
+                  {t("takeControl", "Take control")}
+                </button>
+              ))}
             <button
               type="button"
               disabled={opening}
               style={toolbarButtonStyle("neutral", opening)}
-              onClick={() => void open("observe")}
+              onClick={() => {
+                if (snapshotMode) setSnapshotRefreshToken((token) => token + 1);
+                else void open("observe");
+              }}
             >
-              {t("reconnectTerminal", "Reconnect")}
+              {snapshotMode ? t("refreshTerminalSnapshot", "Refresh") : t("reconnectTerminal", "Reconnect")}
             </button>
             <button type="button" style={toolbarButtonStyle("neutral", false)} onClick={onToggleExpanded}>
               {expanded ? t("restoreTerminal", "Restore") : t("expandTerminal", "Expand")}
@@ -624,10 +712,28 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
             inset: 10,
             overflow: "hidden",
             borderRadius: 5,
-            opacity: pane && visible ? 1 : 0,
-            pointerEvents: pane && visible ? "auto" : "none",
+            opacity: pane && visible && !snapshotMode ? 1 : 0,
+            pointerEvents: pane && visible && !snapshotMode ? "auto" : "none",
           }}
         />
+        {snapshotMode && pane && visible && (
+          <div
+            role="log"
+            aria-label={t("herdrTerminalViewport", "Herdr terminal viewport")}
+            style={{
+              position: "absolute",
+              inset: 10,
+              overflow: "auto",
+              padding: 8,
+              color: "#dbe7f3",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              fontSize: 13,
+              lineHeight: 1.22,
+            }}
+          >
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{snapshotText}</pre>
+          </div>
+        )}
         {!pane && (
           <div style={{ ...emptyStyle, position: "absolute", inset: 0 }}>
             <div style={{ maxWidth: 280, textAlign: "center" }}>
@@ -682,17 +788,23 @@ export function TerminalDock({ pane, visible, expanded, onToggleExpanded, onPane
           <span style={{ color: controlling ? "#fbbf24" : "#93c5fd", fontWeight: 700 }}>
             {controlling ? t("terminalControlMode", "CONTROL") : t("terminalObserveMode", "OBSERVE")}
           </span>
-          <span>{dimensions.cols > 0 && dimensions.rows > 0 ? `${dimensions.cols}×${dimensions.rows}` : "—"}</span>
-          <span>{t("terminalAnsiLabel", "ANSI")}</span>
+          <span>
+            {!snapshotMode && dimensions.cols > 0 && dimensions.rows > 0
+              ? `${dimensions.cols}×${dimensions.rows}`
+              : "—"}
+          </span>
+          <span>{snapshotMode ? t("terminalTextLabel", "TEXT") : t("terminalAnsiLabel", "ANSI")}</span>
           <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {controlling
-              ? t("terminalKeyboardEnabled", "Keyboard input enabled")
-              : t("terminalReadOnly", "Read-only observation")}
+            {snapshotMode
+              ? t("terminalTextSnapshot", "Read-only text snapshot, refreshed every second")
+              : controlling
+                ? t("terminalKeyboardEnabled", "Keyboard input enabled")
+                : t("terminalReadOnly", "Read-only observation")}
           </span>
           <button type="button" style={footerButtonStyle} onClick={() => void copyRecentOutput()}>
             {copied ? t("copied", "Copied") : t("copyRecentOutput", "Copy output")}
           </button>
-          {!following && (
+          {!snapshotMode && !following && (
             <button type="button" style={footerButtonStyle} onClick={jumpToLatest}>
               {t("jumpToLatest", "Jump to latest")}
             </button>

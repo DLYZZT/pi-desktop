@@ -137,19 +137,13 @@ function verifyPackagedResources(resources, toolTarget) {
   const herdrRoot = path.join(resources, "herdr");
   if (!fs.existsSync(herdrRoot)) throw new Error("Packaged Herdr catalog is missing");
   const herdrEntries = fs.readdirSync(herdrRoot).sort();
-  assertExact(
-    herdrEntries,
-    toolTarget === "win32-x64" ? ["runtime-catalog.json"] : ["bin", "runtime-catalog.json"],
-    "packaged Herdr resources",
-  );
-  if (toolTarget !== "win32-x64") {
-    const herdrTargets = fs
-      .readdirSync(path.join(herdrRoot, "bin"), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-    assertExact(herdrTargets, [toolTarget], "packaged Herdr target directories");
-  }
+  assertExact(herdrEntries, ["bin", "runtime-catalog.json"], "packaged Herdr resources");
+  const herdrTargets = fs
+    .readdirSync(path.join(herdrRoot, "bin"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  assertExact(herdrTargets, [toolTarget], "packaged Herdr target directories");
 
   const forbidden = [];
   walkFiles(toolchains, (file) => {
@@ -418,10 +412,6 @@ function verifyBundledTools(resources, platform, arch, executeTools) {
 
 function verifyBundledHerdr(resources, platform, arch, executeTool) {
   const herdrRoot = path.join(resources, "herdr");
-  if (platform === "win32") {
-    if (fs.existsSync(path.join(herdrRoot, "bin"))) throw new Error("Herdr binary leaked into the Windows package");
-    return;
-  }
   const catalog = JSON.parse(fs.readFileSync(path.join(herdrRoot, "runtime-catalog.json"), "utf8"));
   const target = `${platform}-${arch}`;
   const artifact = catalog.artifacts?.[target];
@@ -429,7 +419,14 @@ function verifyBundledHerdr(resources, platform, arch, executeTool) {
     throw new Error("Packaged Herdr catalog target is invalid");
   }
   const targetRoot = path.join(herdrRoot, "bin", target);
-  assertExact(fs.readdirSync(targetRoot).sort(), ["LICENSE", "herdr", "manifest.json"], "packaged Herdr files");
+  const windows = platform === "win32";
+  assertExact(
+    fs.readdirSync(targetRoot).sort(),
+    windows
+      ? ["LICENSE", "THIRD-PARTY-NOTICES", "conpty", "herdr.exe", "manifest.json"]
+      : ["LICENSE", "herdr", "manifest.json"],
+    "packaged Herdr files",
+  );
   const manifest = JSON.parse(fs.readFileSync(path.join(targetRoot, "manifest.json"), "utf8"));
   if (
     manifest.schemaVersion !== 1 ||
@@ -439,14 +436,15 @@ function verifyBundledHerdr(resources, platform, arch, executeTool) {
     manifest.apiSchemaSha256 !== catalog.apiSchemaSha256 ||
     manifest.platform !== platform ||
     manifest.arch !== arch ||
-    manifest.executable !== "herdr" ||
+    manifest.executable !== (windows ? "herdr.exe" : "herdr") ||
     manifest.artifactSha256 !== artifact.sha256 ||
-    manifest.sha256 !== artifact.sha256 ||
-    manifest.bytes !== artifact.downloadBytes
+    manifest.sha256 !== (windows ? artifact.bundleFiles?.[0].sha256 : artifact.sha256) ||
+    manifest.bytes !== (windows ? artifact.bundleFiles?.[0].bytes : artifact.downloadBytes) ||
+    (windows && JSON.stringify(manifest.bundleFiles) !== JSON.stringify(artifact.bundleFiles))
   ) {
     throw new Error("Packaged Herdr manifest does not match the pinned catalog");
   }
-  const executable = path.join(targetRoot, "herdr");
+  const executable = path.join(targetRoot, windows ? "herdr.exe" : "herdr");
   if (platform === "darwin") {
     if (!/^[a-f0-9]{64}$/.test(manifest.darwinCodeSha256) || !Number.isSafeInteger(manifest.darwinCodeBytes)) {
       throw new Error("Packaged Herdr is missing signed-code integrity metadata");
@@ -455,7 +453,20 @@ function verifyBundledHerdr(resources, platform, arch, executeTool) {
   } else {
     verifyManifestFile(executable, manifest.sha256, manifest.bytes);
   }
-  if ((fs.statSync(executable).mode & 0o111) === 0) throw new Error("Packaged Herdr is not executable");
+  if (windows) {
+    const actualFiles = [];
+    walkFiles(targetRoot, (file) => actualFiles.push(path.relative(targetRoot, file).split(path.sep).join("/")));
+    assertExact(
+      actualFiles.sort(),
+      [...artifact.bundleFiles.map((file) => file.path), "LICENSE", "manifest.json"].sort(),
+      "packaged Herdr Windows bundle files",
+    );
+    for (const file of artifact.bundleFiles) {
+      verifyManifestFile(path.join(targetRoot, ...file.path.split("/")), file.sha256, file.bytes);
+    }
+  } else if ((fs.statSync(executable).mode & 0o111) === 0) {
+    throw new Error("Packaged Herdr is not executable");
+  }
   const license = fs.readFileSync(path.join(targetRoot, "LICENSE"));
   if (
     license.length !== 11357 ||

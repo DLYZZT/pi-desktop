@@ -1,5 +1,6 @@
 import net from "node:net";
 import { lstat } from "node:fs/promises";
+import path from "node:path";
 import type { HerdrV20Method, JsonRecord } from "./protocol-v20";
 import { isRecord } from "./protocol-v20";
 import { HerdrBridgeError } from "./errors";
@@ -53,7 +54,20 @@ export class HerdrSocketClient {
   }
 
   private async inspectSafeEndpoint(): Promise<EndpointIdentity | undefined> {
-    if (process.platform === "win32") return undefined;
+    if (process.platform === "win32") {
+      const prefix = "\\\\.\\pipe\\";
+      const marker = this.endpoint.slice(prefix.length);
+      if (
+        !this.endpoint.startsWith(prefix) ||
+        !/^[A-Za-z]:\\/u.test(marker) ||
+        /[\0\r\n]/u.test(marker) ||
+        path.win32.normalize(marker) !== marker ||
+        path.win32.basename(marker).toLowerCase() !== "herdr.sock"
+      ) {
+        throw new HerdrBridgeError("HERDR_ENDPOINT_UNSAFE", "The Herdr named pipe is not a local Session endpoint.");
+      }
+      return undefined;
+    }
     let info;
     try {
       info = await lstat(this.endpoint, { bigint: true });

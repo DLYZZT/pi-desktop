@@ -76,7 +76,7 @@ v0.2.3 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows AR
 - 可选连接本机 Herdr，可在原主对话中查看 Fleet，创建、聚焦或重命名 workspace/tab/pane，解释 Agent 状态，脱敏查看进程，等待输出，并启动、提示或等待 Agent
 - Pi Session 侧栏和主对话始终是主入口；Agent Fleet 在初始页和激活会话中都位于标题栏右侧，右侧 ANSI terminal 仅用于观察、故障排查和显式接管
 - workspace/pane/Agent close 均需要 Pi 本机确认，确认框随界面语言显示完整中英文；Herdr v0.8.2 没有 `agent.stop`，因此 Agent close 会明确关闭其所在 pane，不会静默伪造停止语义
-- Herdr 随 macOS/Linux 应用内置；安装、版本、更新、修复和卸载统一在“开发工具”中管理，Managed 模式从已校验内置副本激活且不单独联网下载
+- Herdr 随 macOS/Linux/Windows x64 应用内置；安装、版本、更新、修复和卸载统一在“开发工具”中管理，Managed 模式从已校验内置副本激活且不单独联网下载。Windows 已支持 Fleet/Agent 控制，以及由原生 Job Object 保护的实时 ANSI 终端和显式键盘接管
 - Attach 只连接用户手动启动的系统 Herdr，Pi Desktop 永不停止它；Managed 由 Pi Desktop 自动启动、监控、重启并在禁用、切换模式、卸载或应用退出时关闭私有 server
 - Pi Session 与 Herdr Session 完全并存；关闭 Pi Desktop terminal 不关闭 Herdr pane/Agent，未知协议会 fail-closed
 - 设置导航中的 Herdr 位于“浏览器”和“消息渠道”之间；安装、更新、修复和卸载仍统一在“开发工具”中管理

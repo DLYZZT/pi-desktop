@@ -6,7 +6,12 @@ import type { PublicManagedComponentState } from "../../shared/toolchains/types.
 import { ToolchainError } from "../../shared/toolchains/errors.ts";
 import type { InstallerProgress } from "../toolchains/installer.ts";
 import { darwinCodeDigest } from "../toolchains/darwin-binary-integrity.ts";
-import { findHerdrRuntimeArtifact, loadHerdrRuntimeCatalog, type HerdrRuntimeCatalog } from "./catalog.ts";
+import {
+  findHerdrRuntimeArtifact,
+  loadHerdrRuntimeCatalog,
+  type HerdrRuntimeBundleFile,
+  type HerdrRuntimeCatalog,
+} from "./catalog.ts";
 
 const HERDR_LICENSE_URL = "https://github.com/herdrdev/herdr/blob/v0.8.2/LICENSE";
 
@@ -22,6 +27,7 @@ export interface BundledHerdrManifest {
   sha256: string;
   bytes: number;
   artifactSha256: string;
+  bundleFiles?: readonly HerdrRuntimeBundleFile[];
   darwinCodeSha256?: string;
   darwinCodeBytes?: number;
 }
@@ -71,7 +77,7 @@ function parseManifest(value: unknown): BundledHerdrManifest | undefined {
         "bytes",
         "artifactSha256",
       ],
-      ["darwinCodeSha256", "darwinCodeBytes"],
+      ["bundleFiles", "darwinCodeSha256", "darwinCodeBytes"],
     ) ||
     manifest.schemaVersion !== 1 ||
     typeof manifest.version !== "string" ||
@@ -80,7 +86,7 @@ function parseManifest(value: unknown): BundledHerdrManifest | undefined {
     !isSha256(manifest.apiSchemaSha256) ||
     typeof manifest.platform !== "string" ||
     typeof manifest.arch !== "string" ||
-    manifest.executable !== "herdr" ||
+    manifest.executable !== (manifest.platform === "win32" ? "herdr.exe" : "herdr") ||
     !isSha256(manifest.sha256) ||
     !Number.isSafeInteger(manifest.bytes) ||
     Number(manifest.bytes) <= 0 ||
@@ -88,7 +94,27 @@ function parseManifest(value: unknown): BundledHerdrManifest | undefined {
     (manifest.darwinCodeSha256 !== undefined && !isSha256(manifest.darwinCodeSha256)) ||
     (manifest.darwinCodeBytes !== undefined &&
       (!Number.isSafeInteger(manifest.darwinCodeBytes) || Number(manifest.darwinCodeBytes) <= 0)) ||
-    (manifest.darwinCodeSha256 === undefined) !== (manifest.darwinCodeBytes === undefined)
+    (manifest.darwinCodeSha256 === undefined) !== (manifest.darwinCodeBytes === undefined) ||
+    (manifest.platform === "win32") !== Array.isArray(manifest.bundleFiles)
+  ) {
+    return undefined;
+  }
+  if (
+    Array.isArray(manifest.bundleFiles) &&
+    manifest.bundleFiles.some((file) => {
+      if (!file || typeof file !== "object" || Array.isArray(file)) return true;
+      const entry = file as Record<string, unknown>;
+      return (
+        !exactKeys(entry, ["path", "bytes", "sha256"]) ||
+        typeof entry.path !== "string" ||
+        !/^[A-Za-z0-9._/-]+$/u.test(entry.path) ||
+        entry.path.startsWith("/") ||
+        entry.path.split("/").includes("..") ||
+        !Number.isSafeInteger(entry.bytes) ||
+        Number(entry.bytes) <= 0 ||
+        !isSha256(entry.sha256)
+      );
+    })
   ) {
     return undefined;
   }
@@ -154,6 +180,22 @@ function assertActive(signal: AbortSignal): void {
   }
 }
 
+async function renameActivatedRuntime(source: string, destination: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.renameSync(source, destination);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(code ?? "") || attempt >= 20) {
+        throw error;
+      }
+      // A just-probed EXE or DLL may remain briefly open to endpoint security.
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
 function directoryBytes(root: string, maxEntries = 10_000): number | undefined {
   if (!fs.existsSync(root)) return 0;
   const pending = [root];
@@ -195,9 +237,33 @@ function executableIntegrity(
       const digest = darwinCodeDigest(contents, manifest.darwinCodeBytes);
       return digest?.sha256 === manifest.darwinCodeSha256 && digest.bytes === manifest.darwinCodeBytes;
     }
-    return (
-      contents.length === manifest.bytes && createHash("sha256").update(contents).digest("hex") === manifest.sha256
-    );
+    if (contents.length !== manifest.bytes || createHash("sha256").update(contents).digest("hex") !== manifest.sha256) {
+      return false;
+    }
+    if (platform === "win32") {
+      if (!manifest.bundleFiles?.length) return false;
+      const allowed = new Set(["LICENSE", "manifest.json"]);
+      for (const entry of manifest.bundleFiles) {
+        const filePath = path.join(root, ...entry.path.split("/"));
+        const fileInfo = fs.lstatSync(filePath);
+        if (!fileInfo.isFile() || fileInfo.isSymbolicLink() || fileInfo.size !== entry.bytes) return false;
+        const fileCanonical = fs.realpathSync.native(filePath);
+        if (!fileCanonical.startsWith(`${canonicalRoot}${path.sep}`)) return false;
+        if (createHash("sha256").update(fs.readFileSync(filePath)).digest("hex") !== entry.sha256) return false;
+        allowed.add(entry.path);
+      }
+      const pending = [root];
+      while (pending.length > 0) {
+        const directory = pending.pop()!;
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+          const entryPath = path.join(directory, entry.name);
+          if (entry.isDirectory()) pending.push(entryPath);
+          else if (!entry.isFile() || !allowed.has(path.relative(root, entryPath).split(path.sep).join("/")))
+            return false;
+        }
+      }
+    }
+    return true;
   } catch {
     return false;
   }
@@ -235,7 +301,7 @@ export class HerdrInstaller {
     const target = `${this.platform}-${this.arch}`;
     const artifact = this.catalog.artifacts[target];
     const runtimesRoot = path.join(this.options.userDataDir, "herdr", "runtimes");
-    if (this.platform === "win32" || !artifact) {
+    if (!artifact) {
       return {
         componentId: "herdr",
         installed: false,
@@ -261,7 +327,7 @@ export class HerdrInstaller {
     const currentHealthy = Boolean(
       currentInstalled &&
       bundle &&
-      executableIntegrity(currentExecutable, runtimesRoot, bundle.manifest, this.platform),
+      executableIntegrity(currentExecutable, path.dirname(currentExecutable), bundle.manifest, this.platform),
     );
     return {
       componentId: "herdr",
@@ -286,12 +352,6 @@ export class HerdrInstaller {
     onProgress: (progress: InstallerProgress) => void = () => undefined,
     signal: AbortSignal = new AbortController().signal,
   ): Promise<string> {
-    if (this.platform === "win32") {
-      throw new ToolchainError({
-        code: "TOOLCHAIN_UNSUPPORTED",
-        message: "Managed Herdr is not supported on Windows in this release",
-      });
-    }
     const artifact = findHerdrRuntimeArtifact(this.catalog, this.platform, this.arch);
     const herdrRoot = path.join(this.options.userDataDir, "herdr");
     const locksRoot = path.join(herdrRoot, "locks");
@@ -311,8 +371,18 @@ export class HerdrInstaller {
           message: "The bundled Herdr runtime failed integrity verification",
         });
       }
-      const stagedExecutable = path.join(staging, "herdr");
+      const executableName = this.platform === "win32" ? "herdr.exe" : "herdr";
+      const stagedExecutable = path.join(staging, executableName);
       fs.copyFileSync(bundle.executable, stagedExecutable, fs.constants.COPYFILE_EXCL);
+      if (this.platform === "win32") {
+        for (const file of bundle.manifest.bundleFiles ?? []) {
+          if (file.path === executableName) continue;
+          const source = path.join(path.dirname(bundle.executable), ...file.path.split("/"));
+          const destination = path.join(staging, ...file.path.split("/"));
+          fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+          fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
+        }
+      }
       onProgress({
         phase: "verifying",
         downloadedBytes: artifact.downloadBytes,
@@ -339,12 +409,12 @@ export class HerdrInstaller {
         fs.renameSync(finalRoot, previousRoot);
       }
       try {
-        fs.renameSync(staging, finalRoot);
+        await renameActivatedRuntime(staging, finalRoot);
       } catch (error) {
         if (previousRoot && fs.existsSync(previousRoot)) fs.renameSync(previousRoot, finalRoot);
         throw error;
       }
-      const installed = path.join(finalRoot, "herdr");
+      const installed = path.join(finalRoot, executableName);
       try {
         if (!executableIntegrity(installed, finalRoot, bundle.manifest, this.platform)) {
           throw new ToolchainError({
@@ -391,8 +461,8 @@ export class HerdrInstaller {
     const releaseLock = acquireInstallLock(path.join(locksRoot, "install.lock"), this.catalog.version);
     const trash = path.join(stagingRoot, `remove-${randomUUID()}`);
     try {
-      fs.renameSync(runtimesRoot, trash);
-      fs.rmSync(trash, { recursive: true, force: true });
+      await renameActivatedRuntime(runtimesRoot, trash);
+      fs.rmSync(trash, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     } catch (error) {
       if (!fs.existsSync(runtimesRoot) && fs.existsSync(trash)) fs.renameSync(trash, runtimesRoot);
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
@@ -407,7 +477,14 @@ export class HerdrInstaller {
   }
 
   private managedExecutable(version: string): string {
-    return path.join(this.options.userDataDir, "herdr", "runtimes", version, `${this.platform}-${this.arch}`, "herdr");
+    return path.join(
+      this.options.userDataDir,
+      "herdr",
+      "runtimes",
+      version,
+      `${this.platform}-${this.arch}`,
+      this.platform === "win32" ? "herdr.exe" : "herdr",
+    );
   }
 
   private loadVerifiedBundle(): { manifest: BundledHerdrManifest; executable: string; license: string } | undefined {
@@ -431,8 +508,9 @@ export class HerdrInstaller {
       const artifact = findHerdrRuntimeArtifact(this.catalog, this.platform, this.arch);
       if (
         manifest.artifactSha256 !== artifact.sha256 ||
-        manifest.sha256 !== artifact.sha256 ||
-        manifest.bytes !== artifact.downloadBytes
+        manifest.sha256 !== (this.platform === "win32" ? artifact.bundleFiles?.[0].sha256 : artifact.sha256) ||
+        manifest.bytes !== (this.platform === "win32" ? artifact.bundleFiles?.[0].bytes : artifact.downloadBytes) ||
+        (this.platform === "win32" && JSON.stringify(manifest.bundleFiles) !== JSON.stringify(artifact.bundleFiles))
       ) {
         return undefined;
       }

@@ -1,5 +1,7 @@
 use crate::error::{HelperError, Result};
-use crate::state::{Bootstrap, build_command_line, build_environment_block};
+use crate::state::{
+    Bootstrap, build_command_line, build_environment_block, build_terminal_command_line,
+};
 use std::ffi::c_void;
 use std::fs::File;
 use std::mem::{size_of, size_of_val, zeroed};
@@ -947,11 +949,15 @@ impl Target {
         let mut process_info: PROCESS_INFORMATION = unsafe { zeroed() };
         let application = wide_nul(&bootstrap.shell_executable);
         let cwd = wide_nul(&bootstrap.cwd);
-        let mut command_line = build_command_line(
-            &bootstrap.shell_executable,
-            &bootstrap.argv_prefix,
-            &bootstrap.command,
-        )?;
+        let mut command_line = if bootstrap.terminal_mode {
+            build_terminal_command_line(&bootstrap.shell_executable, &bootstrap.argv_prefix)?
+        } else {
+            build_command_line(
+                &bootstrap.shell_executable,
+                &bootstrap.argv_prefix,
+                &bootstrap.command,
+            )?
+        };
         let environment = build_environment_block(&bootstrap.environment)?;
         // Re-open both validated paths immediately before process creation and
         // hold the handles across CreateProcessW. Host realpath validation is

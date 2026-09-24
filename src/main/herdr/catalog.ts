@@ -1,11 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 
+export interface HerdrRuntimeBundleFile {
+  path: string;
+  bytes: number;
+  sha256: string;
+}
+
 export interface HerdrRuntimeArtifact {
   upstreamPlatform: string;
   url: string;
   downloadBytes: number;
   sha256: string;
+  bundleFiles?: readonly HerdrRuntimeBundleFile[];
 }
 
 export interface HerdrRuntimeCatalog {
@@ -24,6 +31,16 @@ const EXPECTED_ASSETS: Record<string, string> = {
   "linux-x64": "herdr-linux-x86_64",
   "win32-x64": "herdr-windows-x86_64.zip",
 };
+
+const WINDOWS_BUNDLE_PATHS = [
+  "herdr.exe",
+  "conpty/conpty.dll",
+  "conpty/herdr-conpty.json",
+  "conpty/arm64/OpenConsole.exe",
+  "conpty/x64/OpenConsole.exe",
+  "THIRD-PARTY-NOTICES/Microsoft.Windows.Console.ConPTY-LICENSE.txt",
+  "THIRD-PARTY-NOTICES/Microsoft.Windows.Console.ConPTY-NOTICE.md",
+] as const;
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   return Object.keys(value).sort().join("\0") === [...expected].sort().join("\0");
@@ -64,7 +81,12 @@ export function parseHerdrRuntimeCatalog(value: unknown): HerdrRuntimeCatalog {
     const artifact = raw as Record<string, unknown>;
     const expectedUrl = `https://github.com/herdrdev/herdr/releases/download/v0.8.2/${assetName}`;
     if (
-      !exactKeys(artifact, ["upstreamPlatform", "url", "downloadBytes", "sha256"]) ||
+      !exactKeys(
+        artifact,
+        key === "win32-x64"
+          ? ["upstreamPlatform", "url", "downloadBytes", "sha256", "bundleFiles"]
+          : ["upstreamPlatform", "url", "downloadBytes", "sha256"],
+      ) ||
       typeof artifact.upstreamPlatform !== "string" ||
       artifact.url !== expectedUrl ||
       !Number.isSafeInteger(artifact.downloadBytes) ||
@@ -74,6 +96,27 @@ export function parseHerdrRuntimeCatalog(value: unknown): HerdrRuntimeCatalog {
       !/^(?!0{64}$)[a-f0-9]{64}$/.test(artifact.sha256)
     ) {
       throw new Error(`Herdr artifact ${key} failed validation`);
+    }
+    if (key === "win32-x64") {
+      const files = artifact.bundleFiles;
+      if (
+        !Array.isArray(files) ||
+        files.length !== WINDOWS_BUNDLE_PATHS.length ||
+        files.some((file, index) => {
+          if (!file || typeof file !== "object" || Array.isArray(file)) return true;
+          const record = file as Record<string, unknown>;
+          return (
+            !exactKeys(record, ["path", "bytes", "sha256"]) ||
+            record.path !== WINDOWS_BUNDLE_PATHS[index] ||
+            !Number.isSafeInteger(record.bytes) ||
+            Number(record.bytes) <= 0 ||
+            typeof record.sha256 !== "string" ||
+            !/^(?!0{64}$)[a-f0-9]{64}$/.test(record.sha256)
+          );
+        })
+      ) {
+        throw new Error("Herdr Windows bundle file manifest is invalid");
+      }
     }
   }
   return structuredClone(catalog) as unknown as HerdrRuntimeCatalog;

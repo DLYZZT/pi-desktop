@@ -8,6 +8,7 @@ import { getProcessStartFingerprint } from "../process-tree";
 import { getManagedProcessOwnerIdentity } from "../managed-process/owner-identity";
 import { HerdrBridgeError } from "./errors";
 import { isRecord } from "./protocol-v20";
+import { WindowsHerdrTerminalChild } from "./windows-terminal-child";
 
 const MAX_LINE_BYTES = 2 * 1024 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
@@ -30,9 +31,8 @@ async function registerTerminalCrashRecovery(
   child: ChildProcessWithoutNullStreams,
   terminalId: string,
 ): Promise<() => Promise<void>> {
-  // Windows needs the native Job helper so that stdio remains attached while
-  // the controller is kill-on-close contained. Keep that platform fail-closed
-  // at its own release gate; POSIX uses a detached process group today.
+  // This registration path is POSIX-only. WindowsHerdrTerminalChild registers
+  // its suspended Job target through Main before committing the helper.
   if (process.platform === "win32") throw new Error("Herdr terminal containment is unavailable on Windows");
   const owner = getManagedProcessOwnerIdentity();
   const pid = child.pid;
@@ -73,7 +73,7 @@ function strictBase64(value: string): Buffer | null {
 
 export class HerdrTerminalSession {
   readonly terminalId = randomUUID();
-  private readonly child: ChildProcessWithoutNullStreams;
+  private readonly child: ChildProcessWithoutNullStreams | WindowsHerdrTerminalChild;
   private stdoutBuffer = Buffer.alloc(0);
   private lastSeq = -1;
   private lastAck = -1;
@@ -138,12 +138,14 @@ export class HerdrTerminalSession {
     this.closedPromise = new Promise<void>((resolve) => {
       this.resolveClosed = resolve;
     });
-    this.child = spawn(descriptor.executable, args, {
-      detached: process.platform !== "win32",
-      shell: false,
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    this.child = process.platform === "win32"
+      ? new WindowsHerdrTerminalChild(descriptor.executable, args, this.terminalId)
+      : spawn(descriptor.executable, args, {
+          detached: true,
+          shell: false,
+          windowsHide: true,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
     this.emitStatus("opening");
     this.child.stdout.on("data", (chunk: Buffer) => {
       if (!this.readyForFrames) {
@@ -168,7 +170,10 @@ export class HerdrTerminalSession {
       this.flushPendingCommands();
     });
     this.child.once("spawn", () => {
-      void crashRecovery(this.child, this.terminalId)
+      const recovery = this.child instanceof WindowsHerdrTerminalChild
+        ? Promise.resolve(async () => undefined)
+        : crashRecovery(this.child, this.terminalId);
+      void recovery
         .then((unregister) => {
           this.unregisterCrashRecovery = unregister;
           if (this.closed) {

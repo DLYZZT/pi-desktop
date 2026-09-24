@@ -68,8 +68,8 @@ export function HerdrSettings() {
   }, [t]);
 
   useEffect(() => {
-    void refreshDiagnostics();
-  }, [refreshDiagnostics]);
+    if (runtime) void refreshDiagnostics();
+  }, [refreshDiagnostics, runtime]);
 
   const copyDiagnostics = async () => {
     if (!diagnostics) return;
@@ -110,12 +110,13 @@ export function HerdrSettings() {
     }
   };
 
-  const action = async (kind: "probe" | "connect" | "disconnect") => {
+  const action = async (kind: "probe" | "connect" | "disconnect" | "restart") => {
     setSaving(true);
     setError(null);
     try {
       if (kind === "probe") acceptRuntime(await call("herdr.runtime.probe"));
       else if (kind === "connect") acceptRuntime(await call("herdr.runtime.connect"));
+      else if (kind === "restart") acceptRuntime(await call("herdr.runtime.restart"));
       else {
         await call("herdr.runtime.disconnect");
         acceptRuntime(await call("herdr.runtime.get"));
@@ -378,6 +379,16 @@ export function HerdrSettings() {
           >
             {t("connect", "Connect")}
           </button>
+          {settings.mode === "managed" && diagnostics?.agentClis.some((cli) => cli.restartRequired) && (
+            <button
+              type="button"
+              disabled={loading || saving || dirty || !settings.enabled}
+              onClick={() => void action("restart")}
+              style={buttonStyle}
+            >
+              {t("restartManagedHerdr", "Restart managed Herdr")}
+            </button>
+          )}
           <button
             type="button"
             disabled={loading || saving || !canDisconnect}

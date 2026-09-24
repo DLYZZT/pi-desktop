@@ -6,7 +6,7 @@ import nodeTest from "node:test";
 import { importTestBundle } from "#test-bundle";
 
 const root = path.resolve(import.meta.dirname, "..", "..", "..");
-// Herdr integration is intentionally macOS/Linux-only until the Windows transport is implemented.
+// These fixtures use POSIX process groups; Windows uses the native Job helper.
 const test = process.platform === "win32" ? nodeTest.skip : nodeTest;
 let modulePromise;
 

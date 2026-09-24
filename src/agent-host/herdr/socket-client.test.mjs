@@ -8,7 +8,7 @@ import nodeTest from "node:test";
 import { importTestBundle } from "#test-bundle";
 
 const root = path.resolve(import.meta.dirname, "..", "..", "..");
-// Herdr integration is intentionally macOS/Linux-only until the Windows transport is implemented.
+// These fixtures use POSIX Unix sockets; native Windows named-pipe coverage lives in scripts/test-herdr-windows-e2e.mjs.
 const test = process.platform === "win32" ? nodeTest.skip : nodeTest;
 let modulePromise;
 

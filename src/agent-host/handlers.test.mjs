@@ -50,7 +50,7 @@ async function captureHandlers() {
 test("registerHandlers exposes every contract method exactly once", async () => {
   const { handlers } = await captureHandlers();
   // Keep in sync with src/contract/api.ts: one handler per contract method.
-  assert.equal(Object.keys(handlers).length, 103);
+  assert.equal(Object.keys(handlers).length, 104);
   for (const method of [
     "host.ping",
     "host.toolchain",
@@ -81,6 +81,7 @@ test("registerHandlers exposes every contract method exactly once", async () => 
     "herdr.runtime.get",
     "herdr.runtime.configure",
     "herdr.runtime.probe",
+    "herdr.runtime.restart",
     "herdr.runtime.connect",
     "herdr.runtime.disconnect",
     "herdr.snapshot",

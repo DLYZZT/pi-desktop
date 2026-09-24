@@ -19,7 +19,7 @@ const binary =
   path.join(projectRoot, "build", "herdr", "bin", `${process.platform}-${process.arch}`, "herdr");
 const skip =
   process.platform === "win32"
-    ? "Herdr transport is not supported on Windows"
+    ? "This SDK fixture uses POSIX Unix sockets"
     : !existsSync(binary)
       ? "Prepare the pinned Herdr runtime before running its SDK integration test"
       : false;

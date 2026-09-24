@@ -41,6 +41,7 @@ const toolchainSearch = read("src/agent-host/toolchain-search.ts");
 const toolchainInstaller = read("src/main/toolchains/installer.ts");
 const toolchainManager = read("src/main/toolchains/manager.ts");
 const herdrInstaller = read("src/main/herdr/installer.ts");
+const windowsHerdrArtifact = JSON.parse(read("build/herdr/runtime-catalog.json")).artifacts["win32-x64"];
 const herdrManagedServer = read("src/main/herdr/managed-server.ts");
 const herdrBridge = read("src/agent-host/herdr/bridge.ts");
 const herdrSocketClient = read("src/agent-host/herdr/socket-client.ts");
@@ -127,8 +128,8 @@ const checks = [
     windowsHelperCargo.includes('windows-sys = { version = "=0.61.2"') &&
       windowsHelperCargo.includes('panic = "abort"') &&
       windowsHelperCargo.includes('unsafe_op_in_unsafe_fn = "deny"') &&
-      windowsHelperLock.includes('name = "windows-sys"\nversion = "0.61.2"') &&
-      windowsHelperLock.includes('name = "windows-link"\nversion = "0.2.1"') &&
+      /name = "windows-sys"\r?\nversion = "0\.61\.2"/u.test(windowsHelperLock) &&
+      /name = "windows-link"\r?\nversion = "0\.2\.1"/u.test(windowsHelperLock) &&
       !/(tokio|serde|reqwest|socket|tls)/i.test(windowsHelperCargo),
     "the Windows helper dependency, panic, unsafe, and runtime allowlist must remain pinned",
   ],
@@ -375,12 +376,15 @@ const checks = [
   [
     bundledToolsBuild.includes("prepareHerdrTarget") &&
       bundledToolsBuild.includes("c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4") &&
+      windowsHerdrArtifact.sha256 === "0ab3d0fe1434d55757997542b978c771d642987bb15a7130f4160f0db38821d5" &&
+      windowsHerdrArtifact.bundleFiles?.length === 7 &&
+      bundledToolsBuild.includes("artifact.bundleFiles") &&
       herdrInstaller.includes("The bundled Herdr runtime failed integrity verification") &&
       herdrInstaller.includes("executableIntegrity") &&
       herdrInstaller.includes("async remove()") &&
       !herdrInstaller.includes("globalThis.fetch") &&
-      (electronBuilderConfig.match(/from: build\/herdr\/bin\/\$\{platform\}-\$\{arch\}/g) ?? []).length === 2,
-    "Herdr must be build-time pinned, runtime-offline, integrity checked, removable, and bundled only for macOS/Linux",
+      (electronBuilderConfig.match(/from: build\/herdr\/bin\/\$\{platform\}-\$\{arch\}/g) ?? []).length === 3,
+    "Herdr must be build-time pinned, runtime-offline, integrity checked, removable, and bundled for macOS/Linux/Windows",
   ],
   [
     herdrManagedServer.includes('["--session", target.sessionName, "server"]') &&

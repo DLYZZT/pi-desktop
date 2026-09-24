@@ -345,6 +345,10 @@ jobs:
       - name: Prepare verified bundled search tools
         run: npm run prepare:bundled-tools -- --target ${{ matrix.tool_target }}
 
+      - name: Run native Windows Herdr integration
+        if: runner.os == 'Windows'
+        run: npm run test:herdr-windows-e2e
+
       - name: Run Electron smoke on Windows
         if: runner.os == 'Windows'
         run: npm run smoke
@@ -825,6 +829,9 @@ jobs:
 
       - name: Prepare verified bundled search tools
         run: npm run prepare:bundled-tools -- --target win32-x64
+
+      - name: Run native Windows Herdr integration
+        run: npm run test:herdr-windows-e2e
 
       - name: Package Windows x64
         run: npx electron-builder --win nsis --x64 --publish never

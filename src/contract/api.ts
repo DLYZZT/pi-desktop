@@ -80,6 +80,7 @@ export interface Api {
   "herdr.runtime.get": { params: void; result: HerdrRuntimeSnapshot };
   "herdr.runtime.configure": { params: HerdrRuntimeConfigureRequest; result: HerdrRuntimeSnapshot };
   "herdr.runtime.probe": { params: void; result: HerdrRuntimeSnapshot };
+  "herdr.runtime.restart": { params: void; result: HerdrRuntimeSnapshot };
   "herdr.runtime.connect": { params: void; result: HerdrRuntimeSnapshot };
   "herdr.runtime.disconnect": { params: void; result: { ok: true } };
   "herdr.diagnostics": { params: void; result: HerdrDiagnostics };

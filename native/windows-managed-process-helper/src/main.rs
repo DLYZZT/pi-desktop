@@ -89,6 +89,12 @@ mod windows_main {
             }
         }
 
+        fn send_reliable_output(&self, kind: u16, payload: Vec<u8>) -> Result<()> {
+            self.control
+                .send(Packet { kind, payload })
+                .map_err(|_| HelperError::protocol("HELPER_PARENT_UNAVAILABLE"))
+        }
+
         fn flush_dropped(&self) -> Result<()> {
             let bytes = self.dropped_bytes.swap(0, Ordering::AcqRel);
             let chunks = self.dropped_chunks.swap(0, Ordering::AcqRel);
@@ -199,12 +205,23 @@ mod windows_main {
         }
     }
 
-    fn drain(mut input: std::fs::File, kind: u16, sink: EventSink) {
+    fn drain(mut input: std::fs::File, kind: u16, sink: EventSink, reliable: bool) {
         let mut buffer = vec![0_u8; 16 * 1024];
         loop {
             match input.read(&mut buffer) {
                 Ok(0) => break,
-                Ok(read) => sink.send_output(kind, buffer[..read].to_vec()),
+                Ok(read) => {
+                    if reliable {
+                        if sink
+                            .send_reliable_output(kind, buffer[..read].to_vec())
+                            .is_err()
+                        {
+                            break;
+                        }
+                    } else {
+                        sink.send_output(kind, buffer[..read].to_vec());
+                    }
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(_) => break,
             }
@@ -284,9 +301,14 @@ mod windows_main {
         let pipes = target.take_pipes()?;
         let mut target_stdin = Some(pipes.stdin);
         let stdout_sink = sink.clone();
-        std::thread::spawn(move || drain(pipes.stdout, HELPER_STDOUT, stdout_sink));
+        let terminal_mode = bootstrap.terminal_mode;
+        let stdout_thread = std::thread::spawn(move || {
+            drain(pipes.stdout, HELPER_STDOUT, stdout_sink, terminal_mode)
+        });
         let stderr_sink = sink.clone();
-        std::thread::spawn(move || drain(pipes.stderr, HELPER_STDERR, stderr_sink));
+        let stderr_thread = std::thread::spawn(move || {
+            drain(pipes.stderr, HELPER_STDERR, stderr_sink, terminal_mode)
+        });
         let owner_lost = Arc::new(AtomicBool::new(false));
         let watchdog_lost = Arc::clone(&owner_lost);
         let watchdog_job = Arc::clone(&job);
@@ -312,15 +334,26 @@ mod windows_main {
             match receiver.recv_timeout(Duration::from_millis(50)) {
                 Ok(ControlMessage::Frame(frame)) => match frame.kind {
                     HOST_STDIN => {
-                        let input = Stdin::parse(&frame.payload)?;
+                        let input = if terminal_mode {
+                            if frame.payload.len() > 64 * 1024 {
+                                return Err(HelperError::protocol("HELPER_INVALID_FRAME"));
+                            }
+                            None
+                        } else {
+                            Some(Stdin::parse(&frame.payload)?)
+                        };
                         if let Some(stdin) = target_stdin.as_mut() {
-                            let written = stdin.write_all(input.text.as_bytes()).and_then(|()| {
-                                if input.append_newline {
-                                    stdin.write_all(b"\n")
-                                } else {
-                                    Ok(())
-                                }
-                            });
+                            let written = if let Some(input) = input {
+                                stdin.write_all(input.text.as_bytes()).and_then(|()| {
+                                    if input.append_newline {
+                                        stdin.write_all(b"\n")
+                                    } else {
+                                        Ok(())
+                                    }
+                                })
+                            } else {
+                                stdin.write_all(&frame.payload)
+                            };
                             if written.is_err() {
                                 target_stdin = None;
                                 sink.send_json(HELPER_STDIN_CLOSED, "{}".into())?;
@@ -371,6 +404,10 @@ mod windows_main {
             }
             let active = job.active_processes()?;
             if active == 0 {
+                if terminal_mode {
+                    let _ = stdout_thread.join();
+                    let _ = stderr_thread.join();
+                }
                 sink.send_json(HELPER_ACTIVE_ZERO, "{}".into())?;
                 let exit = if let Some((source, signal)) = stopped {
                     format!(

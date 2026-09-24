@@ -6,7 +6,7 @@ import nodeTest from "node:test";
 import { importTestBundle } from "#test-bundle";
 
 const root = path.resolve(import.meta.dirname, "..", "..", "..");
-// Herdr integration is intentionally macOS/Linux-only until the Windows transport is implemented.
+// These fixtures use POSIX shell scripts; native Windows coverage lives in scripts/test-herdr-windows-e2e.mjs.
 const test = process.platform === "win32" ? nodeTest.skip : nodeTest;
 let modulePromise;
 
@@ -183,9 +183,9 @@ test("background initialization publishes immediately and skips probes when disa
   assert.equal(await import("node:fs").then(({ existsSync }) => existsSync(marker)), false);
 });
 
-test("Windows remains fail-closed without probing or activating bundled Herdr", async (t) => {
+test("Windows managed mode reports a missing runtime and permits installation", async (t) => {
   const { HerdrRuntimeManager } = await loadRuntimeManager();
-  const directory = mkdtempSync(path.join(os.tmpdir(), "pi-herdr-runtime-windows-disabled-"));
+  const directory = mkdtempSync(path.join(os.tmpdir(), "pi-herdr-runtime-windows-missing-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   let installs = 0;
   const manager = new HerdrRuntimeManager({
@@ -204,10 +204,10 @@ test("Windows remains fail-closed without probing or activating bundled Herdr", 
   });
 
   const runtime = await manager.initialize(settings({ mode: "managed" }));
-  assert.equal(runtime.error?.code, "HERDR_PLATFORM_UNSUPPORTED");
+  assert.equal(runtime.error?.code, "HERDR_BINARY_NOT_FOUND");
   const install = await manager.installManagedRuntime();
-  assert.equal(install.error?.code, "HERDR_PLATFORM_UNSUPPORTED");
-  assert.equal(installs, 0);
+  assert.equal(install.error?.code, "HERDR_BINARY_NOT_FOUND");
+  assert.equal(installs, 1);
 });
 
 test("Managed mode rejects schema hash drift while Attach uses versioned compatibility", async (t) => {

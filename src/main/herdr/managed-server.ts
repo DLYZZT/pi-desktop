@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { lstat } from "node:fs/promises";
+import net from "node:net";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
@@ -67,7 +68,51 @@ function delay(ms: number): Promise<void> {
   });
 }
 
+async function probeWindowsPipe(endpoint: string): Promise<{ occupied: boolean; ready: boolean }> {
+  if (!endpoint.startsWith("\\\\.\\pipe\\")) return { occupied: true, ready: false };
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ path: endpoint });
+    let settled = false;
+    let buffer = Buffer.alloc(0);
+    const finish = (occupied: boolean, ready: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve({ occupied, ready });
+    };
+    socket.once("connect", () => {
+      socket.write(`${JSON.stringify({ id: "pi-desktop:startup", method: "ping", params: {} })}\n`);
+    });
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      if (buffer.length > 4096) return finish(true, false);
+      const newline = buffer.indexOf(0x0a);
+      if (newline === -1) return;
+      try {
+        const response = JSON.parse(buffer.subarray(0, newline).toString("utf8")) as {
+          id?: unknown;
+          result?: { type?: unknown; protocol?: unknown };
+        };
+        finish(
+          true,
+          response.id === "pi-desktop:startup" && response.result?.type === "pong" && response.result.protocol === 20,
+        );
+      } catch {
+        finish(true, false);
+      }
+    });
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      finish(!["ENOENT", "ECONNREFUSED", "ENXIO"].includes(error.code ?? ""), false);
+    });
+    socket.once("close", () => finish(true, false));
+    const timer = setTimeout(() => finish(true, false), 1_000);
+    timer.unref();
+  });
+}
+
 async function safeSocketExists(endpoint: string): Promise<boolean> {
+  if (process.platform === "win32") return (await probeWindowsPipe(endpoint)).ready;
   try {
     const info = await lstat(endpoint);
     return (
@@ -82,6 +127,7 @@ async function safeSocketExists(endpoint: string): Promise<boolean> {
 }
 
 async function pathOccupied(endpoint: string): Promise<boolean> {
+  if (process.platform === "win32") return (await probeWindowsPipe(endpoint)).occupied;
   try {
     await lstat(endpoint);
     return true;

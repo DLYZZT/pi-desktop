@@ -271,6 +271,7 @@ export class HerdrBridge {
   private manuallyDisconnected = false;
   private manualConnectRequested = false;
   private terminalTeardownPromise: Promise<void> = Promise.resolve();
+  private windowsTerminalReady = false;
   private waits = new Map<string, AbortController>();
   private readonly runtimeListeners = new Set<(snapshot: HerdrRuntimeSnapshot) => void>();
   private readonly terminals: HerdrTerminalRegistry;
@@ -343,6 +344,16 @@ export class HerdrBridge {
 
   async probe(): Promise<HerdrRuntimeSnapshot> {
     const descriptor = await callMain<HerdrRuntimeDescriptor>("herdr.refreshRuntime", {});
+    herdrRuntimeController.apply(descriptor);
+    return this.getRuntime();
+  }
+
+  async restartManagedServer(): Promise<HerdrRuntimeSnapshot> {
+    if (!this.descriptor.enabled || this.descriptor.mode !== "managed") {
+      throw new HerdrBridgeError("HERDR_INVALID_REQUEST", "Only a managed Herdr server can be restarted.");
+    }
+    await this.teardownConnection();
+    const descriptor = await callMain<HerdrRuntimeDescriptor>("herdr.restartManagedServer", {});
     herdrRuntimeController.apply(descriptor);
     return this.getRuntime();
   }
@@ -437,6 +448,21 @@ export class HerdrBridge {
       this.fleet = mapFleet(result, this.fleet.revision, this.descriptor.hostGeneration ?? 0);
       this.server.emit("herdr.fleet", "*", this.getFleet());
       this.reconnectAttempt = 0;
+      if (process.platform === "win32") {
+        try {
+          const containment = await callMain<{
+            reaperReady?: boolean;
+            capability?: { backend?: string; ready?: boolean };
+            windowsHelper?: unknown;
+          }>("managedProcesses.getSettings", undefined, 2_000);
+          this.windowsTerminalReady = containment.reaperReady === true &&
+            containment.capability?.backend === "windows-job" &&
+            containment.capability.ready === true && Boolean(containment.windowsHelper);
+        } catch {
+          this.windowsTerminalReady = false;
+        }
+      }
+      if (generation !== this.generation) return this.getRuntime();
       this.setRuntime({
         ...this.runtimeFromDescriptor(this.descriptor),
         version: pong.version,
@@ -490,6 +516,7 @@ export class HerdrBridge {
 
   private teardownConnection(): Promise<void> {
     this.generation += 1;
+    this.windowsTerminalReady = false;
     this.connectPromise = null;
     this.clearReconnect();
     this.clearRefreshTimer();
@@ -1343,7 +1370,7 @@ export class HerdrBridge {
   private setRuntime(snapshot: HerdrRuntimeSnapshot): void {
     const ready = snapshot.status === "ready";
     const readable = ready || snapshot.status === "degraded";
-    const terminalReady = ready && process.platform !== "win32";
+    const terminalReady = ready && (process.platform !== "win32" || this.windowsTerminalReady);
     this.runtime = {
       ...snapshot,
       revision: ++this.runtimeRevision,

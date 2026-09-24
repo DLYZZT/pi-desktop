@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import net from "node:net";
@@ -11,6 +11,13 @@ import path from "node:path";
 import { clearInterval, setInterval } from "node:timers";
 import { fileURLToPath } from "node:url";
 import { WindowsJobProcessBackend } from "../src/agent-host/managed-process/windows-helper-client.ts";
+import {
+  WINDOWS_HELPER_KIND,
+  WindowsHelperFrameDecoder,
+  encodeWindowsHelperFrame,
+  encodeWindowsHelperJson,
+  parseWindowsHelperJson,
+} from "../src/agent-host/managed-process/helper-codec.ts";
 import { applyManagedProcessOwnerIdentity } from "../src/agent-host/managed-process/owner-identity.ts";
 import { ManagedProcessReaper, secureWindowsReaperDirectory } from "../src/main/managed-process/reaper.ts";
 import {
@@ -241,6 +248,85 @@ const owner = applyManagedProcessOwnerIdentity({
   mainImagePath: realpathSync.native(process.execPath),
   hostInstanceId: randomUUID(),
 });
+
+async function runRawTerminalScenario(crash) {
+  const terminalFile = path.join(fixture, "terminal-stream.mjs");
+  await writeFile(terminalFile,
+    'process.stdout.write(`READY:${process.pid}\\n`);process.stdin.on("data",chunk=>process.stdout.write(chunk));setInterval(()=>{},1000);');
+  const nonce = randomBytes(32).toString("hex");
+  const processId = `herdr-terminal-${randomUUID()}`;
+  const runId = randomUUID();
+  const jobName = `Local\\PiDesktop.Managed.${nonce}`;
+  const helper = spawn(descriptor.path, ["--owner-stdio-v1"], {
+    cwd: path.dirname(descriptor.path),
+    env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR },
+    shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+  });
+  helper.stdin.on("error", () => undefined);
+  helper.stderr.resume();
+  const frames = [];
+  let output = "";
+  const decoder = new WindowsHelperFrameDecoder();
+  helper.stdout.on("data", (chunk) => {
+    for (const frame of decoder.push(chunk)) {
+      frames.push(frame);
+      if (frame.kind === WINDOWS_HELPER_KIND.stdout) output += frame.payload.toString("utf8");
+    }
+  });
+  let sequence = 1;
+  const sendJson = (kind, value) => helper.stdin.write(encodeWindowsHelperJson(kind, sequence++, value));
+  const sendRaw = (kind, value) => helper.stdin.write(encodeWindowsHelperFrame(kind, sequence++, value));
+  try {
+    const hello = parseWindowsHelperJson(await waitForEvent(frames, (frame) => frame.kind === WINDOWS_HELPER_KIND.hello));
+    assert.equal(hello.buildId, descriptor.buildId);
+    sendJson(WINDOWS_HELPER_KIND.bootstrap, {
+      version: 1,
+      processIdHash: createHash("sha256").update(processId).digest("hex"),
+      runIdHash: createHash("sha256").update(runId).digest("hex"),
+      jobName, nonce, cwd: fixture,
+      shellExecutable: realpathSync.native(process.execPath),
+      argvPrefix: [terminalFile], command: "terminal", terminalMode: true,
+      environment: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH },
+      mainPid: owner.mainPid, mainStartTimeMs: Number(owner.mainStartFingerprint),
+      mainImagePath: owner.mainImagePath,
+      hostPid: owner.hostPid, hostStartTimeMs: Number(owner.hostStartFingerprint),
+      hostImagePath: owner.hostImagePath, hostInstanceId: owner.hostInstanceId,
+    });
+    const prepared = parseWindowsHelperJson(await waitForEvent(frames, (frame) => frame.kind === WINDOWS_HELPER_KIND.prepared));
+    assert.equal(prepared.jobName, jobName);
+    sendJson(WINDOWS_HELPER_KIND.commit, { nonce, journalRevision: 1 });
+    await waitForEvent(frames, (frame) => frame.kind === WINDOWS_HELPER_KIND.started);
+    await withScenarioTimeout((async () => {
+      while (!output.includes("READY:")) await new Promise((resolve) => setTimeout(resolve, 20));
+    })(), "raw terminal ready", 5_000);
+    const targetPid = Number(output.match(/READY:(\d+)/u)?.[1]);
+    assert.ok(Number.isSafeInteger(targetPid) && targetPid > 1);
+    const echo = "TERMINAL_RAW_INPUT_Ω\n";
+    sendRaw(WINDOWS_HELPER_KIND.stdin, Buffer.from(echo));
+    await withScenarioTimeout((async () => {
+      while (!output.includes(echo)) await new Promise((resolve) => setTimeout(resolve, 20));
+    })(), "raw terminal echo", 5_000);
+    if (crash) {
+      helper.kill("SIGKILL");
+      await withScenarioTimeout(new Promise((resolve) => helper.once("close", resolve)), "terminal helper crash", 5_000);
+      await withScenarioTimeout((async () => {
+        for (;;) {
+          try { process.kill(targetPid, 0); } catch { return; }
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+      })(), "terminal Job kill-on-close", 5_000);
+    } else {
+      sendJson(WINDOWS_HELPER_KIND.stop, { mode: "force", source: "host" });
+      await waitForEvent(frames, (frame) => frame.kind === WINDOWS_HELPER_KIND.activeZero);
+      await waitForEvent(frames, (frame) => frame.kind === WINDOWS_HELPER_KIND.exit);
+      await withScenarioTimeout(new Promise((resolve) => helper.once("close", resolve)), "raw terminal close", 5_000);
+    }
+    assert.equal(frames.some((frame) => frame.kind === WINDOWS_HELPER_KIND.outputDropped), false);
+    assert.equal(frames.some((frame) => frame.kind === WINDOWS_HELPER_KIND.error), false);
+  } finally {
+    if (helper.exitCode === null) helper.kill("SIGKILL");
+  }
+}
 const bash = findBash();
 const marker = path.join(fixture, "executed.txt");
 const childFile = path.join(fixture, "child.mjs");
@@ -524,6 +610,9 @@ if (ownerDeathMode === "host" || ownerDeathMode === "main") {
 let acceptanceError;
 let cleanupError;
 try {
+  progress("raw-terminal-job");
+  await runRawTerminalScenario(false);
+  await runRawTerminalScenario(true);
   progress("active-helper-file-lock");
   const lockingBackend = new WindowsJobProcessBackend(descriptor);
   const lockingPrepared = await lockingBackend.prepare(launchCommandInput("active-helper-file-lock", ":"));
@@ -806,6 +895,8 @@ try {
       ok: true,
       scenarios: [
         "two-phase",
+        "raw-terminal-stdio-and-stop",
+        "raw-terminal-helper-crash-kills-job",
         "active-helper-file-lock",
         "journal-protected-dacl",
         "journal-junction-rejected",

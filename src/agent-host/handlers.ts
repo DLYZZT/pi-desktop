@@ -788,6 +788,12 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         return herdr.probe();
       }),
 
+    "herdr.runtime.restart": (params) =>
+      herdrCall(() => {
+        assertHerdrParamKeys(params, []);
+        return herdr.restartManagedServer();
+      }),
+
     "herdr.runtime.connect": (params) =>
       herdrCall(() => {
         assertHerdrParamKeys(params, []);

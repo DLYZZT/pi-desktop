@@ -82,14 +82,20 @@ let startupCheckFinished = false;
 let startupCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let quitCleanupStarted = false;
 let quitCleanupComplete = false;
+let lastHerdrToolchainDiscoveryKey: string | undefined;
 
 async function refreshHerdrAgentCliDiscovery(): Promise<void> {
   try {
+    const toolchains = toolchainManager?.getSnapshot();
+    const runtimeDirectories = (["js.node", "js.bun", "python.interpreter", "python.uv"] as const)
+      .map((capability) => toolchains?.defaults[capability]?.binDir)
+      .filter((directory): directory is string => Boolean(directory));
     const snapshot = await discoverHerdrAgentClis({
       homeDir: app.getPath("home"),
       userDataDir: app.getPath("userData"),
       platform: process.platform,
       env: process.env,
+      runtimeDirectories,
     });
     const changed = snapshot.revision !== herdrAgentCliDiscovery?.revision;
     herdrAgentCliDiscovery = snapshot;
@@ -606,6 +612,15 @@ function startMainProcess(): void {
         if (!win.isDestroyed()) win.webContents.send("toolchains:state", snapshot.publicState);
       }
       hostManager?.setToolchainSnapshot(snapshot);
+      const herdrRuntimeKey = `${snapshot.revision}\0${(
+        ["js.node", "js.bun", "python.interpreter", "python.uv"] as const
+      )
+        .map((capability) => snapshot.defaults[capability]?.binDir ?? "")
+        .join("\0")}`;
+      if (lastHerdrToolchainDiscoveryKey !== herdrRuntimeKey) {
+        lastHerdrToolchainDiscoveryKey = herdrRuntimeKey;
+        void refreshHerdrAgentCliDiscovery();
+      }
       finishPackagedStartupValidation();
     });
     updateManager.subscribe((state) => {
@@ -726,6 +741,7 @@ function startMainProcess(): void {
         return herdrRuntimeManager!.configure(body.settings);
       }
       if (method === "herdr.refreshRuntime") return herdrRuntimeManager!.refresh();
+      if (method === "herdr.restartManagedServer") return herdrRuntimeManager!.restartManagedServer();
       if (method === "managedProcesses.register") {
         const body = (params ?? {}) as { record?: unknown };
         const record = body.record;

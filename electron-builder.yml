@@ -124,6 +124,8 @@ win:
       filter:
         - pi-managed-process-helper.exe
         - manifest.json
+    - from: build/herdr/bin/${platform}-${arch}
+      to: herdr/bin/${platform}-${arch}
   target:
     - target: nsis
       arch:

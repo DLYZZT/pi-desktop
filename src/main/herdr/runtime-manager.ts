@@ -239,6 +239,7 @@ export class HerdrRuntimeManager {
   private operationTail: Promise<void> = Promise.resolve();
   private installPromise: Promise<HerdrRuntimeDescriptor> | null = null;
   private managedServerSuspended = false;
+  private appliedAgentCliEnvironmentRevision: number | undefined;
 
   constructor(private readonly options: RuntimeManagerOptions) {
     this.platform = options.platform ?? process.platform;
@@ -342,7 +343,6 @@ export class HerdrRuntimeManager {
     if (this.installPromise) return this.installPromise;
     const promise = this.enqueueOperation(async () => {
       const settings = structuredClone(this.settings);
-      if (this.platform === "win32") return this.publish(this.unsupportedPlatformDescriptor(settings));
       await this.serverSupervisor.stop();
       try {
         await this.installer.install(onProgress, signal);
@@ -371,6 +371,20 @@ export class HerdrRuntimeManager {
   async stopManagedServer(): Promise<void> {
     this.managedServerSuspended = true;
     await this.serverSupervisor.stop();
+    this.appliedAgentCliEnvironmentRevision = undefined;
+  }
+
+  async restartManagedServer(): Promise<HerdrRuntimeDescriptor> {
+    return this.enqueueOperation(async () => {
+      const settings = structuredClone(this.settings);
+      if (!settings.enabled || settings.mode !== "managed") {
+        throw new Error("Only an enabled managed Herdr server can be restarted");
+      }
+      await this.serverSupervisor.stop();
+      this.appliedAgentCliEnvironmentRevision = undefined;
+      this.managedServerSuspended = false;
+      return this.refreshSettings(settings);
+    });
   }
 
   private enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -387,10 +401,6 @@ export class HerdrRuntimeManager {
     if (!settings.enabled) {
       await this.serverSupervisor.stop();
       return this.publish(base);
-    }
-    if (this.platform === "win32") {
-      await this.serverSupervisor.stop();
-      return this.publish(this.unsupportedPlatformDescriptor(settings));
     }
     if (this.catalogLoadFailed) {
       await this.serverSupervisor.stop();
@@ -483,7 +493,7 @@ export class HerdrRuntimeManager {
           sessionName: settings.sessionName,
           endpoint: descriptor.endpoint,
         });
-        return this.publish(descriptor);
+        return this.publish({ ...descriptor, ...this.baseDescriptor(settings) });
       } catch (error) {
         return this.publish({ ...descriptor, error: this.managedServerError(error) });
       }
@@ -500,6 +510,11 @@ export class HerdrRuntimeManager {
 
   private baseDescriptor(settings: HerdrSettings): Omit<HerdrRuntimeDescriptor, "revision"> {
     const agentCliEnvironment = this.options.agentCliEnvironmentProvider?.();
+    const restartRequired =
+      settings.enabled &&
+      settings.mode === "managed" &&
+      this.appliedAgentCliEnvironmentRevision !== undefined &&
+      agentCliEnvironment?.revision !== this.appliedAgentCliEnvironmentRevision;
     return {
       enabled: settings.enabled,
       mode: settings.mode,
@@ -508,8 +523,12 @@ export class HerdrRuntimeManager {
       releaseControlOnViewClose: settings.releaseControlOnViewClose,
       ...(agentCliEnvironment
         ? {
-            agentClis: agentCliEnvironment.diagnostics.map((entry) => ({ ...entry })),
+            agentClis: agentCliEnvironment.diagnostics.map((entry) => ({
+              ...entry,
+              ...(restartRequired ? { restartRequired: true } : {}),
+            })),
             agentCliEnvironmentRevision: agentCliEnvironment.revision,
+            ...(restartRequired ? { agentCliRestartRequired: true } : {}),
           }
         : {}),
     };
@@ -517,8 +536,10 @@ export class HerdrRuntimeManager {
 
   private managedServerEnvironment(): NodeJS.ProcessEnv {
     const result = { ...this.env };
-    const managedPath = this.options.agentCliEnvironmentProvider?.().managedPath;
+    const agentCliEnvironment = this.options.agentCliEnvironmentProvider?.();
+    const managedPath = agentCliEnvironment?.managedPath;
     if (!managedPath) return result;
+    this.appliedAgentCliEnvironmentRevision = agentCliEnvironment.revision;
     if (this.platform === "win32") {
       for (const key of Object.keys(result)) {
         if (key.toLowerCase() === "path") delete result[key];
@@ -528,17 +549,6 @@ export class HerdrRuntimeManager {
       result.PATH = managedPath;
     }
     return result;
-  }
-
-  private unsupportedPlatformDescriptor(settings: HerdrSettings): Omit<HerdrRuntimeDescriptor, "revision"> {
-    return {
-      ...this.baseDescriptor(settings),
-      error: publicError(
-        "HERDR_PLATFORM_UNSUPPORTED",
-        "Herdr integration is not supported on Windows in this release.",
-        false,
-      ),
-    };
   }
 
   private publish(descriptor: Omit<HerdrRuntimeDescriptor, "revision">): HerdrRuntimeDescriptor {
@@ -612,7 +622,11 @@ export class HerdrRuntimeManager {
     );
     if (settings.mode === "managed") return this.validateCandidate(managed, "managed");
 
-    const systemCandidates = splitPath(this.env.PATH, this.platform).map((directory) =>
+    const systemPath =
+      this.platform === "win32"
+        ? Object.entries(this.env).find(([key]) => key.toLowerCase() === "path")?.[1]
+        : this.env.PATH;
+    const systemCandidates = splitPath(systemPath, this.platform).map((directory) =>
       path.join(directory, executableName(this.platform)),
     );
     for (const candidate of [...new Set(systemCandidates)]) {
@@ -637,8 +651,7 @@ export class HerdrRuntimeManager {
   private resolveEndpoint(sessionName: string): string {
     const appDir = "herdr";
     let configRoot: string;
-    if (this.env.XDG_CONFIG_HOME) configRoot = path.join(this.env.XDG_CONFIG_HOME, appDir);
-    else if (this.platform === "win32") {
+    if (this.platform === "win32") {
       configRoot = path.join(
         this.env.APPDATA ||
           (this.env.USERPROFILE
@@ -646,16 +659,18 @@ export class HerdrRuntimeManager {
             : path.join(homedir(), ".config")),
         appDir,
       );
-    } else configRoot = path.join(homedir(), ".config", appDir);
+    } else if (this.env.XDG_CONFIG_HOME) configRoot = path.join(this.env.XDG_CONFIG_HOME, appDir);
+    else configRoot = path.join(homedir(), ".config", appDir);
     const sessionRoot = sessionName === "default" ? configRoot : path.join(configRoot, "sessions", sessionName);
-    return path.join(sessionRoot, "herdr.sock");
+    const marker = path.join(sessionRoot, "herdr.sock");
+    return this.platform === "win32" ? `\\\\.\\pipe\\${marker}` : marker;
   }
 
   private handleManagedServerEvent(event: HerdrManagedServerEvent): void {
     const settings = structuredClone(this.settings);
     if (!settings.enabled || settings.mode !== "managed" || event.target?.sessionName !== settings.sessionName) return;
     if (event.state === "running") {
-      if (!this.descriptor.error?.code.startsWith("HERDR_SERVER_")) return;
+      if (!this.descriptor.error?.code.startsWith("HERDR_SERVER_") && !this.descriptor.agentCliRestartRequired) return;
       void this.enqueueOperation(() => this.refreshSettings(structuredClone(this.settings)));
       return;
     }

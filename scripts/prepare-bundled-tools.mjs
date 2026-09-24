@@ -213,10 +213,6 @@ async function prepareTarget(catalog, target) {
 }
 
 async function prepareHerdrTarget(catalog, target) {
-  if (target === "win32-x64") {
-    console.log(`[bundled-tools] Herdr remains unsupported for ${target}; no runtime was bundled`);
-    return;
-  }
   const separator = target.lastIndexOf("-");
   const platform = target.slice(0, separator);
   const arch = target.slice(separator + 1);
@@ -227,7 +223,8 @@ async function prepareHerdrTarget(catalog, target) {
   fs.mkdirSync(herdrCacheRoot, { recursive: true, mode: 0o700 });
   const staging = fs.mkdtempSync(path.join(herdrOutputRoot, `.${target}-staging-`));
   try {
-    const cachedBinary = path.join(herdrCacheRoot, `herdr-${catalog.version}-${target}`);
+    const windows = platform === "win32";
+    const cachedBinary = path.join(herdrCacheRoot, `herdr-${catalog.version}-${target}${windows ? ".zip" : ""}`);
     await downloadFixedFile(
       {
         name: `herdr-${catalog.version}-${target}`,
@@ -237,11 +234,48 @@ async function prepareHerdrTarget(catalog, target) {
       },
       cachedBinary,
     );
-    const executable = path.join(staging, "herdr");
-    fs.copyFileSync(cachedBinary, executable, fs.constants.COPYFILE_EXCL);
-    fs.chmodSync(executable, 0o755);
+    const executableName = windows ? "herdr.exe" : "herdr";
+    const executable = path.join(staging, executableName);
+    if (windows) {
+      await extractRuntimeArchive(cachedBinary, staging, "zip", {
+        maxEntries: artifact.bundleFiles.length,
+        maxExtractedBytes: 32 * 1024 * 1024,
+      });
+      const actualFiles = [];
+      const pending = [staging];
+      while (pending.length > 0) {
+        const directory = pending.pop();
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+          const entryPath = path.join(directory, entry.name);
+          if (entry.isDirectory()) pending.push(entryPath);
+          else if (entry.isFile()) actualFiles.push(path.relative(staging, entryPath).split(path.sep).join("/"));
+          else fail(`Herdr ${target} archive contains an unsupported entry`);
+        }
+      }
+      if (
+        actualFiles.sort().join("\0") !==
+        artifact.bundleFiles
+          .map((file) => file.path)
+          .sort()
+          .join("\0")
+      ) {
+        fail(`Herdr ${target} archive file list differs from the pinned catalog`);
+      }
+      for (const file of artifact.bundleFiles) {
+        const actual = await hashFile(path.join(staging, file.path));
+        if (actual.bytes !== file.bytes || actual.sha256 !== file.sha256) {
+          fail(`Herdr ${target} archive member failed verification`);
+        }
+      }
+    } else {
+      fs.copyFileSync(cachedBinary, executable, fs.constants.COPYFILE_EXCL);
+      fs.chmodSync(executable, 0o755);
+    }
     const binary = await hashFile(executable);
-    if (binary.bytes !== artifact.downloadBytes || binary.sha256 !== artifact.sha256) {
+    if (
+      binary.bytes !== (windows ? artifact.bundleFiles[0].bytes : artifact.downloadBytes) ||
+      binary.sha256 !== (windows ? artifact.bundleFiles[0].sha256 : artifact.sha256)
+    ) {
       fail(`Herdr ${target} failed bundled binary verification`);
     }
     const darwinCode = platform === "darwin" ? darwinCodeDigest(fs.readFileSync(executable)) : undefined;
@@ -258,10 +292,11 @@ async function prepareHerdrTarget(catalog, target) {
       apiSchemaSha256: catalog.apiSchemaSha256,
       platform,
       arch,
-      executable: "herdr",
+      executable: executableName,
       sha256: binary.sha256,
       bytes: binary.bytes,
       artifactSha256: artifact.sha256,
+      ...(windows ? { bundleFiles: artifact.bundleFiles } : {}),
       ...(darwinCode ? { darwinCodeSha256: darwinCode.sha256, darwinCodeBytes: darwinCode.bytes } : {}),
     };
     fs.writeFileSync(path.join(staging, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);

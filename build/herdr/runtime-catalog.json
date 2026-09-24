@@ -28,7 +28,16 @@
       "upstreamPlatform": "windows-x86_64",
       "url": "https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-windows-x86_64.zip",
       "downloadBytes": 8382621,
-      "sha256": "0ab3d0fe1434d55757997542b978c771d642987bb15a7130f4160f0db38821d5"
+      "sha256": "0ab3d0fe1434d55757997542b978c771d642987bb15a7130f4160f0db38821d5",
+      "bundleFiles": [
+        { "path": "herdr.exe", "bytes": 22400512, "sha256": "467682cdb5fa482c54897c6b9c96a5300a3516a72ef70ec3d009e16fadb131b3" },
+        { "path": "conpty/conpty.dll", "bytes": 109920, "sha256": "39fba2713e2495117b1591ae8c32a3b904bea7aa66069cf7815e2844c76d75d8" },
+        { "path": "conpty/herdr-conpty.json", "bytes": 450, "sha256": "c8f499ad82c568e737d6bc7d0b583e3785d2f43af3d2c0cebb856076690533f5" },
+        { "path": "conpty/arm64/OpenConsole.exe", "bytes": 1120056, "sha256": "ed7622fd0d3bedc9ab9f122f5e58edf0def9e7999224f52dd395ba9f54edbe09" },
+        { "path": "conpty/x64/OpenConsole.exe", "bytes": 1066296, "sha256": "b7fd936c2668b87b9ecf7b3366dc6568afc1c6f981874cba3e955a1c35cf8160" },
+        { "path": "THIRD-PARTY-NOTICES/Microsoft.Windows.Console.ConPTY-LICENSE.txt", "bytes": 1116, "sha256": "5d177f23ecfeb0ea8e050b6a5a16355e1ae9a0b286436ca8f83ed08b3795be6b" },
+        { "path": "THIRD-PARTY-NOTICES/Microsoft.Windows.Console.ConPTY-NOTICE.md", "bytes": 23176, "sha256": "e7fbaadee6ab20c28b87730a510ee5f5815d8fb4bd88d1d54d282dc2a74c0726" }
+      ]
     }
   },
   "fixturesOnly": {

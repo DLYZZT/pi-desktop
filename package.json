@@ -52,6 +52,7 @@
     "test:managed-process-workflows": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/test-managed-process-workflows.mjs",
     "test:managed-process-frameworks": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/test-managed-process-frameworks.mjs",
     "test:herdr-e2e": "node scripts/test-herdr-e2e.mjs",
+    "test:herdr-windows-e2e": "node scripts/test-herdr-windows-e2e.mjs",
     "test:herdr-desktop-e2e": "npm run build && node scripts/test-herdr-desktop-e2e.mjs",
     "test:windows-nsis-upgrade": "node scripts/test-windows-nsis-upgrade.mjs",
     "test:windows-managed-helper": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/test-windows-managed-process-helper.mjs",

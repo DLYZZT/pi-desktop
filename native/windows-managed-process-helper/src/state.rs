@@ -16,6 +16,7 @@ pub struct Bootstrap {
     pub shell_executable: String,
     pub argv_prefix: Vec<String>,
     pub command: String,
+    pub terminal_mode: bool,
     pub environment: BTreeMap<String, String>,
     pub main_pid: u32,
     pub main_start_time_ms: u64,
@@ -188,6 +189,11 @@ impl Bootstrap {
         let nonce = take_string(&mut object, "nonce", 128)?;
         let cwd = take_string(&mut object, "cwd", 4096)?;
         let shell_executable = take_string(&mut object, "shellExecutable", 4096)?;
+        let terminal_mode = match object.remove("terminalMode") {
+            None => false,
+            Some(Value::Bool(true)) => true,
+            _ => return Err(HelperError::protocol("HELPER_INVALID_FRAME")),
+        };
         let command = take_string(&mut object, "command", MAX_COMMAND_BYTES)?;
         let argv_prefix = match object.remove("argvPrefix") {
             Some(Value::Array(values)) if values.len() <= 32 => values
@@ -240,7 +246,8 @@ impl Bootstrap {
             crate::protocol::json_escape(&host_image_path),
             crate::protocol::json_escape(&host_instance_id),
         )
-        .len();
+        .len()
+        .saturating_add(if terminal_mode { 32 } else { 0 });
         if !valid_hash(&process_id_hash)
             || !valid_hash(&run_id_hash)
             || !valid_job_name(&job_name)
@@ -253,6 +260,7 @@ impl Bootstrap {
             || !valid_bootstrap_path(&cwd)
             || !valid_bootstrap_path(&shell_executable)
             || command.len() > MAX_COMMAND_BYTES
+            || (terminal_mode && command != "terminal")
         {
             return Err(HelperError::protocol("HELPER_INVALID_FRAME"));
         }
@@ -266,6 +274,7 @@ impl Bootstrap {
             shell_executable,
             argv_prefix,
             command,
+            terminal_mode,
             environment,
             main_pid,
             main_start_time_ms,
@@ -432,6 +441,20 @@ pub fn build_command_line(
     Ok(wide)
 }
 
+pub fn build_terminal_command_line(executable: &str, args: &[String]) -> Result<Vec<u16>> {
+    let arguments = std::iter::once(executable)
+        .chain(args.iter().map(String::as_str))
+        .map(quote_windows_argument)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut wide: Vec<u16> = arguments.encode_utf16().collect();
+    if wide.len() >= 32_767 {
+        return Err(HelperError::protocol("TARGET_COMMAND_LINE_TOO_LONG"));
+    }
+    wide.push(0);
+    Ok(wide)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,6 +584,28 @@ mod tests {
                 .unwrap_err()
                 .subcode,
             "TARGET_COMMAND_LINE_TOO_LONG"
+        );
+    }
+
+    #[test]
+    fn terminal_mode_uses_exact_arguments_without_shell_command() {
+        let fixture = bootstrap_json(
+            "terminal",
+            &["--session".into(), "name with space".into()],
+            "{}",
+        )
+        .replacen("\"command\":", "\"terminalMode\":true,\"command\":", 1);
+        let parsed = Bootstrap::parse(fixture.as_bytes()).unwrap();
+        assert!(parsed.terminal_mode);
+        let line =
+            build_terminal_command_line(&parsed.shell_executable, &parsed.argv_prefix).unwrap();
+        let text = String::from_utf16_lossy(&line);
+        assert!(text.contains("--session \"name with space\""));
+        assert!(!text.contains(" -c "));
+        let wrong = fixture.replace("\"command\":\"terminal\"", "\"command\":\"run\"");
+        assert_eq!(
+            Bootstrap::parse(wrong.as_bytes()).unwrap_err().subcode,
+            "HELPER_INVALID_FRAME"
         );
     }
 }

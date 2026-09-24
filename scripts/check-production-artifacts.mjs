@@ -101,8 +101,8 @@ const toolchainCatalogPackagingIsValid =
 const herdrPackagingIsValid =
   builderConfig.includes("from: build/herdr/runtime-catalog.json") &&
   builderConfig.includes("to: herdr/runtime-catalog.json") &&
-  (builderConfig.match(/from: build\/herdr\/bin\/\$\{platform\}-\$\{arch\}/g) ?? []).length === 2 &&
-  (builderConfig.match(/to: herdr\/bin\/\$\{platform\}-\$\{arch\}/g) ?? []).length === 2;
+  (builderConfig.match(/from: build\/herdr\/bin\/\$\{platform\}-\$\{arch\}/g) ?? []).length === 3 &&
+  (builderConfig.match(/to: herdr\/bin\/\$\{platform\}-\$\{arch\}/g) ?? []).length === 3;
 const windowsHelperPackagingIsValid =
   builderConfig.includes("from: out/native/windows-managed-process-helper") &&
   builderConfig.includes("to: managed-process/win32-x64") &&
@@ -146,7 +146,7 @@ if (
     );
   }
   if (!herdrPackagingIsValid) {
-    console.error("FAIL: macOS/Linux packages must include the pinned target Herdr runtime and shared catalog");
+    console.error("FAIL: macOS/Linux/Windows packages must include the pinned target Herdr runtime and shared catalog");
   }
   if (!windowsHelperPackagingIsValid) {
     console.error("FAIL: Windows packages must include exactly the fixed helper executable and integrity manifest");

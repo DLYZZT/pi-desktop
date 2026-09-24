@@ -4,6 +4,7 @@ import { access, chmod, mkdir, readdir, realpath, rename, rm, stat, writeFile } 
 import path from "node:path";
 import { HERDR_AGENT_CLI_CATALOG, type AgentCliCatalogEntry } from "../../shared/herdr/agent-cli-catalog.ts";
 import type { HerdrAgentCliDiagnostic, HerdrAgentCliSource, HerdrStartableAgentKind } from "../../contract/herdr.ts";
+import { readWindowsPersistentPath } from "./windows-persistent-path.ts";
 
 const MAX_DIRECTORIES = 256;
 const MAX_CANDIDATES_PER_KIND = 32;
@@ -41,6 +42,8 @@ export type HerdrAgentCliDiscoveryOptions = {
   userDataDir: string;
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
+  persistentPath?: readonly string[];
+  runtimeDirectories?: readonly string[];
 };
 
 function platformPath(platform: NodeJS.Platform): typeof path.posix | typeof path.win32 {
@@ -136,7 +139,7 @@ async function addVersionManagerDirectories(
 }
 
 export async function collectAgentCliDirectorySeeds(
-  options: Pick<HerdrAgentCliDiscoveryOptions, "homeDir" | "platform" | "env">,
+  options: Pick<HerdrAgentCliDiscoveryOptions, "homeDir" | "platform" | "env" | "persistentPath">,
 ): Promise<readonly DirectorySeed[]> {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
@@ -157,6 +160,14 @@ export async function collectAgentCliDirectorySeeds(
       platform,
     );
   });
+
+  if (platform === "win32") {
+    const persistentPath =
+      options.persistentPath ?? (process.platform === "win32" ? await readWindowsPersistentPath(env) : []);
+    persistentPath.forEach((directory, index) => {
+      addDirectorySeed(seeds, seen, directory, "path", 500 + index, platform);
+    });
+  }
 
   if (platform === "win32") {
     const localAppData =
@@ -278,6 +289,9 @@ async function inspectCandidate(
       if (platform !== "win32") await access(executable, fsConstants.X_OK);
       const canonical = await realpath(executable);
       if (!safeDirectory(canonical, platform)) continue;
+      // CMD performs expansion inside quotes and `call` performs another pass.
+      // Do not write paths with metacharacters into an app-owned batch file.
+      if (platform === "win32" && /[%"!^&|<>]/u.test(executable)) continue;
       return {
         kind: entry.kind,
         executable,
@@ -327,7 +341,8 @@ async function createOverlay(
   try {
     for (const [kind, candidate] of entries) {
       if (platform === "win32") {
-        const wrapper = `@echo off\r\ncall "${candidate.executable.replace(/"/gu, '""')}" %*\r\n`;
+        const invoke = candidate.launchForm === "windows-cmd" ? "call " : "";
+        const wrapper = `@echo off\r\nsetlocal DisableDelayedExpansion\r\n${invoke}"${candidate.executable}" %*\r\n`;
         await writeFile(path.join(staging, `${kind}.cmd`), wrapper, { encoding: "utf8", mode: 0o600 });
       } else {
         const wrapper = `#!/bin/sh\nexec ${shellQuote(candidate.executable)} "$@"\n`;
@@ -355,7 +370,12 @@ export async function discoverHerdrAgentClis(
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const pathApi = platformPath(platform);
-  const commonSeeds = await collectAgentCliDirectorySeeds({ homeDir: options.homeDir, platform, env });
+  const commonSeeds = await collectAgentCliDirectorySeeds({
+    homeDir: options.homeDir,
+    platform,
+    env,
+    persistentPath: options.persistentPath,
+  });
   const selected = new Map<HerdrStartableAgentKind, HerdrAgentCliCandidate | undefined>();
   const candidates = new Map<HerdrStartableAgentKind, readonly HerdrAgentCliCandidate[]>();
   const diagnostics: HerdrAgentCliDiagnostic[] = [];
@@ -363,6 +383,8 @@ export async function discoverHerdrAgentClis(
   for (const entry of HERDR_AGENT_CLI_CATALOG) {
     const entrySeeds: DirectorySeed[] = [];
     const seen = new Set<string>();
+    const officialSeeds: DirectorySeed[] = [];
+    const officialSeen = new Set<string>();
     for (const override of entry.environmentDirectories) {
       const base = safeDirectory(envValue(env, override.key, platform), platform);
       addDirectorySeed(
@@ -380,21 +402,44 @@ export async function discoverHerdrAgentClis(
     const officialRelative =
       platform === "win32" ? entry.windowsHomeRelativeDirectories : entry.posixHomeRelativeDirectories;
     for (const parts of officialRelative) {
-      addDirectorySeed(entrySeeds, seen, pathApi.join(options.homeDir, ...parts), "official", 1_000, platform);
+      const directory = pathApi.join(options.homeDir, ...parts);
+      addDirectorySeed(entrySeeds, seen, directory, "official", 1_000, platform);
+      addDirectorySeed(officialSeeds, officialSeen, directory, "official", 1_000, platform);
     }
     if (platform === "win32") {
       const localAppData =
         safeDirectory(envValue(env, "LOCALAPPDATA", platform), platform) ??
         pathApi.join(options.homeDir, "AppData", "Local");
       for (const parts of entry.windowsLocalAppDataRelativeDirectories) {
-        addDirectorySeed(entrySeeds, seen, pathApi.join(localAppData, ...parts), "official", 1_000, platform);
+        const directory = pathApi.join(localAppData, ...parts);
+        addDirectorySeed(entrySeeds, seen, directory, "official", 1_000, platform);
+        addDirectorySeed(officialSeeds, officialSeen, directory, "official", 1_000, platform);
       }
     }
-    const inspected = (
-      await Promise.all(
-        entrySeeds.slice(0, MAX_CANDIDATES_PER_KIND).map((seed) => inspectCandidate(entry, seed, platform)),
-      )
-    ).filter((candidate): candidate is HerdrAgentCliCandidate => Boolean(candidate));
+    // A long inherited or persistent Windows Path must not crowd out the
+    // catalog's fixed per-Agent and package-manager directories.
+    const prioritySeeds = [...officialSeeds, ...commonSeeds.filter((seed) => seed.precedence >= 1_000)];
+    const priorityCount = Math.min(12, prioritySeeds.length);
+    const scanSeeds: DirectorySeed[] = [];
+    const scanSeen = new Set<string>();
+    const canonicalSeed = new Map(entrySeeds.map((seed) => [pathKey(seed.directory, platform), seed]));
+    const appendScan = (seed: DirectorySeed) => {
+      if (scanSeeds.length >= MAX_CANDIDATES_PER_KIND) return;
+      const key = pathKey(seed.directory, platform);
+      if (scanSeen.has(key)) return;
+      scanSeen.add(key);
+      scanSeeds.push(canonicalSeed.get(key) ?? seed);
+    };
+    entrySeeds
+      .filter((seed) => seed.precedence < 1_000)
+      .slice(0, MAX_CANDIDATES_PER_KIND - priorityCount)
+      .forEach(appendScan);
+    prioritySeeds.slice(0, priorityCount).forEach(appendScan);
+    entrySeeds.forEach(appendScan);
+    prioritySeeds.forEach(appendScan);
+    const inspected = (await Promise.all(scanSeeds.map((seed) => inspectCandidate(entry, seed, platform)))).filter(
+      (candidate): candidate is HerdrAgentCliCandidate => Boolean(candidate),
+    );
     const unique = new Map<string, HerdrAgentCliCandidate>();
     for (const candidate of inspected.sort((left, right) => left.precedence - right.precedence)) {
       const key = pathKey(candidate.realExecutable, platform);
@@ -414,14 +459,19 @@ export async function discoverHerdrAgentClis(
   }
 
   const overlay = await createOverlay(options.userDataDir, selected, platform);
-  const supportDirectories = [...selected.values()]
-    .filter((candidate): candidate is HerdrAgentCliCandidate => Boolean(candidate))
-    .map((candidate) => candidate.directory);
-  const pathEntries = [
-    overlay.directory,
-    ...(envValue(env, "PATH", platform) ?? "").split(pathDelimiter(platform)),
-    ...supportDirectories,
-  ]
+  const systemRoot = safeDirectory(envValue(env, "SystemRoot", platform), platform);
+  const basePath =
+    platform === "win32"
+      ? systemRoot
+        ? [
+            pathApi.join(systemRoot, "System32"),
+            systemRoot,
+            pathApi.join(systemRoot, "System32", "Wbem"),
+            pathApi.join(systemRoot, "System32", "WindowsPowerShell", "v1.0"),
+          ]
+        : []
+      : (envValue(env, "PATH", platform) ?? "").split(pathDelimiter(platform));
+  const pathEntries = [overlay.directory, ...basePath, ...(options.runtimeDirectories ?? [])]
     .map((entry) => safeDirectory(entry, platform))
     .filter((entry): entry is string => Boolean(entry));
   const seenPath = new Set<string>();
@@ -433,9 +483,13 @@ export async function discoverHerdrAgentClis(
       return true;
     })
     .join(pathDelimiter(platform));
+  const environmentRevision = Number.parseInt(
+    createHash("sha256").update(`${overlay.revision}\0${managedPath}`).digest("hex").slice(0, 12),
+    16,
+  );
 
   return {
-    revision: overlay.revision,
+    revision: environmentRevision,
     generatedAt: Date.now(),
     selected,
     candidates,
