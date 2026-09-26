@@ -75,6 +75,19 @@ test("rejects visible literals and hardcoded session notification sinks in migra
   }
 });
 
+test("model hook extraction preserves the localized-notification boundary", (t) => {
+  const entry = fixture(
+    'addNotice({ type: "warning", message: "Model directory failed" });',
+    "export const enUS = {}; export const zhCN = {};",
+    "hooks/useSessionModels.ts",
+  );
+  t.after(entry.cleanup);
+  assert.match(
+    checkRendererI18n(entry.options).failures.join("\n"),
+    /hardcoded session message: Model directory failed/,
+  );
+});
+
 test("rejects dynamic calls, fallback drift, missing and duplicate entries, orphan keys, and placeholder mismatch", () => {
   const entry = fixture(
     `
