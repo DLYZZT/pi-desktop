@@ -1,4 +1,11 @@
 import {
+  executeBrowserJavaScript,
+  sendBrowserCdpCommand,
+  validateBrowserJavaScriptSource,
+  validateBrowserCdpParams,
+  type BrowserScriptOptions,
+} from "./browser-script-execution.ts";
+import {
   collectBrowserSnapshot,
   boundInspectionSnapshot,
   tabSummary,
@@ -61,7 +68,7 @@ import { BrowserIdentityManager } from "./browser-identity-manager.ts";
 import { BrowserInspectionStore } from "./browser-inspection-store.ts";
 import { BrowserNetworkRecorder } from "./browser-network-recorder.ts";
 import { BrowserNetworkPolicy, createSessionNetworkPolicyOptions } from "./browser-network-policy.ts";
-import { redactBrowserText, redactBrowserUrl } from "./browser-redaction.ts";
+import { redactBrowserUrl } from "./browser-redaction.ts";
 import type { BrowserProfileManager } from "./browser-profile-manager.ts";
 import { canResumeSensitiveAgentControl } from "./browser-sensitive-control.ts";
 const MAX_INSPECTION_SCREENSHOT_BYTES = 1_500_000;
@@ -69,8 +76,6 @@ const MAX_INSPECTION_NODE_CHARS = 40_000;
 const DEFAULT_INSPECTION_MAX_NODES = 100;
 const DEFAULT_INSPECTION_MAX_TEXT_CHARS = 8_000;
 const DEFAULT_INSPECTION_NODE_CHARS = 16_000;
-const MAX_SCRIPT_BYTES = 256 * 1024;
-const MAX_SCRIPT_RESULT_BYTES = 2 * 1024 * 1024;
 const KEY_PATTERN =
   /^(Enter|Tab|Escape|Backspace|Delete|Arrow(Up|Down|Left|Right)|Home|End|Page(Up|Down)|F[1-9]|F1[0-2]|[A-Za-z0-9])$/;
 
@@ -1035,119 +1040,24 @@ export class BrowserTabManager {
     tabId: string,
     sessionId: string,
     source: string,
-    options: {
-      timeoutMs?: number;
-      world?: "main" | "isolated";
-      awaitPromise?: boolean;
-      returnByValue?: boolean;
-    } = {},
+    options: BrowserScriptOptions = {},
   ): Promise<{ value?: unknown; exception?: string; untrustedWebContent: true }> {
-    if (typeof source !== "string" || !source || Buffer.byteLength(source) > MAX_SCRIPT_BYTES) {
-      throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser JavaScript source is invalid");
-    }
+    validateBrowserJavaScriptSource(source);
     const record = this.requireOwnedTab(tabId, sessionId);
     await record.advancedReady;
-    return this.runAction(record, sessionId, "advanced", async (signal) => {
-      const contents = record.view.webContents;
-      const releaseDebugger = this.cdp.acquire(record.info.id);
-      let remoteObjectId: string | undefined;
-      let terminateExecution = false;
-      try {
-        let contextId: number | undefined;
-        if (options.world === "isolated") {
-          const tree = await this.cdp.sendCommand<{
-            frameTree?: { frame?: { id?: string } };
-          }>(record.info.id, "Page.getFrameTree");
-          const frameId = tree.frameTree?.frame?.id;
-          if (!frameId) throw new BrowserError("JAVASCRIPT_TIMEOUT", "Browser main frame is unavailable");
-          const isolated = await this.cdp.sendCommand<{ executionContextId?: number }>(
-            record.info.id,
-            "Page.createIsolatedWorld",
-            {
-              frameId,
-              worldName: "pi-browser-tools",
-              grantUniveralAccess: false,
-            },
-          );
-          contextId = isolated.executionContextId;
-        }
-        const evaluated = (await withTimeout(
-          this.cdp.sendCommand(record.info.id, "Runtime.evaluate", {
-            expression: source,
-            awaitPromise: options.awaitPromise !== false,
-            returnByValue: options.returnByValue !== false,
-            userGesture: true,
-            ...(contextId === undefined ? {} : { contextId }),
-          }),
-          clampInteger(options.timeoutMs ?? this.options.getSettings().navigation.actionTimeoutMs, 50, 120_000),
-          "JAVASCRIPT_TIMEOUT",
-          signal,
-        )) as {
-          result?: {
-            value?: unknown;
-            objectId?: string;
-            type?: string;
-            subtype?: string;
-            description?: string;
-            unserializableValue?: string;
-          };
-          exceptionDetails?: { text?: string; exception?: { description?: string } };
-        };
-        remoteObjectId = evaluated.result?.objectId;
-        if (evaluated.exceptionDetails) {
-          const exception = redactBrowserText(
-            evaluated.exceptionDetails.exception?.description ??
-              evaluated.exceptionDetails.text ??
-              "JavaScript execution failed",
-            4_096,
-          );
-          throw new BrowserError("JAVASCRIPT_EXECUTION_FAILED", `Browser JavaScript failed: ${exception}`, {
-            details: { exception },
-          });
-        }
-        const value =
-          options.returnByValue === false
-            ? {
-                type: evaluated.result?.type,
-                subtype: evaluated.result?.subtype,
-                description: evaluated.result?.description,
-                unserializableValue: evaluated.result?.unserializableValue,
-              }
-            : evaluated.result?.value;
-        const serialized = JSON.stringify(value);
-        if (serialized && Buffer.byteLength(serialized) > MAX_SCRIPT_RESULT_BYTES) {
-          throw new BrowserError("RESULT_TOO_LARGE", "Browser JavaScript result is too large");
-        }
-        return { value: sanitizeSerializable(value), untrustedWebContent: true };
-      } catch (error) {
-        if (error instanceof BrowserError) {
-          terminateExecution = error.code === "JAVASCRIPT_TIMEOUT" || error.code === "USER_TOOK_CONTROL";
-          throw error;
-        }
-        const exception = redactBrowserText(
-          error instanceof Error ? error.message : "JavaScript execution failed",
-          4_096,
-        );
-        throw new BrowserError("JAVASCRIPT_EXECUTION_FAILED", `Browser JavaScript failed: ${exception}`, {
-          details: { exception },
-          cause: error,
-        });
-      } finally {
-        if (!contents.isDestroyed() && remoteObjectId && this.cdp.isAttached(record.info.id)) {
-          await this.cdp
-            .sendCommand(record.info.id, "Runtime.releaseObject", { objectId: remoteObjectId })
-            .catch(() => undefined);
-        }
-        if (!contents.isDestroyed() && (terminateExecution || signal.aborted) && this.cdp.isAttached(record.info.id)) {
-          await withTimeout(
-            this.cdp.sendCommand(record.info.id, "Runtime.terminateExecution"),
-            1_000,
-            "JAVASCRIPT_TIMEOUT",
-          ).catch(() => undefined);
-        }
-        releaseDebugger();
-      }
-    });
+    return this.runAction(record, sessionId, "advanced", (signal) =>
+      executeBrowserJavaScript(
+        {
+          contents: record.view.webContents,
+          tabId: record.info.id,
+          timeoutMs: () => this.options.getSettings().navigation.actionTimeoutMs,
+        },
+        this.cdp,
+        source,
+        options,
+        signal,
+      ),
+    );
   }
 
   async sendCdpCommand(
@@ -1156,31 +1066,12 @@ export class BrowserTabManager {
     method: string,
     params?: Record<string, unknown>,
   ): Promise<unknown> {
-    const encodedParams = JSON.stringify(params ?? {});
-    if (Buffer.byteLength(encodedParams) > MAX_SCRIPT_BYTES) {
-      throw new BrowserError("RESULT_TOO_LARGE", "CDP command parameters are too large");
-    }
+    validateBrowserCdpParams(params);
     const record = this.requireOwnedTab(tabId, sessionId);
     await record.advancedReady;
-    return this.runAction(record, sessionId, "advanced", async () => {
-      const releaseDebugger = this.cdp.acquire(record.info.id, "raw-cdp");
-      try {
-        const result = await this.cdp.sendCommand(record.info.id, method, params);
-        const encoded = JSON.stringify(result);
-        const objectIds = collectRemoteObjectIds(result);
-        for (const objectId of objectIds) {
-          await this.cdp.sendCommand(record.info.id, "Runtime.releaseObject", { objectId }).catch(() => undefined);
-        }
-        if (encoded && Buffer.byteLength(encoded) > MAX_SCRIPT_RESULT_BYTES) {
-          throw new BrowserError("RESULT_TOO_LARGE", "CDP command result is too large");
-        }
-        return encoded
-          ? (JSON.parse(encoded, (key, value) => (key === "objectId" ? "<released>" : value)) as unknown)
-          : undefined;
-      } finally {
-        releaseDebugger();
-      }
-    });
+    return this.runAction(record, sessionId, "advanced", () =>
+      sendBrowserCdpCommand(this.cdp, record.info.id, method, params),
+    );
   }
 
   async networkList(
@@ -2149,31 +2040,4 @@ function cdpButtonMask(button: "left" | "middle" | "right"): number {
 
 function redactUrlCredentials(value: string): string {
   return redactBrowserUrl(value);
-}
-
-function sanitizeSerializable(value: unknown): unknown {
-  if (value === undefined || value === null || typeof value === "string" || typeof value === "boolean") return value;
-  if (typeof value === "number") return Number.isFinite(value) ? value : String(value);
-  try {
-    return JSON.parse(JSON.stringify(value)) as unknown;
-  } catch {
-    return String(value).slice(0, 4_096);
-  }
-}
-
-function collectRemoteObjectIds(value: unknown): string[] {
-  const objectIds = new Set<string>();
-  const visit = (candidate: unknown, depth: number): void => {
-    if (!candidate || typeof candidate !== "object" || depth > 32 || objectIds.size >= 1_000) return;
-    if (Array.isArray(candidate)) {
-      for (const entry of candidate) visit(entry, depth + 1);
-      return;
-    }
-    for (const [key, entry] of Object.entries(candidate as Record<string, unknown>)) {
-      if (key === "objectId" && typeof entry === "string" && entry.length <= 4_096) objectIds.add(entry);
-      else visit(entry, depth + 1);
-    }
-  };
-  visit(value, 0);
-  return [...objectIds];
 }
