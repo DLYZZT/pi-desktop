@@ -5,8 +5,12 @@ import { createElement } from "react";
 import { act, create } from "react-test-renderer";
 import { importTestBundle } from "#test-bundle";
 
-const { useAgentSession } = await importTestBundle("session-turn-hook", {
-  entryPoints: [path.join(import.meta.dirname, "useAgentSession.ts")],
+const { useAgentSession, testApi } = await importTestBundle("session-turn-hook", {
+  stdin: {
+    contents: 'export { useAgentSession } from "./useAgentSession.ts"; export * as testApi from "@/lib/api-client";',
+    resolveDir: import.meta.dirname,
+    loader: "ts",
+  },
   tsconfig: path.join(import.meta.dirname, "../../../tsconfig.renderer.json"),
   external: ["react", "react-dom", "react-dom/*"],
   plugins: [
@@ -34,8 +38,12 @@ const { useAgentSession } = await importTestBundle("session-turn-hook", {
           export async function agentState() { return { running: false }; }
           export async function subscribeAgentEvents() { return () => {}; }
           export async function subscribeSessionsChanged() { return () => {}; }
+          let detail, page;
+          export function setHistory(nextDetail, nextPage) { detail = nextDetail; page = nextPage; }
+          export async function getSession() { if (!detail) throw new Error("unexpected detail read"); return detail; }
+          export async function getSessionContextPage() { if (!page) throw new Error("unexpected page read"); return page; }
           const unexpected = async () => { throw new Error("unexpected session IO"); };
-          export { unexpected as getSession, unexpected as getSessionContext, unexpected as getSessionContextPage,
+          export { unexpected as getSessionContext,
             unexpected as getSessionEntryContent, unexpected as newAgent, unexpected as refreshModels,
             unexpected as cancelModelsRefresh };
         `,
@@ -109,4 +117,106 @@ test("the session hook renders turn events and settles a multi-run prompt exactl
   await emit({ type: "message_end", message });
   assert.equal(current.streamState.streamingMessage, null);
   assert.equal(current.messages.length, 1, "late completion does not append the persisted message again");
+});
+
+test("prepending history preserves the viewport instead of activating completion auto-follow", async (t) => {
+  const originals = new Map();
+  const install = (name, value) => {
+    originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+  };
+  const frames = new Map();
+  let sequence = 0;
+  install("IS_REACT_ACT_ENVIRONMENT", true);
+  install("window", { addEventListener() {}, removeEventListener() {} });
+  install("document", { visibilityState: "visible", addEventListener() {}, removeEventListener() {} });
+  install("requestAnimationFrame", (callback) => {
+    frames.set(++sequence, callback);
+    return sequence;
+  });
+  install("cancelAnimationFrame", (id) => frames.delete(id));
+  install(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const context = {
+    messages: [{ role: "user", content: "tail" }],
+    entryIds: ["tail"],
+    historyRevision: "r1",
+    previousCursor: "cursor",
+    loadedMessages: 1,
+    totalMessages: 2,
+    truncatedBefore: true,
+    model: null,
+    thinkingLevel: "off",
+  };
+  testApi.setHistory(
+    {
+      sessionId: "fixture",
+      info: { id: "fixture", cwd: "/fixture" },
+      leafId: "tail",
+      tree: [],
+      context,
+      agentState: { running: false },
+    },
+    {
+      context: {
+        ...context,
+        messages: [{ role: "user", content: "older" }],
+        entryIds: ["older"],
+        previousCursor: undefined,
+      },
+    },
+  );
+  let current, renderer;
+  const scrolls = [];
+  const container = {
+    scrollTop: 0,
+    clientHeight: 600,
+    get scrollHeight() {
+      return 600 + (current?.messages.length ?? 0) * 2000;
+    },
+    querySelector() {
+      return null;
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const end = { scrollIntoView: (options) => scrolls.push(options) };
+  const options = { session: { id: "fixture", cwd: "/fixture" }, newSessionCwd: null };
+  function Probe() {
+    current = useAgentSession(options);
+    return createElement(
+      "div",
+      { ref: current.scrollContainerRef },
+      createElement("span", { ref: current.messagesEndRef }),
+    );
+  }
+  t.after(async () => {
+    if (renderer) await act(async () => renderer.unmount());
+    testApi.setHistory(undefined, undefined);
+    for (const [name, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete globalThis[name];
+    }
+  });
+  await act(async () => {
+    renderer = create(createElement(Probe), {
+      createNodeMock: (element) => (element.type === "div" ? container : end),
+    });
+  });
+  assert.equal(current.messages.length, 1);
+  assert.ok(scrolls.length > 0, "initial history still follows the existing initial-scroll policy");
+  scrolls.length = 0;
+  container.scrollTop = 300;
+  await act(async () => current.loadOlder());
+  assert.equal(current.messages.length, 2);
+  assert.deepEqual(scrolls, [], "prepending must not call scrollIntoView on the bottom anchor");
+  const pending = [...frames.values()];
+  frames.clear();
+  pending.forEach((callback) => callback());
+  assert.equal(container.scrollTop, 2300);
 });

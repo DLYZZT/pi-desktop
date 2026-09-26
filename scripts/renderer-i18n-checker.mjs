@@ -12,6 +12,7 @@ const LOCALIZED_OWNER_SUFFIXES = [
   "components/PluginsConfig.tsx",
   "hooks/useAgentSession.ts",
   "hooks/useSessionModels.ts",
+  "hooks/useSessionHistory.ts",
 ];
 const VISIBLE_ATTRIBUTE_NAMES = new Set(["title", "aria-label", "aria-valuetext", "placeholder", "alt"]);
 const LOCALIZED_DICTIONARIES = [{ name: "zhCN", tag: "zh-CN" }];
@@ -67,7 +68,9 @@ export function checkRendererI18n({
     }
     if (
       localizedOwner &&
-      ["useAgentSession.ts", "useSessionModels.ts"].some((name) => file.endsWith(`${path.sep}hooks${path.sep}${name}`))
+      ["useAgentSession.ts", "useSessionModels.ts", "useSessionHistory.ts"].some((name) =>
+        file.endsWith(`${path.sep}hooks${path.sep}${name}`),
+      )
     ) {
       checkSessionUserFacingSinks({ failures, root, file, source });
     }

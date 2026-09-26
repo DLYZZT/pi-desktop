@@ -88,6 +88,16 @@ test("model hook extraction preserves the localized-notification boundary", (t) 
   );
 });
 
+test("history hook extraction preserves localized load errors", (t) => {
+  const entry = fixture(
+    'setError("History unavailable");',
+    "export const enUS = {}; export const zhCN = {};",
+    "hooks/useSessionHistory.ts",
+  );
+  t.after(entry.cleanup);
+  assert.match(checkRendererI18n(entry.options).failures.join("\n"), /hardcoded session error: History unavailable/);
+});
+
 test("rejects dynamic calls, fallback drift, missing and duplicate entries, orphan keys, and placeholder mismatch", () => {
   const entry = fixture(
     `
