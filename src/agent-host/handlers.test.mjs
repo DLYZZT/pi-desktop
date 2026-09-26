@@ -1,6 +1,6 @@
 import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import { MessageChannel } from "node:worker_threads";
@@ -536,6 +536,87 @@ test("file, git, worktree, skill, plugin, and system handlers return contract-sh
 
   await handlers["files.watchStart"]({ path: project });
   assert.deepEqual(await handlers["files.watchStop"]({ path: project }), { ok: true });
+});
+
+test("file routes retain canonical and exact-session-reference authorization after extraction", async (t) => {
+  const base = mkdtempSync(path.join(tmpdir(), "pi-file-authority-"));
+  let removeSession = async () => {};
+  t.after(async () => {
+    try {
+      await removeSession();
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+  const project = path.join(base, "project"),
+    outside = path.join(base, "outside");
+  mkdirSync(project);
+  mkdirSync(outside);
+  const file = path.join(outside, "referenced.txt");
+  writeFileSync(file, "reference-only fixture");
+  const escape = path.join(project, "escape");
+  symlinkSync(outside, escape, process.platform === "win32" ? "junction" : "dir");
+  const { handlers } = await captureHandlers();
+  await handlers["system.allowRoot"]({ path: project });
+  for (const method of ["files.read", "files.preview", "files.meta", "files.download", "files.watchStart"]) {
+    await assert.rejects(handlers[method]({ path: file }), (error) => error.code === "FORBIDDEN", method);
+    await assert.rejects(
+      handlers[method]({ path: path.join(escape, "referenced.txt") }),
+      (error) => error.code === "FORBIDDEN",
+      method,
+    );
+  }
+  for (const [method, params] of [
+    ["files.list", { path: outside }],
+    ["files.index", { root: outside }],
+    ["git.status", { path: outside }],
+    ["worktrees.list", { projectRoot: outside }],
+    ["worktrees.create", { projectRoot: outside, branch: "fixture" }],
+    ["worktrees.remove", { path: outside }],
+  ])
+    await assert.rejects(handlers[method](params), (error) => error.code === "FORBIDDEN", method);
+
+  const session = SessionManager.create(project, process.env.PI_CODING_AGENT_SESSION_DIR);
+  session.appendMessage({ role: "user", content: "[" + file + "]", timestamp: Date.now() });
+  session.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "Referenced fixture" }],
+    api: "openai-completions",
+    provider: "fixture",
+    model: "fixture",
+    stopReason: "stop",
+    timestamp: Date.now(),
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  });
+  const sourceSessionId = session.getSessionId();
+  removeSession = () => handlers["sessions.delete"]({ id: sourceSessionId });
+  assert.equal((await handlers["files.read"]({ path: file, sourceSessionId })).content, "reference-only fixture");
+  assert.equal((await handlers["files.preview"]({ path: file, sourceSessionId })).content, "reference-only fixture");
+  assert.equal(
+    (await handlers["files.meta"]({ path: file, sourceSessionId })).size,
+    Buffer.byteLength("reference-only fixture"),
+  );
+  assert.equal(
+    Buffer.from((await handlers["files.download"]({ path: file, sourceSessionId })).base64, "base64").toString(),
+    "reference-only fixture",
+  );
+  await handlers["files.watchStart"]({ path: file, sourceSessionId });
+  await handlers["files.watchStop"]({ path: file });
+  await assert.rejects(
+    handlers["files.read"]({ path: file, sourceSessionId: "not-a-session" }),
+    (error) => error.code === "FORBIDDEN",
+  );
+  await assert.rejects(
+    handlers["files.list"]({ path: outside, sourceSessionId }),
+    (error) => error.code === "FORBIDDEN",
+  );
 });
 
 test("session, model configuration, and auth handlers isolate state and preserve error codes", async () => {

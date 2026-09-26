@@ -5,20 +5,14 @@
 import { modelCatalogHandlers, type AvailableModel } from "./handlers/model-catalog";
 import { modelConfigHandlers } from "./handlers/models-config";
 import { createAuthHandlers } from "./handlers/auth";
+import { createFileHandlers } from "./handlers/files";
+import { createWorktreeHandlers } from "./handlers/worktrees";
+import { systemHandlers } from "./handlers/system";
+import { assertPathAllowed } from "./path-authorization";
+import { validateExistingDirectory, canonicalPathForComparison } from "./directory-validation";
 export { projectModelsList } from "./handlers/model-catalog";
 export { credentialMutationFailure } from "./handlers/auth";
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "fs";
-import { homedir } from "os";
+import { existsSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import {
@@ -29,7 +23,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { readSessionSnapshot, assertSessionWritable } from "./session-readonly.ts";
 import { getDesktopSessionToolNames } from "./session-tool-store.ts";
-import { readTextPreview } from "./text-preview";
 import {
   AUTO_TITLE_MAX_LENGTH,
   makeFallbackTitle,
@@ -40,7 +33,7 @@ import {
 import type { RpcServer } from "../contract/rpc";
 import { RpcError, type HistoryWindow, type SessionDetail, type SessionRuntimeState } from "../contract/types";
 import type { SessionTreeNode } from "../shared/types";
-import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed } from "./file-access";
+import { allowFileRoot } from "./file-access";
 import {
   disposeAllRpcSessions,
   getRpcSession,
@@ -57,25 +50,6 @@ import {
   listAllSessions,
   resolveSessionPath,
 } from "./session-reader";
-import { isFilePathReferencedBySession } from "./session-file-references";
-import {
-  addWorktree,
-  getGitStatus,
-  isDirtyWorktreeError,
-  listWorktrees,
-  removeWorktree,
-  resolveProject,
-} from "../shared/worktree";
-import {
-  DOCX_PREVIEW_MAX_BYTES,
-  FILE_DOWNLOAD_MAX_BYTES,
-  IMAGE_PREVIEW_MAX_BYTES,
-  TEXT_PREVIEW_MAX_BYTES,
-  documentPreviewKind,
-  getAudioMime,
-  getDocumentMime,
-  getImageMime,
-} from "../shared/file-types";
 import { createFileWatchService, stopAllFileWatches } from "./file-watch";
 import { callMain } from "./parent-rpc";
 import { createAuthLoginService } from "./auth-login";
@@ -105,7 +79,6 @@ import { getSessionContentSnapshot, invalidateSessionContent } from "./session-c
 import { buildSessionStats } from "./session-stats";
 import { cacheWarmingSettings, isCacheWarmingMode } from "./cache-warming-settings";
 import { sessionIndex } from "./session-index";
-import { FileSuggestionRequestError, fileSuggestionService } from "./file-suggestions";
 import { initializeManagedProcessService } from "./managed-process/runtime";
 import { ManagedProcessError } from "./managed-process/service";
 import type {
@@ -116,72 +89,6 @@ import type {
 import { HerdrBridgeError } from "./herdr/errors";
 import { clearHerdrBridge, initializeHerdrBridge } from "./herdr/runtime";
 import type { HerdrSettings } from "../contract/herdr";
-
-const IGNORED_NAMES = new Set([
-  "node_modules",
-  ".git",
-  ".next",
-  "dist",
-  "build",
-  "__pycache__",
-  ".turbo",
-  ".cache",
-  "coverage",
-  ".pytest_cache",
-  ".mypy_cache",
-  "target",
-  "vendor",
-  ".DS_Store",
-]);
-
-const EXT_TO_LANGUAGE: Record<string, string> = {
-  ts: "typescript",
-  tsx: "typescript",
-  js: "javascript",
-  jsx: "javascript",
-  mjs: "javascript",
-  cjs: "javascript",
-  py: "python",
-  rb: "ruby",
-  go: "go",
-  rs: "rust",
-  java: "java",
-  kt: "kotlin",
-  swift: "swift",
-  c: "c",
-  cpp: "cpp",
-  h: "c",
-  hpp: "cpp",
-  cs: "csharp",
-  html: "html",
-  htm: "html",
-  css: "css",
-  scss: "css",
-  less: "css",
-  json: "json",
-  jsonl: "json",
-  yaml: "yaml",
-  yml: "yaml",
-  toml: "toml",
-  xml: "xml",
-  md: "markdown",
-  mdx: "markdown",
-  sh: "bash",
-  bash: "bash",
-  zsh: "bash",
-  fish: "bash",
-  sql: "sql",
-  txt: "text",
-};
-
-function getLanguage(filePath: string): string {
-  const base = path.basename(filePath).toLowerCase();
-  if (base === "dockerfile" || base.startsWith("dockerfile.")) return "dockerfile";
-  if (base === ".env" || base.startsWith(".env.")) return "bash";
-  if (base === "makefile" || base === "gnumakefile") return "makefile";
-  const ext = base.split(".").pop() ?? "";
-  return EXT_TO_LANGUAGE[ext] ?? "text";
-}
 
 async function emitIndexedSessionChange(server: RpcServer, sessionId: string, cwd: string | null): Promise<void> {
   try {
@@ -195,13 +102,6 @@ async function emitIndexedSessionChange(server: RpcServer, sessionId: string, cw
     console.error("[agent-host] failed to refresh changed session:", error);
   }
   server.emit("sessions.changed", "*", { cwd, fullRefresh: true });
-}
-
-async function assertPathAllowed(target: string, sourceSessionId?: string): Promise<void> {
-  const allowed = await getAllowedFileRoots();
-  if (isFilePathAllowed(target, allowed)) return;
-  if (sourceSessionId && (await isFilePathReferencedBySession(target, sourceSessionId))) return;
-  throw new RpcError({ code: "FORBIDDEN", message: "Access denied" });
 }
 
 async function resolveLoadedSkill(cwd: string, filePath: string) {
@@ -404,32 +304,6 @@ async function resolveTitleSessionTarget(
   return dir.ok ? { cwd: dir.path } : null;
 }
 
-type DirectoryValidation = { ok: true; path: string; canonicalPath: string } | { ok: false; error: string };
-
-function validateExistingDirectory(candidate: unknown): DirectoryValidation {
-  if (typeof candidate !== "string" || !candidate) return { ok: false, error: "Directory does not exist" };
-  try {
-    const realpath = realpathSync.native ?? realpathSync;
-    const canonicalPath = realpath(candidate);
-    if (!statSync(canonicalPath).isDirectory()) return { ok: false, error: "Not a directory" };
-    return { ok: true, path: candidate, canonicalPath };
-  } catch {
-    return { ok: false, error: "Directory does not exist" };
-  }
-}
-
-function canonicalPathForComparison(candidate: string): string {
-  const resolved = path.resolve(candidate);
-  let canonical = resolved;
-  try {
-    const realpath = realpathSync.native ?? realpathSync;
-    canonical = realpath(resolved);
-  } catch {
-    // Historical session cwd values can refer to directories that no longer exist.
-  }
-  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
-}
-
 export function initializeChannels(
   manager: Pick<ChannelManager, "initialize">,
   report: (message: string) => void = (message) => {
@@ -458,6 +332,7 @@ export function assertHerdrParamKeys(value: unknown, allowedKeys: readonly strin
 
 export function registerHandlers(server: RpcServer): () => Promise<void> {
   const fileWatch = createFileWatchService(server);
+  const fileHandlers = createFileHandlers(fileWatch);
   const authLogin = createAuthLoginService(server);
   const authHandlers = createAuthHandlers(authLogin);
   const channelManager = new ChannelManager(server, (session, sessionId) =>
@@ -465,6 +340,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
   );
   initializeChannels(channelManager);
   const managedProcesses = initializeManagedProcessService(server);
+  const worktreeHandlers = createWorktreeHandlers(managedProcesses);
   const herdr = initializeHerdrBridge(server, { assertAllowedPath: (target) => assertPathAllowed(target) });
   const stopHerdrToolSync = herdr.subscribeRuntime(() => syncDesktopToolsForAllSessions());
 
@@ -1062,76 +938,13 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       return { ok: true as const };
     },
 
-    "worktrees.list": async (params) => {
-      const { projectRoot } = params as { projectRoot: string };
-      const allowed = await getAllowedFileRoots();
-      if (!isFilePathAllowed(projectRoot, allowed)) {
-        throw new RpcError({ code: "FORBIDDEN", message: "Access denied" });
-      }
-      const project = await resolveProject(projectRoot);
-      let worktrees: Awaited<ReturnType<typeof listWorktrees>> = [];
-      let isGit = true;
-      try {
-        worktrees = await listWorktrees(existsSync(projectRoot) ? projectRoot : project.projectRoot);
-      } catch {
-        isGit = false;
-      }
-      for (const w of worktrees) allowFileRoot(w.path);
-      return {
-        worktrees,
-        projectRoot: project.projectRoot,
-        isGit,
-        isTopLevel: project.isTopLevel,
-      };
-    },
+    "worktrees.list": worktreeHandlers.list,
 
-    "worktrees.create": async (params) => {
-      const body = params as { projectRoot: string; branch: string; cwd?: string };
-      const cwd = body.cwd ?? body.projectRoot;
-      const allowed = await getAllowedFileRoots();
-      if (!isFilePathAllowed(cwd, allowed)) {
-        throw new RpcError({ code: "FORBIDDEN", message: "Access denied" });
-      }
-      const result = await addWorktree(cwd, body.branch);
-      allowFileRoot(result.path);
-      return { worktree: result };
-    },
+    "worktrees.create": worktreeHandlers.create,
 
-    "worktrees.remove": async (params) => {
-      const body = params as { path: string; cwd?: string; force?: boolean };
-      const cwd = body.cwd ?? body.path;
-      const allowed = await getAllowedFileRoots();
-      if (!isFilePathAllowed(cwd, allowed)) {
-        throw new RpcError({ code: "FORBIDDEN", message: "Access denied" });
-      }
-      const activeProcesses = managedProcesses.activeWithinCwd(body.path);
-      if (activeProcesses.length > 0) {
-        throw new RpcError({
-          code: "CONFLICT",
-          message: "Worktree still contains active managed processes. Stop them before removing it.",
-          detail: { managedProcessCount: activeProcesses.length },
-        });
-      }
-      try {
-        await removeWorktree(cwd, body.path, body.force === true);
-      } catch (error) {
-        if (!body.force && isDirtyWorktreeError(error)) {
-          throw new RpcError({
-            code: "CONFLICT",
-            message: error instanceof Error ? error.message : String(error),
-            detail: { dirty: true },
-          });
-        }
-        throw error;
-      }
-      return { ok: true as const };
-    },
+    "worktrees.remove": worktreeHandlers.remove,
 
-    "git.status": async (params) => {
-      const { path: cwd } = params as { path: string };
-      await assertPathAllowed(cwd);
-      return getGitStatus(cwd);
-    },
+    "git.status": worktreeHandlers.status,
 
     "agent.new": async (params) => {
       const body = params as {
@@ -1290,184 +1103,17 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
     "channels.testSend": async (params) => channelManager.testSend(params.accountId, params.peerId, params.message),
 
-    "files.list": async (params) => {
-      const { path: dirPath } = params as { path: string };
-      await assertPathAllowed(dirPath);
-      if (!existsSync(dirPath) || !statSync(dirPath).isDirectory()) {
-        throw new RpcError({ code: "NOT_FOUND", message: "Directory not found" });
-      }
-      const names = readdirSync(dirPath);
-      const entries: Array<{
-        name: string;
-        isDir: boolean;
-        size?: number;
-        mtime?: number;
-        path: string;
-        type: "file" | "directory";
-      }> = [];
-      for (const name of names) {
-        if (IGNORED_NAMES.has(name)) continue;
-        const full = path.join(dirPath, name);
-        try {
-          const st = statSync(full);
-          const isDir = st.isDirectory();
-          entries.push({
-            name,
-            path: full,
-            isDir,
-            type: isDir ? "directory" : "file",
-            size: st.size,
-            mtime: st.mtimeMs,
-          });
-        } catch {
-          /* skip unreadable */
-        }
-      }
-      entries.sort((a, b) => {
-        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-      return { entries: entries as never };
-    },
+    "files.list": fileHandlers.list,
 
-    "files.read": async (params) => {
-      const { path: filePath, sourceSessionId } = params as {
-        path: string;
-        sourceSessionId?: string;
-      };
-      await assertPathAllowed(filePath, sourceSessionId);
-      const st = statSync(filePath);
-      if (!st.isFile()) {
-        throw new RpcError({ code: "BAD_REQUEST", message: "Not a file" });
-      }
+    "files.read": fileHandlers.read,
 
-      const imageMime = getImageMime(filePath);
-      const audioMime = getAudioMime(filePath);
-      const documentMime = getDocumentMime(filePath);
-      const binaryMime = imageMime || audioMime || documentMime;
+    "files.download": fileHandlers.download,
 
-      // ISSUE-004: binary as base64+mime; never UTF-8 corrupt
-      if (binaryMime) {
-        const limit = imageMime ? IMAGE_PREVIEW_MAX_BYTES : documentMime ? DOCX_PREVIEW_MAX_BYTES : 50 * 1024 * 1024;
-        if (st.size > limit) {
-          return {
-            content: "",
-            encoding: "too_large" as const,
-            mime: binaryMime,
-            language: getLanguage(filePath),
-            size: st.size,
-            truncated: true,
-          };
-        }
-        return {
-          content: readFileSync(filePath).toString("base64"),
-          encoding: "base64" as const,
-          mime: binaryMime,
-          language: getLanguage(filePath),
-          size: st.size,
-          truncated: false,
-        };
-      }
+    "files.meta": fileHandlers.meta,
 
-      const preview = await readTextPreview(filePath, TEXT_PREVIEW_MAX_BYTES);
-      return { ...preview, encoding: "utf8" as const, language: getLanguage(filePath) };
-    },
+    "files.preview": fileHandlers.preview,
 
-    "files.download": async (params) => {
-      const { path: filePath, sourceSessionId } = params as {
-        path: string;
-        sourceSessionId?: string;
-      };
-      await assertPathAllowed(filePath, sourceSessionId);
-      const st = statSync(filePath);
-      if (!st.isFile()) {
-        throw new RpcError({ code: "BAD_REQUEST", message: "Not a file" });
-      }
-      if (st.size > FILE_DOWNLOAD_MAX_BYTES) {
-        throw new RpcError({
-          code: "RESULT_TOO_LARGE",
-          message: `File exceeds the ${FILE_DOWNLOAD_MAX_BYTES / 1024 / 1024} MiB download limit`,
-          detail: { size: st.size, maxBytes: FILE_DOWNLOAD_MAX_BYTES },
-        });
-      }
-      return {
-        base64: readFileSync(filePath).toString("base64"),
-        size: st.size,
-        mime:
-          getImageMime(filePath) || getAudioMime(filePath) || getDocumentMime(filePath) || "application/octet-stream",
-      };
-    },
-
-    "files.meta": async (params) => {
-      const { path: filePath, sourceSessionId } = params as {
-        path: string;
-        sourceSessionId?: string;
-      };
-      await assertPathAllowed(filePath, sourceSessionId);
-      const st = statSync(filePath);
-      const imageMime = getImageMime(filePath);
-      const audioMime = getAudioMime(filePath);
-      const documentMime = getDocumentMime(filePath);
-      return {
-        size: st.size,
-        mtime: st.mtimeMs,
-        language: getLanguage(filePath),
-        kind: documentPreviewKind(filePath) ?? (imageMime ? "image" : "file"),
-        mime: imageMime ?? audioMime ?? documentMime ?? "text/plain",
-      };
-    },
-
-    "files.preview": async (params) => {
-      const { path: filePath, sourceSessionId } = params as {
-        path: string;
-        sourceSessionId?: string;
-      };
-      await assertPathAllowed(filePath, sourceSessionId);
-      const st = statSync(filePath);
-      if (!st.isFile()) throw new RpcError({ code: "BAD_REQUEST", message: "Not a file" });
-      const imgMime = getImageMime(filePath);
-      if (imgMime) {
-        if (st.size > IMAGE_PREVIEW_MAX_BYTES) {
-          return { kind: "too_large", mime: imgMime, size: st.size };
-        }
-        return {
-          kind: "image",
-          mime: imgMime,
-          base64: readFileSync(filePath).toString("base64"),
-        };
-      }
-      const docKind = documentPreviewKind(filePath);
-      if (docKind === "docx") {
-        if (st.size > DOCX_PREVIEW_MAX_BYTES) {
-          return { kind: "too_large", mime: getDocumentMime(filePath) ?? undefined, size: st.size };
-        }
-        return {
-          kind: "docx",
-          mime: getDocumentMime(filePath) ?? undefined,
-          base64: readFileSync(filePath).toString("base64"),
-        };
-      }
-      const preview = await readTextPreview(filePath, TEXT_PREVIEW_MAX_BYTES);
-      return {
-        kind: "text",
-        content: preview.content,
-        language: getLanguage(filePath),
-        ...(preview.truncated ? { truncated: true } : {}),
-      };
-    },
-
-    "files.index": async (params) => {
-      const { root, query } = params as { root: string; query?: string };
-      await assertPathAllowed(root);
-      try {
-        return await fileSuggestionService.suggest(root, query);
-      } catch (error) {
-        if (error instanceof FileSuggestionRequestError) {
-          throw new RpcError({ code: "BAD_REQUEST", message: error.message });
-        }
-        throw error;
-      }
-    },
+    "files.index": fileHandlers.index,
 
     "settings.getCacheWarming": async () => cacheWarmingSettings.get(),
 
@@ -1582,55 +1228,19 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       return applyPluginAction(params);
     },
 
-    "files.watchStart": async (params, context) => {
-      const { path: filePath, sourceSessionId } = params as {
-        path: string;
-        sourceSessionId?: string;
-      };
-      const leaseKey = `files.watch:${filePath}`;
-      context?.releaseLease(leaseKey);
-      const release = await fileWatch.start(filePath, sourceSessionId);
-      context?.setLease(leaseKey, release);
-      return { ok: true as const };
-    },
+    "files.watchStart": fileHandlers.startWatch,
 
-    "files.watchStop": async (params, context) => {
-      const { path: filePath } = params as { path: string };
-      if (context) context.releaseLease(`files.watch:${filePath}`);
-      else fileWatch.stop(filePath);
-      return { ok: true as const };
-    },
+    "files.watchStop": fileHandlers.stopWatch,
 
-    "system.home": () => ({ home: homedir() }),
+    "system.home": systemHandlers.home,
 
-    "system.validateCwd": async (params) => {
-      const { path: dir } = params as { path: string };
-      const validation = validateExistingDirectory(dir);
-      if (!validation.ok) return validation;
-      allowFileRoot(validation.canonicalPath);
-      return { ok: true as const, path: validation.path };
-    },
+    "system.validateCwd": systemHandlers.validateCwd,
 
-    "system.defaultCwd": async () => {
-      const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-      const dir = path.join(homedir(), `pi-cwd-${date}`);
-      mkdirSync(dir, { recursive: true });
-      allowFileRoot(dir);
-      return { cwd: dir };
-    },
+    "system.defaultCwd": systemHandlers.defaultCwd,
 
-    "system.allowRoot": async (params) => {
-      const { path: dir } = params as { path: string };
-      const validation = validateExistingDirectory(dir);
-      if (!validation.ok) throw new RpcError({ code: "BAD_REQUEST", message: validation.error });
-      allowFileRoot(validation.canonicalPath);
-      return { ok: true as const };
-    },
+    "system.allowRoot": systemHandlers.allowRoot,
 
-    "system.runningCount": async () => {
-      const sessionIds = getRunningRpcSessionIds();
-      return { count: sessionIds.length, sessionIds };
-    },
+    "system.runningCount": systemHandlers.runningCount,
   });
 
   return async () => {

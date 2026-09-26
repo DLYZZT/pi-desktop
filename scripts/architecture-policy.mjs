@@ -24,9 +24,9 @@ export const architecturePolicy = {
       reason: "Existing session list and project operations; 22-04/08 separate their ownership.",
     },
     "src/agent-host/handlers.ts": {
-      maxLines: 1703,
+      maxLines: 1313,
       reason:
-        "Explicit RPC registry after 22-06 model/config/auth extraction; remaining domains still retain their existing guards.",
+        "Explicit RPC registry after 22-06 model/config/auth/file/worktree extraction; remaining session and service coordination stays bounded.",
     },
     "src/renderer/components/MessageView.tsx": {
       maxLines: 2072,

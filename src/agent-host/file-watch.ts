@@ -3,8 +3,7 @@
  */
 import fs from "fs";
 import type { RpcServer } from "../contract/rpc";
-import { getAllowedFileRoots, isFilePathAllowed } from "./file-access";
-import { isFilePathReferencedBySession } from "./session-file-references";
+import { assertPathAllowed } from "./path-authorization";
 import { RpcError } from "../contract/types";
 
 type WatchEntry = {
@@ -16,16 +15,9 @@ type WatchEntry = {
 const watches = new Map<string, WatchEntry>();
 
 export function createFileWatchService(server: RpcServer) {
-  async function assertAllowed(filePath: string, sourceSessionId?: string): Promise<void> {
-    const roots = await getAllowedFileRoots();
-    if (isFilePathAllowed(filePath, roots)) return;
-    if (sourceSessionId && (await isFilePathReferencedBySession(filePath, sourceSessionId))) return;
-    throw new RpcError({ code: "FORBIDDEN", message: "Access denied" });
-  }
-
   return {
     async start(filePath: string, sourceSessionId?: string): Promise<() => void> {
-      await assertAllowed(filePath, sourceSessionId);
+      await assertPathAllowed(filePath, sourceSessionId);
       const existing = watches.get(filePath);
       if (existing) {
         existing.refs += 1;
