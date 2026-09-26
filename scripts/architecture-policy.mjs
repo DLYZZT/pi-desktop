@@ -12,9 +12,9 @@ export const architecturePolicy = {
       reason: "Existing input, attachment and mention UI; scheduled for 22-08.",
     },
     "src/main/browser/browser-tab-manager.ts": {
-      maxLines: 2043,
+      maxLines: 1841,
       reason:
-        "Browser tab/control owner after capture, snapshot, script and network-action extraction; input and lifecycle boundaries remain.",
+        "Browser tab/control owner after capture, snapshot, script, network and input extraction; lifecycle and inspection orchestration remain.",
     },
     "src/renderer/components/ModelsConfig.tsx": {
       maxLines: 2887,

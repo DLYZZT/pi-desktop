@@ -1,4 +1,15 @@
 import {
+  typeBrowserText,
+  pressBrowserKey,
+  scrollBrowserPage,
+  sendBrowserMouseClick,
+  validateBrowserKey,
+  validateBrowserText,
+  validateInputModifiers,
+  isPoint,
+  type BrowserInputTarget,
+} from "./browser-input.ts";
+import {
   executeBrowserJavaScript,
   sendBrowserCdpCommand,
   validateBrowserJavaScriptSource,
@@ -76,8 +87,6 @@ const MAX_INSPECTION_NODE_CHARS = 40_000;
 const DEFAULT_INSPECTION_MAX_NODES = 100;
 const DEFAULT_INSPECTION_MAX_TEXT_CHARS = 8_000;
 const DEFAULT_INSPECTION_NODE_CHARS = 16_000;
-const KEY_PATTERN =
-  /^(Enter|Tab|Escape|Backspace|Delete|Arrow(Up|Down|Left|Right)|Home|End|Page(Up|Down)|F[1-9]|F1[0-2]|[A-Za-z0-9])$/;
 
 type TabRecord = {
   view: WebContentsView;
@@ -789,92 +798,14 @@ export class BrowserTabManager {
     text: string,
     submit = false,
   ): Promise<"key-events" | "mixed-insert-text"> {
-    if (typeof text !== "string" || text.length > 64 * 1024 || /\0/.test(text)) {
-      throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser text input is invalid");
-    }
+    validateBrowserText(text);
     const record = this.requireOwnedTab(tabId, sessionId);
     this.assertSnapshotRef(record, ref, snapshotId, generation);
     return this.runAction(record, sessionId, "interact", async (signal) => {
       if (submit) await this.approveSensitiveAction(record, "Submit a form after entering text");
       const frameContext = record.snapshot?.frames.get(ref);
       if (!frameContext) throw new BrowserError("STALE_ELEMENT_REF", "Browser frame is no longer available");
-      const point = await frameContext.frame.executeJavaScript(elementPointScript(snapshotId, ref, true));
-      if (!isPoint(point)) throw new BrowserError("STALE_ELEMENT_REF", "Browser element is no longer editable");
-      point.x += frameContext.offsetX;
-      point.y += frameContext.offsetY;
-      record.syntheticInput += 1;
-      const releaseInputFocus = this.cdp.acquire(record.info.id);
-      let focusEmulationEnabled = false;
-      let usedInsertText = false;
-      try {
-        await this.cdp.sendCommand(record.info.id, "Emulation.setFocusEmulationEnabled", { enabled: true });
-        focusEmulationEnabled = true;
-        record.view.webContents.focus();
-        await this.sendMouseClick(record, point.x, point.y, "left", 1, signal, [], true);
-        // Keep the renderer focused for the complete input sequence. A hidden
-        // Electron view may not have native window focus under Linux/Xvfb, so
-        // do not restore focus emulation between the click and text insertion.
-        // Re-focus the exact frame element after the trusted click so CDP text
-        // insertion also reaches out-of-process iframes deterministically.
-        const focusedPoint = await frameContext.frame.executeJavaScript(elementPointScript(snapshotId, ref, true));
-        if (!isPoint(focusedPoint)) {
-          throw new BrowserError("STALE_ELEMENT_REF", "Browser element is no longer editable");
-        }
-        record.view.webContents.focus();
-        const selectModifier: BrowserInputModifier = process.platform === "darwin" ? "meta" : "control";
-        const selectModifiers = cdpModifierMask([selectModifier]);
-        await this.cdp.sendCommand(record.info.id, "Input.dispatchKeyEvent", {
-          type: "keyDown",
-          key: "a",
-          code: "KeyA",
-          modifiers: selectModifiers,
-          windowsVirtualKeyCode: 65,
-          nativeVirtualKeyCode: 65,
-        });
-        await this.cdp.sendCommand(record.info.id, "Input.dispatchKeyEvent", {
-          type: "keyUp",
-          key: "a",
-          code: "KeyA",
-          modifiers: selectModifiers,
-          windowsVirtualKeyCode: 65,
-          nativeVirtualKeyCode: 65,
-        });
-        // Keep selection and character events ordered on the same CDP queue,
-        // then round-trip through the target OOPIF before inserting text.
-        await frameContext.frame.executeJavaScript("true");
-        for (const character of [...text]) {
-          if (signal.aborted) throw new BrowserError("USER_TOOK_CONTROL", "User took control of the Browser tab");
-          if (/^[\x20-\x7e]$/.test(character)) {
-            record.view.webContents.sendInputEvent({ type: "keyDown", keyCode: character });
-            record.view.webContents.sendInputEvent({ type: "char", keyCode: character });
-            record.view.webContents.sendInputEvent({ type: "keyUp", keyCode: character });
-          } else {
-            await this.cdp.sendCommand(record.info.id, "Input.dispatchKeyEvent", {
-              type: "char",
-              key: character,
-              text: character,
-              unmodifiedText: character,
-            });
-            usedInsertText = true;
-          }
-          if (this.humanizedInputEnabled()) await abortableDelay(randomBetween(18, 64), signal);
-        }
-        if (submit) {
-          record.view.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
-          record.view.webContents.sendInputEvent({ type: "char", keyCode: "Enter" });
-          if (this.humanizedInputEnabled()) await abortableDelay(randomBetween(28, 85), signal);
-          record.view.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
-        }
-        return usedInsertText ? "mixed-insert-text" : "key-events";
-      } finally {
-        if (focusEmulationEnabled) {
-          await this.cdp
-            .sendCommand(record.info.id, "Emulation.setFocusEmulationEnabled", { enabled: false })
-            .catch(() => undefined);
-        }
-        releaseInputFocus();
-        record.syntheticInput -= 1;
-      }
+      return typeBrowserText(this.inputTarget(record), frameContext, snapshotId, ref, text, submit, signal);
     });
   }
 
@@ -931,23 +862,11 @@ export class BrowserTabManager {
 
   async press(tabId: string, sessionId: string, key: string, modifiers: BrowserInputModifier[] = []): Promise<void> {
     modifiers = validateInputModifiers(modifiers);
-    if (typeof key !== "string" || !KEY_PATTERN.test(key)) {
-      throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser key is not allowed");
-    }
+    validateBrowserKey(key);
     const record = this.requireOwnedTab(tabId, sessionId);
-    await this.runAction(record, sessionId, "interact", async () => {
-      record.syntheticInput += 1;
-      try {
-        record.view.webContents.focus();
-        record.view.webContents.sendInputEvent({ type: "keyDown", keyCode: key, modifiers });
-        if (key.length === 1 && !modifiers.some((modifier) => modifier !== "shift")) {
-          record.view.webContents.sendInputEvent({ type: "char", keyCode: key, modifiers });
-        }
-        record.view.webContents.sendInputEvent({ type: "keyUp", keyCode: key, modifiers });
-      } finally {
-        record.syntheticInput -= 1;
-      }
-    });
+    await this.runAction(record, sessionId, "interact", () =>
+      pressBrowserKey(this.inputTarget(record), key, modifiers),
+    );
   }
 
   async scroll(
@@ -961,47 +880,9 @@ export class BrowserTabManager {
       throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser scroll delta is empty");
     }
     const record = this.requireOwnedTab(tabId, sessionId);
-    await this.runAction(record, sessionId, "interact", async (signal) => {
-      const viewport = (await record.view.webContents.executeJavaScriptInIsolatedWorld(SNAPSHOT_WORLD_ID, [
-        { code: `({ width: Math.max(1, innerWidth), height: Math.max(1, innerHeight) })` },
-      ])) as { width?: unknown; height?: unknown };
-      const x = clampInteger(input.x ?? Number(viewport.width) / 2, 0, Math.max(0, Number(viewport.width) - 1));
-      const y = clampInteger(input.y ?? Number(viewport.height) / 2, 0, Math.max(0, Number(viewport.height) - 1));
-      const segments = this.humanizedInputEnabled()
-        ? clampInteger(Math.max(Math.abs(deltaX), Math.abs(deltaY)) / 180, 2, 12)
-        : 1;
-      const releaseScrollFocus = this.cdp.acquire(record.info.id);
-      let focusEmulationEnabled = false;
-      try {
-        await this.cdp.sendCommand(record.info.id, "Emulation.setFocusEmulationEnabled", { enabled: true });
-        focusEmulationEnabled = true;
-        record.syntheticInput += 1;
-        try {
-          record.view.webContents.focus();
-          for (let index = 0; index < segments; index += 1) {
-            record.view.webContents.sendInputEvent({
-              type: "mouseWheel",
-              x,
-              y,
-              deltaX: Math.round(deltaX / segments),
-              deltaY: Math.round(deltaY / segments),
-              canScroll: true,
-            });
-            if (segments > 1) await abortableDelay(randomBetween(12, 38), signal);
-          }
-          await abortableDelay(32, signal);
-        } finally {
-          record.syntheticInput -= 1;
-        }
-      } finally {
-        if (focusEmulationEnabled) {
-          await this.cdp
-            .sendCommand(record.info.id, "Emulation.setFocusEmulationEnabled", { enabled: false })
-            .catch(() => undefined);
-        }
-        releaseScrollFocus();
-      }
-    });
+    await this.runAction(record, sessionId, "interact", (signal) =>
+      scrollBrowserPage(this.inputTarget(record), input, deltaX, deltaY, signal),
+    );
   }
 
   async wait(
@@ -1664,8 +1545,21 @@ export class BrowserTabManager {
     return record.consoleBuffer;
   }
 
-  private humanizedInputEnabled(): boolean {
-    return this.options.getSettings().advancedBrowserMode.enabled;
+  private inputTarget(record: TabRecord): BrowserInputTarget {
+    return {
+      contents: record.view.webContents,
+      tabId: record.info.id,
+      cdp: this.cdp,
+      humanized: () => this.options.getSettings().advancedBrowserMode.enabled,
+      withSyntheticInput: async (task) => {
+        record.syntheticInput += 1;
+        try {
+          return await task();
+        } finally {
+          record.syntheticInput -= 1;
+        }
+      },
+    };
   }
 
   private async sendMouseClick(
@@ -1678,72 +1572,16 @@ export class BrowserTabManager {
     modifiers: BrowserInputModifier[] = [],
     preserveFocusEmulation = false,
   ): Promise<void> {
-    record.view.webContents.focus();
-    const releaseDebugger = this.cdp.acquire(record.info.id);
-    const cdpModifiers = cdpModifierMask(modifiers);
-    let focusEmulationEnabled = false;
-    try {
-      await this.cdp.sendCommand(record.info.id, "Emulation.setFocusEmulationEnabled", { enabled: true });
-      focusEmulationEnabled = true;
-      if (this.humanizedInputEnabled()) {
-        const viewport = (await record.view.webContents.executeJavaScriptInIsolatedWorld(SNAPSHOT_WORLD_ID, [
-          { code: `({ x: Math.max(0, innerWidth / 2), y: Math.max(0, innerHeight / 2) })` },
-        ])) as { x?: unknown; y?: unknown };
-        const startX = Number(viewport.x) || x;
-        const startY = Number(viewport.y) || y;
-        const segments = randomBetween(3, 7);
-        for (let index = 1; index <= segments; index += 1) {
-          const progress = index / segments;
-          await this.cdp.sendCommand(record.info.id, "Input.dispatchMouseEvent", {
-            type: "mouseMoved",
-            x: Math.round(startX + (x - startX) * progress),
-            y: Math.round(startY + (y - startY) * progress),
-            modifiers: cdpModifiers,
-          });
-          await abortableDelay(randomBetween(8, 24), signal);
-        }
-      } else {
-        await this.cdp.sendCommand(record.info.id, "Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x,
-          y,
-          modifiers: cdpModifiers,
-        });
-      }
-      await this.cdp.sendCommand(record.info.id, "Input.dispatchMouseEvent", {
-        type: "mousePressed",
-        x,
-        y,
-        button,
-        buttons: cdpButtonMask(button),
-        clickCount,
-        modifiers: cdpModifiers,
-      });
-      if (this.humanizedInputEnabled()) await abortableDelay(randomBetween(35, 105), signal);
-      await this.cdp.sendCommand(record.info.id, "Input.dispatchMouseEvent", {
-        type: "mouseReleased",
-        x,
-        y,
-        button,
-        buttons: 0,
-        clickCount,
-        modifiers: cdpModifiers,
-      });
-      // A CDP command acknowledgement only confirms that Chromium accepted the
-      // input. Queue a no-op in the isolated world so non-navigation handlers
-      // have run before the click result is returned to the next Agent tool.
-      await record.view.webContents
-        .executeJavaScriptInIsolatedWorld(SNAPSHOT_WORLD_ID, [{ code: "true" }])
-        .catch(() => undefined);
-      await abortableDelay(32, signal);
-    } finally {
-      if (focusEmulationEnabled && !preserveFocusEmulation) {
-        await this.cdp
-          .sendCommand(record.info.id, "Emulation.setFocusEmulationEnabled", { enabled: false })
-          .catch(() => undefined);
-      }
-      releaseDebugger();
-    }
+    return sendBrowserMouseClick(
+      this.inputTarget(record),
+      x,
+      y,
+      button,
+      clickCount,
+      signal,
+      modifiers,
+      preserveFocusEmulation,
+    );
   }
 
   private requireTab(tabId: string): TabRecord {
@@ -1996,46 +1834,6 @@ function isSensitiveNode(node: BrowserSnapshotNode): boolean {
   return /\b(?:buy|purchase|pay|checkout|delete|remove|send|submit|authorize|approve|confirm|download|upload|sign[ -]?in|log[ -]?in)\b/.test(
     text,
   );
-}
-
-function isPoint(value: unknown): value is { x: number; y: number; externalUrl?: string } {
-  return (
-    !!value &&
-    typeof value === "object" &&
-    Number.isFinite((value as { x?: unknown }).x) &&
-    Number.isFinite((value as { y?: unknown }).y)
-  );
-}
-
-function randomBetween(minimum: number, maximum: number): number {
-  return Math.floor(minimum + Math.random() * (maximum - minimum + 1));
-}
-
-function validateInputModifiers(value: BrowserInputModifier[]): BrowserInputModifier[] {
-  if (!Array.isArray(value) || value.length > 4) {
-    throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser input modifiers are invalid");
-  }
-  const allowed = new Set<BrowserInputModifier>(["alt", "control", "meta", "shift"]);
-  const result = [...new Set(value)];
-  if (result.some((modifier) => !allowed.has(modifier))) {
-    throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser input modifiers are invalid");
-  }
-  return result;
-}
-
-function cdpModifierMask(modifiers: BrowserInputModifier[]): number {
-  return modifiers.reduce((mask, modifier) => {
-    if (modifier === "alt") return mask | 1;
-    if (modifier === "control") return mask | 2;
-    if (modifier === "meta") return mask | 4;
-    return mask | 8;
-  }, 0);
-}
-
-function cdpButtonMask(button: "left" | "middle" | "right"): number {
-  if (button === "left") return 1;
-  if (button === "right") return 2;
-  return 4;
 }
 
 function redactUrlCredentials(value: string): string {
