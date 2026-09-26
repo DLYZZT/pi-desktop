@@ -2,32 +2,31 @@
  * Register all Api handlers on the RPC server.
  * Implements the desktop RPC contract in the Agent Host process.
  */
+import { modelCatalogHandlers, type AvailableModel } from "./handlers/model-catalog";
+import { modelConfigHandlers } from "./handlers/models-config";
+import { createAuthHandlers } from "./handlers/auth";
+export { projectModelsList } from "./handlers/model-catalog";
+export { credentialMutationFailure } from "./handlers/auth";
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
-  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { homedir, tmpdir } from "os";
+import { homedir } from "os";
 import path from "path";
-import { createHash, randomUUID } from "crypto";
+import { randomUUID } from "crypto";
 import {
   DefaultResourceLoader,
-  CredentialSynchronizationError,
-  ModelRuntime,
   SessionManager,
   createAgentSessionServices,
   getAgentDir,
-  type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { getSupportedThinkingLevels, type AuthInteraction } from "@earendil-works/pi-ai";
 import { readSessionSnapshot, assertSessionWritable } from "./session-readonly.ts";
 import { getDesktopSessionToolNames } from "./session-tool-store.ts";
 import {
@@ -38,17 +37,7 @@ import {
   takeCodePoints,
 } from "./session-title";
 import type { RpcServer } from "../contract/rpc";
-import {
-  RpcError,
-  type HistoryWindow,
-  type ModelInfo,
-  type ModelCatalogStatus,
-  type ModelCatalogWarning,
-  type ModelPreferencesResult,
-  type ModelsListResult,
-  type SessionDetail,
-  type SessionRuntimeState,
-} from "../contract/types";
+import { RpcError, type HistoryWindow, type SessionDetail, type SessionRuntimeState } from "../contract/types";
 import type { SessionTreeNode } from "../shared/types";
 import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed } from "./file-access";
 import {
@@ -88,8 +77,8 @@ import {
 } from "../shared/file-types";
 import { createFileWatchService, stopAllFileWatches } from "./file-watch";
 import { callMain } from "./parent-rpc";
-import { createAuthLoginService, resolveLoginCode } from "./auth-login";
-import { getSharedModelRuntime, modelCatalogRefreshCoordinator, reloadSharedModelRuntimeConfig } from "./model-runtime";
+import { createAuthLoginService } from "./auth-login";
+import { modelCatalogRefreshCoordinator } from "./model-runtime";
 import { applyPluginAction, readPlugins } from "./plugins-service";
 import { installSkill, searchSkills } from "./skills-service";
 import { updateSkillModelInvocation } from "./skill-frontmatter";
@@ -115,7 +104,6 @@ import { getSessionContentSnapshot, invalidateSessionContent } from "./session-c
 import { buildSessionStats } from "./session-stats";
 import { cacheWarmingSettings, isCacheWarmingMode } from "./cache-warming-settings";
 import { sessionIndex } from "./session-index";
-import { credentialStateMatches, recoverCommittedCredential, type CredentialTarget } from "./credential-sync";
 import { FileSuggestionRequestError, fileSuggestionService } from "./file-suggestions";
 import { initializeManagedProcessService } from "./managed-process/runtime";
 import { ManagedProcessError } from "./managed-process/service";
@@ -215,77 +203,6 @@ async function assertPathAllowed(target: string, sourceSessionId?: string): Prom
   throw new RpcError({ code: "FORBIDDEN", message: "Access denied" });
 }
 
-function getModelsPath(): string {
-  return path.join(getAgentDir(), "models.json");
-}
-
-type ModelsFileSnapshot = { raw: string | null; version: string };
-
-function modelsContentVersion(raw: string | null): string {
-  return raw === null ? "missing" : `sha256:${createHash("sha256").update(raw, "utf8").digest("hex")}`;
-}
-
-function readModelsFileSnapshot(): ModelsFileSnapshot {
-  const p = getModelsPath();
-  if (!existsSync(p)) return { raw: null, version: modelsContentVersion(null) };
-  const raw = readFileSync(p, "utf8");
-  return { raw, version: modelsContentVersion(raw) };
-}
-
-function readModelsJsonSnapshot(): { config: Record<string, unknown>; version: string } {
-  const snapshot = readModelsFileSnapshot();
-  if (snapshot.raw === null) return { config: { providers: {} }, version: snapshot.version };
-  try {
-    return { config: JSON.parse(snapshot.raw) as Record<string, unknown>, version: snapshot.version };
-  } catch (e) {
-    // ISSUE-009: never silently return empty and allow overwrite of corrupt file
-    throw new RpcError({
-      code: "PARSE_ERROR",
-      message: `Failed to parse models.json: ${e instanceof Error ? e.message : String(e)}`,
-    });
-  }
-}
-
-function modelsConfigConflict(expectedVersion: string, currentVersion: string): RpcError {
-  return new RpcError({
-    code: "CONFLICT",
-    message: "models.json changed outside this editor; current edits were not saved",
-    detail: { expectedVersion, currentVersion },
-  });
-}
-
-function writeModelsJson(data: Record<string, unknown>, expectedVersion: string): string {
-  const p = getModelsPath();
-  mkdirSync(path.dirname(p), { recursive: true });
-  const initial = readModelsFileSnapshot();
-  if (initial.version !== expectedVersion) throw modelsConfigConflict(expectedVersion, initial.version);
-  // ISSUE-009: atomic write via temp + rename; keep .bak of previous good file
-  const tmp = `${p}.${process.pid}.tmp`;
-  const bak = `${p}.bak`;
-  const serialized = JSON.stringify(data, null, 2);
-  writeFileSync(tmp, serialized, "utf8");
-  try {
-    const beforeCommit = readModelsFileSnapshot();
-    if (beforeCommit.version !== expectedVersion) throw modelsConfigConflict(expectedVersion, beforeCommit.version);
-    if (beforeCommit.raw !== null) {
-      try {
-        writeFileSync(bak, beforeCommit.raw, "utf8");
-      } catch {
-        /* ignore bak failure */
-      }
-    }
-    renameSync(tmp, p);
-  } catch (e) {
-    try {
-      unlinkSync(tmp);
-    } catch {
-      /* ignore */
-    }
-    throw e;
-  }
-  return modelsContentVersion(serialized);
-}
-
 async function resolveLoadedSkill(cwd: string, filePath: string) {
   if (!cwd || !filePath) {
     throw new RpcError({ code: "BAD_REQUEST", message: "cwd and filePath are required" });
@@ -319,102 +236,6 @@ function writeTextAtomically(filePath: string, content: string): void {
     }
     throw error;
   }
-}
-
-const THINKING_SUFFIXES = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
-
-function stripThinkingSuffix(modelRef: string): string {
-  const trimmed = modelRef.trim();
-  const colonIndex = trimmed.lastIndexOf(":");
-  if (colonIndex === -1) return trimmed;
-  const suffix = trimmed.substring(colonIndex + 1);
-  return THINKING_SUFFIXES.has(suffix) ? trimmed.substring(0, colonIndex) : trimmed;
-}
-
-function filterByExactEnabledModels<T extends { id: string; provider: string }>(
-  available: T[],
-  enabledModels: string[] | undefined,
-): T[] {
-  if (!enabledModels || enabledModels.length === 0) return available;
-  const refs = new Set(enabledModels.map(stripThinkingSuffix).filter(Boolean));
-  const visible = available.filter((m) => refs.has(`${m.provider}/${m.id}`) || refs.has(m.id));
-  return visible.length > 0 ? visible : available;
-}
-
-function projectModelPreferences<T extends { id: string; name: string; provider: string }>(
-  available: readonly T[],
-  enabledModels: string[] | undefined,
-): ModelPreferencesResult {
-  const models: ModelInfo[] = available
-    .map((model) => ({ id: model.id, name: model.name, provider: model.provider }))
-    .sort((a, b) => a.name.localeCompare(b.name) || a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
-  const normalized = [...new Set((enabledModels ?? []).map(stripThinkingSuffix).filter(Boolean))];
-  return { models, enabledModels: normalized.length > 0 ? normalized : null };
-}
-
-function normalizeEnabledModelsInput(value: unknown): string[] | undefined {
-  if (value === null) return undefined;
-  if (!Array.isArray(value) || value.length === 0 || value.length > 2000) {
-    throw new RpcError({
-      code: "BAD_REQUEST",
-      message: "enabledModels must be null or a non-empty array with at most 2000 entries",
-    });
-  }
-
-  const normalized: string[] = [];
-  const seen = new Set<string>();
-  for (const valueEntry of value) {
-    if (typeof valueEntry !== "string") {
-      throw new RpcError({ code: "BAD_REQUEST", message: "Every enabled model reference must be a string" });
-    }
-    const modelReference = stripThinkingSuffix(valueEntry);
-    if (!modelReference || modelReference.length > 512) {
-      throw new RpcError({ code: "BAD_REQUEST", message: "Invalid enabled model reference" });
-    }
-    if (!seen.has(modelReference)) {
-      seen.add(modelReference);
-      normalized.push(modelReference);
-    }
-  }
-  return normalized;
-}
-
-function hasMatchingEnabledModel<T extends { id: string; provider: string }>(
-  available: readonly T[],
-  enabledModels: string[],
-): boolean {
-  const refs = new Set(enabledModels);
-  return available.some((model) => refs.has(`${model.provider}/${model.id}`) || refs.has(model.id));
-}
-
-export async function credentialMutationFailure(
-  modelRuntime: ModelRuntime,
-  providerId: string,
-  target: CredentialTarget,
-  error: unknown,
-) {
-  if (error instanceof CredentialSynchronizationError) {
-    const recovered = await recoverCommittedCredential(modelRuntime, providerId, target);
-    if (recovered) {
-      if (!recovered.synchronized) {
-        console.warn(`[agent-host] credential ${error.operation} committed for ${providerId}; model sync retry failed`);
-      }
-      return recovered;
-    }
-    throw new RpcError({ code: "INTERNAL", message: `Credential change for ${providerId} could not be verified` });
-  }
-  throw new RpcError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : String(error) });
-}
-
-function resolveModelsCwd(params: { cwd?: string } | void): string {
-  const cwd = params?.cwd || process.cwd();
-  try {
-    const st = statSync(cwd);
-    if (!st.isDirectory()) throw new Error("not-directory");
-  } catch {
-    throw new RpcError({ code: "BAD_REQUEST", message: `Directory does not exist: ${cwd}` });
-  }
-  return cwd;
 }
 
 // ============================================================================
@@ -608,92 +429,6 @@ function canonicalPathForComparison(candidate: string): string {
   return process.platform === "win32" ? canonical.toLowerCase() : canonical;
 }
 
-type AvailableModel = Awaited<ReturnType<ModelRuntime["getAvailable"]>>[number];
-
-async function resolveAvailableModels(
-  modelRuntime: ModelRuntime,
-  signal?: AbortSignal,
-): Promise<{ models: AvailableModel[]; warnings: ModelCatalogWarning[] }> {
-  const snapshot = [...modelRuntime.getAvailableSnapshot()];
-  const snapshotByProvider = new Map<string, AvailableModel[]>();
-  for (const model of snapshot) {
-    const models = snapshotByProvider.get(model.provider) ?? [];
-    models.push(model);
-    snapshotByProvider.set(model.provider, models);
-  }
-
-  const results = await Promise.all(
-    [...modelRuntime.getProviders()]
-      .sort((a, b) => a.id.localeCompare(b.id))
-      .map(async (provider) => {
-        try {
-          const models = [...(await modelRuntime.getAvailable(provider.id, { signal }))];
-          return { models, warning: undefined };
-        } catch (error) {
-          if (signal?.aborted) throw signal.reason ?? error;
-          return {
-            models: snapshotByProvider.get(provider.id) ?? [],
-            warning: {
-              provider: provider.id,
-              code: "PROVIDER_AVAILABILITY_FAILED" as const,
-              message: `Unable to check ${provider.id} model availability; the last known state remains available.`,
-            },
-          };
-        }
-      }),
-  );
-  signal?.throwIfAborted();
-  return {
-    models: results.flatMap((result) => result.models),
-    warnings: results.flatMap((result) => (result.warning ? [result.warning] : [])),
-  };
-}
-
-export async function projectModelsList(
-  modelRuntime: ModelRuntime,
-  settings: SettingsManager,
-  catalog: ModelCatalogStatus,
-  options: { signal?: AbortSignal; cachedOnly?: boolean } = {},
-): Promise<ModelsListResult> {
-  const availability = options.cachedOnly
-    ? { models: [...modelRuntime.getAvailableSnapshot()], warnings: [] }
-    : await resolveAvailableModels(modelRuntime, options.signal);
-  const available = availability.models;
-  const enabledModels = settings.getEnabledModels();
-  const visible = filterByExactEnabledModels(available, enabledModels);
-  const models = visible
-    .map((model) => ({ id: model.id, name: model.name, provider: model.provider }))
-    .sort((a, b) => a.name.localeCompare(b.name) || a.provider.localeCompare(b.provider));
-
-  const nameMap: Record<string, string> = {};
-  const thinkingLevels: Record<string, string[]> = {};
-  const thinkingLevelMaps: Record<string, Record<string, string | null>> = {};
-  for (const model of visible) {
-    const key = `${model.provider}:${model.id}`;
-    nameMap[key] = model.name;
-    thinkingLevels[key] = getSupportedThinkingLevels(model);
-    if (model.thinkingLevelMap) thinkingLevelMaps[key] = model.thinkingLevelMap;
-  }
-
-  let defaultModel: { provider: string; modelId: string } | null = null;
-  const provider = settings.getDefaultProvider();
-  const modelId = settings.getDefaultModel();
-  if (provider && modelId && visible.some((model) => model.provider === provider && model.id === modelId)) {
-    defaultModel = { provider, modelId };
-  }
-
-  return {
-    models,
-    defaultModel,
-    thinkingLevels,
-    thinkingLevelMaps,
-    nameMap,
-    catalog: availability.warnings.length
-      ? { ...catalog, warnings: [...catalog.warnings, ...availability.warnings] }
-      : catalog,
-  };
-}
-
 export function initializeChannels(
   manager: Pick<ChannelManager, "initialize">,
   report: (message: string) => void = (message) => {
@@ -723,6 +458,7 @@ export function assertHerdrParamKeys(value: unknown, allowedKeys: readonly strin
 export function registerHandlers(server: RpcServer): () => Promise<void> {
   const fileWatch = createFileWatchService(server);
   const authLogin = createAuthLoginService(server);
+  const authHandlers = createAuthHandlers(authLogin);
   const channelManager = new ChannelManager(server, (session, sessionId) =>
     ensureSessionEvents(server, session, sessionId),
   );
@@ -1763,323 +1499,35 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       }
     },
 
-    "models.list": async (params) => {
-      const cwd = resolveModelsCwd(params as { cwd?: string } | void);
-      const agentDir = getAgentDir();
-      const services = await createAgentSessionServices({ cwd, agentDir });
-      return projectModelsList(services.modelRuntime, services.settingsManager, {
-        source: process.env.PI_OFFLINE === undefined ? "cache" : "offline",
-        refreshed: false,
-        aborted: false,
-        warnings: [],
-      });
-    },
+    "models.list": modelCatalogHandlers.list,
 
-    "models.refresh": async (params) => {
-      const { requestId } = params as { cwd?: string; requestId: string };
-      if (!/^[A-Za-z0-9_-]{1,100}$/.test(requestId)) {
-        throw new RpcError({ code: "BAD_REQUEST", message: "Invalid model refresh request id" });
-      }
-      const cwd = resolveModelsCwd(params);
-      const agentDir = getAgentDir();
-      return modelCatalogRefreshCoordinator.refresh(
-        cwd,
-        requestId,
-        (signal) => createAgentSessionServices({ cwd, agentDir, modelRuntimeSignal: signal }),
-        ({ services, catalog }, signal) =>
-          projectModelsList(services.modelRuntime, services.settingsManager, catalog, {
-            signal,
-            cachedOnly: catalog.aborted,
-          }),
-      );
-    },
+    "models.refresh": modelCatalogHandlers.refresh,
 
-    "models.refreshCancel": (params) => {
-      const { requestId } = params as { requestId: string };
-      return { ok: true as const, cancelled: modelCatalogRefreshCoordinator.cancel(requestId) };
-    },
+    "models.refreshCancel": modelCatalogHandlers.cancelRefresh,
 
-    "models.preferences.get": async (params) => {
-      const cwd = resolveModelsCwd(params as { cwd?: string } | void);
-      const services = await createAgentSessionServices({ cwd, agentDir: getAgentDir() });
-      const { models: available } = await resolveAvailableModels(services.modelRuntime);
-      return projectModelPreferences(available, services.settingsManager.getEnabledModels());
-    },
+    "models.preferences.get": modelCatalogHandlers.getPreferences,
 
-    "models.preferences.set": async (params) => {
-      const body = params as { cwd?: string; enabledModels?: unknown };
-      const cwd = resolveModelsCwd(body);
-      const enabledModels = normalizeEnabledModelsInput(body.enabledModels);
-      const services = await createAgentSessionServices({ cwd, agentDir: getAgentDir() });
-      const { models: available } = await resolveAvailableModels(services.modelRuntime);
-      if (enabledModels && !hasMatchingEnabledModel(available, enabledModels)) {
-        throw new RpcError({ code: "BAD_REQUEST", message: "At least one available model must remain enabled" });
-      }
-      services.settingsManager.setEnabledModels(enabledModels);
-      return projectModelPreferences(available, enabledModels);
-    },
+    "models.preferences.set": modelCatalogHandlers.setPreferences,
 
-    "modelsConfig.get": () => readModelsJsonSnapshot(),
-    "modelsConfig.set": async (params) => {
-      const body = params as { config?: unknown; expectedVersion?: unknown };
-      const config = body?.config as Record<string, unknown> | undefined;
-      // ISSUE-009: refuse to persist empty overwrite without explicit providers key from a real load
-      if (!config || typeof config !== "object" || !("providers" in config)) {
-        throw new RpcError({ code: "BAD_REQUEST", message: "Invalid models config payload" });
-      }
-      if (typeof body.expectedVersion !== "string" || !body.expectedVersion) {
-        throw new RpcError({ code: "BAD_REQUEST", message: "expectedVersion is required" });
-      }
-      const version = writeModelsJson(config, body.expectedVersion);
-      await reloadSharedModelRuntimeConfig();
-      return { ok: true as const, version };
-    },
-    "modelsConfig.test": async (params) => {
-      const body = params as unknown as {
-        providerName?: string;
-        provider?: Record<string, unknown>;
-        model?: Record<string, unknown>;
-      };
-      const providerName = typeof body.providerName === "string" ? body.providerName.trim() : "";
-      if (!providerName) return { ok: false, error: "providerName is required" };
-      if (!body.provider || typeof body.provider !== "object") {
-        return { ok: false, error: "provider is required" };
-      }
-      if (!body.model || typeof body.model !== "object") {
-        return { ok: false, error: "model is required" };
-      }
-      const modelId = typeof body.model.id === "string" ? body.model.id.trim() : "";
-      if (!modelId) return { ok: false, error: "Model ID is required" };
+    "modelsConfig.get": modelConfigHandlers.get,
+    "modelsConfig.set": modelConfigHandlers.set,
+    "modelsConfig.test": modelConfigHandlers.test,
 
-      let tempDir: string | undefined;
-      try {
-        tempDir = mkdtempSync(path.join(tmpdir(), "pi-desktop-model-test-"));
-        const modelsPath = path.join(tempDir, "models.json");
-        writeFileSync(
-          modelsPath,
-          JSON.stringify(
-            {
-              providers: {
-                [providerName]: {
-                  ...body.provider,
-                  models: [{ ...body.model, id: modelId }],
-                },
-              },
-            },
-            null,
-            2,
-          ),
-          "utf8",
-        );
+    "auth.providers": authHandlers.providers,
 
-        const modelRuntime = await ModelRuntime.create({ modelsPath, allowModelNetwork: false });
-        const loadError = modelRuntime.getError();
-        if (loadError) return { ok: false, error: loadError };
+    "auth.allProviders": authHandlers.allProviders,
 
-        const model = modelRuntime.getModel(providerName, modelId);
-        if (!model) return { ok: false, error: `Model not found: ${providerName}/${modelId}` };
+    "auth.setApiKey": authHandlers.setApiKey,
 
-        const auth = await modelRuntime.getAuth(model);
-        if (!auth) return { ok: false, error: `No authentication found for "${providerName}"` };
+    "auth.deleteApiKey": authHandlers.deleteApiKey,
 
-        const TEST_TIMEOUT_MS = 20_000;
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
-        let status: number | undefined;
-        const startedAt = Date.now();
-        try {
-          const message = await modelRuntime.completeSimple(
-            model,
-            {
-              messages: [
-                {
-                  role: "user",
-                  content: "Reply with OK only.",
-                  timestamp: Date.now(),
-                },
-              ],
-            },
-            {
-              maxTokens: 16,
-              timeoutMs: TEST_TIMEOUT_MS,
-              maxRetries: 0,
-              cacheRetention: "none",
-              signal: controller.signal,
-              onResponse: (response: { status: number }) => {
-                status = response.status;
-              },
-            },
-          );
+    "auth.logout": authHandlers.logout,
 
-          const latencyMs = Date.now() - startedAt;
-          if (message.stopReason === "error" || message.stopReason === "aborted") {
-            return {
-              ok: false,
-              error: message.errorMessage ?? (controller.signal.aborted ? "Test timed out" : "Model returned an error"),
-              latencyMs,
-              status,
-            };
-          }
-          const responseText = message.content
-            .filter((b) => b.type === "text")
-            .map((b) => (b as { text: string }).text)
-            .join("")
-            .slice(0, 300);
-          return { ok: true, latencyMs, status, responseText };
-        } finally {
-          clearTimeout(timeout);
-        }
-      } catch (e) {
-        return { ok: false, error: e instanceof Error ? e.message : String(e) };
-      } finally {
-        if (tempDir) {
-          try {
-            rmSync(tempDir, { recursive: true, force: true });
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-    },
+    "auth.loginSubmit": authHandlers.submitLogin,
 
-    "auth.providers": async () => {
-      const modelRuntime = await getSharedModelRuntime();
-      const storedProviders = new Set(
-        (await modelRuntime.listCredentials())
-          .filter((entry) => entry.type === "oauth")
-          .map((entry) => entry.providerId),
-      );
-      const EXCLUDED = new Set(["anthropic"]);
-      const DISPLAY_NAMES: Record<string, string> = {
-        "openai-codex": "ChatGPT Plus/Pro",
-        "github-copilot": "GitHub Copilot",
-      };
-      const result = modelRuntime
-        .getProviders()
-        .filter((p) => p.auth.oauth && !EXCLUDED.has(p.id))
-        .map((p) => ({
-          id: p.id,
-          name: DISPLAY_NAMES[p.id] ?? p.name,
-          usesCallbackServer: false,
-          authenticated: storedProviders.has(p.id),
-          loggedIn: storedProviders.has(p.id),
-        }));
-      return { providers: result };
-    },
+    "auth.loginStart": authHandlers.startLogin,
 
-    "auth.allProviders": async () => {
-      const modelRuntime = await getSharedModelRuntime();
-      const all = modelRuntime.getModels();
-      const OAUTH_PROVIDER_IDS = new Set(["anthropic", "github-copilot", "openai-codex"]);
-      const seen = new Set<string>();
-      const result: Array<{
-        id: string;
-        displayName: string;
-        configured: boolean;
-        source?: string;
-        modelCount: number;
-      }> = [];
-      for (const model of all) {
-        if (seen.has(model.provider)) continue;
-        seen.add(model.provider);
-        if (OAUTH_PROVIDER_IDS.has(model.provider)) continue;
-        const provider = modelRuntime.getProvider(model.provider);
-        if (!provider?.auth.apiKey) continue;
-        const status = modelRuntime.getProviderAuthStatus(model.provider);
-        if (status.source === "models_json_key") continue;
-        result.push({
-          id: model.provider,
-          displayName: provider.name,
-          configured: status.configured,
-          source: status.label ?? status.source,
-          modelCount: all.filter((candidate) => candidate.provider === model.provider).length,
-        });
-      }
-      return { providers: result as never };
-    },
-
-    "auth.setApiKey": async (params) => {
-      const { provider, key } = params as { provider: string; key: string };
-      if (!provider || !key?.trim()) {
-        throw new RpcError({ code: "BAD_REQUEST", message: "provider and key required" });
-      }
-      const modelRuntime = await getSharedModelRuntime();
-      let promptCount = 0;
-      const interaction: AuthInteraction = {
-        async prompt(request) {
-          promptCount += 1;
-          if (promptCount !== 1 || request.type !== "secret") {
-            throw new Error(`${provider} requires an interactive, multi-field login flow`);
-          }
-          return key.trim();
-        },
-        notify() {},
-      };
-      try {
-        await modelRuntime.login(provider, "api_key", interaction);
-      } catch (error) {
-        return credentialMutationFailure(modelRuntime, provider, { present: true, type: "api_key" }, error);
-      }
-      if (!(await credentialStateMatches(modelRuntime, provider, { present: true, type: "api_key" }))) {
-        throw new RpcError({
-          code: "INTERNAL",
-          message: `Key for ${provider} was written but not readable back`,
-        });
-      }
-      return { ok: true as const, synchronized: true };
-    },
-
-    "auth.deleteApiKey": async (params) => {
-      const { provider } = params as { provider: string };
-      const modelRuntime = await getSharedModelRuntime();
-      try {
-        await modelRuntime.logout(provider);
-      } catch (error) {
-        return credentialMutationFailure(modelRuntime, provider, { present: false, type: "api_key" }, error);
-      }
-      if (!(await credentialStateMatches(modelRuntime, provider, { present: false, type: "api_key" }))) {
-        throw new RpcError({ code: "INTERNAL", message: `Key removal for ${provider} could not be verified` });
-      }
-      return { ok: true as const, synchronized: true };
-    },
-
-    "auth.logout": async (params) => {
-      const { provider } = params as { provider: string };
-      const modelRuntime = await getSharedModelRuntime();
-      try {
-        await modelRuntime.logout(provider);
-      } catch (error) {
-        return credentialMutationFailure(modelRuntime, provider, { present: false }, error);
-      }
-      if (!(await credentialStateMatches(modelRuntime, provider, { present: false }))) {
-        throw new RpcError({ code: "INTERNAL", message: `Logout for ${provider} could not be verified` });
-      }
-      return { ok: true as const, synchronized: true };
-    },
-
-    "auth.loginSubmit": async (params) => {
-      const { provider, token, code } = params as {
-        provider: string;
-        token: string;
-        code: string;
-      };
-      if (!resolveLoginCode(provider, token, code)) {
-        throw new RpcError({ code: "NOT_FOUND", message: "No pending login for token" });
-      }
-      return { ok: true as const };
-    },
-
-    "auth.loginStart": async (params) => {
-      const { provider } = params as { provider: string };
-      const result = await authLogin.start(provider);
-      return { ok: true as const, started: result.started };
-    },
-
-    "auth.loginCancel": async (params) => {
-      const { provider } = params as { provider: string };
-      authLogin.cancel(provider);
-      return { ok: true as const };
-    },
+    "auth.loginCancel": authHandlers.cancelLogin,
 
     "skills.list": async (params) => {
       const cwd = (params as { cwd?: string } | void)?.cwd;

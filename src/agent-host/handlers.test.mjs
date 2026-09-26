@@ -2,6 +2,7 @@ import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer } from "node:http";
 import path from "node:path";
 import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -46,6 +47,90 @@ async function captureHandlers() {
   });
   return { handlers, events };
 }
+
+test("model connection tests use isolated configuration and preserve success and provider errors", async (t) => {
+  const { handlers } = await captureHandlers();
+  const calls = [];
+  let fail = false;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    calls.push({
+      url: request.url,
+      model: body.model,
+      maxTokens: body.max_tokens ?? body.max_completion_tokens,
+      fixtureAuth: request.headers.authorization === "Bearer nonsecret-local-fixture",
+    });
+    if (fail) {
+      response
+        .writeHead(400, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ error: { message: "PLAN22_MODEL_TEST_FAILURE", type: "invalid_request_error" } }));
+      return;
+    }
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    for (const [delta, finishReason] of [
+      [{ role: "assistant", content: "OK" }, null],
+      [{}, "stop"],
+    ]) {
+      response.write(
+        "data: " +
+          JSON.stringify({
+            id: "fixture",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "fixture",
+            choices: [{ index: 0, delta, finish_reason: finishReason }],
+          }) +
+          "\n\n",
+      );
+    }
+    response.end("data: [DONE]\n\n");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const modelFile = path.join(isolatedAgentDirectory, "models.json");
+  const before = await handlers["modelsConfig.get"]();
+  const options = {
+    providerName: "plan22-handler-test",
+    provider: {
+      baseUrl: "http://127.0.0.1:" + server.address().port + "/v1",
+      api: "openai-completions",
+      apiKey: "nonsecret-local-fixture",
+    },
+    model: {
+      id: "fixture",
+      name: "Fixture",
+      reasoning: false,
+      input: ["text"],
+      contextWindow: 32768,
+      maxTokens: 128,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    },
+  };
+  const result = await handlers["modelsConfig.test"](options);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.responseText, "OK");
+  assert.equal(result.status, 200);
+  fail = true;
+  const failure = await handlers["modelsConfig.test"](options);
+  assert.equal(failure.ok, false);
+  // TestResult permits a missing status; the provider error must still be preserved.
+  if (failure.status !== undefined) assert.equal(failure.status, 400);
+  assert.match(failure.error, /PLAN22_MODEL_TEST_FAILURE/);
+  assert.equal(calls.length, 2, "test requests must not retry provider failures");
+  assert.ok(
+    calls.every(
+      (call) =>
+        call.url === "/v1/chat/completions" && call.model === "fixture" && call.maxTokens === 16 && call.fixtureAuth,
+    ),
+  );
+  assert.deepEqual(await handlers["modelsConfig.get"](), before);
+  if (before.version === "missing") assert.throws(() => readFileSync(modelFile), { code: "ENOENT" });
+});
 
 test("registerHandlers exposes every contract method exactly once", async () => {
   const { handlers } = await captureHandlers();
