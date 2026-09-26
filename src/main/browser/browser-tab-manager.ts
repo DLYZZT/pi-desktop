@@ -283,15 +283,14 @@ export class BrowserTabManager {
       nativeUserAgent,
       externalProtocolToken: randomUUID(),
     };
-    this.tabs.set(id, record);
-    this.cdp.register(id, view.webContents);
-    this.installTabListeners(record);
     const win = this.options.getWindow();
     if (!win || win.isDestroyed()) {
-      this.tabs.delete(id);
       view.webContents.close();
       throw new BrowserError("BROWSER_DISABLED", "Main window is unavailable");
     }
+    this.tabs.set(id, record);
+    this.cdp.register(id, view.webContents);
+    this.installTabListeners(record);
     win.contentView.addChildView(view);
     view.setVisible(false);
     // A newly constructed WebContents has not necessarily committed its initial

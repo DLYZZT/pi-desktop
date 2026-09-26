@@ -20,7 +20,7 @@ const { BrowserTabManager } = await importTestBundle("browser-tab-input", {
   ],
 });
 
-test("failed debugger attachment during typing does not suppress the next local user takeover", async (t) => {
+function fixture({ windowAvailable = true } = {}) {
   const contents = new EventEmitter();
   const debuggerApi = new EventEmitter();
   Object.assign(debuggerApi, {
@@ -58,7 +58,7 @@ test("failed debugger attachment during typing does not suppress the next local 
   const settings = createDefaultBrowserSettings();
   const session = { getUserAgent: () => "Fixture", setUserAgent() {} };
   const manager = new BrowserTabManager({
-    getWindow: () => win,
+    getWindow: () => (windowAvailable ? win : null),
     getSettings: () => settings,
     getAdvancedRuntimePolicy: () => ({ enabled: false }),
     profiles: { get: () => ({ id: "temporary", mode: "temporary" }), getSession: () => session },
@@ -66,6 +66,11 @@ test("failed debugger attachment during typing does not suppress the next local 
     networkBodyRoot: "unused-test-directory",
     emit() {},
   });
+  return { manager, contents, debuggerApi, frame, waiting };
+}
+
+test("failed debugger attachment during typing does not suppress the next local user takeover", async (t) => {
+  const { manager, frame, waiting, contents } = fixture();
   t.after(() => manager.dispose());
   const tab = await manager.create({ ownerSessionId: "owner", activate: false });
   const snapshot = await manager.snapshot(tab.id, "owner");
@@ -80,4 +85,14 @@ test("failed debugger attachment during typing does not suppress the next local 
   contents.emit("before-input-event", { preventDefault() {} }, { type: "keyDown", key: "x" });
   await cancelled;
   assert.equal(manager.list()[0].control, "user");
+});
+
+test("creating a tab without a live window releases CDP listeners and closes its unowned view", async (t) => {
+  const { manager, contents, debuggerApi } = fixture({ windowAvailable: false });
+  t.after(() => manager.dispose());
+  await assert.rejects(manager.create({ ownerSessionId: "owner" }), (error) => error.code === "BROWSER_DISABLED");
+  assert.equal(contents.isDestroyed(), true);
+  assert.deepEqual(manager.list(), []);
+  assert.equal(debuggerApi.listenerCount("message"), 0);
+  assert.equal(debuggerApi.listenerCount("detach"), 0);
 });
