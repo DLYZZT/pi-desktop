@@ -1,4 +1,11 @@
 import {
+  collectBrowserSnapshot,
+  boundInspectionSnapshot,
+  tabSummary,
+  type SnapshotState,
+  type CapturedSnapshot,
+} from "./browser-snapshot.ts";
+import {
   readBrowserNetworkBody,
   replayBrowserRequest,
   type BrowserNetworkActionServices,
@@ -8,14 +15,13 @@ import { clampInteger } from "./browser-bounds.ts";
 import {
   SNAPSHOT_WORLD_ID,
   externalProtocolGuardScript,
-  createSnapshotScript,
   elementPointScript,
   elementHighlightScript,
 } from "./browser-dom-scripts.ts";
 import { captureBrowserScreenshot, compareScreenshots } from "./browser-screenshot.ts";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import { WebContentsView, type BrowserWindow, type Session, type WebContents, type WebFrameMain } from "electron";
+import { WebContentsView, type BrowserWindow, type Session, type WebContents } from "electron";
 import type {
   BrowserAdvancedRuntimePolicy,
   BrowserBoundsInput,
@@ -44,7 +50,6 @@ import type {
   BrowserSettingsV2,
   BrowserSnapshotNode,
   BrowserTabInfo,
-  BrowserTabSummary,
   BrowserVisualCompareResult,
   BrowserVisualCompareTarget,
 } from "../../contract/browser.ts";
@@ -68,24 +73,6 @@ const MAX_SCRIPT_BYTES = 256 * 1024;
 const MAX_SCRIPT_RESULT_BYTES = 2 * 1024 * 1024;
 const KEY_PATTERN =
   /^(Enter|Tab|Escape|Backspace|Delete|Arrow(Up|Down|Left|Right)|Home|End|Page(Up|Down)|F[1-9]|F1[0-2]|[A-Za-z0-9])$/;
-
-type SnapshotState = {
-  id: string;
-  generation: number;
-  refs: Set<string>;
-  nodes: Map<string, BrowserSnapshotNode>;
-  frames: Map<string, { frame: WebFrameMain; offsetX: number; offsetY: number }>;
-};
-
-type SnapshotTruncation = {
-  text: boolean;
-  nodes: boolean;
-};
-
-type CapturedSnapshot = {
-  snapshot: BrowserPageSnapshot;
-  truncated: SnapshotTruncation;
-};
 
 type TabRecord = {
   view: WebContentsView;
@@ -508,7 +495,14 @@ export class BrowserTabManager {
         return await this.runAction(record, sessionId, "read", async (signal) => {
           const startGeneration = record.info.generation;
           const captured = await this.captureSnapshot(record, maxNodes, maxTextChars, signal);
-          const bounded = boundInspectionSnapshot(record, captured.snapshot, nodeCharBudget);
+          const bounded = boundInspectionSnapshot(captured.snapshot, nodeCharBudget);
+          if (bounded.nodesTruncated && record.snapshot) {
+            const refs = new Set(bounded.snapshot.nodes.map((node) => node.ref));
+            record.snapshot.refs = refs;
+            record.snapshot.nodes = new Map([...record.snapshot.nodes].filter(([ref]) => refs.has(ref)));
+            record.snapshot.frames = new Map([...record.snapshot.frames].filter(([ref]) => refs.has(ref)));
+          }
+
           const snapshot = bounded.snapshot;
           let screenshot: BrowserScreenshotResult | undefined;
           let screenshotUnavailable = false;
@@ -611,95 +605,23 @@ export class BrowserTabManager {
     signal: AbortSignal,
   ): Promise<CapturedSnapshot> {
     record.pendingFileUpload = undefined;
-    const snapshotId = randomUUID();
-    const generation = record.info.generation;
-    const contexts = await collectFrameContexts(record.view.webContents);
-    const nodes: BrowserSnapshotNode[] = [];
-    const textParts: string[] = [];
-    const frameRefs = new Map<string, { frame: WebFrameMain; offsetX: number; offsetY: number }>();
-    let textLength = 0;
-    let textTruncated = false;
-    let nodesTruncated = false;
-    for (const [frameIndex, context] of contexts.entries()) {
-      if (nodes.length >= maxNodes || textLength >= maxTextChars) {
-        // At least this frame remains unread, so either limit may have hidden
-        // additional page text or interactive nodes.
-        nodesTruncated = true;
-        textTruncated = true;
-        break;
-      }
-      const remainingNodes = maxNodes - nodes.length;
-      const remainingText = maxTextChars - textLength;
-      let result: unknown;
-      try {
-        result = await withTimeout(
-          context.frame.executeJavaScript(
-            createSnapshotScript(snapshotId, remainingNodes, remainingText, nodes.length),
-          ),
-          this.options.getSettings().navigation.actionTimeoutMs,
-          "ACTION_TIMEOUT",
-          signal,
-        );
-      } catch {
-        continue;
-      }
-      const parsed = validateSnapshotResult(result);
-      const frameId = `f${frameIndex}`;
-      for (const node of parsed.nodes) {
-        const adjusted: BrowserSnapshotNode = {
-          ...node,
-          frameId,
-          frameUrl: redactBrowserUrl(context.frame.url),
-          ...(node.bounds
-            ? {
-                bounds: {
-                  x: node.bounds.x + context.offsetX,
-                  y: node.bounds.y + context.offsetY,
-                  width: node.bounds.width,
-                  height: node.bounds.height,
-                },
-              }
-            : {}),
-        };
-        nodes.push(adjusted);
-        frameRefs.set(node.ref, context);
-      }
-      if (parsed.text) {
-        textParts.push(parsed.text);
-        textLength += parsed.text.length + 1;
-      }
-      textTruncated ||= parsed.textTruncated;
-      nodesTruncated ||= parsed.nodesTruncated;
-    }
-    if (record.info.generation !== generation) {
+    const captured = await collectBrowserSnapshot(
+      {
+        contents: record.view.webContents,
+        info: () => record.info,
+        timeoutMs: () => this.options.getSettings().navigation.actionTimeoutMs,
+      },
+      maxNodes,
+      maxTextChars,
+      signal,
+    );
+    if (record.info.generation !== captured.state.generation) {
       throw new BrowserError("INSPECTION_STALE", "Browser page changed while collecting a snapshot", {
         details: { reason: "generation-changed" },
       });
     }
-    record.snapshot = {
-      id: snapshotId,
-      generation,
-      refs: new Set(nodes.map((node) => node.ref)),
-      nodes: new Map(nodes.map((node) => [node.ref, node])),
-      frames: frameRefs,
-    };
-    return {
-      snapshot: {
-        tabId: record.info.id,
-        snapshotId,
-        generation,
-        url: redactBrowserUrl(record.info.url),
-        title: record.info.title,
-        text: textParts.join("\n").slice(0, maxTextChars),
-        nodes,
-        truncated: textTruncated || nodesTruncated,
-        untrustedWebContent: true,
-      },
-      truncated: {
-        text: textTruncated,
-        nodes: nodesTruncated,
-      },
-    };
+    record.snapshot = captured.state;
+    return captured;
   }
 
   private async captureScreenshot(
@@ -2120,56 +2042,6 @@ export function createSecureView(
   });
 }
 
-function tabSummary(tab: BrowserTabInfo): BrowserTabSummary {
-  return {
-    id: tab.id,
-    profileId: tab.profileId,
-    url: redactBrowserUrl(tab.url),
-    title: tab.title.slice(0, 512),
-    generation: tab.generation,
-    loading: tab.loading,
-    crashed: tab.crashed,
-    visible: tab.visible,
-  };
-}
-
-function boundInspectionSnapshot(
-  record: TabRecord,
-  snapshot: BrowserPageSnapshot,
-  maxNodeChars: number,
-): { snapshot: BrowserPageSnapshot; nodesTruncated: boolean } {
-  const nodes: BrowserSnapshotNode[] = [];
-  let usedChars = 0;
-  for (const node of snapshot.nodes) {
-    const bounded: BrowserSnapshotNode = {
-      ...node,
-      name: node.name.slice(0, 300),
-      ...(node.value === undefined ? {} : { value: node.value.slice(0, 500) }),
-      ...(node.description === undefined ? {} : { description: node.description.slice(0, 300) }),
-      ...(node.frameUrl === undefined ? {} : { frameUrl: redactBrowserUrl(node.frameUrl, 2_048) }),
-    };
-    const size = JSON.stringify(bounded).length;
-    if (usedChars + size > maxNodeChars) break;
-    nodes.push(bounded);
-    usedChars += size;
-  }
-  if (nodes.length !== snapshot.nodes.length && record.snapshot) {
-    const refs = new Set(nodes.map((node) => node.ref));
-    record.snapshot.refs = refs;
-    record.snapshot.nodes = new Map([...record.snapshot.nodes].filter(([ref]) => refs.has(ref)));
-    record.snapshot.frames = new Map([...record.snapshot.frames].filter(([ref]) => refs.has(ref)));
-  }
-  const nodesTruncated = nodes.length !== snapshot.nodes.length;
-  return {
-    snapshot: {
-      ...snapshot,
-      nodes,
-      truncated: snapshot.truncated || nodesTruncated,
-    },
-    nodesTruncated,
-  };
-}
-
 function normalizeAddress(value: string): string {
   if (typeof value !== "string") throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser address is invalid");
   const trimmed = value.trim();
@@ -2210,43 +2082,6 @@ function navigationFailureError(error: unknown): BrowserError {
   });
 }
 
-async function collectFrameContexts(
-  contents: WebContents,
-): Promise<Array<{ frame: WebFrameMain; offsetX: number; offsetY: number }>> {
-  const result: Array<{ frame: WebFrameMain; offsetX: number; offsetY: number }> = [];
-  const visit = async (frame: WebFrameMain, offsetX: number, offsetY: number): Promise<void> => {
-    result.push({ frame, offsetX, offsetY });
-    const children = frame.frames;
-    if (!children.length) return;
-    let rects: Array<{ x: number; y: number }> = [];
-    try {
-      const value =
-        await frame.executeJavaScript(`Array.from(document.querySelectorAll('iframe,frame')).map((element) => {
-        const rect = element.getBoundingClientRect();
-        return { x: Math.round(rect.x), y: Math.round(rect.y) };
-      })`);
-      if (Array.isArray(value)) {
-        rects = value.filter((entry): entry is { x: number; y: number } =>
-          Boolean(
-            entry &&
-            typeof entry === "object" &&
-            Number.isFinite((entry as { x?: unknown }).x) &&
-            Number.isFinite((entry as { y?: unknown }).y),
-          ),
-        );
-      }
-    } catch {
-      // A destroyed or provisional frame is omitted from the current snapshot.
-    }
-    for (const [index, child] of children.entries()) {
-      const rect = rects[index] ?? { x: 0, y: 0 };
-      await visit(child, offsetX + rect.x, offsetY + rect.y);
-    }
-  };
-  await visit(contents.mainFrame, 0, 0);
-  return result;
-}
-
 function popupLoadOptions(details: Electron.HandlerDetails): Electron.LoadURLOptions {
   const options: Electron.LoadURLOptions = {};
   if (details.referrer?.url) options.httpReferrer = details.referrer;
@@ -2270,38 +2105,6 @@ function isSensitiveNode(node: BrowserSnapshotNode): boolean {
   return /\b(?:buy|purchase|pay|checkout|delete|remove|send|submit|authorize|approve|confirm|download|upload|sign[ -]?in|log[ -]?in)\b/.test(
     text,
   );
-}
-
-function validateSnapshotResult(value: unknown): {
-  text: string;
-  nodes: BrowserSnapshotNode[];
-  textTruncated: boolean;
-  nodesTruncated: boolean;
-} {
-  if (!value || typeof value !== "object")
-    throw new BrowserError("INVALID_BROWSER_REQUEST", "Invalid Browser snapshot result");
-  const result = value as {
-    text?: unknown;
-    nodes?: unknown;
-    textTruncated?: unknown;
-    nodesTruncated?: unknown;
-  };
-  if (typeof result.text !== "string" || !Array.isArray(result.nodes)) {
-    throw new BrowserError("INVALID_BROWSER_REQUEST", "Invalid Browser snapshot result");
-  }
-  const nodes = result.nodes.filter((node): node is BrowserSnapshotNode => {
-    if (!node || typeof node !== "object") return false;
-    const candidate = node as Partial<BrowserSnapshotNode>;
-    return (
-      typeof candidate.ref === "string" && typeof candidate.role === "string" && typeof candidate.name === "string"
-    );
-  });
-  return {
-    text: result.text,
-    nodes,
-    textTruncated: result.textTruncated === true,
-    nodesTruncated: result.nodesTruncated === true,
-  };
 }
 
 function isPoint(value: unknown): value is { x: number; y: number; externalUrl?: string } {
