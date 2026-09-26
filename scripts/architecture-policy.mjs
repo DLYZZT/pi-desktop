@@ -23,11 +23,7 @@ export const architecturePolicy = {
       maxLines: 2767,
       reason: "Existing session list and project operations; 22-04/08 separate their ownership.",
     },
-    "src/agent-host/handlers.ts": {
-      maxLines: 1313,
-      reason:
-        "Explicit RPC registry after 22-06 model/config/auth/file/worktree extraction; remaining session and service coordination stays bounded.",
-    },
+
     "src/renderer/components/MessageView.tsx": {
       maxLines: 2072,
       reason: "Existing rich text, attachment and tool rendering; no increase beyond this checkpoint.",
