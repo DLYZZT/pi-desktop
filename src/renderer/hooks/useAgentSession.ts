@@ -10,7 +10,13 @@ import type {
   SessionTreeNode,
   TextContent,
 } from "@/lib/types";
-import type { ModelCatalogStatus, ModelsListResult, SessionDetail, SessionRuntimeState } from "@contract/types";
+import type {
+  AgentEvent,
+  ModelCatalogStatus,
+  ModelsListResult,
+  SessionDetail,
+  SessionRuntimeState,
+} from "@contract/types";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
 import {
@@ -75,35 +81,17 @@ import { useI18n } from "@/i18n";
 import { sessionClientErrorMessage } from "@/lib/session-error-message";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
 
+import {
+  createSessionTurnState,
+  readCompactResult,
+  reduceSessionTurnState,
+  type QueuedMessages,
+  type StreamAction,
+} from "../lib/session-turn-state";
+export type { AgentPhase, CompactResultInfo, QueuedMessages } from "../lib/session-turn-state";
+
 export type SessionData = SessionDetail;
 type AgentStateResponse = SessionRuntimeState;
-
-interface StreamingState {
-  isStreaming: boolean;
-  streamingMessage: Partial<AgentMessage> | null;
-}
-
-type StreamAction =
-  { type: "start" } | { type: "update"; message: Partial<AgentMessage> } | { type: "end" } | { type: "reset" };
-
-function streamReducer(state: StreamingState, action: StreamAction): StreamingState {
-  switch (action.type) {
-    case "start":
-      return { isStreaming: true, streamingMessage: null };
-    case "update":
-      return { isStreaming: true, streamingMessage: action.message };
-    case "end":
-    case "reset":
-      return { isStreaming: false, streamingMessage: null };
-    default:
-      return state;
-  }
-}
-
-interface AgentEvent {
-  type: string;
-  [key: string]: unknown;
-}
 
 interface CompactCommandResult {
   tokensBefore?: number;
@@ -112,11 +100,6 @@ interface CompactCommandResult {
 
 interface LastAssistantTextResponse {
   text?: string;
-}
-
-export interface QueuedMessages {
-  steering: string[];
-  followUp: string[];
 }
 
 function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null): QueuedMessages {
@@ -129,18 +112,6 @@ function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] 
 type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
 export type { NoticeItem } from "@/lib/notice-queue";
-
-export type AgentPhase =
-  | { kind: "waiting_model" }
-  | { kind: "running_command" }
-  | { kind: "running_tools"; tools: { id: string; name: string }[] }
-  | null;
-
-export interface CompactResultInfo {
-  reason: "manual" | "threshold" | "overflow" | "auto" | string;
-  tokensBefore: number;
-  estimatedTokensAfter: number;
-}
 
 export interface SlashCommandInfo {
   name: string;
@@ -268,13 +239,6 @@ function userMessageKey(message: Partial<AgentMessage>): string {
   });
 }
 
-function readCompactResult(result: unknown, reason: string): CompactResultInfo | null {
-  if (!result || typeof result !== "object") return null;
-  const r = result as CompactCommandResult;
-  if (typeof r.tokensBefore !== "number" || typeof r.estimatedTokensAfter !== "number") return null;
-  return { reason, tokensBefore: r.tokensBefore, estimatedTokensAfter: r.estimatedTokensAfter };
-}
-
 export interface ChatInputHandle {
   insertText: (text: string) => void;
   insertIfEmpty: (content: string) => void;
@@ -316,8 +280,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [entryIds, setEntryIds] = useState<string[]>([]);
-  const [streamState, dispatch] = useReducer(streamReducer, { isStreaming: false, streamingMessage: null });
-  const [agentRunning, setAgentRunning] = useState(false);
+  const [turnState, dispatchTurn] = useReducer(reduceSessionTurnState, undefined, createSessionTurnState);
+  const {
+    streamState,
+    agentRunning,
+    agentPhase,
+    retryInfo,
+    isCompacting,
+    compactError,
+    compactResult,
+    queuedMessages,
+  } = turnState;
+  const dispatch = useCallback((action: StreamAction) => dispatchTurn({ type: "stream", action }), []);
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
   const [modelList, setModelList] = useState<ModelEntry[]>([]);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogStatus>({
@@ -335,9 +309,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [newSessionDefaultModel, setNewSessionDefaultModel] = useState<SelectedModel | null>(null);
   const [toolPreset, setToolPreset] = useState<"none" | "default" | "full">("default");
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevelOption>("auto");
-  const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxAttempts: number; errorMessage?: string } | null>(
-    null,
-  );
   const [contextUsage, setContextUsage] = useState<{
     percent: number | null;
     contextWindow: number;
@@ -347,10 +318,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [forkingEntryId, setForkingEntryId] = useState<string | null>(null);
   const [currentModelOverride, setCurrentModelOverride] = useState<{ provider: string; modelId: string } | null>(null);
   const [pendingModel, setPendingModel] = useState<{ provider: string; modelId: string } | null>(null);
-  const [isCompacting, setIsCompacting] = useState(false);
-  const [compactError, setCompactError] = useState<string | null>(null);
-  const [compactResult, setCompactResult] = useState<CompactResultInfo | null>(null);
-  const [agentPhase, setAgentPhase] = useState<AgentPhase>(null);
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
@@ -359,7 +326,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
-  const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
   const [previousCursor, setPreviousCursor] = useState<string | null>(null);
   const [historyRevision, setHistoryRevision] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -374,6 +340,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const modelListSizeRef = useRef(0);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const agentRunningRef = useRef(false);
+  // Preserve the existing imperative handle while publishing render state through the reducer.
+  const setAgentRunning = useCallback((value: boolean | ((running: boolean) => boolean)) => {
+    const running = typeof value === "function" ? value(agentRunningRef.current) : value;
+    agentRunningRef.current = running;
+    dispatchTurn({ type: "running", running });
+  }, []);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
   const initialScrollDoneRef = useRef(false);
   const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
@@ -527,8 +499,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
           if (liveState.queuedMessages !== undefined)
-            setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages));
-        } else if (d.agentState && !d.agentState.running) setQueuedMessages({ steering: [], followUp: [] });
+            dispatchTurn({ type: "queue-snapshot", queuedMessages: normalizeQueuedMessages(liveState.queuedMessages) });
+        } else if (d.agentState && !d.agentState.running)
+          dispatchTurn({ type: "queue-snapshot", queuedMessages: { steering: [], followUp: [] } });
         if (!liveState?.thinkingLevel && d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
           setThinkingLevel(d.context.thinkingLevel as ThinkingLevelOption);
         }
@@ -913,10 +886,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         optimisticUserMessageKeyRef.current = null;
         if (!agentRunningRef.current) return;
         agentRunningRef.current = false;
-        setAgentRunning(false);
-        setAgentPhase(null);
-        setRetryInfo(null);
-        dispatch({ type: "end" });
+        dispatchTurn({ type: "settled" });
         onAgentEnd?.();
       }
     },
@@ -969,8 +939,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // Mirror compaction state unconditionally: a missed compaction_end
         // would otherwise leave the "Stop compaction" UI stuck. No state
         // (wrapper destroyed) means nothing is compacting.
-        setIsCompacting(state?.isCompacting ?? false);
-        setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages));
+        dispatchTurn({ type: "compaction-state", isCompacting: state?.isCompacting ?? false });
+        dispatchTurn({ type: "queue-snapshot", queuedMessages: normalizeQueuedMessages(state?.queuedMessages) });
         const busy = data.running && state && (state.isStreaming || state.isPromptRunning || state.isCompacting);
         if (busy || !agentRunningRef.current) return;
         if (state) {
@@ -1017,6 +987,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const handleAgentEvent = useCallback(
     (event: AgentEvent) => {
+      dispatchTurn({ type: "event", event });
       switch (event.type) {
         case "channel_turn_start": {
           externalTurnRunIdRef.current = typeof event.runId === "string" ? event.runId : null;
@@ -1037,9 +1008,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
         case "agent_start":
           agentRunningRef.current = true;
-          setAgentRunning(true);
-          setAgentPhase({ kind: "waiting_model" });
-          dispatch({ type: "start" });
           break;
         case "agent_end":
           // One Desktop prompt may have several SDK runs (retry, boundary continuation).
@@ -1065,23 +1033,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             message: (event.error as string | undefined) ?? t("extensionCommandFailed", "Extension command failed"),
           });
           break;
-        case "message_start":
-        case "message_update": {
-          // Ignore streaming events arriving after this run already finished
-          // (e.g. stream data buffered while the tab was frozen, flushed after
-          // reconcile) — they would resurrect a ghost streaming bubble.
-          if (!agentRunningRef.current) break;
-          if ((event.message as { role?: unknown } | undefined)?.role === "system") break;
-          const msg = event.message as Partial<AgentMessage> | undefined;
-          if (msg?.role === "user") {
-            break;
-          }
-          if (msg) {
-            dispatch({ type: "update", message: normalizeToolCalls(msg as AgentMessage) });
-          }
-          setAgentPhase(null);
-          break;
-        }
         case "message_end": {
           // Same late-event guard: after reconcile finished this run,
           // loadSession already loaded this message from the session file —
@@ -1108,62 +1059,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           } else if (completed) {
             updateHistory((current) => appendLocalHistoryMessage(current, normalizeToolCalls(completed)));
           }
-          dispatch({ type: "reset" });
-          setAgentPhase({ kind: "waiting_model" });
           break;
         }
-        case "tool_execution_start": {
-          const id = event.toolCallId as string;
-          const name = event.toolName as string;
-          setAgentPhase((prev) => {
-            const tools = prev?.kind === "running_tools" ? [...prev.tools] : [];
-            if (!tools.some((t) => t.id === id)) tools.push({ id, name });
-            return { kind: "running_tools", tools };
-          });
-          break;
-        }
-        case "tool_execution_end": {
-          const id = event.toolCallId as string;
-          setAgentPhase((prev) => {
-            if (prev?.kind !== "running_tools") return prev;
-            const tools = prev.tools.filter((t) => t.id !== id);
-            if (tools.length === 0) return { kind: "waiting_model" };
-            return { kind: "running_tools", tools };
-          });
-          break;
-        }
-        case "queue_update":
-          setQueuedMessages({
-            steering: [...((event.steering as string[] | undefined) ?? [])],
-            followUp: [...((event.followUp as string[] | undefined) ?? [])],
-          });
-          break;
-        case "auto_retry_start":
-          setRetryInfo({
-            attempt: event.attempt as number,
-            maxAttempts: event.maxAttempts as number,
-            errorMessage: event.errorMessage as string | undefined,
-          });
-          break;
-        case "auto_retry_end":
-          setRetryInfo(null);
-          break;
-        case "auto_compaction_start":
-        case "compaction_start":
-          setIsCompacting(true);
-          setCompactError(null);
-          setCompactResult(null);
-          break;
         case "auto_compaction_end":
         case "compaction_end":
-          setIsCompacting(false);
-          if (event.errorMessage) {
-            setCompactError(event.errorMessage as string);
-            setCompactResult(null);
-          } else if (!event.aborted) {
-            setCompactResult(readCompactResult(event.result, (event.reason as string | undefined) ?? "auto"));
-            if (sessionIdRef.current) void loadSession(sessionIdRef.current);
-          }
+          if (!event.errorMessage && !event.aborted && sessionIdRef.current) void loadSession(sessionIdRef.current);
           break;
         case "extension_ui_request":
           handleExtensionUiRequest(event as ExtensionUiRequest);
@@ -1198,9 +1098,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       promptRunIdRef.current = promptRunId;
       externalTurnRunIdRef.current = null;
       agentRunningRef.current = true;
-      setAgentRunning(true);
-      setAgentPhase(isSlashCommandPrompt ? { kind: "running_command" } : { kind: "waiting_model" });
-      dispatch({ type: "start" });
+      dispatchTurn({ type: "start", phase: isSlashCommandPrompt ? "running_command" : "waiting_model" });
       pendingScrollToUserRef.current = true;
       completionScrollAllowedRef.current = true;
 
@@ -1275,9 +1173,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
         optimisticUserMessageKeyRef.current = null;
         agentRunningRef.current = false;
-        setAgentRunning(false);
-        setAgentPhase(null);
-        dispatch({ type: "end" });
+        dispatchTurn({ type: "send-failed" });
         // ISSUE-006: rethrow so ChatInput restores the draft
         throw e;
       }
@@ -1407,18 +1303,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleCompact = useCallback(async () => {
     const sid = sessionIdRef.current;
     if (!sid || isCompacting) return;
-    setIsCompacting(true);
-    setCompactError(null);
-    setCompactResult(null);
+    dispatchTurn({ type: "compaction-start" });
     try {
       const result = await sendAgentCommand<CompactCommandResult>(sid, { type: "compact" });
-      setCompactResult(readCompactResult(result, "manual"));
+      dispatchTurn({ type: "compaction-result", result: readCompactResult(result, "manual") });
       await loadSession(sid, true);
     } catch (e) {
-      setCompactError(e instanceof Error ? e.message : String(e));
-      setCompactResult(null);
+      dispatchTurn({ type: "compaction-error", error: e instanceof Error ? e.message : String(e) });
+      dispatchTurn({ type: "compaction-result", result: null });
     } finally {
-      setIsCompacting(false);
+      dispatchTurn({ type: "compaction-state", isCompacting: false });
     }
   }, [isCompacting, loadSession]);
 
@@ -1533,14 +1427,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
                 error: t("noActiveSessionToCompact", "No active session to compact"),
               });
             }
-            setIsCompacting(true);
-            setCompactError(null);
-            setCompactResult(null);
+            dispatchTurn({ type: "compaction-start" });
             const result = await sendAgentCommand<CompactCommandResult>(sid, {
               type: "compact",
               ...(args ? { customInstructions: args } : {}),
             });
-            setCompactResult(readCompactResult(result, "manual"));
+            dispatchTurn({ type: "compaction-result", result: readCompactResult(result, "manual") });
             if (await loadSession(sid, true)) promoteNewSession();
             return complete({ handled: true, message: t("contextCompacted", "Compacted context") });
           }
@@ -1603,7 +1495,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       } catch (e) {
         return complete({ handled: true, error: e instanceof Error ? e.message : String(e) });
       } finally {
-        if (commandName === "compact") setIsCompacting(false);
+        if (commandName === "compact") dispatchTurn({ type: "compaction-state", isCompacting: false });
       }
     },
     [
@@ -1732,7 +1624,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const result = await sendAgentCommand<{ steering?: string[]; followUp?: string[] }>(sid, { type: "clear_queue" });
       // clearQueue also emits an empty queue_update, but that only reaches us
       // while the stream is connected — clear locally so idle recalls update the UI.
-      setQueuedMessages({ steering: [], followUp: [] });
+      dispatchTurn({ type: "queue-snapshot", queuedMessages: { steering: [], followUp: [] } });
       const texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])].map(skillInvocationCommandText);
       if (texts.length > 0) {
         opts.chatInputRef?.current?.prependText(texts.join("\n\n"));
@@ -1986,16 +1878,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           void loadTools(session.id);
           if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
             agentRunningRef.current = true;
-            setAgentRunning(true);
-            setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
-            dispatch({ type: "start" });
+            dispatchTurn({ type: "start", phase: agentState.state.isStreaming ? "waiting_model" : "running_command" });
             if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
               void waitForPromptSettlement(session.id);
             }
           }
         }
         if (agentState?.state) {
-          if (agentState.state.isCompacting !== undefined) setIsCompacting(agentState.state.isCompacting);
+          if (agentState.state.isCompacting !== undefined)
+            dispatchTurn({ type: "compaction-state", isCompacting: agentState.state.isCompacting });
           if (agentState.state.contextUsage !== undefined) setContextUsage(agentState.state.contextUsage ?? null);
           if (agentState.state.systemPrompt !== undefined) setSystemPrompt(agentState.state.systemPrompt ?? null);
           if (agentState.state.thinkingLevel !== undefined)
@@ -2005,7 +1896,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (agentState.state.extensionWidgets !== undefined)
             setExtensionWidgets(agentState.state.extensionWidgets ?? []);
           if (agentState.state.queuedMessages !== undefined)
-            setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
+            dispatchTurn({
+              type: "queue-snapshot",
+              queuedMessages: normalizeQueuedMessages(agentState.state.queuedMessages),
+            });
         }
       });
     }
@@ -2147,13 +2041,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // Compact error auto-dismiss
   useEffect(() => {
     if (!compactError) return;
-    const t = setTimeout(() => setCompactError(null), 3000);
+    const t = setTimeout(() => dispatchTurn({ type: "compaction-error", error: null }), 3000);
     return () => clearTimeout(t);
   }, [compactError]);
 
   useEffect(() => {
     if (!compactResult) return;
-    const t = setTimeout(() => setCompactResult(null), 6000);
+    const t = setTimeout(() => dispatchTurn({ type: "compaction-result", result: null }), 6000);
     return () => clearTimeout(t);
   }, [compactResult]);
 
