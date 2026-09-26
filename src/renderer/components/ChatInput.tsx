@@ -25,15 +25,8 @@ import {
   selectDraftImageAdditions,
   type ChatDraftImage,
 } from "@/lib/draft-store";
-import { LatestAbortableRequest } from "@/lib/latest-abortable-request";
-import { fileIndex } from "@/lib/api-client";
 import { buildAtInsertText, extractAtQuery, type AtQueryMatch, type FileIndexEntry } from "@/lib/file-fuzzy";
-import {
-  FileSuggestionLruCache,
-  fileSuggestionCacheKey,
-  projectFileSuggestionResponse,
-  type FileSuggestionDegradedReason,
-} from "@/lib/file-suggestion-client";
+import { useFileSuggestions } from "@/hooks/useFileSuggestions";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
@@ -326,15 +319,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const [atQuery, setAtQuery] = useState<AtQueryMatch | null>(null);
   const [atMenuOpen, setAtMenuOpen] = useState(false);
   const [atActiveIndex, setAtActiveIndex] = useState(0);
-  const [atSuggestionState, setAtSuggestionState] = useState<{
-    cwd: string;
-    tokenKey: string;
-    query: string;
-    matches: FileIndexEntry[];
-    truncated: boolean;
-    degradedReason?: FileSuggestionDegradedReason;
-    status: "loading" | "ready" | "error";
-  } | null>(null);
   const [imageAttachNotice, setImageAttachNotice] = useState<string | null>(null);
   const [submissionNotice, setSubmissionNotice] = useState<string | null>(null);
 
@@ -353,8 +337,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const slashCommandsRequestedRef = useRef(false);
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const atItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const fileSuggestionCacheRef = useRef(new FileSuggestionLruCache());
-  const fileSuggestionRequestRef = useRef(new LatestAbortableRequest());
   const draftKeyRef = useRef(draftKey);
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
@@ -867,10 +849,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     [cwd],
   );
 
-  const atQueryText = atQuery?.query ?? null;
-  // Open/reset the menu whenever the @token appears or changes (mirrors the
-  // slash menu: Escape closes it, the next keystroke re-opens it).
-  const atTokenKey = atQuery === null ? null : `${atQuery.start}:${atQuery.quoted ? 1 : 0}:${atQuery.query}`;
+  const { tokenKey: atTokenKey, state: activeSuggestionState, matches: atMatches } = useFileSuggestions(cwd, atQuery);
+
+  // A changed token reopens the menu; Escape closes it until the next edit.
   useEffect(() => {
     if (atTokenKey === null) {
       setAtMenuOpen(false);
@@ -880,76 +861,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     setAtMenuOpen(true);
     setAtActiveIndex(0);
   }, [atTokenKey]);
-
-  // Request candidates for the active token. Empty queries and directory
-  // drill-down browse immediately; non-empty searches debounce briefly. The
-  // request generation and token tag both prevent stale responses from
-  // replacing a newer query.
-  useEffect(() => {
-    if (atTokenKey === null || atQueryText === null || !cwd) {
-      fileSuggestionRequestRef.current.cancel();
-      setAtSuggestionState(null);
-      return;
-    }
-    const fetchCwd = cwd;
-    const query = atQueryText;
-    const tokenKey = atTokenKey;
-    const platform = window.piBridge?.platform ?? "linux";
-    const cacheKey = fileSuggestionCacheKey(fetchCwd, query, platform);
-    const cached = fileSuggestionCacheRef.current.get(cacheKey);
-    if (cached) {
-      setAtSuggestionState({ cwd: fetchCwd, tokenKey, query, ...cached, status: "ready" });
-      return;
-    }
-
-    setAtSuggestionState({ cwd: fetchCwd, tokenKey, query, matches: [], truncated: false, status: "loading" });
-    const requests = fileSuggestionRequestRef.current;
-    let generation: number | null = null;
-    const timer = setTimeout(
-      () => {
-        const request = requests.begin();
-        generation = request.generation;
-        // The RPC has no backend cancellation method. The existing request
-        // token invalidates local results when the query or workspace changes.
-        fileIndex(fetchCwd, query)
-          .then((data) => {
-            if (!requests.isCurrent(request.generation)) return;
-            const snapshot = projectFileSuggestionResponse(data, query);
-            fileSuggestionCacheRef.current.setWithTtl(
-              cacheKey,
-              snapshot,
-              query === "" || query.endsWith("/") ? 2_000 : 1_000,
-            );
-            setAtSuggestionState({ cwd: fetchCwd, tokenKey, query, ...snapshot, status: "ready" });
-          })
-          .catch((error) => {
-            if (!requests.isCurrent(request.generation) || (error as { name?: string })?.name === "AbortError") return;
-            setAtSuggestionState({
-              cwd: fetchCwd,
-              tokenKey,
-              query,
-              matches: [],
-              truncated: false,
-              status: "error",
-            });
-          })
-          .finally(() => requests.finish(request.generation));
-      },
-      query === "" || query.endsWith("/") ? 0 : 150,
-    );
-    return () => {
-      clearTimeout(timer);
-      if (generation !== null) requests.cancel(generation);
-    };
-  }, [atTokenKey, atQueryText, cwd]);
-
-  const suggestionStateInUse =
-    atSuggestionState !== null && atSuggestionState.cwd === cwd && atSuggestionState.tokenKey === atTokenKey;
-  const activeSuggestionState = suggestionStateInUse ? atSuggestionState : null;
-  const atMatches: FileIndexEntry[] = React.useMemo(
-    () => activeSuggestionState?.matches ?? [],
-    [activeSuggestionState],
-  );
 
   const applyAtCompletion = useCallback(
     (entry: FileIndexEntry) => {

@@ -8,8 +8,9 @@ export const architecturePolicy = {
   lineLimit: 1200,
   budgets: {
     "src/renderer/components/ChatInput.tsx": {
-      maxLines: 3138,
-      reason: "Existing input, attachment and mention UI; scheduled for 22-08.",
+      maxLines: 3046,
+      reason:
+        "File candidate reads/cache have a dedicated hook; attachment, submission and composer UI remain for 22-08.",
     },
     "src/main/browser/browser-tab-manager.ts": {
       maxLines: 1840,

@@ -271,6 +271,22 @@ test("@ autocomplete ignores old results, errors and settlement without retiring
     assert.match(renderedText(renderer.root), /current\.txt/);
     assert.doesNotMatch(renderedText(renderer.root), /Old query failed|Unable to load/);
     assert.equal(renderer.root.findByType("textarea").props.value, "@current");
+
+    textareaNode.value = "@failed";
+    textareaNode.selectionStart = textareaNode.selectionEnd = textareaNode.value.length;
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: textareaNode }));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 175)));
+    await act(async () => pending[4].reject(new Error("Current query failed")));
+    assert.match(renderedText(renderer.root), /File suggestions are temporarily unavailable/);
+    assert.equal(renderer.root.findByType("textarea").props.value, "@failed");
+
+    textareaNode.value = "@recovered";
+    textareaNode.selectionStart = textareaNode.selectionEnd = textareaNode.value.length;
+    await act(async () => renderer.root.findByType("textarea").props.onChange({ target: textareaNode }));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 175)));
+    await act(async () => pending[5].resolve({ matches: [{ path: "recovered.txt" }], truncated: false }));
+    assert.match(renderedText(renderer.root), /recovered\.txt/);
+    assert.doesNotMatch(renderedText(renderer.root), /temporarily unavailable/);
   } finally {
     api.use(api.defaultImplementation);
     if (renderer) await act(async () => renderer.unmount());
