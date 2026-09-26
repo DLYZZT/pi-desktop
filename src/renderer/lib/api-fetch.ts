@@ -388,7 +388,7 @@ export class ApiEventSource {
         .split("/")
         .filter(Boolean);
 
-      if (segs[0] === "agent" && segs[2] === "events") {
+      if (segs[0] === "agent" && segs[1] !== "running" && segs[2] === "events") {
         const sessionId = decodeURIComponent(segs[1]);
         this.unsub = await subscribeAgentEvents(sessionId, (event) => {
           if (this.closed || gen !== this.generation) return;
