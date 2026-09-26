@@ -34,6 +34,18 @@ const IGNORED_NAMES = new Set([
   ".DS_Store",
 ]);
 
+function fileWatchLeaseKey(filePath: string, watchId?: string): string {
+  if (typeof filePath !== "string" || !filePath)
+    throw new RpcError({ code: "BAD_REQUEST", message: "Watch path is required" });
+  // Keep path-only leases for existing callers until the compatibility adapter
+  // is retired. Identified consumers cannot replace or stop those leases.
+  if (watchId === undefined) return `files.watch:${filePath}`;
+  if (typeof watchId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(watchId)) {
+    throw new RpcError({ code: "BAD_REQUEST", message: "Invalid file watch ID" });
+  }
+  return `files.watch.id:${watchId}:${filePath}`;
+}
+
 const EXT_TO_LANGUAGE: Record<string, string> = {
   ts: "typescript",
   tsx: "typescript",
@@ -276,20 +288,42 @@ export function createFileHandlers(fileWatch: Pick<ReturnType<typeof createFileW
     },
 
     startWatch: async (params, context) => {
-      const { path: filePath, sourceSessionId } = params as {
-        path: string;
-        sourceSessionId?: string;
+      const { path: filePath, sourceSessionId, watchId } = params;
+      const leaseKey = fileWatchLeaseKey(filePath, watchId);
+      if (watchId !== undefined && !context)
+        throw new RpcError({ code: "BAD_REQUEST", message: "Watch IDs require an RPC context" });
+      let released = false;
+      let acquired: (() => void) | undefined;
+      const release = () => {
+        if (released) return;
+        released = true;
+        acquired?.();
+        acquired = undefined;
       };
-      const leaseKey = `files.watch:${filePath}`;
-      context?.releaseLease(leaseKey);
-      const release = await fileWatch.start(filePath, sourceSessionId);
+      // Reserve before authorization/installation can suspend. A stop or port
+      // close can now retire this exact pending acquisition as well.
       context?.setLease(leaseKey, release);
-      return { ok: true as const };
+      try {
+        if (released) return { ok: true as const };
+        const stop = await fileWatch.start(filePath, sourceSessionId);
+        if (released) stop();
+        else acquired = stop;
+        return { ok: true as const };
+      } catch (error) {
+        if (!released) {
+          if (context) context.releaseLease(leaseKey);
+          else release();
+        }
+        throw error;
+      }
     },
 
     stopWatch: async (params, context) => {
-      const { path: filePath } = params as { path: string };
-      if (context) context.releaseLease(`files.watch:${filePath}`);
+      const { path: filePath, watchId } = params;
+      const leaseKey = fileWatchLeaseKey(filePath, watchId);
+      if (watchId !== undefined && !context)
+        throw new RpcError({ code: "BAD_REQUEST", message: "Watch IDs require an RPC context" });
+      if (context) context.releaseLease(leaseKey);
       else fileWatch.stop(filePath);
       return { ok: true as const };
     },

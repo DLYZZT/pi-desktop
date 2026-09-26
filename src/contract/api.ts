@@ -338,11 +338,11 @@ export interface Api {
     };
   };
   "files.watchStart": {
-    params: { path: string; sourceSessionId?: string };
+    params: { path: string; sourceSessionId?: string; watchId?: string };
     result: { ok: true };
   };
   "files.watchStop": {
-    params: { path: string };
+    params: { path: string; watchId?: string };
     result: { ok: true };
   };
 

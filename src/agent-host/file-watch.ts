@@ -25,7 +25,7 @@ export function createFileWatchService(server: RpcServer) {
           path: filePath,
           event: "connected",
         });
-        return releaseFileWatch(filePath);
+        return releaseFileWatch(filePath, existing);
       }
 
       if (!fs.existsSync(filePath)) {
@@ -39,8 +39,10 @@ export function createFileWatchService(server: RpcServer) {
       let watcher: fs.FSWatcher;
       let watchEntry: WatchEntry | null = null;
       const emitChange = () => {
+        if (!watchEntry || watches.get(filePath) !== watchEntry) return;
         if (watchEntry?.timer) clearTimeout(watchEntry.timer);
         const timer = setTimeout(() => {
+          if (!watchEntry || watches.get(filePath) !== watchEntry) return;
           if (watchEntry) watchEntry.timer = null;
           try {
             const s = fs.statSync(filePath);
@@ -84,6 +86,7 @@ export function createFileWatchService(server: RpcServer) {
       }
 
       watcher.on("error", () => {
+        if (!watchEntry || watches.get(filePath) !== watchEntry) return;
         server.emit("files.changed", filePath, {
           path: filePath,
           event: "error",
@@ -98,7 +101,7 @@ export function createFileWatchService(server: RpcServer) {
         path: filePath,
         event: "connected",
       });
-      return releaseFileWatch(filePath);
+      return releaseFileWatch(filePath, watchEntry);
     },
 
     stop(filePath: string, force = false): void {
@@ -107,11 +110,12 @@ export function createFileWatchService(server: RpcServer) {
   };
 }
 
-function releaseFileWatch(filePath: string): () => void {
+function releaseFileWatch(filePath: string, owner: WatchEntry): () => void {
   let released = false;
   return () => {
     if (released) return;
     released = true;
+    if (watches.get(filePath) !== owner) return;
     stop(filePath);
   };
 }
@@ -121,13 +125,13 @@ function stop(filePath: string, force = false): void {
   if (!entry) return;
   entry.refs -= 1;
   if (!force && entry.refs > 0) return;
+  watches.delete(filePath);
+  if (entry.timer) clearTimeout(entry.timer);
   try {
     entry.watcher.close();
   } catch {
     /* ignore */
   }
-  if (entry.timer) clearTimeout(entry.timer);
-  watches.delete(filePath);
 }
 
 export function stopAllFileWatches(): void {
