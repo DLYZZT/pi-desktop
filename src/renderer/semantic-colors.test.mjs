@@ -20,11 +20,8 @@ test("status colors in planned component owners use semantic theme tokens", () =
 });
 
 test("ModelsConfig connection-test badge and button use theme semantic colors", () => {
-  const source = readFileSync(new URL("components/ModelsConfig.tsx", import.meta.url), "utf8");
-  const modelDetail = source.slice(
-    source.indexOf("function ModelDetail("),
-    source.indexOf("function ManagedModelsControl("),
-  );
+  const source = readFileSync(new URL("components/models/ModelForms.tsx", import.meta.url), "utf8");
+  const modelDetail = source.slice(source.indexOf("function ModelDetail("));
   const testUi = modelDetail.slice(modelDetail.indexOf("{testSummary &&"), modelDetail.indexOf("onClick={onDelete}"));
 
   assert.ok(testUi.length > 0, "connection-test UI source");

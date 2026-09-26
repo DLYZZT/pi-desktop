@@ -79,10 +79,16 @@ async function mount(t, options = {}) {
   const requests = testApi.state.requests,
     sources = testApi.state.sources,
     timers = [],
-    opened = [];
+    opened = [],
+    focusTimers = [],
+    focused = [];
   let changed = 0;
   const nativeTimeout = globalThis.setTimeout;
   t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => {
+    if (options.captureFocus && delay === 30) {
+      focusTimers.push(() => callback(...args));
+      return {};
+    }
     if (delay !== 2000) return nativeTimeout(callback, delay, ...args);
     const timer = {};
     timers.push({ timer, callback });
@@ -131,13 +137,28 @@ async function mount(t, options = {}) {
     else delete globalThis.window;
   });
   await act(async () => {
-    renderer = create(createElement(Host));
+    renderer = create(createElement(Host), {
+      createNodeMock: options.captureFocus
+        ? (element) =>
+            element.type === "input"
+              ? {
+                  focus: () => focused.push(element.props.placeholder),
+                }
+              : null
+        : undefined,
+    });
   });
   return {
     renderer,
     requests,
     sources,
     opened,
+    focused,
+    async flushFocus() {
+      await act(async () => {
+        for (const callback of focusTimers.splice(0)) callback();
+      });
+    },
     get changed() {
       return changed;
     },
@@ -171,6 +192,37 @@ async function mount(t, options = {}) {
     },
   };
 }
+
+test("provider picker owns its search and focus lifecycle, supports Escape, and returns a custom selection to the editor", async (t) => {
+  const fixture = await mount(t, { captureFocus: true });
+  const isPicker = (node) => typeof node.type === "function" && node.type.name === "AddProviderPicker";
+  await fixture.click("+ Add provider");
+  await act(async () => fixture.detail("AddProviderPicker").findByType("input").props.onKeyDown({ key: "Escape" }));
+  await fixture.flushFocus();
+  assert.deepEqual(fixture.focused, [], "an unmounted picker cannot steal focus");
+  assert.equal(fixture.renderer.root.findAll(isPicker).length, 0);
+
+  await fixture.click("+ Add provider");
+  await fixture.flushFocus();
+  assert.deepEqual(fixture.focused, ["Search providers…"]);
+  await act(async () =>
+    fixture
+      .detail("AddProviderPicker")
+      .findByType("input")
+      .props.onChange({ target: { value: "no-such-provider" } }),
+  );
+  assert.match(text(fixture.detail("AddProviderPicker")), /No providers match/);
+  await act(async () => fixture.detail("AddProviderPicker").findByType("input").props.onKeyDown({ key: "Escape" }));
+  await fixture.click("+ Add provider");
+  assert.equal(fixture.detail("AddProviderPicker").findByType("input").props.value, "");
+  const custom = fixture
+    .detail("AddProviderPicker")
+    .find((node) => node.type === "button" && text(node).includes("OpenAI / Anthropic compatible"));
+  await act(async () => custom.props.onClick());
+  assert.equal(fixture.renderer.root.findAll(isPicker).length, 0);
+  assert.ok(fixture.detail("ProviderDetail"));
+  assert.equal(fixture.requests.length, 0, "choosing a provider edits local config before explicit save");
+});
 
 test("API key save and removal notify the parent once after each committed change, including sync warnings", async (t) => {
   const fixture = await mount(t);

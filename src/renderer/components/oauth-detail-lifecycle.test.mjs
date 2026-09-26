@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const source = await readFile(new URL("./ModelsConfig.tsx", import.meta.url), "utf8");
-const detail = source.slice(source.indexOf("function OAuthDetail("), source.indexOf("function ApiKeyDetail("));
+const detail = await readFile(new URL("./models/OAuthDetail.tsx", import.meta.url), "utf8");
 
 test("OAuthDetail has one provider lifecycle effect and only its cleanup cancels the captured provider", () => {
   const lifecycleStart = detail.indexOf("// Reset state on entry/provider changes.");

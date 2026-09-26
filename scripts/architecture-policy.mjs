@@ -16,10 +16,6 @@ export const architecturePolicy = {
       reason:
         "Browser tab/control owner after capture, snapshot, script, network and input extraction; lifecycle and inspection orchestration remain.",
     },
-    "src/renderer/components/ModelsConfig.tsx": {
-      maxLines: 2827,
-      reason: "Provider/auth/editor UI after typed RPC and explicit login ownership; scheduled for 22-08.",
-    },
     "src/renderer/components/SessionSidebar.tsx": {
       maxLines: 2700,
       reason: "Window session index and typed sidebar RPC are in place; project/list UI remains for 22-08.",
