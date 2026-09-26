@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { ApiHandler, RpcServer } from "../../contract/rpc";
 import { RpcError } from "../../contract/types";
+import { isAgentCommand } from "../../contract/agent-commands";
 import { getRpcSession, startRpcSession } from "../rpc-manager";
 import { resolveSessionPath } from "../session-reader";
 import { readSessionSnapshot } from "../session-readonly";
@@ -69,10 +70,10 @@ export function createAgentHandlers({
     },
 
     command: async (params) => {
-      const { sessionId, command } = params as {
-        sessionId: string;
-        command: Record<string, unknown>;
-      };
+      const { sessionId, command } = params;
+      if (!isAgentCommand(command)) {
+        throw new RpcError({ code: "BAD_REQUEST", message: "Agent command must have a non-empty string type" });
+      }
       const existing = getRpcSession(sessionId);
       if (existing?.isAlive()) {
         // Ensure event subscription

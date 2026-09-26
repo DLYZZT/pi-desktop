@@ -4,6 +4,7 @@
  */
 import { createRpcClient, type PiRpc } from "@contract/rpc";
 import type { ApiMethod, ApiParams, ApiResult, StreamTopic, Streams } from "@contract/api";
+import type { AgentCommand } from "@contract/types";
 
 let rpc: PiRpc | null = null;
 let connectPromise: Promise<PiRpc> | null = null;
@@ -210,8 +211,9 @@ export async function newAgent(params: ApiParams<"agent.new">) {
   return call("agent.new", params);
 }
 
-export async function agentCommand(sessionId: string, command: Record<string, unknown>) {
-  return call("agent.command", { sessionId, command: command as never });
+/** Open transport entry: Host validates the envelope and dispatches the payload. */
+export async function agentCommand(sessionId: string, command: AgentCommand) {
+  return call("agent.command", { sessionId, command });
 }
 
 export async function agentState(sessionId: string) {

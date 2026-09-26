@@ -1,10 +1,12 @@
 import { useState, useCallback, useRef, useEffect, useReducer } from "react";
 import type { AgentMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { AgentEvent, SessionDetail, SessionRuntimeState } from "@contract/types";
+import type { SlashCommandInfo } from "@contract/agent-commands";
+export type { SlashCommandInfo } from "@contract/agent-commands";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { agentState, newAgent } from "@/lib/api-client";
-import { getToolNamesForPreset, getPresetFromTools, type ToolEntry } from "@/lib/tool-presets";
+import { getToolNamesForPreset, getPresetFromTools } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { useSessionEvents } from "./useSessionEvents";
 import { requestAutoSessionTitle, shouldAutoTitleMessage } from "../lib/auto-session-title";
@@ -39,15 +41,6 @@ export type { AgentPhase, CompactResultInfo, QueuedMessages } from "../lib/sessi
 export type SessionData = SessionDetail;
 type AgentStateResponse = SessionRuntimeState;
 
-interface CompactCommandResult {
-  tokensBefore?: number;
-  estimatedTokensAfter?: number;
-}
-
-interface LastAssistantTextResponse {
-  text?: string;
-}
-
 function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null): QueuedMessages {
   return {
     steering: (q?.steering ?? []).map(skillInvocationCommandText),
@@ -56,19 +49,6 @@ function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] 
 }
 
 export type { NoticeItem } from "@/lib/notice-queue";
-
-export interface SlashCommandInfo {
-  name: string;
-  description?: string;
-  source: "extension" | "prompt" | "skill";
-  sourceInfo?: {
-    path: string;
-    source: string;
-    scope: "user" | "project" | "temporary";
-    origin: "package" | "top-level";
-    baseDir?: string;
-  };
-}
 
 export type BuiltinSlashCommandResult =
   { handled: false } | { handled: true; message?: string; error?: string; action?: "openSessionStats" };
@@ -159,10 +139,6 @@ export interface AttachedImage {
   mimeType: string;
   previewUrl: string;
 }
-
-type SlashCommandsResponse = {
-  commands?: SlashCommandInfo[];
-};
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
   const { t } = useI18n();
@@ -397,7 +373,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         request = toolsRequestGate.begin();
       if (!ownsView()) return;
       try {
-        const tools = await sendAgentCommand<ToolEntry[]>(sid, { type: "get_tools" });
+        const tools = await sendAgentCommand(sid, { type: "get_tools" });
         if (tools && ownsView() && toolsRequestGate.isCurrent(request) && sessionIdRef.current === sid) {
           setToolPresetState(getPresetFromTools(tools));
         }
@@ -469,7 +445,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
     setSlashCommandsLoading(true);
     try {
-      const data = await sendAgentCommand<SlashCommandsResponse>(sid, { type: "get_commands" });
+      const data = await sendAgentCommand(sid, { type: "get_commands" });
       if (!isCurrent()) return [] as SlashCommandInfo[];
       const commands = data?.commands ?? [];
       setSlashCommands(commands);
@@ -873,13 +849,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!sid || !ownsView()) return;
       setForkingEntryId(entryId);
       try {
-        const result = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {
+        const result = await sendAgentCommand(sid, {
           type: "fork",
           entryId,
         });
-        const { cancelled, newSessionId } = result ?? {};
-        if (ownsView() && !cancelled && newSessionId) {
-          onSessionForked?.(newSessionId);
+        if (ownsView() && !result.cancelled && result.newSessionId) {
+          onSessionForked?.(result.newSessionId);
         }
       } catch (e) {
         console.error("Fork failed:", e);
@@ -976,7 +951,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     runtimeGate.touch("compaction");
     dispatchTurn({ type: "compaction-start" });
     try {
-      const result = await sendAgentCommand<CompactCommandResult>(sid, { type: "compact" });
+      const result = await sendAgentCommand(sid, { type: "compact" });
       if (!ownsView()) return;
       dispatchTurn({ type: "compaction-result", result: readCompactResult(result, "manual") });
       await loadSession(sid, true);
@@ -1022,7 +997,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             }
             runtimeGate.touch("compaction");
             dispatchTurn({ type: "compaction-start" });
-            const result = await sendAgentCommand<CompactCommandResult>(sid, {
+            const result = await sendAgentCommand(sid, {
               type: "compact",
               ...(args ? { customInstructions: args } : {}),
             });
@@ -1060,7 +1035,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
           case "session": {
             if (!sid) return complete({ handled: true, error: t("noActiveSession", "No active session") });
-            const stats = await sendAgentCommand<SessionStatsInfo>(sid, { type: "get_session_stats" });
+            const stats = await sendAgentCommand(sid, { type: "get_session_stats" });
             if (!ownsView()) return { handled: true };
             if (stats) {
               setSessionStatsOverride(stats);
@@ -1071,7 +1046,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
           case "copy": {
             if (!sid) return complete({ handled: true, error: t("noActiveSession", "No active session") });
-            const data = await sendAgentCommand<LastAssistantTextResponse>(sid, { type: "get_last_assistant_text" });
+            const data = await sendAgentCommand(sid, { type: "get_last_assistant_text" });
             if (!ownsView()) return { handled: true };
             const textToCopy = data?.text ?? "";
             if (!textToCopy) {
@@ -1223,7 +1198,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (!sid || !ownsView()) return;
     const snapshot = runtimeGate.capture();
     try {
-      const result = await sendAgentCommand<{ steering?: string[]; followUp?: string[] }>(sid, { type: "clear_queue" });
+      const result = await sendAgentCommand(sid, { type: "clear_queue" });
       if (!ownsView()) return;
       // clearQueue also emits an empty queue_update, but that only reaches us
       // while the stream is connected — clear locally so idle recalls update the UI.

@@ -50,6 +50,23 @@ async function captureHandlers() {
   return { handlers, events };
 }
 
+test("agent command envelope validation runs before session lookup without closing the open command domain", async () => {
+  const { handlers } = await captureHandlers();
+  for (const command of [null, [], {}, { type: false }, { type: " " }]) {
+    await assert.rejects(
+      handlers["agent.command"]({ sessionId: "missing-fixture", command }),
+      (error) => error.code === "BAD_REQUEST",
+    );
+  }
+  await assert.rejects(
+    handlers["agent.command"]({
+      sessionId: "missing-fixture",
+      command: { type: "future_sdk_command", opaque: { retained: true } },
+    }),
+    (error) => error.code === "NOT_FOUND",
+  );
+});
+
 test("model connection tests use isolated configuration and preserve success and provider errors", async (t) => {
   const { handlers } = await captureHandlers();
   const calls = [];
