@@ -52,6 +52,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check runtime architecture and structure
+        run: npm run check:architecture
+
       - name: Install pinned Rust toolchain (Windows)
         if: runner.os == 'Windows'
         run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc

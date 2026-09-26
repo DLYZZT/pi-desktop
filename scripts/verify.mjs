@@ -23,6 +23,7 @@ run("lint", "npm", ["run", "lint"]);
 run("typecheck (main/host)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.json"]);
 run("typecheck (renderer)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.renderer.json"]);
 run("dependency contract", "node", ["scripts/check-dependency-contract.mjs"]);
+run("architecture boundaries and structure", "node", ["scripts/check-architecture.mjs"]);
 run("unit tests", "npm", ["test"]);
 run("managed process development workflows", "npm", ["run", "test:managed-process-workflows"]);
 run("managed process 60s flood", "npm", ["run", "test:managed-process-flood"]);
