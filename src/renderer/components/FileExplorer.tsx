@@ -1,61 +1,16 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { getFileIcon, FolderIcon } from "./FileIcons";
-import { encodeFilePathForApi, getRelativeFilePath, joinFilePath } from "@/lib/file-paths";
-import { directoryRefreshAction, shouldLoadDirectoryOnExpand } from "@/lib/directory-refresh";
-import type { GitStatusResult } from "@shared/api-types";
+import { getRelativeFilePath } from "@/lib/file-paths";
+import { useDirectoryListing, useFileExplorer } from "@/hooks/useFileExplorer";
+import type { FileNode } from "@/lib/file-explorer-data";
 import { useI18n } from "@/i18n";
 import { formatNumber } from "@/lib/locale-format";
-
-type Translate = (key: string, fallback: string) => string;
-
-interface FileEntry {
-  name: string;
-  isDir: boolean;
-  size: number;
-  modified: string;
-}
-
-interface FileNode {
-  name: string;
-  fullPath: string;
-  isDir: boolean;
-  size: number;
-  children?: FileNode[];
-  loaded?: boolean;
-}
 
 interface Props {
   cwd: string;
   onOpenFile: (filePath: string, fileName: string) => void;
   refreshKey?: number;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
-}
-
-async function fetchEntries(dirPath: string, t: Translate): Promise<FileNode[]> {
-  const encoded = encodeFilePathForApi(dirPath);
-  const res = await fetch(`/api/files/${encoded}?type=list`);
-  if (!res.ok) {
-    let message = t("fileListLoadFailedStatus", "Failed to load files (HTTP {status})").replace(
-      "{status}",
-      String(res.status),
-    );
-    try {
-      const data = (await res.json()) as { error?: string };
-      if (data.error) message = data.error;
-    } catch {
-      // ignore non-JSON error bodies
-    }
-    throw new Error(message);
-  }
-  const data = (await res.json()) as { entries?: FileEntry[] };
-  return (data.entries ?? []).map((e) => ({
-    name: e.name,
-    fullPath: joinFilePath(dirPath, e.name),
-    isDir: e.isDir,
-    size: e.size,
-    children: e.isDir ? [] : undefined,
-    loaded: !e.isDir,
-  }));
 }
 
 function TreeNode({
@@ -79,54 +34,24 @@ function TreeNode({
 }) {
   const { t } = useI18n();
   const open = expandedPaths.has(node.fullPath);
-  const [children, setChildren] = useState<FileNode[]>(node.children ?? []);
-  const [loaded, setLoaded] = useState(node.loaded ?? false);
-  const [stale, setStale] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const {
+    entries: children,
+    loaded,
+    stale,
+    loading,
+  } = useDirectoryListing({ path: node.fullPath, directory: node.isDir, open, revision: refreshKey, t });
   const [hovered, setHovered] = useState(false);
   const [focusedWithin, setFocusedWithin] = useState(false);
   const [downloading, setDownloading] = useState(false);
-
-  const loadChildren = useCallback(
-    async (force = false) => {
-      if (loaded && !stale && !force) return;
-      setLoading(true);
-      try {
-        const entries = await fetchEntries(node.fullPath, t);
-        setChildren(entries);
-        setLoaded(true);
-        setStale(false);
-      } catch {
-        // ignore
-      } finally {
-        setLoading(false);
-      }
-    },
-    [loaded, node.fullPath, stale, t],
-  );
-
-  // Refresh open directories immediately; collapsed directories reload lazily on expansion.
-  useEffect(() => {
-    if (!node.isDir) return;
-    const refreshAction = directoryRefreshAction(open, loaded);
-    if (refreshAction === "reload") {
-      void loadChildren(true);
-    } else if (refreshAction === "mark-stale") {
-      setLoaded(false);
-      setStale(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshKey intentionally owns this refresh effect.
-  }, [refreshKey]);
 
   const handleClick = useCallback(() => {
     if (node.isDir) {
       const next = !open;
       onToggleExpanded(node.fullPath, next);
-      if (next && shouldLoadDirectoryOnExpand(loaded, stale)) void loadChildren();
     } else {
       onOpenFile(node.fullPath, node.name);
     }
-  }, [node.isDir, node.fullPath, node.name, loaded, stale, open, loadChildren, onOpenFile, onToggleExpanded]);
+  }, [node.isDir, node.fullPath, node.name, open, onOpenFile, onToggleExpanded]);
 
   return (
     <div>
@@ -329,7 +254,7 @@ function TreeNode({
               refreshKey={refreshKey}
             />
           ))}
-          {children.length === 0 && loaded && (
+          {children.length === 0 && loaded && !stale && (
             <div
               style={{
                 paddingLeft: 8 + (depth + 1) * 14,
@@ -351,82 +276,24 @@ function TreeNode({
 
 export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props) {
   const { language, t } = useI18n();
-  const [roots, setRoots] = useState<FileNode[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { entries: roots, gitStatus, watching, loading, loaded, error, revision } = useFileExplorer(cwd, refreshKey, t);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
-  const [gitStatus, setGitStatus] = useState<GitStatusResult | null>(null);
-  const [watching, setWatching] = useState(false);
-  const [liveRefreshKey, setLiveRefreshKey] = useState(0);
-  const prevCwdRef = useRef<string | null>(null);
-  const loadGenerationRef = useRef(0);
-
+  const previousCwd = useRef(cwd);
   const handleToggleExpanded = useCallback((fullPath: string, open: boolean) => {
-    setExpandedPaths((prev) => {
-      const next = new Set(prev);
+    setExpandedPaths((previous) => {
+      const next = new Set(previous);
       if (open) next.add(fullPath);
       else next.delete(fullPath);
       return next;
     });
   }, []);
-
-  const loadProject = useCallback(
-    async (showLoading: boolean) => {
-      const generation = ++loadGenerationRef.current;
-      if (showLoading) setLoading(true);
-      setError(null);
-      try {
-        const [entries, statusResponse] = await Promise.all([
-          fetchEntries(cwd, t),
-          fetch(`/api/git-status?cwd=${encodeURIComponent(cwd)}`),
-        ]);
-        const status = statusResponse.ok ? ((await statusResponse.json()) as GitStatusResult) : null;
-        if (generation !== loadGenerationRef.current) return;
-        setRoots(entries);
-        setGitStatus(status);
-      } catch (error) {
-        if (generation === loadGenerationRef.current) {
-          setError(error instanceof Error ? error.message : String(error));
-        }
-      } finally {
-        if (generation === loadGenerationRef.current) setLoading(false);
-      }
-    },
-    [cwd, t],
-  );
-
   useEffect(() => {
-    const cwdChanged = prevCwdRef.current !== cwd;
-    prevCwdRef.current = cwd;
+    if (previousCwd.current === cwd) return;
+    previousCwd.current = cwd;
+    setExpandedPaths(new Set());
+  }, [cwd]);
 
-    // Reset expanded state only when cwd changes, not on refreshKey bumps
-    if (cwdChanged) setExpandedPaths(new Set());
-
-    void loadProject(cwdChanged);
-  }, [cwd, refreshKey, loadProject]);
-
-  useEffect(() => {
-    setWatching(false);
-    const encoded = encodeFilePathForApi(cwd);
-    const events = new EventSource(`/api/files/${encoded}?type=watch`);
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    events.addEventListener("connected", () => setWatching(true));
-    events.addEventListener("change", () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        setLiveRefreshKey((key) => key + 1);
-        void loadProject(false);
-      }, 200);
-    });
-    events.addEventListener("error", () => setWatching(false));
-    events.onerror = () => setWatching(false);
-    return () => {
-      if (timer) clearTimeout(timer);
-      events.close();
-    };
-  }, [cwd, loadProject]);
-
-  if (loading) {
+  if (!loaded && loading) {
     return (
       <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>
         {t("loadingFiles", "Loading files…")}
@@ -526,7 +393,7 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
           onAtMention={onAtMention}
           expandedPaths={expandedPaths}
           onToggleExpanded={handleToggleExpanded}
-          refreshKey={(refreshKey ?? 0) + liveRefreshKey}
+          refreshKey={revision}
         />
       ))}
       {roots.length === 0 && (
