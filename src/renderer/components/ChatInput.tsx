@@ -26,6 +26,7 @@ import {
   type ChatDraftImage,
 } from "@/lib/draft-store";
 import { LatestAbortableRequest } from "@/lib/latest-abortable-request";
+import { fileIndex } from "@/lib/api-client";
 import { buildAtInsertText, extractAtQuery, type AtQueryMatch, type FileIndexEntry } from "@/lib/file-fuzzy";
 import {
   FileSuggestionLruCache,
@@ -908,13 +909,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       () => {
         const request = requests.begin();
         generation = request.generation;
-        fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}&q=${encodeURIComponent(query)}`, {
-          signal: request.signal,
-        })
-          .then((res) => {
-            if (!res.ok) throw new Error(`file suggestions failed: ${res.status}`);
-            return res.json() as Promise<unknown>;
-          })
+        // The RPC has no backend cancellation method. The existing request
+        // token invalidates local results when the query or workspace changes.
+        fileIndex(fetchCwd, query)
           .then((data) => {
             if (!requests.isCurrent(request.generation)) return;
             const snapshot = projectFileSuggestionResponse(data, query);

@@ -74,28 +74,36 @@ Object.defineProperties(globalThis, {
 });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const fetchRequests = [];
-const defaultFetchImplementation = async () => ({
-  ok: true,
-  async json() {
-    return { files: ["src/main.ts", "src/renderer/App.tsx", "README.md"], truncated: false };
-  },
-});
-let fetchImplementation = defaultFetchImplementation;
-globalThis.fetch = async (url, options) => {
-  fetchRequests.push(String(url));
-  return fetchImplementation(url, options);
+globalThis.fetch = () => {
+  throw new Error("File suggestions must use typed RPC");
 };
 
-const { ChatInput } = await importTestBundle("src/renderer/components/chat-input-file-reference", {
+const { ChatInput, api } = await importTestBundle("src/renderer/components/chat-input-file-reference", {
   stdin: {
-    contents: 'export { ChatInput } from "./ChatInput.tsx";',
+    contents: 'export { ChatInput } from "./ChatInput.tsx"; export * as api from "@/lib/api-client";',
     resolveDir: import.meta.dirname,
     sourcefile: "chat-input-file-reference-test-entry.tsx",
     loader: "tsx",
   },
   tsconfig: path.join(import.meta.dirname, "../../../tsconfig.renderer.json"),
   external: ["react", "react-dom", "react-dom/*"],
+  plugins: [
+    {
+      name: "file-index-api",
+      setup(build) {
+        build.onResolve({ filter: /^@\/lib\/api-client$/ }, () => ({ path: "api", namespace: "index-test" }));
+        build.onLoad({ filter: /.*/, namespace: "index-test" }, () => ({
+          contents: `
+      export const requests = [];
+      export const defaultImplementation = async () => ({files: ["src/main.ts", "src/renderer/App.tsx", "README.md"], truncated: false});
+      let implementation = defaultImplementation;
+      export function use(next) {implementation = next;}
+      export async function fileIndex(root, query) {requests.push({root, query}); return implementation(root, query);}
+    `,
+        }));
+      },
+    },
+  ],
 });
 
 after(() => {
@@ -120,20 +128,12 @@ function renderedText(node) {
 }
 
 function deferred() {
-  let resolve;
-  const promise = new Promise((nextResolve) => {
+  let resolve, reject;
+  const promise = new Promise((nextResolve, nextReject) => {
     resolve = nextResolve;
+    reject = nextReject;
   });
-  return { promise, resolve };
-}
-
-function response(data) {
-  return {
-    ok: true,
-    async json() {
-      return data;
-    },
-  };
+  return { promise, resolve, reject };
 }
 
 test("@ project file autocomplete survives component state and sends the completed reference", async () => {
@@ -179,8 +179,8 @@ test("@ project file autocomplete survives component state and sends the complet
   });
   await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
 
-  assert.equal(fetchRequests.length, 1);
-  assert.match(fetchRequests[0], /^\/api\/file-index\?cwd=/);
+  assert.equal(api.requests.length, 1);
+  assert.deepEqual(api.requests[0], { root: "/workspace/project", query: "src/" });
   assert.ok(
     renderer.root
       .findAllByType("button")
@@ -205,13 +205,13 @@ test("@ project file autocomplete survives component state and sends the complet
   await act(async () => renderer.unmount());
 });
 
-test("@ autocomplete requests each query and ignores a late response for an older token", async () => {
+test("@ autocomplete ignores old results, errors and settlement without retiring the current request", async () => {
   const pending = [];
-  fetchImplementation = () => {
+  api.use(() => {
     const request = deferred();
     pending.push(request);
     return request.promise;
-  };
+  });
   const textareaNode = {
     focus() {},
     scrollHeight: 24,
@@ -232,46 +232,57 @@ test("@ autocomplete requests each query and ignores a late response for an olde
         { createNodeMock: (element) => (element.type === "textarea" ? textareaNode : null) },
       );
     });
-    const requestStart = fetchRequests.length;
+    const requestStart = api.requests.length;
 
     textareaNode.value = "@mai";
     textareaNode.selectionStart = textareaNode.value.length;
     textareaNode.selectionEnd = textareaNode.value.length;
     await act(async () => renderer.root.findByType("textarea").props.onChange({ target: textareaNode }));
     await act(async () => new Promise((resolve) => setTimeout(resolve, 175)));
-    assert.match(fetchRequests[requestStart], /[?&]q=mai(?:&|$)/);
+    assert.equal(api.requests[requestStart].query, "mai");
 
     textareaNode.value = "@read";
     textareaNode.selectionStart = textareaNode.value.length;
     textareaNode.selectionEnd = textareaNode.value.length;
     await act(async () => renderer.root.findByType("textarea").props.onChange({ target: textareaNode }));
     await act(async () => new Promise((resolve) => setTimeout(resolve, 175)));
-    assert.match(fetchRequests[requestStart + 1], /[?&]q=read(?:&|$)/);
+    assert.equal(api.requests[requestStart + 1].query, "read");
 
     await act(async () => {
-      pending[1].resolve(response({ matches: [{ path: "README.md", isDir: false }], truncated: false }));
+      pending[1].resolve({ matches: [{ path: "README.md", isDir: false }], truncated: false });
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
     assert.match(renderedText(renderer.root), /README\.md/);
 
     await act(async () => {
-      pending[0].resolve(response({ matches: [{ path: "src/main.ts", isDir: false }], truncated: false }));
+      pending[0].resolve({ matches: [{ path: "src/main.ts", isDir: false }], truncated: false });
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
     assert.doesNotMatch(renderedText(renderer.root), /main\.ts/);
+
+    for (const query of ["old-error", "current"]) {
+      textareaNode.value = `@${query}`;
+      textareaNode.selectionStart = textareaNode.selectionEnd = textareaNode.value.length;
+      await act(async () => renderer.root.findByType("textarea").props.onChange({ target: textareaNode }));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 175)));
+    }
+    await act(async () => pending[2].reject(new Error("Old query failed")));
+    await act(async () => pending[3].resolve({ matches: [{ path: "current.txt" }], truncated: false }));
+    assert.match(renderedText(renderer.root), /current\.txt/);
+    assert.doesNotMatch(renderedText(renderer.root), /Old query failed|Unable to load/);
+    assert.equal(renderer.root.findByType("textarea").props.value, "@current");
   } finally {
-    fetchImplementation = defaultFetchImplementation;
+    api.use(api.defaultImplementation);
     if (renderer) await act(async () => renderer.unmount());
   }
 });
 
 test("@ autocomplete shows degraded scope and reuses a recent query from the bounded cache", async () => {
-  fetchImplementation = async () =>
-    response({
-      matches: [{ path: "Desktop/nested.txt", isDir: false }],
-      truncated: false,
-      degradedReason: "search-unavailable",
-    });
+  api.use(async () => ({
+    matches: [{ path: "Desktop/nested.txt", isDir: false }],
+    truncated: false,
+    degradedReason: "search-unavailable",
+  }));
   const textareaNode = {
     focus() {},
     scrollHeight: 24,
@@ -292,14 +303,14 @@ test("@ autocomplete shows degraded scope and reuses a recent query from the bou
         { createNodeMock: (element) => (element.type === "textarea" ? textareaNode : null) },
       );
     });
-    const requestStart = fetchRequests.length;
+    const requestStart = api.requests.length;
     textareaNode.value = "@nest";
     textareaNode.selectionStart = textareaNode.value.length;
     textareaNode.selectionEnd = textareaNode.value.length;
     await act(async () => renderer.root.findByType("textarea").props.onChange({ target: textareaNode }));
     await act(async () => new Promise((resolve) => setTimeout(resolve, 175)));
     assert.match(renderedText(renderer.root), /limited to this folder/);
-    assert.equal(fetchRequests.length, requestStart + 1);
+    assert.equal(api.requests.length, requestStart + 1);
 
     textareaNode.value = "";
     textareaNode.selectionStart = 0;
@@ -312,10 +323,10 @@ test("@ autocomplete shows degraded scope and reuses a recent query from the bou
       renderer.root.findByType("textarea").props.onChange({ target: textareaNode });
       await Promise.resolve();
     });
-    assert.equal(fetchRequests.length, requestStart + 1);
+    assert.equal(api.requests.length, requestStart + 1);
     assert.match(renderedText(renderer.root), /Desktop\/nested\.txt/);
   } finally {
-    fetchImplementation = defaultFetchImplementation;
+    api.use(api.defaultImplementation);
     if (renderer) await act(async () => renderer.unmount());
   }
 });

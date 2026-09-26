@@ -1,6 +1,5 @@
 /**
- * ISSUE-004: load file bytes via RPC/fetch shim and produce Blob URLs
- * (img/audio/iframe cannot hit /api without going through fetch).
+ * Load authorized file bytes through RPC and own their temporary Blob URLs.
  */
 import { call } from "./api-client";
 
@@ -70,8 +69,6 @@ export async function downloadFileViaRpc(
     path: filePath,
     sourceSessionId: sourceSessionId ?? undefined,
   });
-  const blob = base64ToBlob(data.base64, data.mime);
-
   // Native binary save preserves exact bytes for text and arbitrary binary files.
   if (window.piBridge?.saveBinaryFile) {
     const saved = await window.piBridge.saveBinaryFile({
@@ -80,10 +77,13 @@ export async function downloadFileViaRpc(
     });
     if (saved) {
       await window.piBridge.showItemInFolder(saved);
-      return;
     }
+    // A cancelled native dialog completes this attempt; it must not open a
+    // second save route via the browser download fallback.
+    return;
   }
 
+  const blob = base64ToBlob(data.base64, data.mime);
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement("a");

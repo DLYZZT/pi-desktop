@@ -118,8 +118,8 @@ export function createFileHandlers(fileWatch: Pick<ReturnType<typeof createFileW
       const entries: Array<{
         name: string;
         isDir: boolean;
-        size?: number;
-        mtime?: number;
+        size: number;
+        mtime: number;
         path: string;
         type: "file" | "directory";
       }> = [];
@@ -145,7 +145,7 @@ export function createFileHandlers(fileWatch: Pick<ReturnType<typeof createFileW
         if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
-      return { entries: entries as never };
+      return { entries };
     },
 
     read: async (params) => {

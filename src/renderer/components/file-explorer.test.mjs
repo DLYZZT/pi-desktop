@@ -13,9 +13,9 @@ after(() => {
   else globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
 });
 
-const { FileExplorer } = await importTestBundle("file-explorer", {
+const { FileExplorer, api } = await importTestBundle("file-explorer", {
   stdin: {
-    contents: 'export {FileExplorer} from "./FileExplorer.tsx";',
+    contents: 'export {FileExplorer} from "./FileExplorer.tsx"; export * as api from "@/lib/api-client";',
     resolveDir: import.meta.dirname,
     loader: "ts",
   },
@@ -25,6 +25,23 @@ const { FileExplorer } = await importTestBundle("file-explorer", {
     {
       name: "file-explorer-i18n",
       setup(build) {
+        build.onResolve({ filter: /^(?:@\/lib\/|\.\/)api-client$/ }, () => ({
+          path: "api",
+          namespace: "files-api-test",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "files-api-test" }, () => ({
+          contents: `
+          let handler;
+          export const sources = [], calls = [];
+          export function reset(next) {handler = next; sources.length = calls.length = 0;}
+          export async function call(method, params) { calls.push({method, params}); return handler(method, params); }
+          export async function subscribe(topic, key, on) {
+            const source = {topic, key, closed: false, emit: (event) => on({path: key, event})};
+            sources.push(source);
+            return () => {source.closed = true;};
+          }
+        `,
+        }));
         build.onResolve({ filter: /^@\/i18n$/ }, () => ({ path: "i18n", namespace: "files-test" }));
         build.onLoad({ filter: /.*/, namespace: "files-test" }, () => ({
           contents: 'const t = (_key, fallback) => fallback; export function useI18n() {return {t, language: "en"};}',
@@ -45,7 +62,6 @@ const gitStatus = {
   untracked: 0,
   conflicted: 0,
 };
-const jsonResponse = (data, status = 200) => new globalThis.Response(JSON.stringify(data), { status });
 
 async function mount(t, strict = false) {
   const timers = new Map();
@@ -62,37 +78,24 @@ async function mount(t, strict = false) {
     else nativeClearTimeout(id);
   });
   const oldSource = Object.getOwnPropertyDescriptor(globalThis, "EventSource");
-  const sources = [];
   globalThis.EventSource = class {
-    handlers = new Map();
-    constructor(url) {
-      this.url = url;
-      this.closed = false;
-      sources.push(this);
-    }
-    addEventListener(name, callback) {
-      this.handlers.set(name, callback);
-    }
-    emit(name) {
-      this.handlers.get(name)?.({});
-    }
-    close() {
-      this.closed = true;
+    constructor() {
+      throw new Error("Legacy EventSource must not be used");
     }
   };
+  t.mock.method(globalThis, "fetch", () => {
+    throw new Error("Legacy fetch must not be used");
+  });
   const requests = [];
-  t.mock.method(globalThis, "fetch", async (input) => {
-    const url = new URL(input, "http://fixture");
-    const kind = url.pathname === "/api/git-status" ? "git" : "entries";
-    assert.ok(kind === "git" || url.pathname.startsWith("/api/files/"));
-    const directory =
-      kind === "git"
-        ? url.searchParams.get("cwd")
-        : "/" + url.pathname.slice("/api/files/".length).split("/").map(decodeURIComponent).join("/");
-    const request = { ...createDeferred(), kind, directory, settled: false };
+  api.reset(async (method, params) => {
+    if (method === "files.watchStart" || method === "files.watchStop") return { ok: true };
+    assert.ok(method === "files.list" || method === "git.status");
+    const kind = method === "git.status" ? "git" : "entries";
+    const request = { ...createDeferred(), kind, directory: params.path, settled: false };
     requests.push(request);
     return request.promise;
   });
+  const sources = api.sources;
   let props = { cwd: "/project", refreshKey: 0, onOpenFile: () => {} };
   const view = () =>
     strict ? createElement(StrictMode, null, createElement(FileExplorer, props)) : createElement(FileExplorer, props);
@@ -124,11 +127,12 @@ async function mount(t, strict = false) {
         const listing = pending(directory, "entries");
         assert.ok(listing, `No pending listing for ${directory}`);
         listing.settled = true;
-        listing.resolve(jsonResponse(status === 200 ? { entries } : { error: entries }, status));
+        if (status === 200) listing.resolve({ entries });
+        else listing.reject(Object.assign(new Error(entries), { code: "FORBIDDEN" }));
         const git = pending(directory, "git");
         if (git) {
           git.settled = true;
-          git.resolve(jsonResponse(gitStatus));
+          git.resolve(gitStatus);
         }
       });
     },
@@ -227,7 +231,8 @@ test("workspace changes discard old results and late watch events, including pen
   await fixture.watch(0, "change");
   await fixture.fireTimers();
   assert.equal(fixture.count("/second"), 1);
-  assert.doesNotMatch(fixture.text(), /old-project|Project changes are monitored/);
+  assert.doesNotMatch(fixture.text(), /old-project/);
+  assert.match(fixture.text(), /Project changes are monitored/);
   assert.match(fixture.text(), /second\.txt/);
   await fixture.watch(1, "change");
   assert.equal(fixture.timers.size, 1);

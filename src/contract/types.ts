@@ -92,9 +92,9 @@ export interface DirEntry {
   name: string;
   path: string;
   type: "file" | "directory";
-  size?: number;
-  mtime?: number;
-  [key: string]: unknown;
+  isDir: boolean;
+  size: number;
+  mtime: number;
 }
 
 export interface FileContent {

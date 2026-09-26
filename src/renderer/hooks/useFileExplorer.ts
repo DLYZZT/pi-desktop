@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DirectoryRefreshCoordinator } from "@/lib/directory-refresh";
 import { readDirectory, type DirectoryData, type FileExplorerTranslate } from "@/lib/file-explorer-data";
-import { encodeFilePathForApi } from "@/lib/file-paths";
+import { watchFile } from "@/lib/file-watch-client";
 
 interface DirectoryState extends DirectoryData {
   path: string;
@@ -124,28 +124,21 @@ export function useFileExplorer(cwd: string, refreshKey: number | undefined, t: 
   useEffect(() => {
     let active = true;
     setWatching(false);
-    const events = new EventSource(`/api/files/${encodeFilePathForApi(cwd)}?type=watch`);
-    events.addEventListener("connected", () => {
-      if (active) setWatching(true);
+    const stop = watchFile(cwd, {
+      onStatus: setWatching,
+      onChange: () => {
+        if (timerRef.current !== null) clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(() => {
+          timerRef.current = null;
+          if (active) refresh();
+        }, 200);
+      },
     });
-    events.addEventListener("change", () => {
-      if (!active) return;
-      if (timerRef.current !== null) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
-        timerRef.current = null;
-        if (active) refresh();
-      }, 200);
-    });
-    const unavailable = () => {
-      if (active) setWatching(false);
-    };
-    events.addEventListener("error", unavailable);
-    events.onerror = unavailable;
     return () => {
       active = false;
       if (timerRef.current !== null) clearTimeout(timerRef.current);
       timerRef.current = null;
-      events.close();
+      stop();
     };
   }, [cwd, refresh]);
   return { ...listing, watching };
