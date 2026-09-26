@@ -1,3 +1,8 @@
+import {
+  readBrowserNetworkBody,
+  replayBrowserRequest,
+  type BrowserNetworkActionServices,
+} from "./browser-network-actions.ts";
 import { withTimeout, abortableDelay } from "./browser-action-timing.ts";
 import { clampInteger } from "./browser-bounds.ts";
 import {
@@ -53,11 +58,6 @@ import { BrowserNetworkRecorder } from "./browser-network-recorder.ts";
 import { BrowserNetworkPolicy, createSessionNetworkPolicyOptions } from "./browser-network-policy.ts";
 import { redactBrowserText, redactBrowserUrl } from "./browser-redaction.ts";
 import type { BrowserProfileManager } from "./browser-profile-manager.ts";
-import {
-  MAX_REPLAY_RESPONSE_BYTES,
-  readBoundedResponseBody,
-  runBoundedNetworkAction,
-} from "./browser-response-body.ts";
 import { canResumeSensitiveAgentControl } from "./browser-sensitive-control.ts";
 const MAX_INSPECTION_SCREENSHOT_BYTES = 1_500_000;
 const MAX_INSPECTION_NODE_CHARS = 40_000;
@@ -1383,37 +1383,9 @@ export class BrowserTabManager {
   ): Promise<BrowserNetworkBodyResult> {
     const record = this.requireOwnedTab(tabId, sessionId);
     await record.advancedReady;
-    return this.runAction(record, sessionId, "advanced", async (signal) => {
-      const recorder = this.requireNetworkRecorder(record);
-      recorder.armBodyCapture();
-      try {
-        return await recorder.body(requestId, input);
-      } catch (error) {
-        const request = recorder.getRequest(requestId);
-        if (!(error instanceof BrowserError) || request.method !== "GET") throw error;
-        const sealed = recorder.getSealedReplayRecord(requestId);
-        const checked = await this.getNetworkPolicy(record).check(sealed.url, {
-          settings: this.options.getSettings().navigation,
-          allowAboutBlank: false,
-          userApprovedPrivateNetwork: false,
-        });
-        return runBoundedNetworkAction(
-          signal,
-          this.options.getSettings().navigation.actionTimeoutMs,
-          async (networkSignal) => {
-            const response = await record.session.fetch(checked.url, {
-              method: "GET",
-              headers: replayHeaders(sealed.headers),
-              redirect: "error",
-              signal: networkSignal,
-            });
-            const data = await readBoundedResponseBody(response, MAX_REPLAY_RESPONSE_BYTES, networkSignal);
-            const mimeType = response.headers.get("content-type") ?? request.mimeType ?? "application/octet-stream";
-            return recorder.recordRefetchedBody(requestId, data, mimeType);
-          },
-        );
-      }
-    });
+    return this.runAction(record, sessionId, "advanced", (signal) =>
+      readBrowserNetworkBody(this.networkActionServices(record), requestId, input, signal),
+    );
   }
 
   async networkReplay(
@@ -1428,94 +1400,11 @@ export class BrowserTabManager {
     }
     const record = this.requireOwnedTab(tabId, sessionId);
     await record.advancedReady;
-    return this.runAction(record, sessionId, "advanced", async (signal) => {
-      const recorder = this.requireNetworkRecorder(record);
-      recorder.armBodyCapture();
-      const sealed = recorder.getSealedReplayRecord(requestId);
-      const method = sealed.method.toUpperCase();
-      if (!["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-        throw new BrowserError("REQUEST_REPLAY_BLOCKED", `Browser request method cannot be replayed: ${method}`);
-      }
-      const targetUrl = validateReplayUrl(overrides?.url ?? sealed.url);
-      const checked = await this.getNetworkPolicy(record).check(targetUrl, {
-        settings: this.options.getSettings().navigation,
-        allowAboutBlank: false,
-        userApprovedPrivateNetwork: false,
-      });
-      const headers = { ...replayHeaders(sealed.headers), ...validateReplayOverrides(overrides?.headers) };
-      const body = overrides?.body ?? sealed.postData;
-      if (body !== undefined && Buffer.byteLength(body) > 8 * 1024 * 1024) {
-        throw new BrowserError("RESULT_TOO_LARGE", "Browser request replay body is too large");
-      }
-      if (!["GET", "HEAD"].includes(method)) {
-        await this.approveSensitiveAction(
-          record,
-          `Replay ${method} to ${new URL(checked.url).origin} (${headers["content-type"] ?? "unknown content type"}, ${Buffer.byteLength(body ?? "")} bytes): ${reason.trim()}`,
-        );
-      }
-      return runBoundedNetworkAction(
-        signal,
-        this.options.getSettings().navigation.actionTimeoutMs,
-        async (networkSignal) => {
-          let url = checked.url;
-          let response: Response | undefined;
-          for (let redirectCount = 0; redirectCount < 6; redirectCount += 1) {
-            try {
-              response = await record.session.fetch(url, {
-                method,
-                headers,
-                ...(body === undefined || method === "GET" || method === "HEAD" ? {} : { body }),
-                redirect: "manual",
-                signal: networkSignal,
-              });
-            } catch (error) {
-              if (/redirect.*(?:cancel|block)/i.test(error instanceof Error ? error.message : String(error))) {
-                throw new BrowserError("REQUEST_REPLAY_BLOCKED", "Browser request replay redirect was blocked");
-              }
-              throw new BrowserError("REQUEST_REPLAY_NOT_AVAILABLE", "Browser request replay failed", {
-                retryable: false,
-                cause: error,
-              });
-            }
-            const location = response.headers.get("location");
-            if (!location || response.status < 300 || response.status >= 400) break;
-            const next = new URL(location, url);
-            if (next.origin !== new URL(url).origin) {
-              throw new BrowserError("REQUEST_REPLAY_BLOCKED", "Cross-origin request replay redirect was blocked");
-            }
-            if (method !== "GET" && method !== "HEAD") break;
-            url = (
-              await this.getNetworkPolicy(record).check(next.toString(), {
-                settings: this.options.getSettings().navigation,
-                allowAboutBlank: false,
-                userApprovedPrivateNetwork: false,
-              })
-            ).url;
-          }
-          if (!response) throw new BrowserError("REQUEST_REPLAY_NOT_AVAILABLE", "Browser request replay failed");
-          const responseData = await readBoundedResponseBody(response, MAX_REPLAY_RESPONSE_BYTES, networkSignal);
-          const responseHeaders = Object.fromEntries(response.headers.entries());
-          const mimeType = response.headers.get("content-type") ?? "application/octet-stream";
-          const replayed = recorder.recordReplay({
-            replayedFrom: requestId,
-            method,
-            url,
-            requestHeaders: headers,
-            status: response.status,
-            statusText: response.statusText,
-            responseHeaders,
-            body: responseData,
-            mimeType,
-          });
-          return {
-            request: replayed,
-            ...(responseData.byteLength
-              ? { responseBody: await recorder.body(replayed.requestId, { maxBytes: 512 * 1024 }) }
-              : {}),
-          };
-        },
-      );
-    });
+    return this.runAction(record, sessionId, "advanced", (signal) =>
+      replayBrowserRequest(this.networkActionServices(record), requestId, overrides, reason, signal, (description) =>
+        this.approveSensitiveAction(record, description),
+      ),
+    );
   }
 
   async chooseUploadFiles(tabId: string, paths: string[]): Promise<void> {
@@ -1932,6 +1821,20 @@ export class BrowserTabManager {
       });
     }
     await record.networkRecorder.start();
+  }
+
+  private networkActionServices(record: TabRecord): BrowserNetworkActionServices {
+    return {
+      recorder: this.requireNetworkRecorder(record),
+      session: record.session,
+      checkUrl: (url) =>
+        this.getNetworkPolicy(record).check(url, {
+          settings: this.options.getSettings().navigation,
+          allowAboutBlank: false,
+          userApprovedPrivateNetwork: false,
+        }),
+      timeoutMs: () => this.options.getSettings().navigation.actionTimeoutMs,
+    };
   }
 
   private requireNetworkRecorder(record: TabRecord): BrowserNetworkRecorder {
@@ -2414,24 +2317,6 @@ function randomBetween(minimum: number, maximum: number): number {
   return Math.floor(minimum + Math.random() * (maximum - minimum + 1));
 }
 
-function validateReplayUrl(value: string): string {
-  if (typeof value !== "string" || !value || value.length > 8_192 || /[\0\r\n]/.test(value)) {
-    throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser request replay URL is invalid");
-  }
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser request replay URL is invalid");
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new BrowserError("REQUEST_REPLAY_BLOCKED", "Browser request replay protocol is blocked");
-  }
-  url.username = "";
-  url.password = "";
-  return url.toString();
-}
-
 function validateInputModifiers(value: BrowserInputModifier[]): BrowserInputModifier[] {
   if (!Array.isArray(value) || value.length > 4) {
     throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser input modifiers are invalid");
@@ -2457,37 +2342,6 @@ function cdpButtonMask(button: "left" | "middle" | "right"): number {
   if (button === "left") return 1;
   if (button === "right") return 2;
   return 4;
-}
-
-function replayHeaders(value: Record<string, string>): Record<string, string> {
-  const blocked = new Set([
-    "host",
-    "cookie",
-    "content-length",
-    "proxy-authorization",
-    "connection",
-    "transfer-encoding",
-  ]);
-  const result: Record<string, string> = {};
-  for (const [name, headerValue] of Object.entries(value)) {
-    const normalized = name.trim().toLowerCase();
-    if (!normalized || blocked.has(normalized) || normalized.startsWith("sec-")) continue;
-    if (/[\0\r\n]/.test(name) || /[\0\r\n]/.test(headerValue)) continue;
-    result[normalized] = headerValue.slice(0, 16_384);
-  }
-  return result;
-}
-
-function validateReplayOverrides(value?: Record<string, string>): Record<string, string> {
-  if (!value) return {};
-  if (Object.keys(value).length > 100) {
-    throw new BrowserError("INVALID_BROWSER_REQUEST", "Too many Browser request replay header overrides");
-  }
-  const normalized = replayHeaders(value);
-  if (Object.keys(normalized).length !== Object.keys(value).length) {
-    throw new BrowserError("REQUEST_REPLAY_BLOCKED", "A protected Browser request header cannot be overridden");
-  }
-  return normalized;
 }
 
 function redactUrlCredentials(value: string): string {
