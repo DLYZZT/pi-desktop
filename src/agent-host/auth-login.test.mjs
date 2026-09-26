@@ -24,6 +24,35 @@ function nextTurn() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+for (const outcome of ["success", "cancelled"]) {
+  test(`an old OAuth ${outcome} cannot terminate the replacement subscriber`, async (t) => {
+    const { createAuthLoginService } = await loadAuthLoginModule();
+    const old = createDeferred(),
+      replacement = createDeferred(),
+      events = [];
+    let calls = 0;
+    const service = createAuthLoginService({ emit: (_topic, _key, event) => events.push(event) }, () => ({
+      getProvider: () => ({ auth: { oauth: {} } }),
+      login: () => (++calls === 1 ? old.promise : replacement.promise),
+    }));
+    t.after(() => {
+      service.dispose();
+      old.resolve();
+      replacement.resolve();
+    });
+    const provider = `late-terminal-${outcome}`;
+    await service.start(provider);
+    service.cancel(provider);
+    await service.start(provider);
+    const countAfterReplacement = events.length;
+    if (outcome === "success") old.resolve();
+    else old.reject(new Error("Login cancelled"));
+    await nextTurn();
+    assert.equal(events.length, countAfterReplacement);
+    assert.deepEqual(await service.start(provider), { started: false });
+  });
+}
+
 test("runtime initialization reserves provider ownership and cancellation prevents a late login", async () => {
   const { createAuthLoginService } = await loadAuthLoginModule();
   const pending = createDeferred();
@@ -115,18 +144,18 @@ test("a cancelled OAuth flow cannot clear the active replacement flow", async ()
 
   assert.deepEqual(await service.start("test-oauth"), { started: true });
   service.cancel("test-oauth");
+  const eventsAtCancellation = events.length;
   assert.deepEqual(await service.start("test-oauth"), { started: true });
 
   // Let the cancelled flow reach its catch/finally after the replacement starts.
   await nextTurn();
   assert.deepEqual(await service.start("test-oauth"), { started: false });
-  assert.equal(
-    events.some((event) => event.data.type === "cancelled"),
-    true,
-  );
+  assert.equal(events.length, eventsAtCancellation + 1, "only the new prompt may follow replacement startup");
+  assert.equal(events.filter((event) => event.data.type === "cancelled").length, 1);
 
   service.cancel("test-oauth");
   await nextTurn();
+  assert.equal(events.filter((event) => event.data.type === "cancelled").length, 2);
 });
 
 test("ModelRuntime auth notifications and prompts map onto the desktop login stream", async () => {

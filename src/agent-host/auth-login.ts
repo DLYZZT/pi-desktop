@@ -69,7 +69,18 @@ export function createAuthLoginService(
       const abort = new AbortController();
       activeLogins.set(provider, abort);
       ownedLogins.set(provider, abort);
+      let terminalSent = false;
+      const emitTerminal = (data: Record<string, unknown>) => {
+        if (terminalSent || activeLogins.get(provider) !== abort) return;
+        terminalSent = true;
+        emit(provider, data);
+      };
+      // Acknowledge cancellation before releasing the provider slot. Later SDK
+      // settlement must not deliver an old terminal event to a new subscription.
+      const onAbort = () => emitTerminal({ type: "cancelled" });
+      abort.signal.addEventListener("abort", onAbort, { once: true });
       const releaseSlot = () => {
+        abort.signal.removeEventListener("abort", onAbort);
         if (activeLogins.get(provider) === abort) activeLogins.delete(provider);
         if (ownedLogins.get(provider) === abort) ownedLogins.delete(provider);
       };
@@ -144,7 +155,7 @@ export function createAuthLoginService(
         releaseSlot();
       };
 
-      abort.signal.addEventListener("abort", cleanup);
+      abort.signal.addEventListener("abort", cleanup, { once: true });
 
       const notify = (event: AuthEvent) => {
         if (closed || abort.signal.aborted) return;
@@ -212,7 +223,7 @@ export function createAuthLoginService(
             prompt,
           });
 
-          emit(provider, { type: "success" });
+          emitTerminal({ type: "success" });
         } catch (err) {
           if (err instanceof CredentialSynchronizationError) {
             const recovered = await recoverCommittedCredential(modelRuntime, provider, {
@@ -220,18 +231,19 @@ export function createAuthLoginService(
               type: "oauth",
             });
             if (recovered) {
-              emit(provider, { type: "success", ...(recovered.warning ? { warning: recovered.warning } : {}) });
+              emitTerminal({ type: "success", ...(recovered.warning ? { warning: recovered.warning } : {}) });
               return;
             }
           }
           const msg = err instanceof Error ? err.message : String(err);
           if (msg === "Login cancelled" || abort.signal.aborted) {
-            emit(provider, { type: "cancelled" });
+            emitTerminal({ type: "cancelled" });
           } else {
-            emit(provider, { type: "error", message: msg });
+            emitTerminal({ type: "error", message: msg });
           }
         } finally {
           cleanup();
+          abort.signal.removeEventListener("abort", cleanup);
         }
       })();
 
