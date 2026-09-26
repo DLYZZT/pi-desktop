@@ -12,8 +12,9 @@ export const architecturePolicy = {
       reason: "Existing input, attachment and mention UI; scheduled for 22-08.",
     },
     "src/main/browser/browser-tab-manager.ts": {
-      maxLines: 2946,
-      reason: "Existing Browser operation owner; split under 22-06 with authorization and Electron regressions.",
+      maxLines: 2522,
+      reason:
+        "Browser tab/control owner after capture, DOM script and timing extraction; further 22-06 operation boundaries remain.",
     },
     "src/renderer/components/ModelsConfig.tsx": {
       maxLines: 2887,

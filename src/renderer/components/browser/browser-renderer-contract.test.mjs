@@ -11,6 +11,7 @@ const browserSettings = read(new URL("./BrowserSettings.tsx", import.meta.url));
 const browserAuthorization = read(new URL("./BrowserAuthorizationDialog.tsx", import.meta.url));
 const browserService = read(new URL("../../../main/browser/browser-service.ts", import.meta.url));
 const browserTabManager = read(new URL("../../../main/browser/browser-tab-manager.ts", import.meta.url));
+const browserScreenshot = read(new URL("../../../main/browser/browser-screenshot.ts", import.meta.url));
 const mainProcess = read(new URL("../../../main/main.ts", import.meta.url));
 const mainWindow = read(new URL("../../../main/window.ts", import.meta.url));
 const i18n = read(new URL("../../i18n-dictionaries.ts", import.meta.url));
@@ -42,8 +43,10 @@ test("Main fails closed across Renderer reloads and hidden screenshots never pre
     browserTabManager.indexOf("async screenshot("),
     browserTabManager.indexOf("async click("),
   );
-  assert.match(screenshotBody, /stayHidden: true/);
+  assert.match(screenshotBody, /captureBrowserScreenshot\(/);
+  assert.match(browserScreenshot, /stayHidden: true/);
   assert.doesNotMatch(screenshotBody, /setVisible\(true\)/);
+  assert.doesNotMatch(browserScreenshot, /setVisible\(true\)/);
 });
 
 test("Browser access is demand-prompted and AppShell never eagerly grants a selected session", () => {

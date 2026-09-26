@@ -1,13 +1,16 @@
+import { withTimeout, abortableDelay } from "./browser-action-timing.ts";
+import { clampInteger } from "./browser-bounds.ts";
+import {
+  SNAPSHOT_WORLD_ID,
+  externalProtocolGuardScript,
+  createSnapshotScript,
+  elementPointScript,
+  elementHighlightScript,
+} from "./browser-dom-scripts.ts";
+import { captureBrowserScreenshot, compareScreenshots } from "./browser-screenshot.ts";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import {
-  nativeImage,
-  WebContentsView,
-  type BrowserWindow,
-  type Session,
-  type WebContents,
-  type WebFrameMain,
-} from "electron";
+import { WebContentsView, type BrowserWindow, type Session, type WebContents, type WebFrameMain } from "electron";
 import type {
   BrowserAdvancedRuntimePolicy,
   BrowserBoundsInput,
@@ -56,17 +59,11 @@ import {
   runBoundedNetworkAction,
 } from "./browser-response-body.ts";
 import { canResumeSensitiveAgentControl } from "./browser-sensitive-control.ts";
-
-const SNAPSHOT_WORLD_ID = 99_911;
-const MAX_SCREENSHOT_BYTES = 12 * 1024 * 1024;
 const MAX_INSPECTION_SCREENSHOT_BYTES = 1_500_000;
 const MAX_INSPECTION_NODE_CHARS = 40_000;
 const DEFAULT_INSPECTION_MAX_NODES = 100;
 const DEFAULT_INSPECTION_MAX_TEXT_CHARS = 8_000;
 const DEFAULT_INSPECTION_NODE_CHARS = 16_000;
-const MAX_FULL_PAGE_HEIGHT = 16_384;
-const MAX_SCREENSHOT_PIXELS = 32_000_000;
-const MAX_COMPARE_PIXELS = 16_000_000;
 const MAX_SCRIPT_BYTES = 256 * 1024;
 const MAX_SCRIPT_RESULT_BYTES = 2 * 1024 * 1024;
 const KEY_PATTERN =
@@ -709,138 +706,23 @@ export class BrowserTabManager {
     record: TabRecord,
     options: BrowserScreenshotOptions,
   ): Promise<BrowserScreenshotResult> {
-    const format = options.format ?? "png";
-    const quality = options.quality ?? 85;
-    const mode = options.mode ?? "viewport";
-    const generation = record.info.generation;
-    if (mode === "element") {
+    if (options.mode === "element") {
       if (!options.snapshotId || !options.ref || options.generation === undefined) {
         throw new BrowserError("INVALID_BROWSER_REQUEST", "Element screenshot requires a snapshot reference");
       }
       this.assertSnapshotRef(record, options.ref, options.snapshotId, options.generation);
     }
-    let image: Electron.NativeImage | undefined;
-    let captureError: unknown;
-    if (mode !== "full-page") {
-      const rect =
-        mode === "element"
-          ? screenshotRectForNode(record.snapshot?.nodes.get(options.ref!), MAX_SCREENSHOT_PIXELS)
-          : undefined;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-          image = await withTimeout(
-            record.view.webContents.capturePage(rect, { stayHidden: true, stayAwake: true }),
-            3_000,
-            "ACTION_TIMEOUT",
-          );
-          if (!image.isEmpty()) break;
-        } catch (error) {
-          captureError = error;
-        }
-        await abortableDelay(100);
-      }
-      if (mode === "viewport" && (!image || image.isEmpty())) {
-        try {
-          image = await capturePresentedFrame(record.view.webContents, 3_000);
-        } catch (error) {
-          captureError = error;
-        }
-      }
-    }
-    let buffer: Buffer;
-    let size: Electron.Size;
-    if (image && !image.isEmpty()) {
-      size = image.getSize();
-      buffer = format === "jpeg" ? image.toJPEG(clampInteger(quality, 1, 100)) : image.toPNG();
-    } else {
-      const clip = await this.screenshotClip(record, mode, options);
-      if (clip.width * clip.height > MAX_SCREENSHOT_PIXELS) {
-        throw new BrowserError("RESULT_TOO_LARGE", "Browser screenshot exceeds the pixel limit");
-      }
-      const releaseDebugger = this.cdp.acquire(record.info.id);
-      try {
-        const captured = (await withTimeout(
-          this.cdp.sendCommand(record.info.id, "Page.captureScreenshot", {
-            format,
-            ...(format === "jpeg" ? { quality: clampInteger(quality, 1, 100) } : {}),
-            fromSurface: true,
-            captureBeyondViewport: mode === "full-page",
-            clip: { ...clip, scale: 1 },
-          }),
-          8_000,
-          "ACTION_TIMEOUT",
-        )) as { data?: string };
-        if (!captured.data) throw captureError ?? new Error("CDP screenshot returned no data");
-        buffer = Buffer.from(captured.data, "base64");
-        size = nativeImage.createFromBuffer(buffer).getSize();
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        const nativeReason = captureError instanceof Error ? captureError.message : String(captureError ?? "none");
-        throw new BrowserError(
-          "ACTION_TIMEOUT",
-          `Browser screenshot surface is not ready (${reason}; native=${nativeReason})`,
-          {
-            retryable: true,
-            cause: error,
-          },
-        );
-      } finally {
-        releaseDebugger();
-      }
-    }
-    if (record.info.generation !== generation) {
-      throw new BrowserError("INSPECTION_STALE", "Browser page changed during screenshot", {
-        details: { reason: "generation-changed" },
-      });
-    }
-    if (buffer.byteLength > MAX_SCREENSHOT_BYTES) {
-      throw new BrowserError("RESULT_TOO_LARGE", "Browser screenshot exceeds the result size limit");
-    }
-    return {
-      tabId: record.info.id,
-      mime: format === "jpeg" ? "image/jpeg" : "image/png",
-      base64: buffer.toString("base64"),
-      width: size.width,
-      height: size.height,
-      mode,
-      generation,
-      untrustedWebContent: true,
-    };
-  }
 
-  private async screenshotClip(
-    record: TabRecord,
-    mode: BrowserScreenshotMode,
-    options: BrowserScreenshotOptions,
-  ): Promise<{ x: number; y: number; width: number; height: number }> {
-    if (mode === "element") {
-      return screenshotRectForNode(record.snapshot?.nodes.get(options.ref!), MAX_SCREENSHOT_PIXELS);
-    }
-    if (mode === "full-page") {
-      const releaseDebugger = this.cdp.acquire(record.info.id);
-      try {
-        const metrics = await this.cdp.sendCommand<{
-          cssContentSize?: { width?: number; height?: number };
-        }>(record.info.id, "Page.getLayoutMetrics");
-        const width = clampInteger(Number(metrics.cssContentSize?.width), 1, 8_192);
-        const rawHeight = Number(metrics.cssContentSize?.height);
-        if (!Number.isFinite(rawHeight) || rawHeight <= 0 || rawHeight > MAX_FULL_PAGE_HEIGHT) {
-          throw new BrowserError("RESULT_TOO_LARGE", "Browser full-page screenshot exceeds the height limit");
-        }
-        return { x: 0, y: 0, width, height: Math.ceil(rawHeight) };
-      } finally {
-        releaseDebugger();
-      }
-    }
-    const viewport = (await record.view.webContents.executeJavaScriptInIsolatedWorld(SNAPSHOT_WORLD_ID, [
-      { code: "({ width: Math.max(1, innerWidth), height: Math.max(1, innerHeight) })" },
-    ])) as { width?: unknown; height?: unknown };
-    return {
-      x: 0,
-      y: 0,
-      width: clampInteger(Number(viewport.width), 1, 8_192),
-      height: clampInteger(Number(viewport.height), 1, 8_192),
-    };
+    return captureBrowserScreenshot(
+      {
+        contents: record.view.webContents,
+        tabId: record.info.id,
+        generation: () => record.info.generation,
+        element: options.ref ? record.snapshot?.nodes.get(options.ref) : undefined,
+      },
+      this.cdp,
+      options,
+    );
   }
 
   async click(
@@ -2385,127 +2267,6 @@ function boundInspectionSnapshot(
   };
 }
 
-function screenshotRectForNode(
-  node: BrowserSnapshotNode | undefined,
-  maxPixels: number,
-): { x: number; y: number; width: number; height: number } {
-  if (!node?.bounds) throw new BrowserError("STALE_ELEMENT_REF", "Browser element has no current screenshot bounds");
-  const x = Math.max(0, Math.floor(node.bounds.x));
-  const y = Math.max(0, Math.floor(node.bounds.y));
-  const width = Math.max(1, Math.ceil(node.bounds.width));
-  const height = Math.max(1, Math.ceil(node.bounds.height));
-  if (width * height > maxPixels) {
-    throw new BrowserError("RESULT_TOO_LARGE", "Browser element screenshot exceeds the pixel limit");
-  }
-  return { x, y, width, height };
-}
-
-function compareScreenshots(
-  left: BrowserScreenshotResult,
-  right: BrowserScreenshotResult,
-  threshold: number,
-  includeDiff: boolean,
-): BrowserVisualCompareResult {
-  const leftImage = nativeImage.createFromBuffer(Buffer.from(left.base64, "base64"));
-  const rightImage = nativeImage.createFromBuffer(Buffer.from(right.base64, "base64"));
-  const leftSize = leftImage.getSize();
-  const rightSize = rightImage.getSize();
-  const dimensionsMatch = leftSize.width === rightSize.width && leftSize.height === rightSize.height;
-  const width = Math.max(leftSize.width, rightSize.width);
-  const height = Math.max(leftSize.height, rightSize.height);
-  const totalPixels = width * height;
-  if (totalPixels <= 0 || totalPixels > MAX_COMPARE_PIXELS) {
-    throw new BrowserError("VISUAL_COMPARE_UNAVAILABLE", "Browser visual comparison exceeds the pixel limit");
-  }
-  if (!dimensionsMatch) {
-    return {
-      mode: left.mode,
-      width,
-      height,
-      dimensionsMatch: false,
-      differentPixels: totalPixels,
-      totalPixels,
-      differenceRatio: 1,
-      regions: [{ x: 0, y: 0, width, height }],
-      leftGeneration: left.generation,
-      rightGeneration: right.generation,
-      untrustedWebContent: true,
-    };
-  }
-  const leftBitmap = leftImage.toBitmap();
-  const rightBitmap = rightImage.toBitmap();
-  if (leftBitmap.length !== rightBitmap.length || leftBitmap.length < totalPixels * 4) {
-    throw new BrowserError("VISUAL_COMPARE_UNAVAILABLE", "Browser screenshot bitmap is unavailable");
-  }
-  const diffBitmap = includeDiff ? Buffer.alloc(leftBitmap.length) : undefined;
-  let differentPixels = 0;
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-  for (let pixel = 0; pixel < totalPixels; pixel += 1) {
-    const offset = pixel * 4;
-    let different = false;
-    for (let channel = 0; channel < 4; channel += 1) {
-      if (Math.abs(leftBitmap[offset + channel]! - rightBitmap[offset + channel]!) > threshold) {
-        different = true;
-        break;
-      }
-    }
-    if (different) {
-      differentPixels += 1;
-      const x = pixel % width;
-      const y = Math.floor(pixel / width);
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-      if (diffBitmap) {
-        diffBitmap[offset] = 0;
-        diffBitmap[offset + 1] = 0;
-        diffBitmap[offset + 2] = 255;
-        diffBitmap[offset + 3] = 255;
-      }
-    } else if (diffBitmap) {
-      diffBitmap[offset] = Math.round(leftBitmap[offset]! * 0.25);
-      diffBitmap[offset + 1] = Math.round(leftBitmap[offset + 1]! * 0.25);
-      diffBitmap[offset + 2] = Math.round(leftBitmap[offset + 2]! * 0.25);
-      diffBitmap[offset + 3] = 255;
-    }
-  }
-  let diff: BrowserScreenshotResult | undefined;
-  if (diffBitmap) {
-    const png = nativeImage.createFromBitmap(diffBitmap, { width, height, scaleFactor: 1 }).toPNG();
-    if (png.byteLength > MAX_SCREENSHOT_BYTES) {
-      throw new BrowserError("RESULT_TOO_LARGE", "Browser visual diff exceeds the result size limit");
-    }
-    diff = {
-      tabId: left.tabId,
-      mime: "image/png",
-      base64: png.toString("base64"),
-      width,
-      height,
-      mode: left.mode,
-      generation: left.generation,
-      untrustedWebContent: true,
-    };
-  }
-  return {
-    mode: left.mode,
-    width,
-    height,
-    dimensionsMatch: true,
-    differentPixels,
-    totalPixels,
-    differenceRatio: differentPixels / totalPixels,
-    regions: differentPixels === 0 ? [] : [{ x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }],
-    leftGeneration: left.generation,
-    rightGeneration: right.generation,
-    ...(diff ? { diff } : {}),
-    untrustedWebContent: true,
-  };
-}
-
 function normalizeAddress(value: string): string {
   if (typeof value !== "string") throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser address is invalid");
   const trimmed = value.trim();
@@ -2546,25 +2307,6 @@ function navigationFailureError(error: unknown): BrowserError {
   });
 }
 
-function externalProtocolGuardScript(token: string): string {
-  const prefix = `pi-browser-external:${token}:`;
-  return `(() => {
-    if (globalThis.__piExternalProtocolGuardInstalled) return;
-    Object.defineProperty(globalThis, '__piExternalProtocolGuardInstalled', { value: true });
-    document.addEventListener('click', (event) => {
-      if (!event.isTrusted) return;
-      const anchor = event.composedPath().find((node) => node && node.nodeType === 1 && node.tagName === 'A');
-      if (!anchor) return;
-      let url;
-      try { url = new URL(anchor.href, location.href); } catch { return; }
-      if (url.protocol === 'http:' || url.protocol === 'https:' || url.href === 'about:blank') return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (url.protocol === 'mailto:') console.info(${JSON.stringify(prefix)} + url.href.slice(0, 8192));
-    }, true);
-  })()`;
-}
-
 async function collectFrameContexts(
   contents: WebContents,
 ): Promise<Array<{ frame: WebFrameMain; offsetX: number; offsetY: number }>> {
@@ -2602,69 +2344,6 @@ async function collectFrameContexts(
   return result;
 }
 
-function createSnapshotScript(snapshotId: string, maxNodes: number, maxTextChars: number, startIndex = 0): string {
-  return `(() => {
-    const token = ${JSON.stringify(snapshotId)};
-    for (const old of document.querySelectorAll('[data-pi-browser-ref]')) old.removeAttribute('data-pi-browser-ref');
-    const selector = 'a,button,input,textarea,select,summary,[role],[tabindex],[contenteditable="true"]';
-    const all = Array.from(document.querySelectorAll(selector));
-    const nodes = [];
-    let nodesTruncated = false;
-    let index = ${startIndex};
-    for (const element of all) {
-      const rect = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      if (rect.width <= 0 || rect.height <= 0 || style.visibility === 'hidden' || style.display === 'none') continue;
-      if (nodes.length >= ${maxNodes}) {
-        nodesTruncated = true;
-        break;
-      }
-      const ref = 'e' + (++index);
-      element.setAttribute('data-pi-browser-ref', token + ':' + ref);
-      const tag = element.tagName.toLowerCase();
-      const autocomplete = (element.getAttribute('autocomplete') || '').toLowerCase();
-      const secretInput = tag === 'input' && (element.type === 'password' || /(?:password|one-time-code|cc-number|cc-csc)/.test(autocomplete));
-      const safeValue = secretInput || (tag === 'input' && element.type === 'file') ? '' : (typeof element.value === 'string' ? element.value : '');
-      const role = element.getAttribute('role') || ({a:'link',button:'button',input:(element.type === 'checkbox' ? 'checkbox' : element.type === 'radio' ? 'radio' : element.type === 'file' ? 'file-upload' : element.type === 'password' ? 'password' : 'textbox'),textarea:'textbox',select:'combobox',summary:'button'}[tag] || 'generic');
-      const name = (element.getAttribute('aria-label') || element.getAttribute('alt') || element.getAttribute('placeholder') || element.innerText || safeValue || element.getAttribute('title') || '').trim().replace(/\\s+/g, ' ').slice(0, 500);
-      nodes.push({ ref, role, name, value: secretInput ? undefined : safeValue.slice(0, 2000), description: secretInput ? 'Sensitive value redacted' : undefined, disabled: Boolean(element.disabled), focused: document.activeElement === element, checked: typeof element.checked === 'boolean' ? element.checked : undefined, level: Number(element.getAttribute('aria-level')) || undefined, bounds: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) } });
-    }
-    const rawText = (document.body?.innerText || '').replace(/\\r/g, '');
-    const textTruncated = rawText.length > ${maxTextChars};
-    return { text: rawText.slice(0, ${maxTextChars}), nodes, textTruncated, nodesTruncated };
-  })()`;
-}
-
-function elementPointScript(snapshotId: string, ref: string, focus: boolean): string {
-  return `(() => {
-    const element = document.querySelector('[data-pi-browser-ref=' + CSS.escape(${JSON.stringify(`${snapshotId}:${ref}`)}) + ']');
-    if (!element || !element.isConnected) return null;
-    let rect = element.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return null;
-    if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) {
-      element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
-      rect = element.getBoundingClientRect();
-    }
-    const left = Math.max(0, rect.left);
-    const right = Math.min(innerWidth, rect.right);
-    const top = Math.max(0, rect.top);
-    const bottom = Math.min(innerHeight, rect.bottom);
-    if (right <= left || bottom <= top) return null;
-    const x = Math.round(left + (right - left) / 2);
-    const y = Math.round(top + (bottom - top) / 2);
-    ${focus ? "element.focus(); if (element.matches?.('input:not([type=file]),textarea') && typeof element.select === 'function') element.select();" : ""}
-    const anchor = element.closest?.('a[href]');
-    let externalUrl;
-    if (anchor) {
-      try {
-        const target = new URL(anchor.href, location.href);
-        if (target.protocol !== 'http:' && target.protocol !== 'https:' && target.href !== 'about:blank') externalUrl = target.href.slice(0, 8192);
-      } catch {}
-    }
-    return { x, y, externalUrl };
-  })()`;
-}
-
 function popupLoadOptions(details: Electron.HandlerDetails): Electron.LoadURLOptions {
   const options: Electron.LoadURLOptions = {};
   if (details.referrer?.url) options.httpReferrer = details.referrer;
@@ -2681,29 +2360,6 @@ function popupLoadOptions(details: Electron.HandlerDetails): Electron.LoadURLOpt
     }
   }
   return options;
-}
-
-function elementHighlightScript(snapshotId: string, ref: string, show: boolean): string {
-  const token = `${snapshotId}:${ref}`;
-  return `(() => {
-    const markerId = 'pi-browser-action-highlight';
-    document.getElementById(markerId)?.remove();
-    if (!${show}) return;
-    const element = document.querySelector('[data-pi-browser-ref=' + CSS.escape(${JSON.stringify(token)}) + ']');
-    if (!element || !element.isConnected) return;
-    const rect = element.getBoundingClientRect();
-    const marker = document.createElement('div');
-    marker.id = markerId;
-    marker.setAttribute('aria-hidden', 'true');
-    Object.assign(marker.style, {
-      position: 'fixed', pointerEvents: 'none', zIndex: '2147483647',
-      left: Math.max(0, rect.left - 3) + 'px', top: Math.max(0, rect.top - 3) + 'px',
-      width: Math.max(1, rect.width + 6) + 'px', height: Math.max(1, rect.height + 6) + 'px',
-      border: '2px solid #f59e0b', borderRadius: '5px', boxSizing: 'border-box',
-      background: 'rgba(245, 158, 11, 0.12)'
-    });
-    document.documentElement.appendChild(marker);
-  })()`;
 }
 
 function isSensitiveNode(node: BrowserSnapshotNode): boolean {
@@ -2752,11 +2408,6 @@ function isPoint(value: unknown): value is { x: number; y: number; externalUrl?:
     Number.isFinite((value as { x?: unknown }).x) &&
     Number.isFinite((value as { y?: unknown }).y)
   );
-}
-
-function clampInteger(value: number, minimum: number, maximum: number): number {
-  if (!Number.isFinite(value)) return minimum;
-  return Math.max(minimum, Math.min(maximum, Math.round(value)));
 }
 
 function randomBetween(minimum: number, maximum: number): number {
@@ -2868,79 +2519,4 @@ function collectRemoteObjectIds(value: unknown): string[] {
   };
   visit(value, 0);
   return [...objectIds];
-}
-
-async function capturePresentedFrame(contents: WebContents, timeoutMs: number): Promise<Electron.NativeImage> {
-  return new Promise<Electron.NativeImage>((resolve, reject) => {
-    let settled = false;
-    const finish = (callback: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (!contents.isDestroyed()) {
-        try {
-          contents.endFrameSubscription();
-        } catch {
-          // The subscription may already have ended with the renderer.
-        }
-      }
-      callback();
-    };
-    const timer = setTimeout(
-      () => finish(() => reject(new BrowserError("ACTION_TIMEOUT", "Browser frame capture timed out"))),
-      timeoutMs,
-    );
-    try {
-      contents.beginFrameSubscription(false, (frame) => {
-        if (!frame.isEmpty()) finish(() => resolve(frame));
-      });
-      contents.invalidate();
-    } catch (error) {
-      finish(() => reject(error));
-    }
-  });
-}
-
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  code: "ACTION_TIMEOUT" | "JAVASCRIPT_TIMEOUT",
-  signal?: AbortSignal,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const finish = (callback: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      callback();
-    };
-    const onAbort = () =>
-      finish(() => reject(new BrowserError("USER_TOOK_CONTROL", "User took control of the Browser tab")));
-    const timer = setTimeout(
-      () => finish(() => reject(new BrowserError(code, "Browser action timed out", { retryable: true }))),
-      timeoutMs,
-    );
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted) onAbort();
-    promise.then(
-      (value) => finish(() => resolve(value)),
-      (error) => finish(() => reject(error)),
-    );
-  });
-}
-
-function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(new BrowserError("USER_TOOK_CONTROL", "User took control of the Browser tab"));
-      },
-      { once: true },
-    );
-  });
 }
