@@ -82,7 +82,8 @@ async function mount(t, options = {}) {
     opened = [],
     focusTimers = [],
     focused = [];
-  let changed = 0;
+  let changed = 0,
+    providerFocusCount = 0;
   const nativeTimeout = globalThis.setTimeout;
   t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => {
     if (options.captureFocus && delay === 30) {
@@ -139,12 +140,12 @@ async function mount(t, options = {}) {
   await act(async () => {
     renderer = create(createElement(Host), {
       createNodeMock: options.captureFocus
-        ? (element) =>
-            element.type === "input"
-              ? {
-                  focus: () => focused.push(element.props.placeholder),
-                }
-              : null
+        ? (element) => {
+            if (element.type === "input") return { focus: () => focused.push(element.props.placeholder) };
+            if (element.type === "button" && element.props["aria-label"] === "Add provider")
+              return { focus: () => providerFocusCount++ };
+            return null;
+          }
         : undefined,
     });
   });
@@ -154,6 +155,9 @@ async function mount(t, options = {}) {
     sources,
     opened,
     focused,
+    get providerFocusCount() {
+      return providerFocusCount;
+    },
     async flushFocus() {
       await act(async () => {
         for (const callback of focusTimers.splice(0)) callback();
@@ -197,9 +201,24 @@ test("provider picker owns its search and focus lifecycle, supports Escape, and 
   const fixture = await mount(t, { captureFocus: true });
   const isPicker = (node) => typeof node.type === "function" && node.type.name === "AddProviderPicker";
   await fixture.click("+ Add provider");
-  await act(async () => fixture.detail("AddProviderPicker").findByType("input").props.onKeyDown({ key: "Escape" }));
+  let escapeStopped = false;
+  const escape = {
+    key: "Escape",
+    preventDefault() {},
+    stopPropagation() {
+      escapeStopped = true;
+    },
+  };
+  await act(async () =>
+    fixture
+      .detail("AddProviderPicker")
+      .find((node) => node.props.role === "dialog")
+      .props.onKeyDown(escape),
+  );
+  assert.equal(escapeStopped, true, "closing the picker must not also close the parent Settings dialog");
   await fixture.flushFocus();
   assert.deepEqual(fixture.focused, [], "an unmounted picker cannot steal focus");
+  assert.equal(fixture.providerFocusCount, 1, "focus returns to the picker trigger");
   assert.equal(fixture.renderer.root.findAll(isPicker).length, 0);
 
   await fixture.click("+ Add provider");
@@ -212,7 +231,12 @@ test("provider picker owns its search and focus lifecycle, supports Escape, and 
       .props.onChange({ target: { value: "no-such-provider" } }),
   );
   assert.match(text(fixture.detail("AddProviderPicker")), /No providers match/);
-  await act(async () => fixture.detail("AddProviderPicker").findByType("input").props.onKeyDown({ key: "Escape" }));
+  await act(async () =>
+    fixture
+      .detail("AddProviderPicker")
+      .find((node) => node.props.role === "dialog")
+      .props.onKeyDown(escape),
+  );
   await fixture.click("+ Add provider");
   assert.equal(fixture.detail("AddProviderPicker").findByType("input").props.value, "");
   const custom = fixture

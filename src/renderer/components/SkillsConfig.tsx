@@ -887,8 +887,10 @@ export const SkillsConfig = forwardRef<
                         const isSelected = !addMode && selected === skill.filePath;
                         const disabled = skill.disableModelInvocation;
                         return (
-                          <div
+                          <button
                             key={skill.filePath}
+                            type="button"
+                            aria-current={isSelected ? "true" : undefined}
                             onClick={() => {
                               if (isSelected) return;
                               requestTransition(() => {
@@ -900,6 +902,10 @@ export const SkillsConfig = forwardRef<
                               display: "flex",
                               alignItems: "center",
                               gap: 7,
+                              width: "100%",
+                              border: 0,
+                              textAlign: "left",
+                              fontFamily: "inherit",
                               padding: "8px 8px",
                               borderRadius: 5,
                               cursor: "pointer",
@@ -937,7 +943,7 @@ export const SkillsConfig = forwardRef<
                             >
                               {skill.name}
                             </span>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
@@ -953,12 +959,18 @@ export const SkillsConfig = forwardRef<
                 flexShrink: 0,
               }}
             >
-              <div
+              <button
+                type="button"
+                aria-current={addMode ? "true" : undefined}
                 onClick={() => requestTransition(() => setAddMode(true))}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
+                  width: "100%",
+                  border: 0,
+                  textAlign: "left",
+                  fontFamily: "inherit",
                   padding: "7px 8px",
                   borderRadius: 5,
                   cursor: "pointer",
@@ -987,7 +999,7 @@ export const SkillsConfig = forwardRef<
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
                 {t("addSkill", "Add skill")}
-              </div>
+              </button>
             </div>
           </div>
 

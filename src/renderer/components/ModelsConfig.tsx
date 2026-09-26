@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useReducer } from "react";
+import { useState, useEffect, useCallback, useReducer, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import {
@@ -64,6 +64,7 @@ export function ModelsConfig({
   const [modelPreferencesSaving, setModelPreferencesSaving] = useState(false);
   const [modelPreferencesError, setModelPreferencesError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const addProviderButtonRef = useRef<HTMLButtonElement>(null);
 
   const loadOAuthProviders = useCallback(() => {
     call("auth.providers")
@@ -684,6 +685,8 @@ export function ModelsConfig({
               {/* Add provider */}
               <div style={{ borderTop: "1px solid var(--border)", padding: "8px 6px" }}>
                 <button
+                  ref={addProviderButtonRef}
+                  aria-label={t("addProvider", "Add provider")}
                   onClick={() => setPickerOpen(true)}
                   style={{
                     display: "flex",
@@ -844,7 +847,10 @@ export function ModelsConfig({
           onSelectOAuth={(id) => setSelection({ type: "oauth", providerId: id })}
           onSelectApiKey={(id) => setSelection({ type: "apikey", providerId: id })}
           onAddCustom={addCustomProvider}
-          onClose={() => setPickerOpen(false)}
+          onClose={() => {
+            setPickerOpen(false);
+            addProviderButtonRef.current?.focus();
+          }}
         />
       )}
     </>

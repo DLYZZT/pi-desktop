@@ -80,6 +80,15 @@ export function AddProviderPicker({
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("addProvider", "Add provider")}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }}
         style={{
           width: 820,
           maxWidth: "calc(100vw - 32px)",
@@ -122,9 +131,6 @@ export function AddProviderPicker({
             ref={inputRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") onClose();
-            }}
             placeholder={t("modelSearchProviders", "Search providers…")}
             style={{
               flex: 1,

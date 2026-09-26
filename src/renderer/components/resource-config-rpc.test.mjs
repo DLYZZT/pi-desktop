@@ -182,6 +182,31 @@ test("skills RPC listing ignores late success and errors after switching project
   assert.doesNotMatch(fixture.text(), /Old connection|current description/);
 });
 
+test("skill navigation exposes native buttons and preserves unsaved-change guards", async (t) => {
+  const fixture = await mount(t, "skills");
+  await fixture.reply("skills.list", { skills: [skill("first"), skill("second")] });
+  await fixture.reply("skills.getContent", { content: "first content" });
+  const buttons = () => fixture.renderer.root.findAllByType("button");
+  const first = buttons().find((node) => text(node) === "first");
+  const second = buttons().find((node) => text(node) === "second");
+  assert.ok(first && second, "each skill must be a keyboard-focusable native button");
+  assert.equal(first.props.type, "button");
+  assert.equal(first.props["aria-current"], "true");
+  assert.ok(buttons().find((node) => text(node) === "Add skill"));
+  await act(async () =>
+    fixture.renderer.root.findByType("textarea").props.onChange({ target: { value: "unsaved first" } }),
+  );
+  await fixture.click("second");
+  assert.ok(fixture.renderer.root.find((node) => node.props.role === "dialog"));
+  assert.equal(fixture.renderer.root.findByType("textarea").props.value, "unsaved first");
+  await fixture.click("Cancel");
+  assert.equal(buttons().find((node) => text(node) === "first").props["aria-current"], "true");
+  await fixture.click("second");
+  await fixture.click("Discard");
+  await fixture.reply("skills.getContent", { content: "second content" });
+  assert.equal(buttons().find((node) => text(node) === "second").props["aria-current"], "true");
+});
+
 test("skill toggling sends typed fields and changes the view only after a successful commit", async (t) => {
   const fixture = await mount(t, "skills");
   const item = skill("fixture");
