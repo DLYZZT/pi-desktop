@@ -127,6 +127,9 @@ export function startSessionWatcher(server: RpcServer, options: SessionWatcherOp
       stop();
     });
     setAllowedRootsWatcherHealthy(true);
+    // A write immediately after attachment may not produce a native callback.
+    // Reconcile once so startup does not depend on receiving that first event.
+    debounce();
   } catch (err) {
     stop();
     console.error("[agent-host] session watcher failed:", err);

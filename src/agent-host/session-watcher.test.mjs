@@ -19,7 +19,7 @@ const { startSessionWatcher, sessionIndex } = await importTestBundle("pi-usage-s
   },
 });
 
-function controlledWatcher(t, indexOverrides = {}) {
+async function controlledWatcher(t, indexOverrides = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "pi-watch-lifecycle-"));
   const agentDir = path.join(root, "agent");
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -31,15 +31,18 @@ function controlledWatcher(t, indexOverrides = {}) {
   let onChange;
   let onError;
   let closed = 0;
+  let initialScans = 0;
+  const index = {
+    getByPath: () => null,
+    refreshPath: async () => ({ id: "fixture", cwd: root }),
+    refreshAll: async () => {
+      initialScans++;
+    },
+  };
   const stop = startSessionWatcher(
     { emit: (_topic, key, event) => events.push({ key, event }) },
     {
-      index: {
-        getByPath: () => null,
-        refreshPath: async () => ({ id: "fixture", cwd: root }),
-        refreshAll: async () => {},
-        ...indexOverrides,
-      },
+      index,
       watch(_directory, listener) {
         onChange = listener;
         return {
@@ -65,7 +68,7 @@ function controlledWatcher(t, indexOverrides = {}) {
     else process.env.PI_CODING_AGENT_SESSION_DIR = previousSessionsDir;
     rmSync(root, { recursive: true, force: true });
   });
-  return {
+  const fixture = {
     events,
     stop,
     change: (name) => onChange("change", name),
@@ -79,12 +82,23 @@ function controlledWatcher(t, indexOverrides = {}) {
       await flush();
     },
   };
+  await fixture.flush();
+  const startupEvents = events.splice(0);
+  Object.assign(index, indexOverrides);
+  return { ...fixture, startupEvents, initialScans };
 }
+
+test("startup reconciles once even when the native watcher delivers no initial event", async (t) => {
+  const fixture = await controlledWatcher(t);
+  assert.equal(fixture.initialScans, 1);
+  assert.deepEqual(fixture.startupEvents, [{ key: "*", event: { cwd: null, fullRefresh: true } }]);
+  assert.equal(fixture.pending(), 0, "startup reconciliation does not introduce continuous polling");
+});
 
 for (const mode of ["path", "all"]) {
   test(`stopping suppresses a late ${mode} refresh and ignores subsequent callbacks`, async (t) => {
     const gate = Promise.withResolvers();
-    const fixture = controlledWatcher(t, {
+    const fixture = await controlledWatcher(t, {
       [mode === "path" ? "refreshPath" : "refreshAll"]: () => gate.promise,
     });
     fixture.change(mode === "path" ? "sessions/id.jsonl" : "settings.json");
@@ -105,7 +119,7 @@ test("events during a full refresh cause a later scan without overlapping scans"
   let active = 0;
   let maxActive = 0;
   let calls = 0;
-  const fixture = controlledWatcher(t, {
+  const fixture = await controlledWatcher(t, {
     async refreshAll() {
       active++;
       maxActive = Math.max(maxActive, active);
@@ -128,7 +142,7 @@ test("events during a full refresh cause a later scan without overlapping scans"
 
 test("duplicate paths are coalesced and a full refresh subsumes pending path work", async (t) => {
   const calls = [];
-  const fixture = controlledWatcher(t, {
+  const fixture = await controlledWatcher(t, {
     async refreshPath(file) {
       calls.push(path.basename(file));
       return { id: "fixture", cwd: "/project" };
@@ -150,7 +164,7 @@ test("duplicate paths are coalesced and a full refresh subsumes pending path wor
 });
 
 test("removed sessions retain their identity and unknown paths invalidate the full list", async (t) => {
-  const fixture = controlledWatcher(t, {
+  const fixture = await controlledWatcher(t, {
     getByPath: (file) => (file.endsWith("removed.jsonl") ? { id: "removed", cwd: "/project" } : null),
     refreshPath: async () => null,
   });
@@ -163,10 +177,10 @@ test("removed sessions retain their identity and unknown paths invalidate the fu
   ]);
 });
 
-test("watch errors stop pending work and close the watcher once", (t) => {
+test("watch errors stop pending work and close the watcher once", async (t) => {
   const errors = [];
   t.mock.method(console, "error", (...args) => errors.push(args));
-  const fixture = controlledWatcher(t);
+  const fixture = await controlledWatcher(t);
   fixture.change("sessions/id.jsonl");
   fixture.error(new Error("watch fixture failure"));
   fixture.change("settings.json");
@@ -181,7 +195,7 @@ test("a rejected refresh after shutdown does not publish an error fallback", asy
   const errors = [];
   t.mock.method(console, "error", (...args) => errors.push(args));
   const gate = Promise.withResolvers();
-  const fixture = controlledWatcher(t, { refreshAll: () => gate.promise });
+  const fixture = await controlledWatcher(t, { refreshAll: () => gate.promise });
   fixture.change("settings.json");
   const flushing = fixture.flush();
   fixture.stop();
@@ -213,7 +227,7 @@ test("ambiguous session metadata requests a full refresh while unrelated files a
   assert.deepEqual(classifySessionWatchChange(agentDir, sessionsRoot, "notes.txt"), { kind: "ignore" });
 });
 
-test("an independent usage append notifies an idle session without adding a chat message", async (t) => {
+test("startup reconciliation and independent usage appends update an idle session", async (t) => {
   const root = mkdtempSync(path.join(tmpdir(), "pi-usage-watch-"));
   const agentDir = path.join(root, "agent");
   const sessionsRoot = path.join(agentDir, "sessions");
@@ -304,13 +318,32 @@ test("an independent usage append notifies an idle session without adding a chat
     cost: { input: 0.01, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.01 },
   });
   record("append-end");
-  for (let attempt = 0; attempt < 60 && events.length === 0; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  assert.equal(manager.getEntries().filter((entry) => entry.type === "message").length, 2);
-  assert.equal(
-    events.some((event) => event.sessionId === manager.getSessionId() || event.fullRefresh === true),
-    true,
-    JSON.stringify({ platform: process.platform, trace }, null, 2),
+  const waitForChange = async (after) => {
+    for (let attempt = 0; attempt < 60 && events.length === after; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(
+      events.slice(after).some((event) => event.sessionId === manager.getSessionId() || event.fullRefresh === true),
+      true,
+      JSON.stringify({ platform: process.platform, trace }, null, 2),
+    );
+  };
+  await waitForChange(0);
+  const previousEvents = events.length;
+  const previousTrace = trace.length;
+  record("steady-append-start");
+  manager.appendUsage("cache_warm", "anthropic", "fixture", {
+    input: 11,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 11,
+    cost: { input: 0.02, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.02 },
+  });
+  await waitForChange(previousEvents);
+  assert.ok(
+    trace.slice(previousTrace).some((entry) => entry.phase === "event"),
+    "the steady-state append must be observed by the real native watcher",
   );
+  assert.equal(manager.getEntries().filter((entry) => entry.type === "message").length, 2);
 });
