@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { CredentialSynchronizationError } from "@earendil-works/pi-coding-agent";
+import { createDeferred } from "#test-timing";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
 let modulePromise;
@@ -22,6 +23,72 @@ async function loadAuthLoginModule() {
 function nextTurn() {
   return new Promise((resolve) => setImmediate(resolve));
 }
+
+test("runtime initialization reserves provider ownership and cancellation prevents a late login", async () => {
+  const { createAuthLoginService } = await loadAuthLoginModule();
+  const pending = createDeferred();
+  let logins = 0;
+  const service = createAuthLoginService({ emit() {} }, () => pending.promise);
+  const starting = service.start("reserved-fixture");
+  assert.deepEqual(await service.start("reserved-fixture"), { started: false });
+  service.cancel("reserved-fixture");
+  pending.resolve({
+    getProvider: () => ({ auth: { oauth: {} } }),
+    async login() {
+      logins++;
+    },
+  });
+  assert.deepEqual(await starting, { started: false });
+  assert.equal(logins, 0);
+  service.dispose();
+});
+
+test("disposal prevents pending runtime creation from reviving a closed login service", async () => {
+  const { createAuthLoginService } = await loadAuthLoginModule();
+  const pending = createDeferred();
+  let logins = 0;
+  const service = createAuthLoginService({ emit() {} }, () => pending.promise);
+  const starting = service.start("disposed-fixture");
+  service.dispose();
+  service.dispose();
+  pending.resolve({
+    getProvider: () => ({ auth: { oauth: {} } }),
+    async login() {
+      logins++;
+    },
+  });
+  assert.deepEqual(await starting, { started: false });
+  assert.equal(logins, 0);
+  await assert.rejects(service.start("disposed-fixture"), (error) => error.code === "CLOSED");
+});
+
+test("disposal cancels owned tokens and suppresses late progress without cancelling a replacement", async () => {
+  const { createAuthLoginService, resolveLoginCode } = await loadAuthLoginModule();
+  const events = [],
+    interactions = [];
+  const runtime = {
+    getProvider: () => ({ auth: { oauth: {} } }),
+    async login(_provider, _type, interaction) {
+      interactions.push(interaction);
+      await interaction.prompt({ type: "manual_code", message: "fixture code" });
+    },
+  };
+  const first = createAuthLoginService({ emit: (_topic, _provider, event) => events.push(event) }, () => runtime);
+  await first.start("owned-fixture");
+  const token = events[0].token;
+  first.cancel("owned-fixture");
+  const replacement = createAuthLoginService({ emit() {} }, () => runtime);
+  await replacement.start("owned-fixture");
+  first.dispose();
+  const count = events.length;
+  interactions[0].notify({ type: "progress", message: "late" });
+  await nextTurn();
+  assert.equal(resolveLoginCode("owned-fixture", token, "late"), false);
+  assert.equal(events.length, count);
+  assert.equal(interactions[1].signal.aborted, false);
+  replacement.dispose();
+  await nextTurn();
+});
 
 test("a cancelled OAuth flow cannot clear the active replacement flow", async () => {
   const { createAuthLoginService } = await loadAuthLoginModule();

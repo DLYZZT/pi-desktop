@@ -2,10 +2,6 @@
  * Register all Api handlers on the RPC server.
  * Implements the desktop RPC contract in the Agent Host process.
  */
-/**
- * Register all Api handlers on the RPC server.
- * Implements the desktop RPC contract in the Agent Host process.
- */
 import { modelCatalogHandlers } from "./handlers/model-catalog";
 import { modelConfigHandlers } from "./handlers/models-config";
 import { createAuthHandlers } from "./handlers/auth";
@@ -29,7 +25,9 @@ import { assertPathAllowed } from "./path-authorization";
 export { projectModelsList } from "./handlers/model-catalog";
 export { credentialMutationFailure } from "./handlers/auth";
 
-import type { RpcServer } from "../contract/rpc";
+import type { RpcServer, RpcRequestContext } from "../contract/rpc";
+import { createSessionEventBindings } from "./session-event-bindings";
+import { createHostShutdown } from "./host-shutdown";
 import { RpcError } from "../contract/types";
 
 import { disposeAllRpcSessions, subscribeRunningSessions, syncDesktopToolsForAllSessions } from "./rpc-manager";
@@ -47,17 +45,17 @@ import { HerdrBridgeError } from "./herdr/errors";
 import { clearHerdrBridge, initializeHerdrBridge } from "./herdr/runtime";
 
 export function registerHandlers(server: RpcServer): () => Promise<void> {
+  const bindings = createSessionEventBindings(server);
+  let closing = false;
   const fileWatch = createFileWatchService(server);
   const fileHandlers = createFileHandlers(fileWatch);
   const authLogin = createAuthLoginService(server);
   const authHandlers = createAuthHandlers(authLogin);
-  const channelManager = new ChannelManager(server, (session, sessionId) =>
-    ensureSessionEvents(server, session, sessionId),
-  );
+  const channelManager = new ChannelManager(server, (session, sessionId) => bindings.ensure(session, sessionId));
   initializeChannels(channelManager);
   const managedProcesses = initializeManagedProcessService(server);
   const worktreeHandlers = createWorktreeHandlers(managedProcesses);
-  const sessionHandlers = createSessionHandlers({ server, managedProcesses, clearSessionEventBinding });
+  const sessionHandlers = createSessionHandlers({ server, managedProcesses, clearSessionEventBinding: bindings.clear });
   const herdr = initializeHerdrBridge(server, { assertAllowedPath: (target) => assertPathAllowed(target) });
   const stopHerdrToolSync = herdr.subscribeRuntime(() => syncDesktopToolsForAllSessions());
 
@@ -83,7 +81,8 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
   };
 
   // Running sessions stream + tray badge signal to main via parentPort
-  subscribeRunningSessions((ids) => {
+  const stopRunning = subscribeRunningSessions((ids) => {
+    if (closing) return;
     // Both fields remain in the current stream contract for renderer compatibility.
     server.emit("agent.running", "*", {
       type: "running",
@@ -99,282 +98,243 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
   const agentHandlers = createAgentHandlers({
     server,
-    bindEvents: (session, id) => ensureSessionEvents(server, session, id),
+    bindEvents: (session, id) => bindings.ensure(session, id),
   });
   const titleHandlers = createTitleHandlers(server);
   const channelHandlers = createChannelHandlers(channelManager);
   const processHandlers = createProcessHandlers(managedProcesses, managedCall);
   const herdrHandlers = createHerdrHandlers(herdr, herdrCall);
 
+  const guard =
+    <P, R>(handler: (params: P, context: RpcRequestContext) => R) =>
+    (params: P, context: RpcRequestContext): R => {
+      if (closing) throw new RpcError({ code: "CLOSED", message: "Agent Host is shutting down" });
+      return handler(params, context);
+    };
+
   server.handle({
-    "host.ping": () => ({ ok: true as const, ts: Date.now() }),
+    "host.ping": guard(() => ({ ok: true as const, ts: Date.now() })),
 
-    "herdr.runtime.get": herdrHandlers.runtimeGet,
+    "herdr.runtime.get": guard(herdrHandlers.runtimeGet),
 
-    "herdr.runtime.configure": herdrHandlers.runtimeConfigure,
+    "herdr.runtime.configure": guard(herdrHandlers.runtimeConfigure),
 
-    "herdr.runtime.probe": herdrHandlers.runtimeProbe,
+    "herdr.runtime.probe": guard(herdrHandlers.runtimeProbe),
 
-    "herdr.runtime.restart": herdrHandlers.runtimeRestart,
+    "herdr.runtime.restart": guard(herdrHandlers.runtimeRestart),
 
-    "herdr.runtime.connect": herdrHandlers.runtimeConnect,
+    "herdr.runtime.connect": guard(herdrHandlers.runtimeConnect),
 
-    "herdr.runtime.disconnect": herdrHandlers.runtimeDisconnect,
+    "herdr.runtime.disconnect": guard(herdrHandlers.runtimeDisconnect),
 
-    "herdr.diagnostics": herdrHandlers.diagnostics,
+    "herdr.diagnostics": guard(herdrHandlers.diagnostics),
 
-    "herdr.snapshot": herdrHandlers.snapshot,
+    "herdr.snapshot": guard(herdrHandlers.snapshot),
 
-    "herdr.workspace.create": herdrHandlers.workspaceCreate,
+    "herdr.workspace.create": guard(herdrHandlers.workspaceCreate),
 
-    "herdr.pane.split": herdrHandlers.paneSplit,
+    "herdr.pane.split": guard(herdrHandlers.paneSplit),
 
-    "herdr.pane.read": herdrHandlers.paneRead,
+    "herdr.pane.read": guard(herdrHandlers.paneRead),
 
-    "herdr.agent.start": herdrHandlers.agentStart,
+    "herdr.agent.start": guard(herdrHandlers.agentStart),
 
-    "herdr.agent.prompt": herdrHandlers.agentPrompt,
+    "herdr.agent.prompt": guard(herdrHandlers.agentPrompt),
 
-    "herdr.agent.sendKeys": herdrHandlers.agentSendKeys,
+    "herdr.agent.sendKeys": guard(herdrHandlers.agentSendKeys),
 
-    "herdr.agent.wait": herdrHandlers.agentWait,
+    "herdr.agent.wait": guard(herdrHandlers.agentWait),
 
-    "herdr.agent.waitCancel": herdrHandlers.agentWaitCancel,
+    "herdr.agent.waitCancel": guard(herdrHandlers.agentWaitCancel),
 
-    "herdr.terminal.open": herdrHandlers.terminalOpen,
+    "herdr.terminal.open": guard(herdrHandlers.terminalOpen),
 
-    "herdr.terminal.input": herdrHandlers.terminalInput,
+    "herdr.terminal.input": guard(herdrHandlers.terminalInput),
 
-    "herdr.terminal.resize": herdrHandlers.terminalResize,
+    "herdr.terminal.resize": guard(herdrHandlers.terminalResize),
 
-    "herdr.terminal.ack": herdrHandlers.terminalAck,
+    "herdr.terminal.ack": guard(herdrHandlers.terminalAck),
 
-    "herdr.terminal.close": herdrHandlers.terminalClose,
+    "herdr.terminal.close": guard(herdrHandlers.terminalClose),
 
-    "host.toolchain": resourceHandlers.toolchain,
+    "host.toolchain": guard(resourceHandlers.toolchain),
 
-    "processes.list": processHandlers.list,
+    "processes.list": guard(processHandlers.list),
 
-    "processes.get": processHandlers.get,
+    "processes.get": guard(processHandlers.get),
 
-    "processes.read": processHandlers.read,
+    "processes.read": guard(processHandlers.read),
 
-    "processes.wait": processHandlers.wait,
+    "processes.wait": guard(processHandlers.wait),
 
-    "processes.write": processHandlers.write,
+    "processes.write": guard(processHandlers.write),
 
-    "processes.stop": processHandlers.stop,
+    "processes.stop": guard(processHandlers.stop),
 
-    "processes.stopAll": processHandlers.stopAll,
+    "processes.stopAll": guard(processHandlers.stopAll),
 
-    "processes.restart": processHandlers.restart,
+    "processes.restart": guard(processHandlers.restart),
 
-    "processes.dismiss": processHandlers.dismiss,
+    "processes.dismiss": guard(processHandlers.dismiss),
 
-    "processes.export": processHandlers.export,
+    "processes.export": guard(processHandlers.export),
 
-    "sessions.list": sessionHandlers.list,
+    "sessions.list": guard(sessionHandlers.list),
 
-    "sessions.get": sessionHandlers.get,
+    "sessions.get": guard(sessionHandlers.get),
 
-    "sessions.context": sessionHandlers.context,
+    "sessions.context": guard(sessionHandlers.context),
 
-    "sessions.contextPage": sessionHandlers.contextPage,
+    "sessions.contextPage": guard(sessionHandlers.contextPage),
 
-    "sessions.entryContent": sessionHandlers.entryContent,
+    "sessions.entryContent": guard(sessionHandlers.entryContent),
 
-    "sessions.export": sessionHandlers.export,
+    "sessions.export": guard(sessionHandlers.export),
 
-    "sessions.delete": sessionHandlers.delete,
+    "sessions.delete": guard(sessionHandlers.delete),
 
-    "sessions.rename": sessionHandlers.rename,
+    "sessions.rename": guard(sessionHandlers.rename),
 
-    "worktrees.list": worktreeHandlers.list,
+    "worktrees.list": guard(worktreeHandlers.list),
 
-    "worktrees.create": worktreeHandlers.create,
+    "worktrees.create": guard(worktreeHandlers.create),
 
-    "worktrees.remove": worktreeHandlers.remove,
+    "worktrees.remove": guard(worktreeHandlers.remove),
 
-    "git.status": worktreeHandlers.status,
+    "git.status": guard(worktreeHandlers.status),
 
-    "agent.new": agentHandlers.new,
+    "agent.new": guard(agentHandlers.new),
 
-    "agent.command": agentHandlers.command,
+    "agent.command": guard(agentHandlers.command),
 
-    "agent.state": agentHandlers.state,
+    "agent.state": guard(agentHandlers.state),
 
-    "agent.generateTitle": titleHandlers.generate,
+    "agent.generateTitle": guard(titleHandlers.generate),
 
-    "channels.list": channelHandlers.list,
+    "channels.list": guard(channelHandlers.list),
 
-    "channels.accountUpsert": channelHandlers.accountUpsert,
+    "channels.accountUpsert": guard(channelHandlers.accountUpsert),
 
-    "channels.accountConnect": channelHandlers.accountConnect,
+    "channels.accountConnect": guard(channelHandlers.accountConnect),
 
-    "channels.accountDelete": channelHandlers.accountDelete,
+    "channels.accountDelete": guard(channelHandlers.accountDelete),
 
-    "channels.start": channelHandlers.start,
+    "channels.start": guard(channelHandlers.start),
 
-    "channels.stop": channelHandlers.stop,
+    "channels.stop": guard(channelHandlers.stop),
 
-    "channels.restart": channelHandlers.restart,
+    "channels.restart": guard(channelHandlers.restart),
 
-    "channels.probe": channelHandlers.probe,
+    "channels.probe": guard(channelHandlers.probe),
 
-    "channels.loginStart": channelHandlers.loginStart,
+    "channels.loginStart": guard(channelHandlers.loginStart),
 
-    "channels.loginWait": channelHandlers.loginWait,
+    "channels.loginWait": guard(channelHandlers.loginWait),
 
-    "channels.loginSubmitCode": channelHandlers.loginSubmitCode,
+    "channels.loginSubmitCode": guard(channelHandlers.loginSubmitCode),
 
-    "channels.loginCancel": channelHandlers.loginCancel,
+    "channels.loginCancel": guard(channelHandlers.loginCancel),
 
-    "channels.pairingApprove": channelHandlers.pairingApprove,
+    "channels.pairingApprove": guard(channelHandlers.pairingApprove),
 
-    "channels.pairingReject": channelHandlers.pairingReject,
+    "channels.pairingReject": guard(channelHandlers.pairingReject),
 
-    "channels.bindingUpsert": channelHandlers.bindingUpsert,
+    "channels.bindingUpsert": guard(channelHandlers.bindingUpsert),
 
-    "channels.bindingDelete": channelHandlers.bindingDelete,
+    "channels.bindingDelete": guard(channelHandlers.bindingDelete),
 
-    "channels.testSend": channelHandlers.testSend,
+    "channels.testSend": guard(channelHandlers.testSend),
 
-    "files.list": fileHandlers.list,
+    "files.list": guard(fileHandlers.list),
 
-    "files.read": fileHandlers.read,
+    "files.read": guard(fileHandlers.read),
 
-    "files.download": fileHandlers.download,
+    "files.download": guard(fileHandlers.download),
 
-    "files.meta": fileHandlers.meta,
+    "files.meta": guard(fileHandlers.meta),
 
-    "files.preview": fileHandlers.preview,
+    "files.preview": guard(fileHandlers.preview),
 
-    "files.index": fileHandlers.index,
+    "files.index": guard(fileHandlers.index),
 
-    "settings.getCacheWarming": resourceHandlers.getCacheWarming,
+    "settings.getCacheWarming": guard(resourceHandlers.getCacheWarming),
 
-    "settings.setCacheWarming": resourceHandlers.setCacheWarming,
+    "settings.setCacheWarming": guard(resourceHandlers.setCacheWarming),
 
-    "models.list": modelCatalogHandlers.list,
+    "models.list": guard(modelCatalogHandlers.list),
 
-    "models.refresh": modelCatalogHandlers.refresh,
+    "models.refresh": guard(modelCatalogHandlers.refresh),
 
-    "models.refreshCancel": modelCatalogHandlers.cancelRefresh,
+    "models.refreshCancel": guard(modelCatalogHandlers.cancelRefresh),
 
-    "models.preferences.get": modelCatalogHandlers.getPreferences,
+    "models.preferences.get": guard(modelCatalogHandlers.getPreferences),
 
-    "models.preferences.set": modelCatalogHandlers.setPreferences,
+    "models.preferences.set": guard(modelCatalogHandlers.setPreferences),
 
-    "modelsConfig.get": modelConfigHandlers.get,
-    "modelsConfig.set": modelConfigHandlers.set,
-    "modelsConfig.test": modelConfigHandlers.test,
+    "modelsConfig.get": guard(modelConfigHandlers.get),
+    "modelsConfig.set": guard(modelConfigHandlers.set),
+    "modelsConfig.test": guard(modelConfigHandlers.test),
 
-    "auth.providers": authHandlers.providers,
+    "auth.providers": guard(authHandlers.providers),
 
-    "auth.allProviders": authHandlers.allProviders,
+    "auth.allProviders": guard(authHandlers.allProviders),
 
-    "auth.setApiKey": authHandlers.setApiKey,
+    "auth.setApiKey": guard(authHandlers.setApiKey),
 
-    "auth.deleteApiKey": authHandlers.deleteApiKey,
+    "auth.deleteApiKey": guard(authHandlers.deleteApiKey),
 
-    "auth.logout": authHandlers.logout,
+    "auth.logout": guard(authHandlers.logout),
 
-    "auth.loginSubmit": authHandlers.submitLogin,
+    "auth.loginSubmit": guard(authHandlers.submitLogin),
 
-    "auth.loginStart": authHandlers.startLogin,
+    "auth.loginStart": guard(authHandlers.startLogin),
 
-    "auth.loginCancel": authHandlers.cancelLogin,
+    "auth.loginCancel": guard(authHandlers.cancelLogin),
 
-    "skills.list": resourceHandlers.listSkills,
+    "skills.list": guard(resourceHandlers.listSkills),
 
-    "skills.search": resourceHandlers.searchSkills,
+    "skills.search": guard(resourceHandlers.searchSkills),
 
-    "skills.install": resourceHandlers.installSkill,
+    "skills.install": guard(resourceHandlers.installSkill),
 
-    "skills.set": resourceHandlers.setSkill,
+    "skills.set": guard(resourceHandlers.setSkill),
 
-    "skills.getContent": resourceHandlers.getSkillContent,
+    "skills.getContent": guard(resourceHandlers.getSkillContent),
 
-    "plugins.list": resourceHandlers.listPlugins,
+    "plugins.list": guard(resourceHandlers.listPlugins),
 
-    "plugins.set": resourceHandlers.setPlugin,
+    "plugins.set": guard(resourceHandlers.setPlugin),
 
-    "files.watchStart": fileHandlers.startWatch,
+    "files.watchStart": guard(fileHandlers.startWatch),
 
-    "files.watchStop": fileHandlers.stopWatch,
+    "files.watchStop": guard(fileHandlers.stopWatch),
 
-    "system.home": systemHandlers.home,
+    "system.home": guard(systemHandlers.home),
 
-    "system.validateCwd": systemHandlers.validateCwd,
+    "system.validateCwd": guard(systemHandlers.validateCwd),
 
-    "system.defaultCwd": systemHandlers.defaultCwd,
+    "system.defaultCwd": guard(systemHandlers.defaultCwd),
 
-    "system.allowRoot": systemHandlers.allowRoot,
+    "system.allowRoot": guard(systemHandlers.allowRoot),
 
-    "system.runningCount": systemHandlers.runningCount,
+    "system.runningCount": guard(systemHandlers.runningCount),
   });
 
-  return async () => {
-    modelCatalogRefreshCoordinator.cancelAll();
-    stopHerdrToolSync();
-    await herdr.shutdown();
-    clearHerdrBridge(herdr);
-    await managedProcesses.stopAll("host");
-    await channelManager.shutdown();
-    stopAllFileWatches();
-    await disposeAllRpcSessions();
+  const shutdown = createHostShutdown([
+    { name: "running subscription", stop: stopRunning },
+    { name: "session event bindings", stop: bindings.close },
+    { name: "authentication flows", stop: () => authLogin.dispose() },
+    { name: "model refreshes", stop: () => modelCatalogRefreshCoordinator.cancelAll() },
+    { name: "Herdr tool sync", stop: stopHerdrToolSync },
+    { name: "Herdr", stop: () => herdr.shutdown() },
+    { name: "Herdr registration", stop: () => clearHerdrBridge(herdr) },
+    { name: "managed processes", stop: () => managedProcesses.stopAll("host") },
+    { name: "channels", stop: () => channelManager.shutdown() },
+    { name: "file watches", stop: stopAllFileWatches },
+    { name: "Agent sessions", stop: disposeAllRpcSessions },
+  ]);
+  return () => {
+    closing = true;
+    return shutdown();
   };
-}
-
-/** ISSUE-003: track bindings per wrapper instance, not permanent sessionId set */
-const eventBoundWrappers = new WeakSet<object>();
-const eventUnsubsBySession = new Map<string, () => void>();
-
-function clearSessionEventBinding(sessionId: string): void {
-  const unsub = eventUnsubsBySession.get(sessionId);
-  if (unsub) {
-    try {
-      unsub();
-    } catch {
-      /* ignore */
-    }
-    eventUnsubsBySession.delete(sessionId);
-  }
-}
-
-function ensureSessionEvents(
-  server: RpcServer,
-  session: {
-    sessionId: string;
-    onEvent: (l: (e: { type: string; [k: string]: unknown }) => void) => () => void;
-    onDestroy?: (cb: () => void) => void | (() => void);
-  },
-  sessionId: string,
-): void {
-  if (eventBoundWrappers.has(session as object)) return;
-  eventBoundWrappers.add(session as object);
-
-  const key = session.sessionId || sessionId;
-  // Replace any stale binding for this session id (re-opened after idle destroy)
-  clearSessionEventBinding(key);
-
-  const unsub = session.onEvent((event) => {
-    server.emit("agent.events", key, event as never);
-    // ISSUE-015: only agent_end (not synthetic prompt_done) for system notifications
-    if (event.type === "agent_end") {
-      try {
-        process.parentPort?.postMessage({
-          type: "agent-end",
-          sessionId: key,
-          eventType: event.type,
-        });
-      } catch {
-        /* ignore */
-      }
-    }
-  });
-  eventUnsubsBySession.set(key, unsub);
-  session.onDestroy?.(() => {
-    clearSessionEventBinding(key);
-  });
 }

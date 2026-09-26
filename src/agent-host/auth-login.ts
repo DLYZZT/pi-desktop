@@ -52,27 +52,44 @@ export function createAuthLoginService(
   server: RpcServer,
   createModelRuntime: ModelRuntimeFactory = getSharedModelRuntime,
 ) {
+  let closed = false;
+  const ownedLogins = new Map<string, AbortController>();
   function emit(provider: string, data: Record<string, unknown>) {
+    if (closed) return;
     server.emit("auth.login", provider, data as never);
   }
 
   return {
     async start(provider: string): Promise<{ started: boolean }> {
+      if (closed) throw new RpcError({ code: "CLOSED", message: "Login service is closed" });
       if (activeLogins.has(provider)) {
         return { started: false };
       }
 
-      const modelRuntime = await createModelRuntime();
-      const providerInfo = modelRuntime.getProvider(provider);
-      if (!providerInfo?.auth.oauth) {
-        throw new RpcError({ code: "NOT_FOUND", message: `Unknown provider: ${provider}` });
-      }
-
       const abort = new AbortController();
       activeLogins.set(provider, abort);
+      ownedLogins.set(provider, abort);
+      const releaseSlot = () => {
+        if (activeLogins.get(provider) === abort) activeLogins.delete(provider);
+        if (ownedLogins.get(provider) === abort) ownedLogins.delete(provider);
+      };
+      let modelRuntime: OAuthRuntime;
+      try {
+        modelRuntime = await createModelRuntime();
+        if (closed || abort.signal.aborted) {
+          releaseSlot();
+          return { started: false };
+        }
+        if (!modelRuntime.getProvider(provider)?.auth.oauth)
+          throw new RpcError({ code: "NOT_FOUND", message: `Unknown provider: ${provider}` });
+      } catch (error) {
+        releaseSlot();
+        throw error;
+      }
       const activeTokens = new Set<string>();
 
       const createClientInputRequest = (signal?: AbortSignal) => {
+        if (closed || abort.signal.aborted) throw new Error("Login cancelled");
         const token = `${provider}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         activeTokens.add(token);
         const promise = new Promise<string>((resolve, reject) => {
@@ -124,14 +141,13 @@ export function createAuthLoginService(
         activeTokens.clear();
         // A cancelled flow may finish after its replacement has started.
         // Only remove this flow's own controller from the provider slot.
-        if (activeLogins.get(provider) === abort) {
-          activeLogins.delete(provider);
-        }
+        releaseSlot();
       };
 
       abort.signal.addEventListener("abort", cleanup);
 
       const notify = (event: AuthEvent) => {
+        if (closed || abort.signal.aborted) return;
         switch (event.type) {
           case "auth_url": {
             const request = getManualInputRequest();
@@ -224,6 +240,15 @@ export function createAuthLoginService(
 
     cancel(provider: string) {
       cancelLogin(provider);
+    },
+    dispose() {
+      if (closed) return;
+      closed = true;
+      for (const [provider, abort] of ownedLogins) {
+        abort.abort();
+        if (activeLogins.get(provider) === abort) activeLogins.delete(provider);
+      }
+      ownedLogins.clear();
     },
   };
 }

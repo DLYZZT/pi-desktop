@@ -119,7 +119,13 @@ if (parentPort) {
     if (msg?.type === "shutdown") {
       stopWatcher();
       restoreGitRunner();
-      void stopHandlers().finally(() => process.exit(0));
+      void stopHandlers().then(
+        () => process.exit(0),
+        () => {
+          log("Host handler cleanup failed");
+          process.exit(1);
+        },
+      );
     }
   });
 
