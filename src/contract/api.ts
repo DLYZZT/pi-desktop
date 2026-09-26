@@ -1,6 +1,7 @@
 import type {
   AgentCommand,
   AgentEvent,
+  ApiKeyProviderStatus,
   CredentialMutationResult,
   DirEntry,
   EntryContentResult,
@@ -400,7 +401,7 @@ export interface Api {
   };
 
   "auth.providers": { params: void; result: { providers: ProviderStatus[] } };
-  "auth.allProviders": { params: void; result: { providers: ProviderStatus[] } };
+  "auth.allProviders": { params: void; result: { providers: ApiKeyProviderStatus[] } };
   "auth.setApiKey": {
     params: { provider: string; key: string };
     result: CredentialMutationResult;

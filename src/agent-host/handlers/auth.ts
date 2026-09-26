@@ -1,7 +1,7 @@
 import { CredentialSynchronizationError, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AuthInteraction } from "@earendil-works/pi-ai";
 import type { ApiHandler } from "../../contract/rpc";
-import { RpcError } from "../../contract/types";
+import { RpcError, type ApiKeyProviderStatus } from "../../contract/types";
 import { getSharedModelRuntime } from "../model-runtime";
 import { credentialStateMatches, recoverCommittedCredential, type CredentialTarget } from "../credential-sync";
 import { resolveLoginCode, type createAuthLoginService } from "../auth-login";
@@ -69,13 +69,7 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
       const all = modelRuntime.getModels();
       const OAUTH_PROVIDER_IDS = new Set(["anthropic", "github-copilot", "openai-codex"]);
       const seen = new Set<string>();
-      const result: Array<{
-        id: string;
-        displayName: string;
-        configured: boolean;
-        source?: string;
-        modelCount: number;
-      }> = [];
+      const result: ApiKeyProviderStatus[] = [];
       for (const model of all) {
         if (seen.has(model.provider)) continue;
         seen.add(model.provider);
@@ -92,7 +86,7 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
           modelCount: all.filter((candidate) => candidate.provider === model.provider).length,
         });
       }
-      return { providers: result as never };
+      return { providers: result };
     },
 
     setApiKey: async (params) => {

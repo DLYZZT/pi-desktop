@@ -167,14 +167,25 @@ export interface ModelsConfigSnapshot {
 export interface TestResult {
   ok: boolean;
   error?: string;
-  [key: string]: unknown;
+  latencyMs?: number;
+  status?: number;
+  responseText?: string;
 }
 
 export interface ProviderStatus {
   id: string;
   name: string;
   authenticated?: boolean;
-  [key: string]: unknown;
+  usesCallbackServer: boolean;
+  loggedIn: boolean;
+}
+
+export interface ApiKeyProviderStatus {
+  id: string;
+  displayName: string;
+  configured: boolean;
+  source?: string;
+  modelCount: number;
 }
 
 export interface SkillInfo {

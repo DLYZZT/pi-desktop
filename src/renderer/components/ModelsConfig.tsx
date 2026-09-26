@@ -17,9 +17,14 @@ import {
   type ModelsJson,
   type ProviderEntry,
 } from "@/lib/models-config-state";
-import { call, getModelPreferences, setModelPreferences } from "@/lib/api-client";
+import { call, getModelPreferences, setModelPreferences, subscribeAuthLogin } from "@/lib/api-client";
 import { isModelEnabled, setProviderModelsEnabled, toggleModelEnabled } from "@/lib/model-selection";
-import type { ModelPreferencesResult } from "@contract/types";
+import type {
+  ModelPreferencesResult,
+  ProviderStatus as OAuthProvider,
+  ApiKeyProviderStatus as ApiKeyProvider,
+  LoginProgressEvent,
+} from "@contract/types";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
 import OpenAIIcon from "@lobehub/icons/es/OpenAI/components/Mono";
@@ -101,21 +106,6 @@ const PROVIDER_ICONS: Record<string, { Icon: IconComponent; hasColor: boolean }>
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-interface OAuthProvider {
-  id: string;
-  name: string;
-  usesCallbackServer: boolean;
-  loggedIn: boolean;
-}
-
-interface ApiKeyProvider {
-  id: string;
-  displayName: string;
-  configured: boolean;
-  source?: string;
-  modelCount: number;
-}
 
 type OAuthLoginState =
   | { phase: "idle" }
@@ -527,22 +517,11 @@ function ModelDetail({
     if (!model.id.trim() || testState.phase === "testing") return;
     setTestState({ phase: "testing" });
     try {
-      const res = await fetch("/api/models-config/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerName, provider, model }),
-      });
-      const d = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        latencyMs?: number;
-        status?: number;
-        responseText?: string;
-      };
-      if (!res.ok || !d.ok) {
+      const d = await call("modelsConfig.test", { providerName, provider, model });
+      if (!d.ok) {
         setTestState({
           phase: "error",
-          message: d.error ?? `HTTP ${res.status}`,
+          message: d.error ?? t("modelConnectionFailed", "Failed"),
           latencyMs: d.latencyMs,
           status: d.status,
         });
@@ -557,7 +536,7 @@ function ModelDetail({
     } catch (e) {
       setTestState({ phase: "error", message: e instanceof Error ? e.message : String(e) });
     }
-  }, [model, provider, providerName, testState.phase]);
+  }, [model, provider, providerName, t, testState.phase]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -994,9 +973,17 @@ function OAuthDetail({
   const { t } = useI18n();
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
   const [inputValue, setInputValue] = useState("");
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const progressUnsubRef = useRef<(() => void) | null>(null);
+  const challengeRef = useRef<string | null>(null);
+  const submissionRef = useRef<{ attempt: number; token: string } | null>(null);
   const loginAttemptRef = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const closeProgress = useCallback(() => {
+    const off = progressUnsubRef.current;
+    progressUnsubRef.current = null;
+    submissionRef.current = null;
+    off?.();
+  }, []);
 
   useEffect(() => {
     if (loginState.phase === "auth" || loginState.phase === "prompt") {
@@ -1011,21 +998,21 @@ function OAuthDetail({
     loginAttemptRef.current += 1;
     setLoginState({ phase: "idle" });
     setInputValue("");
-    eventSourceRef.current?.close();
-    eventSourceRef.current = null;
+    closeProgress();
+    challengeRef.current = null;
     return () => {
       loginAttemptRef.current += 1;
-      eventSourceRef.current?.close();
-      eventSourceRef.current = null;
+      closeProgress();
+      challengeRef.current = null;
       void call("auth.loginCancel", { provider: providerId }).catch(() => {});
     };
-  }, [provider.id]);
+  }, [closeProgress, provider.id]);
 
   const handleLogin = useCallback(async () => {
     const attempt = loginAttemptRef.current + 1;
     loginAttemptRef.current = attempt;
-    eventSourceRef.current?.close();
-    eventSourceRef.current = null;
+    closeProgress();
+    challengeRef.current = null;
     setLoginState({ phase: "connecting" });
     setInputValue("");
 
@@ -1043,107 +1030,103 @@ function OAuthDetail({
     }
     if (loginAttemptRef.current !== attempt) return;
 
-    const es = new EventSource(`/api/auth/login/${encodeURIComponent(provider.id)}`);
-    eventSourceRef.current = es;
-
-    es.onmessage = (e) => {
-      if (eventSourceRef.current !== es || loginAttemptRef.current !== attempt) return;
-      const data = JSON.parse(e.data) as {
-        type: string;
-        url?: string;
-        instructions?: string | null;
-        token?: string;
-        message?: string;
-        placeholder?: string | null;
-        userCode?: string;
-        verificationUri?: string;
-        intervalSeconds?: number | null;
-        expiresInSeconds?: number | null;
-        options?: { id: string; label: string }[];
-        warning?: { code: "MODEL_SYNC_FAILED"; message: string };
-      };
-      if (data.type === "auth") {
-        setLoginState({ phase: "auth", url: data.url!, instructions: data.instructions ?? null, token: data.token! });
-        // Single open path (ISSUE-008): prefer desktop openExternal
-        if (data.url) {
-          void (
-            window.piBridge?.openExternal(data.url) ??
-            Promise.resolve(window.open(data.url, "_blank", "noopener,noreferrer"))
-          );
+    let startRequested = false;
+    const acceptChallenge = (token: string) => {
+      if (challengeRef.current !== token) setInputValue("");
+      challengeRef.current = token;
+    };
+    const finishProgress = () => {
+      loginAttemptRef.current += 1;
+      challengeRef.current = null;
+      closeProgress();
+    };
+    try {
+      const unsubscribe = await subscribeAuthLogin(provider.id, (data: LoginProgressEvent) => {
+        if (loginAttemptRef.current !== attempt || !startRequested) return;
+        if (data.type === "auth") {
+          acceptChallenge(data.token);
+          setLoginState({ phase: "auth", url: data.url, instructions: data.instructions ?? null, token: data.token });
+          // Single open path (ISSUE-008): prefer desktop openExternal
+          if (data.url) {
+            void (
+              window.piBridge?.openExternal(data.url) ??
+              Promise.resolve(window.open(data.url, "_blank", "noopener,noreferrer"))
+            );
+          }
+        } else if (data.type === "device_code") {
+          setLoginState({
+            phase: "device_code",
+            userCode: data.userCode,
+            verificationUri: data.verificationUri,
+            intervalSeconds: data.intervalSeconds ?? null,
+            expiresInSeconds: data.expiresInSeconds ?? null,
+          });
+          if (data.verificationUri) {
+            void (
+              window.piBridge?.openExternal(data.verificationUri) ??
+              Promise.resolve(window.open(data.verificationUri, "_blank", "noopener,noreferrer"))
+            );
+          }
+        } else if (data.type === "prompt_request") {
+          acceptChallenge(data.token);
+          setLoginState({
+            phase: "prompt",
+            message: data.message,
+            placeholder: data.placeholder ?? null,
+            token: data.token,
+          });
+        } else if (data.type === "select_request") {
+          acceptChallenge(data.token);
+          setLoginState({ phase: "select", message: data.message, options: data.options ?? [], token: data.token });
+        } else if (data.type === "progress") {
+          setLoginState({ phase: "progress", message: data.message });
+        } else if (data.type === "success") {
+          finishProgress();
+          setInputValue("");
+          setLoginState({
+            phase: "success",
+            ...(data.warning ? { message: data.warning.message, warning: true } : {}),
+          });
+          onRefresh();
+        } else if (data.type === "error") {
+          finishProgress();
+          setLoginState({ phase: "error", message: data.message });
+        } else if (data.type === "cancelled") {
+          finishProgress();
+          setLoginState({ phase: "idle" });
         }
-      } else if (data.type === "device_code") {
-        setLoginState({
-          phase: "device_code",
-          userCode: data.userCode!,
-          verificationUri: data.verificationUri!,
-          intervalSeconds: data.intervalSeconds ?? null,
-          expiresInSeconds: data.expiresInSeconds ?? null,
-        });
-        if (data.verificationUri) {
-          void (
-            window.piBridge?.openExternal(data.verificationUri) ??
-            Promise.resolve(window.open(data.verificationUri, "_blank", "noopener,noreferrer"))
-          );
-        }
-      } else if (data.type === "prompt_request") {
-        setLoginState({
-          phase: "prompt",
-          message: data.message!,
-          placeholder: data.placeholder ?? null,
-          token: data.token!,
-        });
-      } else if (data.type === "select_request") {
-        setLoginState({ phase: "select", message: data.message!, options: data.options ?? [], token: data.token! });
-      } else if (data.type === "progress") {
-        setLoginState({ phase: "progress", message: data.message! });
-      } else if (data.type === "success") {
-        es.close();
-        eventSourceRef.current = null;
-        setLoginState({
-          phase: "success",
-          ...(data.warning ? { message: data.warning.message, warning: true } : {}),
-        });
-        onRefresh();
-      } else if (data.type === "error") {
-        es.close();
-        eventSourceRef.current = null;
-        setLoginState({ phase: "error", message: data.message! });
-      } else if (data.type === "cancelled") {
-        es.close();
-        eventSourceRef.current = null;
-        setLoginState({ phase: "idle" });
+      });
+      if (loginAttemptRef.current !== attempt) {
+        unsubscribe();
+        return;
       }
-    };
-    es.onerror = (event) => {
-      if (eventSourceRef.current !== es || loginAttemptRef.current !== attempt) return;
-      es.close();
-      eventSourceRef.current = null;
-      const message =
-        event instanceof ErrorEvent && event.message ? event.message : t("modelConnectionLost", "Connection lost");
-      setLoginState((prev) => (prev.phase === "success" ? prev : { phase: "error", message }));
-    };
-  }, [provider.id, onRefresh, t]);
+      progressUnsubRef.current = unsubscribe;
+      startRequested = true;
+      const result = await call("auth.loginStart", { provider: provider.id });
+      if (loginAttemptRef.current !== attempt) return;
+      if (!result.started) throw new Error("An OAuth login is already active. Cancel it and try again.");
+    } catch (error) {
+      if (loginAttemptRef.current !== attempt) return;
+      finishProgress();
+      setLoginState({
+        phase: "error",
+        message: error instanceof Error ? error.message : t("modelConnectionLost", "Connection lost"),
+      });
+    }
+  }, [closeProgress, provider.id, onRefresh, t]);
 
   const handleCancelLogin = useCallback(() => {
     loginAttemptRef.current += 1;
-    eventSourceRef.current?.close();
-    eventSourceRef.current = null;
+    closeProgress();
+    challengeRef.current = null;
     setLoginState({ phase: "idle" });
     setInputValue("");
     void call("auth.loginCancel", { provider: provider.id }).catch(() => {});
-  }, [provider.id]);
+  }, [closeProgress, provider.id]);
 
   const handleLogout = useCallback(async () => {
     try {
-      const response = await fetch(`/api/auth/logout/${encodeURIComponent(provider.id)}`, { method: "POST" });
-      const result = (await response.json().catch(() => ({}))) as {
-        warning?: { code: "MODEL_SYNC_FAILED"; message: string };
-        error?: string;
-      };
-      if (!response.ok || result.error) {
-        setLoginState({ phase: "error", message: result.error ?? `HTTP ${response.status}` });
-        return;
-      }
+      const result = await call("auth.logout", { provider: provider.id });
       setLoginState(
         result.warning
           ? { phase: "success", message: result.warning.message, warning: true }
@@ -1155,60 +1138,47 @@ function OAuthDetail({
     }
   }, [provider.id, onRefresh, t]);
 
-  const submitCode = useCallback(
-    async (token: string, code: string) => {
-      if (!code.trim()) return;
-      setLoginState({ phase: "progress", message: t("modelVerifying", "Verifying…") });
+  const submitChallenge = useCallback(
+    async (token: string, code: string, message: string, clearInput: boolean) => {
+      const attempt = loginAttemptRef.current;
+      if (
+        challengeRef.current !== token ||
+        (submissionRef.current?.attempt === attempt && submissionRef.current.token === token)
+      )
+        return;
+      const submission = { attempt, token };
+      submissionRef.current = submission;
+      const current = () => loginAttemptRef.current === attempt && challengeRef.current === token;
+      setLoginState({ phase: "progress", message });
       try {
-        const res = await fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token, code: code.trim() }),
-        });
-        if (!res.ok) {
-          const d = (await res.json().catch(() => ({}))) as { error?: string };
+        await call("auth.loginSubmit", { provider: provider.id, token, code });
+        if (current() && clearInput) setInputValue("");
+      } catch (error) {
+        if (current())
           setLoginState({
             phase: "error",
-            message: d.error ?? t("modelServerError", "Server error {status}").replace("{status}", String(res.status)),
+            message: error instanceof Error ? error.message : t("modelNetworkError", "Network error"),
           });
-          return;
-        }
-        setInputValue("");
-        // Success path: the auth progress stream emits "success" and updates state.
-      } catch (e) {
-        setLoginState({
-          phase: "error",
-          message: e instanceof Error ? e.message : t("modelNetworkError", "Network error"),
-        });
+      } finally {
+        if (submissionRef.current === submission) submissionRef.current = null;
       }
     },
     [provider.id, t],
   );
 
-  const submitSelection = useCallback(
-    async (token: string, value: string) => {
-      setLoginState({ phase: "progress", message: t("modelContinuing", "Continuing…") });
-      try {
-        const res = await fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token, code: value }),
-        });
-        if (!res.ok) {
-          const d = (await res.json().catch(() => ({}))) as { error?: string };
-          setLoginState({
-            phase: "error",
-            message: d.error ?? t("modelServerError", "Server error {status}").replace("{status}", String(res.status)),
-          });
-        }
-      } catch (e) {
-        setLoginState({
-          phase: "error",
-          message: e instanceof Error ? e.message : t("modelNetworkError", "Network error"),
-        });
-      }
+  const submitCode = useCallback(
+    (token: string, code: string) => {
+      if (!code.trim()) return Promise.resolve();
+      return submitChallenge(token, code.trim(), t("modelVerifying", "Verifying…"), true);
     },
-    [provider.id, t],
+    [submitChallenge, t],
+  );
+
+  const submitSelection = useCallback(
+    (token: string, value: string) => {
+      return submitChallenge(token, value, t("modelContinuing", "Continuing…"), false);
+    },
+    [submitChallenge, t],
   );
 
   const isWorking =
@@ -1496,27 +1466,14 @@ function ApiKeyDetail({
     setWarning(null);
     setSavedOk(false);
     try {
-      const res = await fetch(`/api/auth/api-key/${encodeURIComponent(provider.id)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: apiKey.trim() }),
-      });
-      const d = (await res.json()) as {
-        ok?: boolean;
-        warning?: { code: "MODEL_SYNC_FAILED"; message: string };
-        error?: string;
-      };
-      if (!res.ok || d.error) {
-        setError(d.error ?? `HTTP ${res.status}`);
-      } else {
-        setApiKey("");
-        setSavedOk(true);
-        setWarning(d.warning?.message ?? null);
-        setTimeout(() => setSavedOk(false), 2000);
-        onRefresh();
-      }
+      const result = await call("auth.setApiKey", { provider: provider.id, key: apiKey.trim() });
+      setApiKey("");
+      setSavedOk(true);
+      setWarning(result.warning?.message ?? null);
+      setTimeout(() => setSavedOk(false), 2000);
+      onRefresh();
     } catch (e) {
-      setError(String(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
@@ -1527,19 +1484,11 @@ function ApiKeyDetail({
     setError(null);
     setWarning(null);
     try {
-      const res = await fetch(`/api/auth/api-key/${encodeURIComponent(provider.id)}`, { method: "DELETE" });
-      const d = (await res.json()) as {
-        ok?: boolean;
-        warning?: { code: "MODEL_SYNC_FAILED"; message: string };
-        error?: string;
-      };
-      if (!res.ok || d.error) setError(d.error ?? `HTTP ${res.status}`);
-      else {
-        setWarning(d.warning?.message ?? null);
-        onRefresh();
-      }
+      const result = await call("auth.deleteApiKey", { provider: provider.id });
+      setWarning(result.warning?.message ?? null);
+      onRefresh();
     } catch (e) {
-      setError(String(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRemoving(false);
     }
@@ -2092,16 +2041,14 @@ export function ModelsConfig({
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const loadOAuthProviders = useCallback(() => {
-    fetch("/api/auth/providers")
-      .then((r) => r.json())
-      .then((d: { providers: OAuthProvider[] }) => setOauthProviders(d.providers))
+    call("auth.providers")
+      .then((d) => setOauthProviders(d.providers))
       .catch(() => {});
   }, []);
 
   const loadApiKeyProviders = useCallback(() => {
-    fetch("/api/auth/all-providers")
-      .then((r) => r.json())
-      .then((d: { providers: ApiKeyProvider[] }) => setApiKeyProviders(d.providers))
+    call("auth.allProviders")
+      .then((d) => setApiKeyProviders(d.providers))
       .catch(() => {});
   }, []);
 
@@ -2154,15 +2101,11 @@ export function ModelsConfig({
     setLoadFailed(false);
     setConfigLoaded(false);
     try {
-      const response = await fetch("/api/models-config");
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `HTTP ${response.status}`);
-      }
-      const snapshot = (await response.json()) as { config?: ModelsJson; version?: string; error?: string };
-      if (snapshot.error) throw new Error(snapshot.error);
+      const snapshot = await call("modelsConfig.get");
       if (!snapshot.config || typeof snapshot.version !== "string") throw new Error("Invalid models config snapshot");
-      const normalized = snapshot.config.providers ? snapshot.config : { ...snapshot.config, providers: {} };
+      // Host owns complete SDK JSON; the editor works on its provider/model subset.
+      const editorConfig = snapshot.config as ModelsJson;
+      const normalized = editorConfig.providers ? editorConfig : { ...editorConfig, providers: {} };
       const keys = Object.keys(normalized.providers ?? {});
       dispatchEditor({
         type: "config.replace",
@@ -2267,35 +2210,30 @@ export function ModelsConfig({
     setSaveError(null);
     setSavedOk(false);
     try {
-      const res = await fetch("/api/models-config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config, expectedVersion: configVersion }),
-      });
-      const d = (await res.json()) as { success?: boolean; error?: string; code?: string; version?: string };
-      if (!res.ok || d.error) {
-        const conflict = res.status === 409 || d.code === "CONFLICT";
-        setSaveConflict(conflict);
-        setSaveError(
-          conflict
-            ? t(
-                "modelConfigConflict",
-                "models.json changed outside this editor. Your edits are preserved here; copy or compare them before reloading the disk version to merge manually.",
-              )
-            : (d.error ?? `HTTP ${res.status}`),
-        );
-      } else if (typeof d.version !== "string") {
+      const result = await call("modelsConfig.set", { config, expectedVersion: configVersion });
+      if (typeof result.version !== "string") {
         setSaveError("Invalid models config save response");
       } else {
-        setConfigVersion(d.version);
+        setConfigVersion(result.version);
         setSaveConflict(false);
         setSavedOk(true);
         onChanged?.();
         void loadModelPreferences();
         setTimeout(() => setSavedOk(false), 2000);
       }
-    } catch (e) {
-      setSaveError(String(e));
+    } catch (error) {
+      const conflict = error instanceof Error && "code" in error && error.code === "CONFLICT";
+      setSaveConflict(conflict);
+      setSaveError(
+        conflict
+          ? t(
+              "modelConfigConflict",
+              "models.json changed outside this editor. Your edits are preserved here; copy or compare them before reloading the disk version to merge manually.",
+            )
+          : error instanceof Error
+            ? error.message
+            : String(error),
+      );
     } finally {
       setSaving(false);
     }

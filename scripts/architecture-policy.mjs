@@ -17,8 +17,8 @@ export const architecturePolicy = {
         "Browser tab/control owner after capture, snapshot, script, network and input extraction; lifecycle and inspection orchestration remain.",
     },
     "src/renderer/components/ModelsConfig.tsx": {
-      maxLines: 2889,
-      reason: "Existing provider/auth/editor UI plus two committed-credential notifications; scheduled for 22-08.",
+      maxLines: 2827,
+      reason: "Provider/auth/editor UI after typed RPC and explicit login ownership; scheduled for 22-08.",
     },
     "src/renderer/components/SessionSidebar.tsx": {
       maxLines: 2748,
@@ -81,7 +81,7 @@ export const architecturePolicy = {
   },
   dataModules: {
     "src/renderer/i18n-dictionaries.ts": {
-      baselineLines: 3546,
+      baselineLines: 3543,
       reason:
         "Translation data, checked for literal-only contents here and parity/duplicates/fallbacks by check:i18n; split under 22-08.",
     },

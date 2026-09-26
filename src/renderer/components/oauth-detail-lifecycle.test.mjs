@@ -19,13 +19,14 @@ test("OAuthDetail has one provider lifecycle effect and only its cleanup cancels
   assert.doesNotMatch(lifecycle.slice(0, lifecycle.indexOf("return () =>")), /auth\.loginCancel/);
 });
 
-test("each explicit login attempt awaits one cancellation before creating its replacement stream", () => {
+test("each explicit login attempt awaits cancellation before subscription and starts only after installation", () => {
   const loginStart = detail.indexOf("const handleLogin = useCallback");
   const cancelStart = detail.indexOf("const handleCancelLogin = useCallback");
   const login = detail.slice(loginStart, cancelStart);
 
   assert.equal(login.match(/auth\.loginCancel/g)?.length, 1);
   assert.match(login, /await call\("auth\.loginCancel", \{ provider: provider\.id \}\);/);
-  assert.ok(login.indexOf("auth.loginCancel") < login.indexOf("new EventSource"));
-  assert.match(login, /if \(loginAttemptRef\.current !== attempt\) return;[\s\S]*new EventSource/);
+  assert.ok(login.indexOf("auth.loginCancel") < login.indexOf("subscribeAuthLogin"));
+  assert.ok(login.indexOf("progressUnsubRef.current = unsubscribe") < login.indexOf('call("auth.loginStart"'));
+  assert.match(login, /if \(loginAttemptRef\.current !== attempt\) \{\s*unsubscribe\(\);\s*return;/);
 });

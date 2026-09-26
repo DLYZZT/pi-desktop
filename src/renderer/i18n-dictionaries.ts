@@ -784,7 +784,6 @@ export const enUS: Record<string, string> = {
   modelSearchProviders: "Search providers…",
   modelSelectionDescription:
     "Choose which models appear in the model picker. The active model in an existing session is not changed.",
-  modelServerError: "Server error {status}",
   modelsOfflineCache: "Offline: using the cached model directory.",
   modelSubscription: "Subscription",
   modelSubscriptions: "Subscriptions",
@@ -1959,7 +1958,6 @@ export const zhCN: Record<string, string> = {
   modelSearchProviderModels: "搜索服务商模型",
   modelSearchProviders: "搜索服务商…",
   modelSelectionDescription: "选择要显示在模型选择器中的模型。现有会话正在使用的模型不会改变。",
-  modelServerError: "服务器错误 {status}",
   modelsOfflineCache: "离线：正在使用缓存的模型目录。",
   modelSubscription: "订阅账号",
   modelSubscriptions: "订阅",
@@ -3126,7 +3124,6 @@ export const zhTW: Record<string, string> = {
   modelSearchProviderModels: "搜尋服務商模型",
   modelSearchProviders: "搜尋服務商…",
   modelSelectionDescription: "選擇要在模型選擇器中顯示的模型。既有會話使用的模型不會改變。",
-  modelServerError: "伺服器錯誤 {status}",
   modelsOfflineCache: "離線：正在使用快取的模型目錄。",
   modelSubscription: "訂閱帳號",
   modelSubscriptions: "訂閱",

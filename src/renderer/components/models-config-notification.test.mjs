@@ -5,6 +5,7 @@ import { createElement, useState } from "react";
 import { act, create } from "react-test-renderer";
 import { importTestBundle } from "#test-bundle";
 import { createDeferred } from "#test-timing";
+import { RpcError } from "../../contract/types.ts";
 
 const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -38,15 +39,30 @@ const { ModelsConfig, useSessionModels, testApi } = await importTestBundle("mode
         export function useI18n() {return {t, language:'en'};}
       `
                 : `
-        export const state = {reads:0, catalogReads:0, writes:[], writeResult:null};
+        export const state = {reads:0, catalogReads:0, writes:[], writeResult:null, requests:[], calls:[], sources:[], cancelQueue:[], startQueue:[], subscribeQueue:[], config:{providers:{}}, version:'one', configError:null};
         const model = {id:'fixture-model',name:'Fixture model',provider:'api-fixture',reasoning:false,input:['text'],contextWindow:4096,maxTokens:512};
-        export function reset() {state.reads=0;state.catalogReads=0;state.writes=[];state.writeResult=null;}
+        export function reset() {state.reads=0;state.catalogReads=0;state.writes=[];state.writeResult=null;state.requests=[];state.calls=[];state.sources=[];state.cancelQueue=[];state.startQueue=[];state.subscribeQueue=[];state.config={providers:{}};state.version='one';state.configError=null;}
         export async function listModels() {state.catalogReads++;return {models:[{...model,name:'Catalog '+state.catalogReads}],catalog:{source:'cache',refreshed:false,aborted:false,warnings:[]}};}
         export async function cancelModelsRefresh() {}
         export async function refreshModels() {throw new Error('Unexpected remote catalog refresh');}
         export async function getModelPreferences() {state.reads++;return {models:[model],enabledModels:null};}
         export async function setModelPreferences(cwd, enabledModels) {state.writes.push({cwd,enabledModels});return await state.writeResult;}
-        export async function call(method) {if(method !== 'auth.loginCancel') throw new Error('Unexpected RPC: '+method);return {};}
+        const take = (queue, fallback) => { const next=queue.shift(); return typeof next === 'function' ? next() : next ?? fallback; };
+        export async function subscribeAuthLogin(provider,on) {
+          const entry={provider,on,closed:0};state.sources.push(entry);
+          await take(state.subscribeQueue,undefined);
+          return () => entry.closed++;
+        }
+        export async function call(method,params) {
+          state.calls.push({method,params});
+          if(method === 'auth.loginCancel') return await take(state.cancelQueue,{ok:true});
+          if(method === 'auth.loginStart') return await take(state.startQueue,{ok:true,started:true});
+          if(method === 'modelsConfig.get') {if(state.configError)throw state.configError;return {config:structuredClone(state.config),version:state.version};}
+          if(method === 'auth.providers')return {providers:[{id:'oauth-fixture',name:'OAuth fixture',usesCallbackServer:false,loggedIn:true}]};
+          if(method === 'auth.allProviders')return {providers:[{id:'api-fixture',displayName:'API fixture',configured:true,modelCount:1}]};
+          let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});
+          state.requests.push({method,params,resolve,reject});return promise;
+        }
       `,
         }));
       },
@@ -55,13 +71,15 @@ const { ModelsConfig, useSessionModels, testApi } = await importTestBundle("mode
 });
 
 const text = (node) => (typeof node === "string" ? node : (node.children?.map(text).join("") ?? ""));
-const jsonResponse = (data, status = 200) => new globalThis.Response(JSON.stringify(data), { status });
 
-async function mount(t) {
+async function mount(t, options = {}) {
   testApi.reset();
-  const requests = [],
-    sources = [],
-    timers = [];
+  if (options.config) testApi.state.config = options.config;
+  testApi.state.configError = options.configError ?? null;
+  const requests = testApi.state.requests,
+    sources = testApi.state.sources,
+    timers = [],
+    opened = [];
   let changed = 0;
   const nativeTimeout = globalThis.setTimeout;
   t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => {
@@ -71,33 +89,24 @@ async function mount(t) {
     return timer;
   });
   const previousSource = Object.getOwnPropertyDescriptor(globalThis, "EventSource");
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   globalThis.EventSource = class {
-    constructor(url) {
-      this.url = url;
-      this.closed = false;
-      sources.push(this);
-    }
-    close() {
-      this.closed = true;
+    constructor() {
+      throw new Error("OAuth must use a typed subscription");
     }
   };
-  t.mock.method(globalThis, "fetch", async (url, options = {}) => {
-    const method = options.method ?? "GET";
-    if (method === "GET") {
-      if (url === "/api/models-config") return jsonResponse({ config: { providers: {} }, version: "one" });
-      if (url === "/api/auth/providers")
-        return jsonResponse({
-          providers: [{ id: "oauth-fixture", name: "OAuth fixture", usesCallbackServer: false, loggedIn: true }],
-        });
-      if (url === "/api/auth/all-providers")
-        return jsonResponse({
-          providers: [{ id: "api-fixture", displayName: "API fixture", configured: true, modelCount: 1 }],
-        });
-      throw new Error("Unexpected read: " + url);
-    }
-    const request = { ...createDeferred(), url, method, options };
-    requests.push(request);
-    return request.promise;
+  globalThis.window = {
+    piBridge: {
+      async openExternal(url) {
+        opened.push(url);
+      },
+    },
+    open() {
+      throw new Error("Unexpected browser fallback");
+    },
+  };
+  t.mock.method(globalThis, "fetch", () => {
+    throw new Error("Model configuration must not use fetch");
   });
   let renderer, catalog;
   const addNotice = () => {};
@@ -118,6 +127,8 @@ async function mount(t) {
     await act(async () => renderer.unmount());
     if (previousSource) Object.defineProperty(globalThis, "EventSource", previousSource);
     else delete globalThis.EventSource;
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else delete globalThis.window;
   });
   await act(async () => {
     renderer = create(createElement(Host));
@@ -126,6 +137,7 @@ async function mount(t) {
     renderer,
     requests,
     sources,
+    opened,
     get changed() {
       return changed;
     },
@@ -145,8 +157,14 @@ async function mount(t) {
         void button.props.onClick();
       });
     },
-    async reply(index, data, status = 200) {
-      await act(async () => requests[index].resolve(jsonResponse(data, status)));
+    async reply(index, data) {
+      await act(async () => requests[index].resolve(data));
+    },
+    async fail(index, code, message) {
+      await act(async () => requests[index].reject(new RpcError({ code, message })));
+    },
+    async event(index, data) {
+      await act(async () => sources[index].on(data));
     },
     detail(name) {
       return renderer.root.find((node) => typeof node.type === "function" && node.type.name === name);
@@ -163,7 +181,7 @@ test("API key save and removal notify the parent once after each committed chang
   await act(async () => input.props.onChange({ target: { value: "nonsecret-fixture-key" } }));
   await fixture.click("Save", fixture.detail("ApiKeyDetail"));
   assert.equal(fixture.changed, 0);
-  assert.equal(fixture.requests[0].method, "POST");
+  assert.equal(fixture.requests[0].method, "auth.setApiKey");
   await fixture.reply(0, {
     ok: true,
     synchronized: false,
@@ -175,7 +193,7 @@ test("API key save and removal notify the parent once after each committed chang
   assert.equal(fixture.catalog.modelList[0].name, "Catalog 2");
   await fixture.click("Disconnect", fixture.detail("ApiKeyDetail"));
   assert.equal(fixture.changed, 1);
-  assert.equal(fixture.requests[1].method, "DELETE");
+  assert.equal(fixture.requests[1].method, "auth.deleteApiKey");
   await fixture.reply(1, { ok: true, synchronized: true });
   assert.equal(fixture.changed, 2);
   assert.equal(testApi.state.reads, 3);
@@ -186,12 +204,12 @@ test("failed credential mutations do not publish a model catalog change", async 
   const fixture = await mount(t);
   await fixture.select("API fixture");
   await fixture.click("Disconnect", fixture.detail("ApiKeyDetail"));
-  await fixture.reply(0, { error: "Failed to remove fixture" }, 500);
+  await fixture.fail(0, "INTERNAL", "Failed to remove fixture");
   assert.equal(fixture.changed, 0);
   assert.equal(testApi.state.reads, 1);
   await fixture.select("OAuth fixture");
   await fixture.click("Disconnect", fixture.detail("OAuthDetail"));
-  await fixture.reply(1, { error: "Failed to logout fixture" }, 500);
+  await fixture.fail(1, "INTERNAL", "Failed to logout fixture");
   assert.equal(fixture.changed, 0);
   assert.equal(testApi.state.reads, 1);
   assert.equal(testApi.state.catalogReads, 1);
@@ -202,21 +220,15 @@ test("OAuth completion and logout notify after commit while progress and duplica
   await fixture.select("OAuth fixture");
   await fixture.click("Re-login", fixture.detail("OAuthDetail"));
   assert.equal(fixture.sources.length, 1);
-  await act(async () =>
-    fixture.sources[0].onmessage({ data: JSON.stringify({ type: "progress", message: "Waiting" }) }),
-  );
+  await fixture.event(0, { type: "progress", message: "Waiting" });
   assert.equal(fixture.changed, 0);
-  await act(async () =>
-    fixture.sources[0].onmessage({
-      data: JSON.stringify({
-        type: "success",
-        warning: { code: "MODEL_SYNC_FAILED", message: "Saved; refresh pending" },
-      }),
-    }),
-  );
+  await fixture.event(0, {
+    type: "success",
+    warning: { code: "MODEL_SYNC_FAILED", message: "Saved; refresh pending" },
+  });
   assert.equal(fixture.changed, 1);
-  assert.equal(fixture.sources[0].closed, true);
-  await act(async () => fixture.sources[0].onmessage({ data: JSON.stringify({ type: "success" }) }));
+  assert.equal(fixture.sources[0].closed, 1);
+  await fixture.event(0, { type: "success" });
   assert.equal(fixture.changed, 1);
   await fixture.click("Disconnect", fixture.detail("OAuthDetail"));
   assert.equal(fixture.changed, 1);
@@ -229,7 +241,7 @@ test("config and model-selection saves keep their existing single committed-chan
   const fixture = await mount(t);
   await fixture.click("Save");
   assert.equal(fixture.changed, 0);
-  await fixture.reply(0, { success: true, version: "two" });
+  await fixture.reply(0, { ok: true, version: "two" });
   assert.equal(fixture.changed, 1);
   await fixture.select("API fixture");
   const checkbox = fixture
@@ -243,4 +255,196 @@ test("config and model-selection saves keep their existing single committed-chan
   await act(async () => saved.resolve({ models: [], enabledModels: [] }));
   assert.equal(fixture.changed, 2);
   assert.equal(testApi.state.catalogReads, 3);
+});
+
+test("OAuth reset must settle before subscribing and a cancelled reset cannot start a login", async (t) => {
+  const fixture = await mount(t);
+  await fixture.select("OAuth fixture");
+  const reset = createDeferred();
+  testApi.state.cancelQueue.push(reset.promise);
+  await fixture.click("Re-login", fixture.detail("OAuthDetail"));
+  assert.equal(fixture.sources.length, 0);
+  await fixture.click("Cancel", fixture.detail("OAuthDetail"));
+  await act(async () => reset.resolve({ ok: true }));
+  assert.equal(fixture.sources.length, 0);
+  assert.equal(testApi.state.calls.filter((call) => call.method === "auth.loginStart").length, 0);
+});
+
+test("a late subscription is released without issuing a cancellation against the replacement login", async (t) => {
+  const fixture = await mount(t);
+  await fixture.select("OAuth fixture");
+  const installation = createDeferred();
+  testApi.state.subscribeQueue.push(installation.promise);
+  await fixture.click("Re-login", fixture.detail("OAuthDetail"));
+  await fixture.select("API fixture");
+  await fixture.select("OAuth fixture");
+  await fixture.click("Re-login", fixture.detail("OAuthDetail"));
+  const cancels = testApi.state.calls.filter((call) => call.method === "auth.loginCancel").length;
+  assert.equal(fixture.sources.length, 2);
+  await act(async () => installation.resolve());
+  assert.equal(fixture.sources[0].closed, 1);
+  assert.equal(fixture.sources[1].closed, 0);
+  assert.equal(testApi.state.calls.filter((call) => call.method === "auth.loginCancel").length, cancels);
+  await fixture.event(0, { type: "success" });
+  assert.equal(fixture.changed, 0);
+  await fixture.event(1, { type: "success" });
+  assert.equal(fixture.changed, 1);
+});
+
+test("a terminal login event stays authoritative when its start acknowledgement fails late", async (t) => {
+  const fixture = await mount(t);
+  await fixture.select("OAuth fixture");
+  testApi.state.startQueue.push(() => {
+    testApi.state.sources.at(-1).on({ type: "success" });
+    throw new RpcError({ code: "TIMEOUT", message: "Late start failure" });
+  });
+  await fixture.click("Re-login", fixture.detail("OAuthDetail"));
+  assert.equal(fixture.changed, 1);
+  assert.equal(fixture.sources[0].closed, 1);
+  assert.doesNotMatch(JSON.stringify(fixture.renderer.toJSON()), /Late start failure/);
+});
+
+test("challenge submissions are deduplicated and late replies cannot clear a newer prompt", async (t) => {
+  const fixture = await mount(t);
+  await fixture.select("OAuth fixture");
+  await fixture.click("Re-login", fixture.detail("OAuthDetail"));
+  await fixture.event(0, {
+    type: "prompt_request",
+    message: "First prompt",
+    token: "first",
+    placeholder: null,
+    secret: false,
+  });
+  const input = () => fixture.detail("OAuthDetail").find((node) => node.type === "input");
+  await act(async () => input().props.onChange({ target: { value: "  first answer  " } }));
+  const oldKey = input().props.onKeyDown;
+  await act(async () => {
+    oldKey({ key: "Enter" });
+    oldKey({ key: "Enter" });
+  });
+  assert.equal(fixture.requests.length, 1);
+  assert.deepEqual(fixture.requests[0].params, { provider: "oauth-fixture", token: "first", code: "first answer" });
+  await fixture.event(0, {
+    type: "prompt_request",
+    message: "Second prompt",
+    token: "second",
+    placeholder: null,
+    secret: false,
+  });
+  await act(async () => input().props.onChange({ target: { value: "keep this draft" } }));
+  await fixture.fail(0, "TIMEOUT", "Old submit timeout");
+  assert.equal(input().props.value, "keep this draft");
+  assert.doesNotMatch(JSON.stringify(fixture.renderer.toJSON()), /Old submit timeout/);
+  await act(async () => oldKey({ key: "Enter" }));
+  assert.equal(fixture.requests.length, 1);
+  await act(async () => input().props.onKeyDown({ key: "Enter" }));
+  assert.deepEqual(fixture.requests[1].params, { provider: "oauth-fixture", token: "second", code: "keep this draft" });
+  await fixture.event(0, { type: "success" });
+  await fixture.reply(1, { ok: true });
+  assert.equal(fixture.changed, 1);
+});
+
+test("OAuth URLs use one native open path and cancelled subscriptions cannot open late URLs", async (t) => {
+  const fixture = await mount(t);
+  await fixture.select("OAuth fixture");
+  await fixture.click("Re-login", fixture.detail("OAuthDetail"));
+  await fixture.event(0, { type: "auth", url: "https://fixture.test/authorize", instructions: null, token: "code" });
+  assert.deepEqual(fixture.opened, ["https://fixture.test/authorize"]);
+  await fixture.event(0, {
+    type: "device_code",
+    userCode: "TEST",
+    verificationUri: "https://fixture.test/device",
+    intervalSeconds: 1,
+    expiresInSeconds: 60,
+  });
+  assert.equal(fixture.opened.length, 2);
+  await fixture.click("Cancel", fixture.detail("OAuthDetail"));
+  await fixture.event(0, { type: "auth", url: "https://fixture.test/late", instructions: null, token: "late" });
+  assert.equal(fixture.opened.length, 2);
+  assert.equal(fixture.sources[0].closed, 1);
+});
+
+test("OAuth selection preserves the option id and waits for the terminal event before publishing credentials", async (t) => {
+  const fixture = await mount(t);
+  await fixture.select("OAuth fixture");
+  await fixture.click("Re-login", fixture.detail("OAuthDetail"));
+  await fixture.event(0, {
+    type: "select_request",
+    message: "Choose method",
+    token: "selection",
+    options: [{ id: " exact option ", label: "Fixture choice" }],
+  });
+  await fixture.click("Fixture choice", fixture.detail("OAuthDetail"));
+  assert.deepEqual(fixture.requests[0].params, {
+    provider: "oauth-fixture",
+    token: "selection",
+    code: " exact option ",
+  });
+  await fixture.reply(0, { ok: true });
+  assert.equal(fixture.changed, 0);
+  await fixture.event(0, { type: "success" });
+  assert.equal(fixture.changed, 1);
+});
+
+test("failed OAuth reset does not install a subscription or start another backend flow", async (t) => {
+  const fixture = await mount(t);
+  await fixture.select("OAuth fixture");
+  testApi.state.cancelQueue.push(() => {
+    throw new RpcError({ code: "CLOSED", message: "Reset unavailable" });
+  });
+  await fixture.click("Re-login", fixture.detail("OAuthDetail"));
+  assert.equal(fixture.sources.length, 0);
+  assert.equal(testApi.state.calls.filter((call) => call.method === "auth.loginStart").length, 0);
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /Reset unavailable/);
+});
+
+const editorConfig = (url) => ({
+  providers: { custom: { api: "openai-completions", baseUrl: url, models: [{ id: "custom-model" }] } },
+});
+
+test("typed configuration conflicts retain edits until an explicit reload supplies a new version", async (t) => {
+  const fixture = await mount(t, { config: editorConfig("https://initial.test") });
+  const field = (value) => fixture.renderer.root.find((node) => node.type === "input" && node.props.value === value);
+  await act(async () => field("https://initial.test").props.onChange({ target: { value: "https://edited.test" } }));
+  await fixture.click("Save");
+  assert.equal(fixture.requests[0].method, "modelsConfig.set");
+  assert.equal(fixture.requests[0].params.expectedVersion, "one");
+  assert.equal(fixture.requests[0].params.config.providers.custom.baseUrl, "https://edited.test");
+  await fixture.fail(0, "CONFLICT", "Version changed");
+  assert.ok(field("https://edited.test"));
+  assert.equal(fixture.changed, 0);
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /changed outside this editor/);
+  testApi.state.config = editorConfig("https://external.test");
+  testApi.state.version = "external-version";
+  await fixture.click("Reload disk version");
+  assert.ok(field("https://external.test"));
+  await fixture.click("Save");
+  assert.equal(fixture.requests[1].params.expectedVersion, "external-version");
+  await fixture.reply(1, { ok: true, version: "saved-version" });
+  assert.equal(fixture.changed, 1);
+});
+
+test("failed configuration reads block saving instead of replacing the disk file with an empty config", async (t) => {
+  const fixture = await mount(t, {
+    configError: new RpcError({ code: "FORBIDDEN", message: "Fixture access denied" }),
+  });
+  const save = fixture.renderer.root.find((node) => node.type === "button" && text(node) === "Save");
+  assert.equal(save.props.disabled, true);
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /Fixture access denied/);
+  assert.equal(fixture.requests.length, 0);
+});
+
+test("model connection results preserve endpoint status and latency separately from RPC errors", async (t) => {
+  const fixture = await mount(t, { config: editorConfig("https://model.test") });
+  await fixture.select("custom-model");
+  await fixture.click("Test", fixture.detail("ModelDetail"));
+  assert.equal(fixture.requests[0].method, "modelsConfig.test");
+  assert.equal(fixture.requests[0].params.providerName, "custom");
+  assert.equal(fixture.requests[0].params.model.id, "custom-model");
+  await fixture.reply(0, { ok: false, error: "Endpoint denied", status: 401, latencyMs: 7 });
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /Endpoint denied/);
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /HTTP 401/);
+  await fixture.click("Test", fixture.detail("ModelDetail"));
+  await fixture.reply(1, { ok: true, responseText: "OK", status: 200, latencyMs: 3 });
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /Connected/);
 });

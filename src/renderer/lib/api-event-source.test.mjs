@@ -111,3 +111,29 @@ test("migrated skills and plugins routes cannot silently re-enter the compatibil
   }
   assert.equal(testApi.unexpectedCalls, 0);
 });
+
+test("model and auth operations no longer start through legacy routes or EventSource", async () => {
+  testApi.reset();
+  for (const [route, method] of [
+    ["/api/models-config", "GET"],
+    ["/api/models-config", "PUT"],
+    ["/api/models-config/test", "POST"],
+    ["/api/auth/providers", "GET"],
+    ["/api/auth/all-providers", "GET"],
+    ["/api/auth/logout/fixture", "POST"],
+    ["/api/auth/api-key/fixture", "POST"],
+    ["/api/auth/api-key/fixture", "DELETE"],
+    ["/api/auth/login/fixture", "POST"],
+  ]) {
+    const response = await apiFetch(route, {
+      method,
+      body: JSON.stringify({ provider: "fixture", config: {}, expectedVersion: "one" }),
+    });
+    assert.equal(response.status, 404);
+  }
+  const source = new ApiEventSource("/api/auth/login/fixture");
+  await settle();
+  assert.equal(source.readyState, ApiEventSource.CLOSED);
+  assert.equal(testApi.subscriptions.length, 0);
+  assert.equal(testApi.unexpectedCalls, 0);
+});

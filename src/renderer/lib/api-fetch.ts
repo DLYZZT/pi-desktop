@@ -21,7 +21,6 @@ import {
   renameSession,
   subscribe,
   subscribeAgentEvents,
-  subscribeAuthLogin,
   subscribeRunning,
   validateCwd,
   defaultCwd,
@@ -144,54 +143,6 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
         modelList: d.models,
         models: d.nameMap ? Object.fromEntries(Object.entries(d.nameMap)) : d.models,
       });
-    }
-
-    if (segs[0] === "models-config" && segs.length === 1) {
-      if (method === "GET") return jsonResponse(await call("modelsConfig.get"));
-      if (method === "PUT" || method === "POST") {
-        const body = await parseBody(init);
-        const result = await call("modelsConfig.set", body as never);
-        return jsonResponse({ success: true, version: result.version });
-      }
-    }
-    if (segs[0] === "models-config" && segs[1] === "test" && method === "POST") {
-      const body = await parseBody(init);
-      return jsonResponse(await call("modelsConfig.test", body as never));
-    }
-
-    if (segs[0] === "auth" && segs[1] === "providers" && method === "GET") {
-      return jsonResponse(await call("auth.providers"));
-    }
-    if (segs[0] === "auth" && segs[1] === "all-providers" && method === "GET") {
-      return jsonResponse(await call("auth.allProviders"));
-    }
-    if (segs[0] === "auth" && segs[1] === "logout" && method === "POST") {
-      const provider = decodeURIComponent(segs[2] ?? "");
-      return jsonResponse(await call("auth.logout", { provider }));
-    }
-    if (segs[0] === "auth" && segs[1] === "api-key") {
-      const provider = decodeURIComponent(segs[2] ?? "");
-      if (method === "PUT" || method === "POST") {
-        const body = await parseBody(init);
-        const result = await call("auth.setApiKey", {
-          provider,
-          key: String(body.key ?? body.apiKey ?? ""),
-        });
-        return jsonResponse(result);
-      }
-      if (method === "DELETE") {
-        return jsonResponse(await call("auth.deleteApiKey", { provider }));
-      }
-    }
-    if (segs[0] === "auth" && segs[1] === "login" && method === "POST") {
-      const provider = decodeURIComponent(segs[2] ?? "");
-      const body = await parseBody(init);
-      await call("auth.loginSubmit", {
-        provider,
-        token: String(body.token ?? ""),
-        code: String(body.code ?? ""),
-      });
-      return jsonResponse({ ok: true });
     }
 
     if (segs[0] === "files") {
@@ -375,34 +326,6 @@ export class ApiEventSource {
         return;
       }
 
-      if (segs[0] === "auth" && segs[1] === "login") {
-        const provider = decodeURIComponent(segs[2] ?? "");
-        this.unsub = await subscribeAuthLogin(provider, (event) => {
-          if (this.closed || gen !== this.generation) return;
-          this.readyState = ApiEventSource.OPEN;
-          const type = String((event as { type?: string }).type ?? "message");
-          // Single path: onmessage only — ModelsConfig handles openExternal
-          this.onmessage?.({ data: JSON.stringify(event) } as MessageEvent);
-          void type;
-        });
-        if (this.closed || gen !== this.generation) {
-          this.unsub?.();
-          void call("auth.loginCancel", { provider }).catch(() => {});
-          return;
-        }
-        const result = await call("auth.loginStart", { provider });
-        if (!result.started) {
-          throw new Error("An OAuth login is already active. Cancel it and try again.");
-        }
-        if (this.closed || gen !== this.generation) {
-          void call("auth.loginCancel", { provider }).catch(() => {});
-          return;
-        }
-        this.readyState = ApiEventSource.OPEN;
-        this.onopen?.(new Event("open"));
-        return;
-      }
-
       if (segs[0] === "files") {
         const rawPath = "/" + segs.slice(1).map(decodeURIComponent).join("/");
         const filePath = rawPath.match(/^\/[A-Za-z]:\//) ? rawPath.slice(1) : rawPath;
@@ -452,8 +375,7 @@ export class ApiEventSource {
     this.readyState = ApiEventSource.CLOSED;
     this.unsub?.();
     this.unsub = null;
-    // ISSUE-008: cancel OAuth if this was a login stream — best-effort via URL parse is hard;
-    // ModelsConfig must call auth.loginCancel. Still stop file watches.
+    // File watches are the remaining stream-owned Host resource in this adapter.
     if (this.filePath) {
       void call("files.watchStop", { path: this.filePath }).catch(() => {});
       this.filePath = null;

@@ -112,11 +112,7 @@ export const modelConfigHandlers = {
   },
 
   test: async (params) => {
-    const body = params as unknown as {
-      providerName?: string;
-      provider?: Record<string, unknown>;
-      model?: Record<string, unknown>;
-    };
+    const body = params;
     const providerName = typeof body.providerName === "string" ? body.providerName.trim() : "";
     if (!providerName) return { ok: false, error: "providerName is required" };
     if (!body.provider || typeof body.provider !== "object") {
