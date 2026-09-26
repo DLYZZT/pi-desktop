@@ -78,13 +78,9 @@ export const architecturePolicy = {
       reason: "Existing toolchain installation/validation owner; keep its bounded-operation behavior.",
     },
   },
-  dataModules: {
-    "src/renderer/i18n-dictionaries.ts": {
-      baselineLines: 3540,
-      reason:
-        "Translation data, checked for literal-only contents here and parity/duplicates/fallbacks by check:i18n; split under 22-08.",
-    },
-  },
+  // Domain dictionaries now fit the ordinary module limit. Their static
+  // composition, duplicate keys and language parity are checked by check:i18n.
+  dataModules: {},
   // An exception, when necessary, must name an exact rule/from/to edge and
   // provide both reason and removeWhen. Wildcards and unused exceptions fail.
   exceptions: [],

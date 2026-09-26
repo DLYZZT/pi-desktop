@@ -33,6 +33,21 @@ test("startup and language changes synchronize native UI and preserve renderer p
   setAppLanguage("en-US");
   assert.equal(translate("settings", "Settings"), "Settings");
   assert.equal(patches.at(-1).language, "en-US");
+
+  // Domain aggregation must preserve the existing zh-TW -> zh-CN -> caller
+  // fallback order, including the distinction between empty and absent values.
+  const { dictionaries } = await import("./i18n-dictionaries.ts");
+  const traditional = dictionaries["zh-TW"].settings;
+  try {
+    delete dictionaries["zh-TW"].settings;
+    setAppLanguage("zh-TW");
+    assert.equal(translate("settings", "Settings"), dictionaries["zh-CN"].settings);
+    dictionaries["zh-TW"].settings = "";
+    assert.equal(translate("settings", "Settings"), "");
+    assert.equal(translate("unregistered-fixture-key", "Caller fallback"), "Caller fallback");
+  } finally {
+    dictionaries["zh-TW"].settings = traditional;
+  }
 });
 
 test("native synchronization failure is handled without losing the renderer language", async (t) => {

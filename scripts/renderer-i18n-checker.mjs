@@ -121,38 +121,109 @@ function rendererSourceFiles(directory, dictionariesPath, result = []) {
 }
 
 function readDictionary({ failures, dictionariesPath, name }) {
-  const sourceText = fs.readFileSync(dictionariesPath, "utf8");
-  const source = ts.createSourceFile(dictionariesPath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const values = new Map();
-  let found = false;
-  walk(source, (node) => {
-    if (
-      !ts.isVariableDeclaration(node) ||
-      !ts.isIdentifier(node.name) ||
-      node.name.text !== name ||
-      !node.initializer ||
-      !ts.isObjectLiteralExpression(node.initializer)
-    ) {
-      return;
+  const directory = path.dirname(dictionariesPath);
+  const stack = new Set();
+  const merge = (target, entries) => {
+    for (const [key, value] of entries) {
+      if (target.has(key)) failures.push(`${name} contains duplicate key ${key}`);
+      target.set(key, value);
     }
-    found = true;
-    for (const property of node.initializer.properties) {
-      if (!ts.isPropertyAssignment(property) || !ts.isStringLiteralLike(property.initializer)) {
-        failures.push(`${name} contains a non-static dictionary entry at line ${lineOf(source, property)}`);
-        continue;
-      }
-      const key =
-        ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name) ? property.name.text : undefined;
-      if (!key) {
-        failures.push(`${name} contains a dynamic dictionary key at line ${lineOf(source, property)}`);
-        continue;
-      }
-      if (values.has(key)) failures.push(`${name} contains duplicate key ${key}`);
-      values.set(key, property.initializer.text);
+    return target;
+  };
+  const read = (file, symbol) => {
+    const reference = `${file}:${symbol}`;
+    if (stack.has(reference)) {
+      failures.push(`dictionary ${name} contains a cyclic import at ${reference}`);
+      return new Map();
     }
-  });
-  if (!found) failures.push(`dictionary ${name} was not found`);
-  return values;
+    if (!fs.existsSync(file)) {
+      failures.push(`dictionary module not found: ${file}`);
+      return new Map();
+    }
+    if (!fs.realpathSync(file).startsWith(fs.realpathSync(directory) + path.sep)) {
+      failures.push(`dictionary module leaves Renderer: ${file}`);
+      return new Map();
+    }
+    stack.add(reference);
+    const source = ts.createSourceFile(
+      file,
+      fs.readFileSync(file, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    for (const diagnostic of source.parseDiagnostics)
+      failures.push(`${file}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")}`);
+    const declarations = new Map(),
+      imports = new Map();
+    for (const statement of source.statements) {
+      if (ts.isVariableStatement(statement))
+        for (const declaration of statement.declarationList.declarations) {
+          if (ts.isIdentifier(declaration.name)) declarations.set(declaration.name.text, declaration.initializer);
+        }
+      if (
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteral(statement.moduleSpecifier) &&
+        statement.importClause?.namedBindings &&
+        ts.isNamedImports(statement.importClause.namedBindings)
+      ) {
+        for (const binding of statement.importClause.namedBindings.elements)
+          imports.set(binding.name.text, {
+            module: statement.moduleSpecifier.text,
+            symbol: (binding.propertyName ?? binding.name).text,
+          });
+      }
+    }
+    const resolve = (expression) => {
+      const values = new Map();
+      if (!expression) {
+        failures.push(`dictionary ${symbol} was not found in ${file}`);
+        return values;
+      }
+      if (ts.isObjectLiteralExpression(expression)) {
+        for (const property of expression.properties) {
+          if (!ts.isPropertyAssignment(property) || !ts.isStringLiteralLike(property.initializer)) {
+            failures.push(`${name} contains a non-static dictionary entry at ${file}:${lineOf(source, property)}`);
+            continue;
+          }
+          const key =
+            ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name) ? property.name.text : undefined;
+          if (!key) {
+            failures.push(`${name} contains a dynamic dictionary key at ${file}:${lineOf(source, property)}`);
+            continue;
+          }
+          merge(values, [[key, property.initializer.text]]);
+        }
+        return values;
+      }
+      if (ts.isIdentifier(expression)) {
+        const imported = imports.get(expression.text);
+        if (imported?.module.startsWith(".")) {
+          return read(path.resolve(path.dirname(file), imported.module), imported.symbol);
+        }
+        if (declarations.has(expression.text)) return read(file, expression.text);
+      }
+      if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression)) {
+        const helper = imports.get(expression.expression.text);
+        // Recognize only the explicit runtime merger, never evaluate arbitrary
+        // code or ignore a spread/call the checker cannot understand.
+        if (
+          helper?.symbol === "mergeDictionaries" &&
+          path.resolve(path.dirname(file), helper.module) === path.join(directory, "i18n/merge-dictionaries.ts") &&
+          expression.arguments.length
+        ) {
+          for (const argument of expression.arguments) merge(values, resolve(argument));
+          return values;
+        }
+      }
+      failures.push(`${name} contains a non-static dictionary composition at ${file}:${lineOf(source, expression)}`);
+      return values;
+    };
+    const values = resolve(declarations.get(symbol));
+    stack.delete(reference);
+    return values;
+  };
+  return read(dictionariesPath, name);
 }
 
 function checkDictionaryParity(failures, enUS, localized, tag) {

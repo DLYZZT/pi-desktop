@@ -20,6 +20,68 @@ function fixture(component, dictionaries, componentPath = "Component.tsx") {
   };
 }
 
+function domainFixture(t, part = 'export const enUS = {greeting: "Hello"}; export const zhCN = {greeting: "你好"};') {
+  const entry = fixture(
+    't("greeting", "Hello");',
+    `
+    import {mergeDictionaries} from "./i18n/merge-dictionaries.ts";
+    import {enUS as commonEn, zhCN as commonZh} from "./i18n/common.ts";
+    export const enUS = mergeDictionaries(commonEn);
+    export const zhCN = mergeDictionaries(commonZh);
+  `,
+  );
+  t.after(entry.cleanup);
+  const directory = path.join(entry.options.rendererRoot, "i18n");
+  fs.mkdirSync(directory);
+  fs.writeFileSync(path.join(directory, "common.ts"), part);
+  return {
+    ...entry,
+    write(name, content) {
+      fs.writeFileSync(path.join(directory, name), content);
+    },
+  };
+}
+
+test("follows explicit domain imports and preserves all existing parity and fallback checks", (t) => {
+  const entry = domainFixture(t);
+  assert.deepEqual(checkRendererI18n(entry.options), { failures: [], keyCount: 1 });
+  entry.write("common.ts", 'export const enUS = {greeting: "Drift {name}"}; export const zhCN = {};');
+  const errors = checkRendererI18n(entry.options).failures.join("\n");
+  assert.match(errors, /zh-CN is missing greeting/);
+  assert.match(errors, /fallback .* does not match/);
+});
+
+test("rejects cross-domain duplicates even when the overridden translations are identical", (t) => {
+  const entry = domainFixture(
+    t,
+    `
+    import {mergeDictionaries} from "./merge-dictionaries.ts";
+    import {one, two} from "./parts.ts";
+    export const enUS = mergeDictionaries(one, two);
+    export const zhCN = {greeting: "你好"};
+  `,
+  );
+  entry.write("parts.ts", 'export const one = {greeting: "Hello"}; export const two = {greeting: "Hello"};');
+  assert.match(checkRendererI18n(entry.options).failures.join("\n"), /enUS contains duplicate key greeting/);
+});
+
+test("unknown composition, missing domain modules, cycles and dynamic entries cannot silently pass", (t) => {
+  const entry = domainFixture(t);
+  for (const [source, expected] of [
+    ["export const enUS = load(); export const zhCN = {};", /non-static dictionary composition/],
+    [
+      'import {enUS as other} from "./absent.ts"; export const enUS = other; export const zhCN = {};',
+      /module not found/,
+    ],
+    ["export const enUS = alias; const alias = enUS; export const zhCN = {};", /cyclic import/],
+    ["export const enUS = {greeting: compute()}; export const zhCN = {};", /non-static dictionary entry/],
+    ["export const enUS = {...other}; export const zhCN = {};", /non-static dictionary entry/],
+  ]) {
+    entry.write("common.ts", source);
+    assert.match(checkRendererI18n(entry.options).failures.join("\n"), expected);
+  }
+});
+
 test("accepts static calls with exact bilingual dictionary and placeholder parity", () => {
   const entry = fixture(
     'export const value = t("greeting", "Hello {name}");',

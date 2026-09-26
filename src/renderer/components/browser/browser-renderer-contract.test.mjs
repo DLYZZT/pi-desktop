@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import { zhCN } from "../../i18n-dictionaries.ts";
 
 const read = (url) => fs.readFileSync(url, "utf8");
 const appShell = read(new URL("../AppShell.tsx", import.meta.url));
@@ -14,7 +15,6 @@ const browserTabManager = read(new URL("../../../main/browser/browser-tab-manage
 const browserScreenshot = read(new URL("../../../main/browser/browser-screenshot.ts", import.meta.url));
 const mainProcess = read(new URL("../../../main/main.ts", import.meta.url));
 const mainWindow = read(new URL("../../../main/window.ts", import.meta.url));
-const i18n = read(new URL("../../i18n-dictionaries.ts", import.meta.url));
 
 test("Browser remains a fixed right-panel resource and hides its native surface behind Settings", () => {
   assert.match(appShell, /const BROWSER_TAB_ID = "browser"/);
@@ -90,10 +90,10 @@ test("Browser Settings and Browser panel use the app language dictionary", () =>
   assert.match(browserSettings, /browserRequestConfirmation\("advanced-browser-mode", patch, language\)/);
   assert.match(browserService, /language === "zh-CN"/);
   assert.match(browserService, /启用高级浏览器模式/);
-  assert.match(i18n, /browser: "浏览器"/);
-  assert.match(i18n, /browserSettingsTitle: "内置浏览器"/);
-  assert.match(i18n, /browserSessionPermanentPermission: "此会话的永久浏览器权限"/);
-  assert.match(i18n, /browserLoadingPanel: "正在加载浏览器…"/);
+  assert.equal(zhCN.browser, "浏览器");
+  assert.equal(zhCN.browserSettingsTitle, "内置浏览器");
+  assert.equal(zhCN.browserSessionPermanentPermission, "此会话的永久浏览器权限");
+  assert.equal(zhCN.browserLoadingPanel, "正在加载浏览器…");
 });
 
 test("Browser Settings uses an in-app text prompt instead of Electron's unsupported window.prompt", () => {
