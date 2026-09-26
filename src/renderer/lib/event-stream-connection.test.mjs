@@ -79,3 +79,60 @@ test("a late old connection cannot overwrite or close its replacement", async ()
   assert.equal(newClosed, 1);
   assert.equal(target.current, null);
 });
+
+test("abort settles a pending connection and retires a late subscription exactly once", async () => {
+  const controller = new globalThis.AbortController();
+  const manager = new EventStreamConnectionManager({ current: null });
+  const pending = deferred();
+  let closed = 0,
+    received = 0,
+    listener;
+  const connection = connectTimedEventStream({
+    manager,
+    signal: controller.signal,
+    subscribe(onEvent) {
+      listener = onEvent;
+      return pending.promise;
+    },
+    onEvent() {
+      received++;
+    },
+    timeoutMs: 10_000,
+  });
+  controller.abort();
+  assert.equal((await connection).status, "closed");
+  listener({ type: "ghost" });
+  pending.resolve(() => closed++);
+  await pending.promise;
+  await new Promise((resolve) => setImmediate(resolve));
+  manager.invalidate();
+  assert.equal(received, 0);
+  assert.equal(closed, 1);
+});
+
+test("an already aborted connection never invokes subscribe", async () => {
+  const controller = new globalThis.AbortController();
+  controller.abort();
+  const result = await connectTimedEventStream({
+    manager: new EventStreamConnectionManager({ current: null }),
+    signal: controller.signal,
+    subscribe() {
+      assert.fail("must not attach after unmount");
+    },
+    onEvent() {},
+    timeoutMs: 10_000,
+  });
+  assert.equal(result.status, "closed");
+});
+
+test("synchronous subscribe failures become a closed connection", async () => {
+  const result = await connectTimedEventStream({
+    manager: new EventStreamConnectionManager({ current: null }),
+    subscribe() {
+      throw new Error("closed transport");
+    },
+    onEvent() {},
+    timeoutMs: 10_000,
+  });
+  assert.equal(result.status, "closed");
+});

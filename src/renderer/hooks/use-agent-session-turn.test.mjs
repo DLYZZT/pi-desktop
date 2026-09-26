@@ -4,6 +4,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { act, create } from "react-test-renderer";
 import { importTestBundle } from "#test-bundle";
+import { createDeferred } from "#test-timing";
 
 const { useAgentSession, testApi } = await importTestBundle("session-turn-hook", {
   stdin: {
@@ -31,20 +32,32 @@ const { useAgentSession, testApi } = await importTestBundle("session-turn-hook",
         `
               : path === "@/lib/agent-client"
                 ? `
-          export async function sendAgentCommand() { throw new Error("unexpected command"); }
+          export { sendAgentCommand } from "@/lib/api-client";
         `
                 : `
           export async function listModels() { return { models: [], catalog: { source: "cache", refreshed: false, aborted: false, warnings: [] } }; }
           export async function agentState() { return { running: false }; }
-          export async function subscribeAgentEvents() { return () => {}; }
+          export const connections = [];
+          export async function subscribeAgentEvents(sid) { connections.push(sid); return () => {}; }
           export async function subscribeSessionsChanged() { return () => {}; }
+          const pendingCommands = new Map();
+          export const commands = [];
+          export function queueCommand(type, value) { pendingCommands.set(type, value); }
+          export async function sendAgentCommand(sid, command) {
+            commands.push({sid, command});
+            if (!pendingCommands.has(command.type)) throw new Error("unexpected command " + command.type);
+            const result = pendingCommands.get(command.type); pendingCommands.delete(command.type);
+            return await result;
+          }
+          export const newAgent = (params) => sendAgentCommand(null, params);
+          export function resetCommands() { pendingCommands.clear(); commands.length = connections.length = 0; }
           let detail, page;
           export function setHistory(nextDetail, nextPage) { detail = nextDetail; page = nextPage; }
           export async function getSession() { if (!detail) throw new Error("unexpected detail read"); return detail; }
           export async function getSessionContextPage() { if (!page) throw new Error("unexpected page read"); return page; }
           const unexpected = async () => { throw new Error("unexpected session IO"); };
           export { unexpected as getSessionContext,
-            unexpected as getSessionEntryContent, unexpected as newAgent, unexpected as refreshModels,
+            unexpected as getSessionEntryContent, unexpected as refreshModels,
             unexpected as cancelModelsRefresh };
         `,
         }));
@@ -220,3 +233,66 @@ test("prepending history preserves the viewport instead of activating completion
   pending.forEach((callback) => callback());
   assert.equal(container.scrollTop, 2300);
 });
+
+for (const action of ["create", "fork"]) {
+  test(`a late ${action} result cannot navigate a view the user already left`, async (t) => {
+    testApi.resetCommands();
+    const originals = new Map();
+    const install = (name, value) => {
+      originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+      Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+    };
+    install("IS_REACT_ACT_ENVIRONMENT", true);
+    install("window", { addEventListener() {}, removeEventListener() {}, localStorage: { getItem: () => "off" } });
+    install("document", { visibilityState: "visible", addEventListener() {}, removeEventListener() {} });
+    install("requestAnimationFrame", (callback) => {
+      callback();
+      return 0;
+    });
+    install("cancelAnimationFrame", () => {});
+    let renderer, current;
+    const navigations = [];
+    const options = {
+      session: null,
+      newSessionCwd: action === "create" ? "/fixture" : null,
+      onSessionCreated: (session) => navigations.push(session),
+      onSessionForked: (id) => navigations.push(id),
+    };
+    function Probe() {
+      current = useAgentSession(options);
+      return null;
+    }
+    t.after(async () => {
+      if (renderer) await act(async () => renderer.unmount());
+      testApi.resetCommands();
+      for (const [name, descriptor] of originals) {
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+        else delete globalThis[name];
+      }
+    });
+    await act(async () => {
+      renderer = create(createElement(Probe));
+    });
+    const pending = createDeferred();
+    testApi.queueCommand(action === "create" ? "ensure_session" : "fork", pending.promise);
+    testApi.queueCommand("prompt", {});
+    let operation;
+    await act(async () => {
+      if (action === "fork") current.sessionIdRef.current = "source";
+      operation = action === "create" ? current.handleSend("background fixture") : current.handleFork("entry");
+    });
+    await act(async () => renderer.unmount());
+    renderer = null;
+    await act(async () => {
+      pending.resolve(action === "create" ? { sessionId: "new" } : { newSessionId: "forked" });
+      await operation;
+    });
+    assert.deepEqual(navigations, []);
+    assert.deepEqual(testApi.connections, [], "leaving the view must not install a background UI subscription");
+    assert.equal(
+      testApi.commands.filter(({ command }) => command.type === "prompt").length,
+      action === "create" ? 1 : 0,
+      "an already accepted prompt still executes exactly once after the view closes",
+    );
+  });
+}

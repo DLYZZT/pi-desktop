@@ -59,34 +59,47 @@ export async function connectTimedEventStream<Event>(options: {
   subscribe: (onEvent: (event: Event) => void) => Promise<Unsubscribe>;
   onEvent: (event: Event) => void;
   timeoutMs: number;
+  signal?: AbortSignal;
 }): Promise<EventStreamConnectionResult> {
+  if (options.signal?.aborted) return { status: "closed", unsubscribe: () => {} };
   const generation = options.manager.begin();
-  const subscription = options
-    .subscribe((event) => {
-      if (options.manager.isCurrent(generation)) options.onEvent(event);
-    })
-    .then(
-      (unsubscribe) => ({ status: "subscribed" as const, unsubscribe }),
-      () => ({ status: "closed" as const }),
-    );
+  const subscription = (async () =>
+    options.subscribe((event) => {
+      if (!options.signal?.aborted && options.manager.isCurrent(generation)) options.onEvent(event);
+    }))().then(
+    (unsubscribe) => ({ status: "subscribed" as const, unsubscribe }),
+    () => ({ status: "closed" as const }),
+  );
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   const outcome = await Promise.race([
     subscription,
     new Promise<{ status: "timeout" }>((resolve) => {
       timeout = setTimeout(() => resolve({ status: "timeout" }), options.timeoutMs);
     }),
+    new Promise<{ status: "cancelled" }>((resolve) => {
+      onAbort = () => resolve({ status: "cancelled" });
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      if (options.signal?.aborted) onAbort();
+    }),
   ]);
   if (timeout) clearTimeout(timeout);
+  if (onAbort) options.signal?.removeEventListener("abort", onAbort);
 
-  if (outcome.status === "timeout") {
+  if (outcome.status === "timeout" || outcome.status === "cancelled") {
     options.manager.invalidate(generation);
     void subscription.then((late) => {
       if (late.status === "subscribed") late.unsubscribe();
     });
-    return { status: "timeout", unsubscribe: () => {} };
+    return { status: outcome.status === "timeout" ? "timeout" : "closed", unsubscribe: () => {} };
   }
   if (outcome.status === "closed") {
     options.manager.invalidate(generation);
+    return { status: "closed", unsubscribe: () => {} };
+  }
+  if (options.signal?.aborted) {
+    options.manager.invalidate(generation);
+    outcome.unsubscribe();
     return { status: "closed", unsubscribe: () => {} };
   }
   const unsubscribe = options.manager.install(generation, outcome.unsubscribe);

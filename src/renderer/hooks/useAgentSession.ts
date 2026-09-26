@@ -10,18 +10,12 @@ import type {
 import type { AgentEvent, SessionDetail, SessionRuntimeState } from "@contract/types";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
-import { agentState, newAgent, subscribeAgentEvents, subscribeSessionsChanged } from "@/lib/api-client";
+import { agentState, newAgent } from "@/lib/api-client";
 import { getToolNamesForPreset, getPresetFromTools, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
-import { subscribeActiveSessionLiveSync } from "./active-session-live-sync";
+import { useSessionEvents } from "./useSessionEvents";
 import { requestAutoSessionTitle, shouldAutoTitleMessage } from "../lib/auto-session-title";
 
-import {
-  connectTimedEventStream,
-  EventStreamConnectionManager,
-  type EventStreamConnectionResult,
-  type EventStreamConnectionStatus,
-} from "@/lib/event-stream-connection";
 import {
   appendLocalHistoryMessage,
   removeLastHistoryMessage,
@@ -107,15 +101,7 @@ const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
 const AGENT_STATE_RECONCILE_MS = 15_000;
-const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
 const NOTICE_EXIT_ANIMATION_MS = 180;
-
-class EventStreamConnectionError extends Error {
-  constructor(public readonly status: Exclude<EventStreamConnectionStatus, "connected">) {
-    super(`EVENT_STREAM_${status.toUpperCase()}`);
-    this.name = "EventStreamConnectionError";
-  }
-}
 
 function createNoticeId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -268,8 +254,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
-  const eventUnsubRef = useRef<(() => void) | null>(null);
-  const [eventConnectionManager] = useState(() => new EventStreamConnectionManager(eventUnsubRef));
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const agentRunningRef = useRef(false);
   // Preserve the existing imperative handle while publishing render state through the reducer.
@@ -278,7 +262,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunningRef.current = running;
     dispatchTurn({ type: "running", running });
   }, []);
-  const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
@@ -335,6 +318,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     invalidateHistory,
     beginNavigation,
   } = useSessionHistory({ isNew, sessionIdRef, capturePrependAnchor, onSessionLoaded: applySessionSnapshot });
+  const { ensureEventsConnected, eventUnsubRef, handleAgentEventRef, isActive } = useSessionEvents({
+    sessionIdRef,
+    onSessionChanged: (sid) => {
+      void loadSession(sid);
+    },
+  });
   const viewport = useChatViewport({
     agentRunning,
     agentRunningRef,
@@ -390,7 +379,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const promoteNewSession = useCallback(
     (messageCount = 0, firstMessage = "(no messages)") => {
       const sid = sessionIdRef.current;
-      if (!isNew || !newSessionCwd || !sid || newSessionPromotedRef.current) return;
+      if (!isActive() || !isNew || !newSessionCwd || !sid || newSessionPromotedRef.current) return;
       newSessionPromotedRef.current = true;
       onSessionCreated?.({
         id: sid,
@@ -403,7 +392,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         firstMessage,
       });
     },
-    [isNew, newSessionCwd, onSessionCreated],
+    [isActive, isNew, newSessionCwd, onSessionCreated],
   );
 
   const ensureNewSession = useCallback(async () => {
@@ -455,27 +444,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setSlashCommandsLoading(false);
     }
   }, [ensureNewSession]);
-
-  const connectEvents = useCallback(
-    async (sid: string): Promise<EventStreamConnectionResult> => {
-      return connectTimedEventStream({
-        manager: eventConnectionManager,
-        subscribe: (onEvent) => subscribeAgentEvents(sid, onEvent),
-        onEvent: (event) => handleAgentEventRef.current?.(event as AgentEvent),
-        timeoutMs: EVENT_STREAM_CONNECT_TIMEOUT_MS,
-      });
-    },
-    [eventConnectionManager],
-  );
-
-  const ensureEventsConnected = useCallback(
-    async (sid: string) => {
-      const result = await connectEvents(sid);
-      if (result.status === "connected") return;
-      throw new EventStreamConnectionError(result.status);
-    },
-    [connectEvents],
-  );
 
   const respondToExtensionUi = useCallback(
     async (
@@ -914,7 +882,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           entryId,
         });
         const { cancelled, newSessionId } = result ?? {};
-        if (!cancelled && newSessionId) {
+        if (isActive() && !cancelled && newSessionId) {
           onSessionForked?.(newSessionId);
         }
       } catch (e) {
@@ -923,7 +891,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setForkingEntryId(null);
       }
     },
-    [onSessionForked],
+    [isActive, onSessionForked],
   );
 
   const handleNavigate = useCallback(
@@ -1284,34 +1252,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // Load session on mount
   useEffect(() => {
     let disposed = false;
-    let unsubscribeLiveSync: (() => void) | undefined;
     resetHistory();
     if (session) {
       prepareSessionChange();
       sessionIdRef.current = session.id;
-
-      // Subscribe even when the session is currently idle. IM turns can start
-      // without a desktop prompt, so waiting for agentState.running would miss
-      // the entire external turn until this component is remounted.
-      void subscribeActiveSessionLiveSync({
-        sessionId: session.id,
-        connectAgentEvents: async (sessionId) => {
-          const result = await connectEvents(sessionId);
-          if (result.status !== "connected") throw new EventStreamConnectionError(result.status);
-          return result.unsubscribe;
-        },
-        subscribeSessionChanges: subscribeSessionsChanged,
-        onSessionChanged: () => {
-          if (!disposed) void loadSession(session.id);
-        },
-      })
-        .then((unsubscribe) => {
-          if (disposed) unsubscribe();
-          else unsubscribeLiveSync = unsubscribe;
-        })
-        .catch((cause) => {
-          if (!disposed) console.error("Failed to subscribe to active session updates:", cause);
-        });
 
       void loadSession(session.id, true, true, true).then((agentState) => {
         if (disposed) return;
@@ -1348,8 +1292,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     return () => {
       disposed = true;
       invalidateHistory();
-      unsubscribeLiveSync?.();
-      eventConnectionManager.invalidate();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- session identity owns this lifecycle effect.
   }, []);
