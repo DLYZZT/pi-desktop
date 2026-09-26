@@ -29,6 +29,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { readSessionSnapshot, assertSessionWritable } from "./session-readonly.ts";
 import { getDesktopSessionToolNames } from "./session-tool-store.ts";
+import { readTextPreview } from "./text-preview";
 import {
   AUTO_TITLE_MAX_LENGTH,
   makeFallbackTitle,
@@ -1368,22 +1369,8 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
         };
       }
 
-      // Text: only read up to limit
-      const fd = await import("fs").then((fs) => fs.openSync(filePath, "r"));
-      try {
-        const max = Math.min(st.size, TEXT_PREVIEW_MAX_BYTES);
-        const buf = Buffer.alloc(max);
-        const n = (await import("fs")).readSync(fd, buf, 0, max, 0);
-        return {
-          content: buf.slice(0, n).toString("utf8"),
-          encoding: "utf8" as const,
-          language: getLanguage(filePath),
-          size: st.size,
-          truncated: st.size > TEXT_PREVIEW_MAX_BYTES,
-        };
-      } finally {
-        (await import("fs")).closeSync(fd);
-      }
+      const preview = await readTextPreview(filePath, TEXT_PREVIEW_MAX_BYTES);
+      return { ...preview, encoding: "utf8" as const, language: getLanguage(filePath) };
     },
 
     "files.download": async (params) => {
@@ -1437,6 +1424,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       };
       await assertPathAllowed(filePath, sourceSessionId);
       const st = statSync(filePath);
+      if (!st.isFile()) throw new RpcError({ code: "BAD_REQUEST", message: "Not a file" });
       const imgMime = getImageMime(filePath);
       if (imgMime) {
         if (st.size > IMAGE_PREVIEW_MAX_BYTES) {
@@ -1459,18 +1447,12 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
           base64: readFileSync(filePath).toString("base64"),
         };
       }
-      if (st.size > TEXT_PREVIEW_MAX_BYTES) {
-        return {
-          kind: "text",
-          content: readFileSync(filePath, "utf8").slice(0, TEXT_PREVIEW_MAX_BYTES),
-          language: getLanguage(filePath),
-          truncated: true,
-        };
-      }
+      const preview = await readTextPreview(filePath, TEXT_PREVIEW_MAX_BYTES);
       return {
         kind: "text",
-        content: readFileSync(filePath, "utf8"),
+        content: preview.content,
         language: getLanguage(filePath),
+        ...(preview.truncated ? { truncated: true } : {}),
       };
     },
 

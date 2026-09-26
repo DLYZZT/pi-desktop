@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
+import { MessageChannel } from "node:worker_threads";
 import path from "node:path";
 import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { CredentialSynchronizationError } from "@earendil-works/pi-coding-agent";
+import { TEXT_PREVIEW_MAX_BYTES } from "../shared/file-types.ts";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
 const isolatedAgentDirectory = mkdtempSync(path.join(tmpdir(), "pi-handler-agent-"));
@@ -24,7 +26,7 @@ async function loadHandlersModule() {
       absWorkingDir: root,
       stdin: {
         contents:
-          'export * from "./handlers.ts"; export { setDesktopSessionToolNames } from "./session-tool-store.ts";',
+          'export * from "./handlers.ts"; export { setDesktopSessionToolNames } from "./session-tool-store.ts"; export {createRpcServer, createRpcClient} from "../contract/rpc.ts";',
         resolveDir: import.meta.dirname,
         loader: "ts",
       },
@@ -186,6 +188,46 @@ test("registerHandlers exposes every contract method exactly once", async () => 
     "system.allowRoot",
   ]) {
     assert.equal(typeof handlers[method], "function", `${method} must be registered`);
+  }
+});
+
+test("both text endpoints preserve UTF-8 boundaries and byte budgets while Host ping remains available", async (t) => {
+  const project = mkdtempSync(path.join(tmpdir(), "pi-preview-handlers-"));
+  t.after(() => rmSync(project, { recursive: true, force: true }));
+  const file = path.join(project, "large.txt");
+  writeFileSync(file, "中🙂".repeat(TEXT_PREVIEW_MAX_BYTES));
+  const { handlers } = await captureHandlers();
+  const { createRpcClient, createRpcServer } = await loadHandlersModule();
+  const { port1, port2 } = new MessageChannel();
+  const server = createRpcServer(),
+    client = createRpcClient(port1);
+  server.handle(handlers);
+  server.attachPort(port2);
+  t.after(() => {
+    client.close();
+    server.detachPort(port2);
+    port2.close();
+  });
+  await client.call("system.allowRoot", { path: project });
+  await client.call("files.meta", { path: file }); // warm authorization before checking IO fairness
+  let finished = 0;
+  const previews = ["files.read", "files.preview", "files.read", "files.preview"].map((method) =>
+    client.call(method, { path: file }).then((result) => {
+      finished++;
+      return result;
+    }),
+  );
+  const ping = await client.call("host.ping");
+  assert.equal(ping.ok, true);
+  assert.ok(finished < previews.length, "a queued ping must not wait for all file reads to finish");
+  for (const result of await Promise.all(previews)) {
+    assert.ok(Buffer.byteLength(result.content, "utf8") <= TEXT_PREVIEW_MAX_BYTES);
+    assert.equal(result.truncated, true);
+    assert.ok(!result.content.includes("\ufffd"), "a truncated code point must not become a replacement character");
+  }
+  for (const method of ["files.read", "files.preview"]) {
+    await assert.rejects(client.call(method, { path: project }), (error) => error.code === "BAD_REQUEST");
+    await assert.rejects(handlers[method]({ path: path.join(project, "deleted.txt") }), { code: "ENOENT" });
   }
 });
 
