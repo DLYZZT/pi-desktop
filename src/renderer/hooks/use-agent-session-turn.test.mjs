@@ -36,10 +36,14 @@ const { useAgentSession, testApi } = await importTestBundle("session-turn-hook",
         `
                 : `
           export async function listModels() { return { models: [], catalog: { source: "cache", refreshed: false, aborted: false, warnings: [] } }; }
-          export async function agentState() { return { running: false }; }
+          let stateResponse;
+          export function setStateResponse(value) { stateResponse = value; }
+          export async function agentState() { return stateResponse ?? { running: false }; }
           export const connections = [];
           export async function subscribeAgentEvents(sid) { connections.push(sid); return () => {}; }
-          export async function subscribeSessionsChanged() { return () => {}; }
+          const changeListeners = new Set();
+          export function emitChanges(event) { for (const listener of changeListeners) listener(event); }
+          export async function subscribeSessionsChanged(listener) { changeListeners.add(listener); return () => changeListeners.delete(listener); }
           const pendingCommands = new Map();
           export const commands = [];
           export function queueCommand(type, value) { pendingCommands.set(type, value); }
@@ -296,3 +300,220 @@ for (const action of ["create", "fork"]) {
     );
   });
 }
+
+const runtimeDetail = (runtime, messages = []) => ({
+  sessionId: "fixture",
+  info: { id: "fixture", cwd: "/fixture" },
+  leafId: null,
+  tree: [],
+  context: {
+    messages,
+    entryIds: messages.map((_, i) => String(i)),
+    historyRevision: "r1",
+    model: null,
+    thinkingLevel: "off",
+    loadedMessages: messages.length,
+    totalMessages: messages.length,
+    truncatedBefore: false,
+  },
+  agentState: runtime,
+});
+
+async function mountRuntime(t, initial) {
+  const originals = new Map();
+  const listeners = new Map();
+  const install = (name, value) => {
+    originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+  };
+  install("IS_REACT_ACT_ENVIRONMENT", true);
+  install("window", {
+    addEventListener: (name, callback) => {
+      const set = listeners.get(name) ?? new Set();
+      set.add(callback);
+      listeners.set(name, set);
+    },
+    removeEventListener: (name, callback) => listeners.get(name)?.delete(callback),
+  });
+  install("document", { visibilityState: "visible", addEventListener() {}, removeEventListener() {} });
+  install("requestAnimationFrame", (callback) => {
+    callback();
+    return 0;
+  });
+  install("cancelAnimationFrame", () => {});
+  testApi.resetCommands();
+  testApi.setStateResponse(undefined);
+  testApi.queueCommand("get_tools", []);
+  testApi.setHistory(initial, undefined);
+  let current,
+    renderer,
+    completions = 0;
+  const options = { session: { id: "fixture", cwd: "/fixture" }, newSessionCwd: null, onAgentEnd: () => completions++ };
+  function Probe() {
+    current = useAgentSession(options);
+    return null;
+  }
+  t.after(async () => {
+    if (renderer) await act(async () => renderer.unmount());
+    testApi.resetCommands();
+    testApi.setStateResponse(undefined);
+    testApi.setHistory(undefined, undefined);
+    for (const [name, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete globalThis[name];
+    }
+  });
+  await act(async () => {
+    renderer = create(createElement(Probe));
+  });
+  return {
+    get current() {
+      return current;
+    },
+    get completions() {
+      return completions;
+    },
+    emit: (event) => act(async () => current.handleAgentEventRef.current(event)),
+    reconcile: () =>
+      act(async () => {
+        for (const listener of listeners.get("online") ?? []) listener();
+      }),
+  };
+}
+
+test("an initial running snapshot arriving after prompt_done cannot resurrect the turn", async (t) => {
+  const initial = createDeferred();
+  const fixture = await mountRuntime(t, initial.promise);
+  await fixture.emit({ type: "prompt_done" });
+  await act(async () => {
+    initial.resolve(runtimeDetail({ running: true, state: { isStreaming: true } }));
+  });
+  assert.equal(fixture.current.agentRunning, false);
+  assert.equal(fixture.current.streamState.isStreaming, false);
+});
+
+test("a resumed view accepts completion from the client run created by its previous mount", async (t) => {
+  const fixture = await mountRuntime(t, runtimeDetail({ running: true, state: { isStreaming: true } }));
+  assert.equal(fixture.current.agentRunning, true);
+  testApi.setHistory(
+    runtimeDetail({ running: true, state: { isStreaming: false, isPromptRunning: false } }),
+    undefined,
+  );
+  await fixture.emit({ type: "prompt_done", clientRunId: 42 });
+  assert.equal(fixture.current.agentRunning, false);
+  assert.equal(fixture.completions, 1);
+});
+
+test("local client IDs still reject unrelated completion and cannot stop a later channel turn", async (t) => {
+  const fixture = await mountRuntime(t, runtimeDetail({ running: false }));
+  testApi.queueCommand("prompt", {});
+  await act(async () => fixture.current.handleSend("local fixture"));
+  await fixture.emit({ type: "agent_start" });
+  await fixture.emit({ type: "prompt_done", clientRunId: 99 });
+  assert.equal(fixture.current.agentRunning, true);
+  assert.equal(fixture.completions, 0);
+  await fixture.emit({ type: "prompt_done", clientRunId: 1 });
+  assert.equal(fixture.current.agentRunning, false);
+  assert.equal(fixture.completions, 1);
+  await fixture.emit({ type: "channel_turn_start", runId: "external" });
+  await fixture.emit({ type: "agent_start" });
+  await fixture.emit({ type: "prompt_done", clientRunId: 1 });
+  assert.equal(fixture.current.agentRunning, true);
+  assert.equal(fixture.completions, 1);
+});
+
+test("a newer history-only refresh does not discard the initial runtime hydration", async (t) => {
+  const initial = createDeferred();
+  const fixture = await mountRuntime(t, initial.promise);
+  const message = { role: "user", content: "newer persisted history" };
+  testApi.setHistory(runtimeDetail(undefined, [message]), undefined);
+  await act(async () => testApi.emitChanges({ sessionId: "fixture" }));
+  assert.deepEqual(fixture.current.messages, [message]);
+  await act(async () => {
+    initial.resolve(runtimeDetail({ running: true, state: { isStreaming: true, systemPrompt: "initial" } }));
+  });
+  assert.equal(fixture.current.agentRunning, true);
+  assert.equal(fixture.current.systemPrompt, "initial");
+  assert.deepEqual(fixture.current.messages, [message]);
+});
+
+test("an initial snapshot hydrates the run while preserving newer queue, compaction and extension events", async (t) => {
+  const initial = createDeferred();
+  const fixture = await mountRuntime(t, initial.promise);
+  await fixture.emit({ type: "queue_update", steering: ["new"], followUp: [] });
+  await fixture.emit({ type: "compaction_start" });
+  await fixture.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "job", statusText: "new" });
+  await fixture.emit({ type: "extension_ui_request", method: "setWidget", widgetKey: "job", widgetLines: ["new"] });
+  await act(async () => {
+    initial.resolve(
+      runtimeDetail({
+        running: true,
+        state: {
+          isStreaming: true,
+          isCompacting: false,
+          queuedMessages: { steering: ["old"], followUp: [] },
+          extensionStatuses: [{ key: "job", text: "old" }],
+          extensionWidgets: [],
+        },
+      }),
+    );
+  });
+  assert.equal(fixture.current.agentRunning, true, "unrelated fields must not discard initial run hydration");
+  assert.deepEqual(fixture.current.queuedMessages, { steering: ["new"], followUp: [] });
+  assert.equal(fixture.current.isCompacting, true);
+  assert.deepEqual(fixture.current.extensionStatuses, [{ key: "job", text: "new" }]);
+  assert.deepEqual(fixture.current.extensionWidgets[0].lines, ["new"]);
+});
+
+test("an older initial snapshot cannot clear a newer stream projection", async (t) => {
+  const initial = createDeferred();
+  const fixture = await mountRuntime(t, initial.promise);
+  await fixture.emit({ type: "agent_start" });
+  const message = { role: "assistant", content: [{ type: "text", text: "new stream" }] };
+  await fixture.emit({ type: "message_update", message });
+  await act(async () => {
+    initial.resolve(runtimeDetail({ running: true, state: { isStreaming: true } }));
+  });
+  assert.deepEqual(fixture.current.streamState.streamingMessage, message);
+  assert.equal(fixture.current.agentPhase, null);
+});
+
+test("a slow external completion cannot replace history or settle the next external run", async (t) => {
+  const fixture = await mountRuntime(t, runtimeDetail({ running: false }));
+  await fixture.emit({ type: "channel_turn_start", runId: "first" });
+  await fixture.emit({ type: "agent_start" });
+  const finishing = createDeferred();
+  testApi.setHistory(finishing.promise, undefined);
+  await fixture.emit({ type: "channel_turn_end", runId: "first" });
+  await fixture.emit({ type: "channel_turn_start", runId: "second" });
+  await fixture.emit({ type: "agent_start" });
+  const message = { role: "user", content: "new external turn" };
+  await fixture.emit({ type: "message_end", message });
+  await act(async () => {
+    finishing.resolve(runtimeDetail({ running: false }));
+  });
+  assert.equal(fixture.current.agentRunning, true);
+  assert.deepEqual(fixture.current.messages, [message]);
+  assert.equal(fixture.completions, 0);
+  testApi.setHistory(runtimeDetail({ running: false }, [message]), undefined);
+  await fixture.emit({ type: "channel_turn_end", runId: "second" });
+  assert.equal(fixture.current.agentRunning, false);
+  assert.equal(fixture.completions, 1);
+});
+
+test("an idle reconciliation read cannot override events received while it was in flight", async (t) => {
+  const fixture = await mountRuntime(t, runtimeDetail({ running: false }));
+  await fixture.emit({ type: "agent_start" });
+  const state = createDeferred();
+  testApi.setStateResponse(state.promise);
+  await fixture.reconcile();
+  await fixture.emit({ type: "queue_update", steering: ["keep"], followUp: [] });
+  await fixture.emit({ type: "compaction_start" });
+  await act(async () => {
+    state.resolve({ running: true, state: { isStreaming: false, isPromptRunning: false, isCompacting: false } });
+  });
+  assert.equal(fixture.current.agentRunning, true);
+  assert.equal(fixture.current.isCompacting, true);
+  assert.deepEqual(fixture.current.queuedMessages.steering, ["keep"]);
+  assert.equal(fixture.completions, 0);
+});

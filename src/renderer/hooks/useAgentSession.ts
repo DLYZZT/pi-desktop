@@ -26,6 +26,7 @@ import { useI18n } from "@/i18n";
 import { useSessionModels } from "./useSessionModels";
 import { useSessionHistory } from "./useSessionHistory";
 import { useChatViewport } from "./useChatViewport";
+import { SessionRuntimeGate, type RuntimeSnapshotTicket } from "@/lib/session-runtime-gate";
 import { sessionClientErrorMessage } from "@/lib/session-error-message";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
 
@@ -265,37 +266,62 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
+  // The counter is local to this view. A restored run belongs to an earlier
+  // mount and may legitimately complete with a different clientRunId.
+  const ownedPromptRunIdRef = useRef<number | null>(null);
   const externalTurnRunIdRef = useRef<string | null>(null);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
+  const [runtimeGate] = useState(() => new SessionRuntimeGate());
   const prependAnchorRef = useRef<ReturnType<typeof useChatViewport>["capturePrependAnchor"] | null>(null);
   const capturePrependAnchor = useCallback(() => prependAnchorRef.current?.(), []);
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
 
+  const applyRuntimeSnapshot = useCallback(
+    (snapshot: SessionDetail["agentState"], ticket: RuntimeSnapshotTicket) => {
+      const liveState = snapshot?.state;
+      if (liveState) {
+        if (liveState.contextUsage !== undefined && runtimeGate.accept(ticket, "usage"))
+          setContextUsage(liveState.contextUsage ?? null);
+        if (liveState.systemPrompt !== undefined && runtimeGate.accept(ticket, "systemPrompt"))
+          setSystemPrompt(liveState.systemPrompt ?? null);
+        if (liveState.thinkingLevel !== undefined && runtimeGate.accept(ticket, "thinking"))
+          setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
+        if (liveState.extensionStatuses !== undefined && runtimeGate.accept(ticket, "statuses"))
+          setExtensionStatuses(liveState.extensionStatuses ?? []);
+        if (liveState.extensionWidgets !== undefined && runtimeGate.accept(ticket, "widgets"))
+          setExtensionWidgets(liveState.extensionWidgets ?? []);
+        if (liveState.isCompacting !== undefined && runtimeGate.accept(ticket, "compaction"))
+          dispatchTurn({ type: "compaction-state", isCompacting: liveState.isCompacting });
+        if (liveState.queuedMessages !== undefined && runtimeGate.accept(ticket, "queue"))
+          dispatchTurn({ type: "queue-snapshot", queuedMessages: normalizeQueuedMessages(liveState.queuedMessages) });
+      } else if (snapshot && !snapshot.running && runtimeGate.accept(ticket, "queue"))
+        dispatchTurn({ type: "queue-snapshot", queuedMessages: { steering: [], followUp: [] } });
+    },
+    [runtimeGate],
+  );
   const applySessionSnapshot = useCallback(
-    (d: SessionDetail) => {
+    (d: SessionDetail, ticket = runtimeGate.capture()) => {
       setSessionStatsOverride(null);
       if (d.toolNames !== undefined) {
         setToolPresetState(getPresetFromTools(d.toolNames.map((name) => ({ name, description: "", active: true }))));
       }
       setCurrentModelOverride(null);
-      const liveState = d.agentState?.state;
-      if (liveState) {
-        if (liveState.contextUsage !== undefined) setContextUsage(liveState.contextUsage ?? null);
-        if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
-        if (liveState.thinkingLevel !== undefined)
-          setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
-        if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
-        if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
-        if (liveState.queuedMessages !== undefined)
-          dispatchTurn({ type: "queue-snapshot", queuedMessages: normalizeQueuedMessages(liveState.queuedMessages) });
-      } else if (d.agentState && !d.agentState.running)
-        dispatchTurn({ type: "queue-snapshot", queuedMessages: { steering: [], followUp: [] } });
-      if (!liveState?.thinkingLevel && d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
+      applyRuntimeSnapshot(d.agentState, ticket);
+      if (
+        !d.agentState?.state?.thinkingLevel &&
+        d.context.thinkingLevel &&
+        d.context.thinkingLevel !== "off" &&
+        runtimeGate.accept(ticket, "thinking")
+      ) {
         setThinkingLevel(d.context.thinkingLevel as ThinkingLevelOption);
       }
     },
-    [setToolPresetState],
+    [applyRuntimeSnapshot, runtimeGate, setToolPresetState],
   );
+  const prepareSessionSnapshot = useCallback(() => {
+    const ticket = runtimeGate.capture();
+    return (detail: SessionDetail) => applySessionSnapshot(detail, ticket);
+  }, [applySessionSnapshot, runtimeGate]);
   const {
     data,
     loading,
@@ -317,7 +343,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     resetHistory,
     invalidateHistory,
     beginNavigation,
-  } = useSessionHistory({ isNew, sessionIdRef, capturePrependAnchor, onSessionLoaded: applySessionSnapshot });
+  } = useSessionHistory({
+    isNew,
+    sessionIdRef,
+    capturePrependAnchor,
+    onSessionLoaded: applySessionSnapshot,
+    prepareSessionSnapshot,
+  });
   const { ensureEventsConnected, eventUnsubRef, handleAgentEventRef, isActive } = useSessionEvents({
     sessionIdRef,
     onSessionChanged: (sid) => {
@@ -498,12 +530,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           break;
         }
         case "setStatus":
+          runtimeGate.touch("statuses");
           setExtensionStatuses((prev) => {
             const rest = prev.filter((item) => item.key !== request.statusKey);
             return request.statusText ? [...rest, { key: request.statusKey, text: request.statusText }] : rest;
           });
           break;
         case "setWidget":
+          runtimeGate.touch("widgets");
           setExtensionWidgets((prev) => {
             const rest = prev.filter((item) => item.key !== request.widgetKey);
             return request.widgetLines
@@ -532,38 +566,52 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           break;
       }
     },
-    [addNotice, opts.chatInputRef],
+    [addNotice, opts.chatInputRef, runtimeGate],
   );
 
   const finishPromptWithoutStream = useCallback(
     async (sid: string | null = sessionIdRef.current, runId?: number) => {
       // Bail out before loadSession too: a stale finish for a previous run
       // must not overwrite the messages of the run currently streaming.
-      if (runId !== undefined && promptRunIdRef.current !== runId) return;
+      const ticket = runtimeGate.capture();
+      const ownsRun = () =>
+        isActive() &&
+        sessionIdRef.current === sid &&
+        runtimeGate.isCurrentRun(ticket) &&
+        (runId === undefined || promptRunIdRef.current === runId);
+      if (!ownsRun()) return;
       try {
-        if (sid) await loadSession(sid, false, true);
+        if (sid) await loadSession(sid, false, true, false, ownsRun);
       } finally {
-        if (runId !== undefined && promptRunIdRef.current !== runId) return;
+        if (!ownsRun()) return;
         optimisticUserMessageKeyRef.current = null;
         if (!agentRunningRef.current) return;
         agentRunningRef.current = false;
+        runtimeGate.beginRun();
         dispatchTurn({ type: "settled" });
         onAgentEnd?.();
       }
     },
-    [loadSession, onAgentEnd],
+    [isActive, loadSession, onAgentEnd, runtimeGate],
   );
 
   const waitForPromptSettlement = useCallback(
     async (sid: string, runId?: number) => {
+      const ticket = runtimeGate.capture();
+      const ownsRun = () =>
+        isActive() &&
+        sessionIdRef.current === sid &&
+        runtimeGate.isCurrent(ticket, "run") &&
+        (runId === undefined || promptRunIdRef.current === runId);
       await delay(PROMPT_SETTLE_INITIAL_DELAY_MS);
       const startedAt = Date.now();
 
       while (agentRunningRef.current && Date.now() - startedAt < PROMPT_SETTLE_MAX_MS) {
-        if (runId !== undefined && promptRunIdRef.current !== runId) return;
+        if (!ownsRun()) return;
         try {
           try {
             const data = await agentState(sid);
+            if (!ownsRun()) return;
             const state = data.state as AgentStateResponse | undefined;
             if (!data.running || !state || (!state.isStreaming && !state.isPromptRunning)) {
               await finishPromptWithoutStream(sid, runId);
@@ -578,7 +626,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         await delay(PROMPT_SETTLE_POLL_MS);
       }
     },
-    [finishPromptWithoutStream],
+    [finishPromptWithoutStream, isActive, runtimeGate],
   );
 
   // Reconcile client streaming state with the server. When stream events are
@@ -588,34 +636,36 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // through the same path as prompt_done.
   const reconcileAgentState = useCallback(
     async (sid: string) => {
-      if (!agentRunningRef.current) return;
+      if (!isActive() || !agentRunningRef.current) return;
       const runId = promptRunIdRef.current;
+      const ticket = runtimeGate.capture();
       try {
         const data = await agentState(sid);
         // A slow response can straddle a run boundary (previous run finished
         // and the user already started the next one while this request was in
         // flight) — everything in it is stale, drop it.
-        if (promptRunIdRef.current !== runId) return;
+        if (!isActive() || sessionIdRef.current !== sid || !runtimeGate.isCurrentRun(ticket)) return;
         const state = (data.state ?? undefined) as AgentStateResponse | undefined;
         // Mirror compaction state unconditionally: a missed compaction_end
         // would otherwise leave the "Stop compaction" UI stuck. No state
         // (wrapper destroyed) means nothing is compacting.
-        dispatchTurn({ type: "compaction-state", isCompacting: state?.isCompacting ?? false });
-        dispatchTurn({ type: "queue-snapshot", queuedMessages: normalizeQueuedMessages(state?.queuedMessages) });
+        const canSettle =
+          runtimeGate.isCurrent(ticket, "run") &&
+          runtimeGate.isCurrent(ticket, "compaction") &&
+          runtimeGate.isCurrent(ticket, "queue");
+        if (runtimeGate.accept(ticket, "compaction"))
+          dispatchTurn({ type: "compaction-state", isCompacting: state?.isCompacting ?? false });
+        if (runtimeGate.accept(ticket, "queue"))
+          dispatchTurn({ type: "queue-snapshot", queuedMessages: normalizeQueuedMessages(state?.queuedMessages) });
         const busy = data.running && state && (state.isStreaming || state.isPromptRunning || state.isCompacting);
-        if (busy || !agentRunningRef.current) return;
-        if (state) {
-          if (state.contextUsage !== undefined) setContextUsage(state.contextUsage ?? null);
-          if (state.systemPrompt !== undefined) setSystemPrompt(state.systemPrompt ?? null);
-          if (state.extensionStatuses !== undefined) setExtensionStatuses(state.extensionStatuses ?? []);
-          if (state.extensionWidgets !== undefined) setExtensionWidgets(state.extensionWidgets ?? []);
-        }
+        if (!canSettle || busy || !agentRunningRef.current) return;
+        applyRuntimeSnapshot({ running: data.running, state }, ticket);
         await finishPromptWithoutStream(sid, runId);
       } catch {
         // Network still down — the next poll / visibility / online tick retries.
       }
     },
-    [finishPromptWithoutStream],
+    [applyRuntimeSnapshot, finishPromptWithoutStream, isActive, runtimeGate],
   );
 
   // Recovery net for missed stream events: while the agent is running, verify
@@ -648,9 +698,29 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const handleAgentEvent = useCallback(
     (event: AgentEvent) => {
+      if (!isActive()) return;
+      if (
+        (event.type === "prompt_done" || event.type === "prompt_error") &&
+        typeof event.clientRunId === "number" &&
+        ((ownedPromptRunIdRef.current !== null && event.clientRunId !== ownedPromptRunIdRef.current) ||
+          externalTurnRunIdRef.current !== null)
+      )
+        return;
+      if (
+        (event.type === "channel_turn_end" || event.type === "channel_turn_error") &&
+        externalTurnRunIdRef.current !== event.runId
+      )
+        return;
+      if (event.type === "agent_start" || event.type === "channel_turn_start") runtimeGate.beginRun();
+      if (event.type === "prompt_done" || event.type === "channel_turn_end" || event.type === "channel_turn_error")
+        runtimeGate.touch("run");
+      if (event.type === "queue_update") runtimeGate.touch("queue");
+      if (["auto_compaction_start", "compaction_start", "auto_compaction_end", "compaction_end"].includes(event.type))
+        runtimeGate.touch("compaction");
       dispatchTurn({ type: "event", event });
       switch (event.type) {
         case "channel_turn_start": {
+          ownedPromptRunIdRef.current = null;
           externalTurnRunIdRef.current = typeof event.runId === "string" ? event.runId : null;
           beginExternalTurn();
           break;
@@ -671,14 +741,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           // The wrapper emits prompt_done only after the whole operation settles.
           break;
         case "prompt_done": {
-          const clientRunId = typeof event.clientRunId === "number" ? event.clientRunId : undefined;
-          if (clientRunId !== undefined && clientRunId !== promptRunIdRef.current) break;
+          const clientRunId =
+            ownedPromptRunIdRef.current !== null && typeof event.clientRunId === "number"
+              ? event.clientRunId
+              : undefined;
           if (!agentRunningRef.current) break;
           void finishPromptWithoutStream(sessionIdRef.current, clientRunId);
           break;
         }
         case "prompt_error":
-          if (typeof event.clientRunId === "number" && event.clientRunId !== promptRunIdRef.current) break;
           addNotice({
             type: "error",
             message: (event.errorMessage as string | undefined) ?? t("commandFailed", "Command failed"),
@@ -733,7 +804,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       endExternalTurn,
       finishPromptWithoutStream,
       handleExtensionUiRequest,
+      isActive,
       loadSession,
+      runtimeGate,
       t,
       updateHistory,
     ],
@@ -747,6 +820,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (agentRunning) return;
       const isSlashCommandPrompt = !images?.length && trimmedMessage.startsWith("/");
       const promptRunId = promptRunIdRef.current + 1;
+      runtimeGate.beginRun();
 
       const imageBlocks = images?.map((img) => ({
         type: "image" as const,
@@ -762,6 +836,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       updateHistory((current) => appendLocalHistoryMessage(current, userMsg));
       optimisticUserMessageKeyRef.current = userMessageKey(userMsg);
       promptRunIdRef.current = promptRunId;
+      ownedPromptRunIdRef.current = promptRunId;
       externalTurnRunIdRef.current = null;
       agentRunningRef.current = true;
       dispatchTurn({ type: "start", phase: isSlashCommandPrompt ? "running_command" : "waiting_model" });
@@ -855,6 +930,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       ensureNewSession,
       ensureEventsConnected,
       promoteNewSession,
+      runtimeGate,
       waitForPromptSettlement,
       addNotice,
       updateHistory,
@@ -973,6 +1049,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleCompact = useCallback(async () => {
     const sid = sessionIdRef.current;
     if (!sid || isCompacting) return;
+    runtimeGate.touch("compaction");
     dispatchTurn({ type: "compaction-start" });
     try {
       const result = await sendAgentCommand<CompactCommandResult>(sid, { type: "compact" });
@@ -984,7 +1061,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       dispatchTurn({ type: "compaction-state", isCompacting: false });
     }
-  }, [isCompacting, loadSession]);
+  }, [isCompacting, loadSession, runtimeGate]);
 
   const handleBuiltinSlashCommand = useCallback(
     async (text: string): Promise<BuiltinSlashCommandResult> => {
@@ -1014,6 +1091,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
                 error: t("noActiveSessionToCompact", "No active session to compact"),
               });
             }
+            runtimeGate.touch("compaction");
             dispatchTurn({ type: "compaction-start" });
             const result = await sendAgentCommand<CompactCommandResult>(sid, {
               type: "compact",
@@ -1094,6 +1172,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       loadSlashCommands,
       loadTools,
       promoteNewSession,
+      runtimeGate,
       onSessionStatsPanelOpen,
       t,
     ],
@@ -1222,17 +1301,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [opts.chatInputRef, addNotice, t]);
 
-  const handleThinkingLevelChange = useCallback(async (level: ThinkingLevelOption) => {
-    setThinkingLevel(level);
-    if (level === "auto") return; // "auto" leaves pi's current setting untouched
-    const sid = sessionIdRef.current ?? (await ensuringNewSessionRef.current);
-    if (!sid) return;
-    try {
-      await sendAgentCommand(sid, { type: "set_thinking_level", level });
-    } catch (e) {
-      console.error("Failed to set thinking level:", e);
-    }
-  }, []);
+  const handleThinkingLevelChange = useCallback(
+    async (level: ThinkingLevelOption) => {
+      runtimeGate.touch("thinking");
+      setThinkingLevel(level);
+      if (level === "auto") return; // "auto" leaves pi's current setting untouched
+      const sid = sessionIdRef.current ?? (await ensuringNewSessionRef.current);
+      if (!sid) return;
+      try {
+        await sendAgentCommand(sid, { type: "set_thinking_level", level });
+      } catch (e) {
+        console.error("Failed to set thinking level:", e);
+      }
+    },
+    [runtimeGate],
+  );
 
   const handleToolPresetChange = useCallback(
     async (preset: "none" | "default" | "full") => {
@@ -1256,13 +1339,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (session) {
       prepareSessionChange();
       sessionIdRef.current = session.id;
-
+      const ticket = runtimeGate.capture();
       void loadSession(session.id, true, true, true).then((agentState) => {
         if (disposed) return;
         restoreFollowAfterLoad();
-        if (agentState?.running) {
+        if (agentState?.running && runtimeGate.accept(ticket, "run")) {
           void loadTools(session.id);
-          if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
+          if (!agentRunningRef.current && (agentState.state?.isStreaming || agentState.state?.isPromptRunning)) {
             agentRunningRef.current = true;
             dispatchTurn({ type: "start", phase: agentState.state.isStreaming ? "waiting_model" : "running_command" });
             if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
@@ -1270,23 +1353,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             }
           }
         }
-        if (agentState?.state) {
-          if (agentState.state.isCompacting !== undefined)
-            dispatchTurn({ type: "compaction-state", isCompacting: agentState.state.isCompacting });
-          if (agentState.state.contextUsage !== undefined) setContextUsage(agentState.state.contextUsage ?? null);
-          if (agentState.state.systemPrompt !== undefined) setSystemPrompt(agentState.state.systemPrompt ?? null);
-          if (agentState.state.thinkingLevel !== undefined)
-            setThinkingLevel((agentState.state.thinkingLevel as ThinkingLevelOption) ?? "auto");
-          if (agentState.state.extensionStatuses !== undefined)
-            setExtensionStatuses(agentState.state.extensionStatuses ?? []);
-          if (agentState.state.extensionWidgets !== undefined)
-            setExtensionWidgets(agentState.state.extensionWidgets ?? []);
-          if (agentState.state.queuedMessages !== undefined)
-            dispatchTurn({
-              type: "queue-snapshot",
-              queuedMessages: normalizeQueuedMessages(agentState.state.queuedMessages),
-            });
-        }
+        applyRuntimeSnapshot(agentState ?? undefined, ticket);
       });
     }
     return () => {

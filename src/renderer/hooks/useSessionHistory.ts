@@ -32,6 +32,7 @@ export interface SessionHistoryOptions {
   sessionIdRef: RefObject<string | null>;
   capturePrependAnchor?: () => (() => void) | undefined;
   onSessionLoaded: (detail: SessionDetail) => void;
+  prepareSessionSnapshot?: () => (detail: SessionDetail) => void;
 }
 
 /** Owns persisted history and the lifetime of every request that can publish it. */
@@ -40,6 +41,7 @@ export function useSessionHistory({
   sessionIdRef,
   capturePrependAnchor,
   onSessionLoaded,
+  prepareSessionSnapshot,
 }: SessionHistoryOptions) {
   const { t } = useI18n();
   const [data, setData] = useState<SessionDetail | null>(null);
@@ -165,7 +167,13 @@ export function useSessionHistory({
   }, [invalidateHistory, isCurrent, sessionIdRef]);
 
   const loadSession = useCallback(
-    async (sid: string, showLoading = false, includeState = false, reset = false) => {
+    async (
+      sid: string,
+      showLoading = false,
+      includeState = false,
+      reset = false,
+      isRelevant: () => boolean = () => true,
+    ) => {
       if (!activeRef.current || sessionIdRef.current !== sid) return null;
       const showSpinner = showLoading || loadingOwnerRef.current !== null;
       if (reset) {
@@ -174,7 +182,8 @@ export function useSessionHistory({
       }
       const scope = { sessionId: sid, generation: historyGenerationRef.current };
       const request = detailGateRef.current.begin();
-      const ownsView = () => isCurrent(scope) && detailGateRef.current.isCurrent(request);
+      const ownsView = () => isCurrent(scope) && isRelevant() && detailGateRef.current.isCurrent(request);
+      const applySnapshot = prepareSessionSnapshot?.() ?? onSessionLoaded;
       if (showSpinner) {
         loadingOwnerRef.current = request;
         setLoading(true);
@@ -196,7 +205,7 @@ export function useSessionHistory({
           failTrace();
           // History freshness is separate from an initial caller's runtime hydration.
           // Preserve that return value only while its session/branch scope is still current.
-          return isCurrent(scope) ? (detail.agentState ?? null) : null;
+          return isCurrent(scope) && isRelevant() ? (detail.agentState ?? null) : null;
         }
         setData(detail);
         setActiveLeafId(detail.leafId);
@@ -222,7 +231,7 @@ export function useSessionHistory({
         commitHistory(merged.messages, merged.entryIds);
         updatePagingState(merged.revision!, merged.previousCursor ?? undefined);
         setError(null);
-        onSessionLoaded(detail);
+        applySnapshot(detail);
         return detail.agentState ?? null;
       } catch (cause) {
         failTrace();
@@ -241,7 +250,17 @@ export function useSessionHistory({
         }
       }
     },
-    [commitHistory, invalidateHistory, isCurrent, onSessionLoaded, resetHistory, sessionIdRef, t, updatePagingState],
+    [
+      commitHistory,
+      invalidateHistory,
+      isCurrent,
+      onSessionLoaded,
+      prepareSessionSnapshot,
+      resetHistory,
+      sessionIdRef,
+      t,
+      updatePagingState,
+    ],
   );
 
   useEffect(() => {
