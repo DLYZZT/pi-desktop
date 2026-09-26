@@ -4,9 +4,10 @@ import test from "node:test";
 import { npmInvocation, validateDependencyManifest, validateEsbuildTree } from "./check-dependency-contract.mjs";
 
 test("dependency inspection uses the native npm launcher on Windows", () => {
-  assert.deepEqual(npmInvocation("win32", undefined), { command: "npm.cmd", args: [], shell: true });
-  assert.deepEqual(npmInvocation("linux", undefined), { command: "npm", args: [], shell: false });
-  assert.deepEqual(npmInvocation("darwin", undefined), { command: "npm", args: [], shell: false });
+  // An explicit empty path tests the fallback even when npm test sets npm_execpath.
+  assert.deepEqual(npmInvocation("win32", ""), { command: "npm.cmd", args: [], shell: true });
+  assert.deepEqual(npmInvocation("linux", ""), { command: "npm", args: [], shell: false });
+  assert.deepEqual(npmInvocation("darwin", ""), { command: "npm", args: [], shell: false });
   assert.deepEqual(npmInvocation("win32", import.meta.filename, "node.exe"), {
     command: "node.exe",
     args: [import.meta.filename],
