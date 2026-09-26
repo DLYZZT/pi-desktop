@@ -3,7 +3,7 @@ import {
   getProcessStartFingerprint,
   processGroupExists,
   terminatePosixProcessGroup,
-} from "../../agent-host/process-tree.ts";
+} from "../../shared/node/process-tree.ts";
 import { readReaperJournal, validateReaperRecord, writeReaperJournal } from "./reaper-journal.ts";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -13,7 +13,7 @@ import {
   WindowsHelperFrameDecoder,
   encodeWindowsHelperJson,
   parseWindowsHelperJson,
-} from "../../agent-host/managed-process/helper-codec.ts";
+} from "../../shared/node/windows-helper-codec.ts";
 
 export type ManagedProcessReaperStatus = {
   ready: boolean;

@@ -11,7 +11,7 @@ import type {
 } from "../shared/toolchains/types";
 import { ToolchainError } from "../shared/toolchains/errors.ts";
 import { callMain } from "./parent-rpc.ts";
-import { windowsNativePathToMsys } from "../main/toolchains/environment.ts";
+import { windowsNativePathToMsys } from "../shared/node/windows-path.ts";
 import { sanitizeToolEnvironment } from "./tool-environment.ts";
 
 const execFileAsync = promisify(execFile);

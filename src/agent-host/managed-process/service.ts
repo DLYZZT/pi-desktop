@@ -45,7 +45,7 @@ import {
 } from "../../shared/managed-process-policy.ts";
 import { ToolchainError } from "../../shared/toolchains/errors.ts";
 import { callMain } from "../parent-rpc.ts";
-import { getProcessStartFingerprint, terminatePosixProcessGroup } from "../process-tree.ts";
+import { getProcessStartFingerprint, terminatePosixProcessGroup } from "../../shared/node/process-tree.ts";
 import { toolchainRuntime, type ToolchainRuntime } from "../toolchain-runtime.ts";
 import { ManagedProcessOutputBuffer, ManagedProcessOutputDecoder, parseManagedProcessCursor } from "./output-buffer.ts";
 import type { ManagedProcessBackend, ManagedProcessBackendEvent } from "./backend.ts";

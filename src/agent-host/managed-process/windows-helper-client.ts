@@ -25,7 +25,7 @@ import {
   encodeWindowsHelperJson,
   parseWindowsHelperJson,
   type WindowsHelperFrame,
-} from "./helper-codec.ts";
+} from "../../shared/node/windows-helper-codec.ts";
 
 const HELLO_TIMEOUT_MS = 2_000;
 const PREPARE_TIMEOUT_MS = 5_000;

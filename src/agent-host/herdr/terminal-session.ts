@@ -4,7 +4,7 @@ import type { RpcServer } from "../../contract/rpc";
 import type { HerdrErrorCode, HerdrRuntimeDescriptor, HerdrTerminalStatus } from "../../contract/herdr";
 import type { PosixManagedProcessReaperRecord } from "../../contract/processes";
 import { callMain } from "../parent-rpc";
-import { getProcessStartFingerprint } from "../process-tree";
+import { getProcessStartFingerprint } from "../../shared/node/process-tree.ts";
 import { getManagedProcessOwnerIdentity } from "../managed-process/owner-identity";
 import { HerdrBridgeError } from "./errors";
 import { isRecord } from "./protocol-v20";

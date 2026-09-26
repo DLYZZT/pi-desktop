@@ -2,7 +2,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { ToolExecutionContext } from "../../shared/toolchains/types.ts";
-import { getProcessStartFingerprint, terminatePosixProcessGroup, terminateProcessTree } from "../process-tree.ts";
+import {
+  getProcessStartFingerprint,
+  terminatePosixProcessGroup,
+  terminateProcessTree,
+} from "../../shared/node/process-tree.ts";
 import type {
   ManagedProcessBackend,
   ManagedProcessBackendEvent,

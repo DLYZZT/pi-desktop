@@ -17,7 +17,7 @@ import {
   encodeWindowsHelperFrame,
   encodeWindowsHelperJson,
   parseWindowsHelperJson,
-} from "../src/agent-host/managed-process/helper-codec.ts";
+} from "../src/shared/node/windows-helper-codec.ts";
 import { applyManagedProcessOwnerIdentity } from "../src/agent-host/managed-process/owner-identity.ts";
 import { ManagedProcessReaper, secureWindowsReaperDirectory } from "../src/main/managed-process/reaper.ts";
 import {

@@ -10,7 +10,7 @@ import {
   encodeWindowsHelperFrame,
   encodeWindowsHelperJson,
   parseWindowsHelperJson,
-} from "./helper-codec.ts";
+} from "./windows-helper-codec.ts";
 
 test("Windows helper codec handles fragmented and coalesced frames", () => {
   const first = encodeWindowsHelperJson(WINDOWS_HELPER_KIND.hello, 1, { protocolVersion: 1 });

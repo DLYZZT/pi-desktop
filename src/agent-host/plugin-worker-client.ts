@@ -10,7 +10,7 @@ import {
   type PluginWorkerRequest,
   type PluginWorkerResponse,
 } from "./plugin-worker-protocol.ts";
-import { terminateProcessTree } from "./process-tree.ts";
+import { terminateProcessTree } from "../shared/node/process-tree.ts";
 
 const PLUGIN_WORKER_TIMEOUT_MS = 3 * 60_000;
 const OUTPUT_TAIL_LIMIT = 2 * 1024 * 1024;

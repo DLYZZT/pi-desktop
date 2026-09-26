@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 export const WINDOWS_HELPER_PROTOCOL_VERSION = 1;
 export const WINDOWS_HELPER_HEADER_BYTES = 16;
 export const WINDOWS_HELPER_CONTROL_MAX_BYTES = 128 * 1024;

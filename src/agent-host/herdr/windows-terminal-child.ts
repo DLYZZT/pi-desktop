@@ -15,7 +15,7 @@ import {
   encodeWindowsHelperJson,
   parseWindowsHelperJson,
   type WindowsHelperFrame,
-} from "../managed-process/helper-codec";
+} from "../../shared/node/windows-helper-codec.ts";
 
 const HANDSHAKE_TIMEOUT_MS = 5_000;
 const INPUT_CHUNK_BYTES = 32 * 1024;
