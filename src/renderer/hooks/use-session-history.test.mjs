@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { act, create } from "react-test-renderer";
 import { importTestBundle } from "#test-bundle";
 import { createDeferred } from "#test-timing";
+import { RpcError } from "../../contract/types.ts";
 
 const previousAct = globalThis.IS_REACT_ACT_ENVIRONMENT;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -321,6 +322,37 @@ test("an old page error cannot reset the newer revision or clear its page reques
   });
   assert.deepEqual(fixture.current.entryIds, ["older-entry", "entry", ""]);
   assert.equal(fixture.current.messages[1].content, "new tail");
+  assert.equal(fixture.current.loadingOlder, false);
+});
+
+test("stale pagination uses the structured RPC code to reload the latest window", async (t) => {
+  t.mock.method(console, "error", () => {});
+  const fixture = await mount(t);
+  await fixture.load(detail("a", "r1", "old tail", "old-cursor"));
+  testApi.enqueue("page", () => {
+    throw new RpcError({ code: "STALE_CURSOR", message: "Session history changed; reload the latest page" });
+  });
+  testApi.enqueue("session", detail("a", "r2", "refreshed", "new-cursor"));
+  await act(async () => fixture.current.loadOlder());
+  assert.equal(fixture.current.messages[0].content, "refreshed");
+  assert.equal(fixture.current.historyRevision, "r2");
+  assert.equal(fixture.current.previousCursor, "new-cursor");
+  assert.equal(fixture.current.loadingOlder, false);
+  assert.equal(fixture.current.error, null);
+});
+
+test("a localized missing-session error clears the current history and its cursor", async (t) => {
+  const fixture = await mount(t);
+  await fixture.load(detail("a", "r1", "old tail", "cursor"));
+  testApi.enqueue("session", () => {
+    throw new RpcError({ code: "NOT_FOUND", message: "会话不存在" });
+  });
+  await act(async () => fixture.current.loadSession("a", true));
+  assert.equal(fixture.current.data, null);
+  assert.deepEqual(fixture.current.messages, []);
+  assert.equal(fixture.current.previousCursor, null);
+  assert.equal(fixture.current.historyRevision, null);
+  assert.equal(fixture.current.loading, false);
   assert.equal(fixture.current.loadingOlder, false);
 });
 

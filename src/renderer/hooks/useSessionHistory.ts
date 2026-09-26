@@ -23,6 +23,10 @@ type HistoryScope = { sessionId: string; generation: number };
 type PageRequest = HistoryScope & { cursor: string; revision: string };
 type DeferredContent = EntryContentResult["content"];
 
+function hasRpcCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+}
+
 export interface SessionHistoryOptions {
   isNew: boolean;
   sessionIdRef: RefObject<string | null>;
@@ -121,19 +125,22 @@ export function useSessionHistory({
     setPreviousCursor(cursor ?? null);
   }, []);
 
-  const resetHistory = useCallback(() => {
-    invalidateHistory();
-    historyRevisionRef.current = null;
-    previousCursorRef.current = null;
-    commitHistory([], []);
-    setData(null);
-    setActiveLeafId(null);
-    setError(null);
-    setHistoryRevision(null);
-    setPreviousCursor(null);
-    setLoadingOlder(false);
-    setLoading(!isNew);
-  }, [commitHistory, invalidateHistory, isNew]);
+  const resetHistory = useCallback(
+    (showLoading = !isNew) => {
+      invalidateHistory();
+      historyRevisionRef.current = null;
+      previousCursorRef.current = null;
+      commitHistory([], []);
+      setData(null);
+      setActiveLeafId(null);
+      setError(null);
+      setHistoryRevision(null);
+      setPreviousCursor(null);
+      setLoadingOlder(false);
+      setLoading(showLoading);
+    },
+    [commitHistory, invalidateHistory, isNew],
+  );
 
   const beginNavigation = useCallback(() => {
     const sid = sessionIdRef.current;
@@ -221,13 +228,8 @@ export function useSessionHistory({
         failTrace();
         if (!ownsView()) return null;
         const message = cause instanceof Error ? cause.message : String(cause);
-        if (message.includes("not found") || message.includes("NOT_FOUND")) {
-          if (showLoading) {
-            setData(null);
-            setActiveLeafId(null);
-            commitHistory([], []);
-            setError(null);
-          }
+        if (hasRpcCode(cause, "NOT_FOUND") || message.includes("not found") || message.includes("NOT_FOUND")) {
+          if (showLoading) resetHistory(false);
           return null;
         }
         setError(sessionClientErrorMessage(cause, t, t("sessionLoadFailed", "Failed to load session.")));
@@ -239,7 +241,7 @@ export function useSessionHistory({
         }
       }
     },
-    [commitHistory, invalidateHistory, isCurrent, onSessionLoaded, sessionIdRef, t, updatePagingState],
+    [commitHistory, invalidateHistory, isCurrent, onSessionLoaded, resetHistory, sessionIdRef, t, updatePagingState],
   );
 
   useEffect(() => {
@@ -329,7 +331,7 @@ export function useSessionHistory({
         return;
       }
       const message = cause instanceof Error ? cause.message : String(cause);
-      if (message.includes("STALE_CURSOR")) {
+      if (hasRpcCode(cause, "STALE_CURSOR") || message.includes("STALE_CURSOR")) {
         outcome = "stale-reset";
         await loadSession(sid, false, false, true);
       } else {
