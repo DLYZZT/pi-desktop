@@ -34,6 +34,7 @@ export function useSessionEvents({
   const [changes] = useState(() => new EventStreamConnectionManager(changesUnsubRef));
   const lifetimeRef = useRef(new AbortController());
   const isActive = useCallback(() => !lifetimeRef.current.signal.aborted, []);
+  const getViewSignal = useCallback(() => lifetimeRef.current.signal, []);
 
   const connectEvents = useCallback(
     async (sid: string): Promise<EventStreamConnectionResult> => {
@@ -97,5 +98,5 @@ export function useSessionEvents({
     };
   }, [changes, connectEvents, events, sessionIdRef]);
 
-  return { connectEvents, ensureEventsConnected, eventUnsubRef, handleAgentEventRef, isActive };
+  return { connectEvents, ensureEventsConnected, eventUnsubRef, handleAgentEventRef, isActive, getViewSignal };
 }

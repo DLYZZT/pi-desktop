@@ -1,12 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useReducer } from "react";
-import type {
-  AgentMessage,
-  ExtensionStatusItem,
-  ExtensionUiRequest,
-  ExtensionWidgetItem,
-  SessionInfo,
-  SessionTreeNode,
-} from "@/lib/types";
+import type { AgentMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { AgentEvent, SessionDetail, SessionRuntimeState } from "@contract/types";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
@@ -21,11 +14,11 @@ import {
   removeLastHistoryMessage,
   replaceLastHistoryMessage,
 } from "@/lib/session-history-update";
-import { NOTICE_VISIBLE_MS, noticeExpiryDelay, noticeReducer, type NoticeType } from "@/lib/notice-queue";
 import { useI18n } from "@/i18n";
 import { useSessionModels } from "./useSessionModels";
 import { useSessionHistory } from "./useSessionHistory";
 import { useChatViewport } from "./useChatViewport";
+import { useSessionExtensionUi } from "./useSessionExtensionUi";
 import { SessionRuntimeGate, type RuntimeSnapshotTicket } from "@/lib/session-runtime-gate";
 import { sessionClientErrorMessage } from "@/lib/session-error-message";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
@@ -58,8 +51,6 @@ function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] 
   };
 }
 
-type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
-type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
 export type { NoticeItem } from "@/lib/notice-queue";
 
 export interface SlashCommandInfo {
@@ -102,14 +93,6 @@ const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
 const AGENT_STATE_RECONCILE_MS = 15_000;
-const NOTICE_EXIT_ANIMATION_MS = 180;
-
-function createNoticeId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -196,6 +179,33 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const isNew = session === null && newSessionCwd !== null;
 
+  const sessionIdRef = useRef<string | null>(session?.id ?? null);
+  const [runtimeGate] = useState(() => new SessionRuntimeGate());
+  const loadSessionRef = useRef<((sid: string) => Promise<unknown>) | null>(null);
+  const { ensureEventsConnected, eventUnsubRef, handleAgentEventRef, isActive, getViewSignal } = useSessionEvents({
+    sessionIdRef,
+    onSessionChanged: (sid) => {
+      void loadSessionRef.current?.(sid);
+    },
+  });
+  const {
+    extensionDialog,
+    extensionCustomUi,
+    extensionStatuses,
+    extensionWidgets,
+    notices,
+    addNotice,
+    applyExtensionSnapshot,
+    handleExtensionUiRequest,
+    respondToExtensionUi,
+    sendExtensionCustomInput,
+  } = useSessionExtensionUi({
+    sessionIdRef,
+    getViewSignal,
+    runtimeGate,
+    chatInputRef: opts.chatInputRef,
+  });
+
   const [turnState, dispatchTurn] = useReducer(reduceSessionTurnState, undefined, createSessionTurnState);
   const {
     streamState,
@@ -221,20 +231,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [pendingModel, setPendingModel] = useState<{ provider: string; modelId: string } | null>(null);
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
-  const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
-  const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType }) => {
-    const message = notice.message.trim();
-    if (!message) return;
-    dispatchNotice({
-      type: "add",
-      notice: {
-        id: notice.id ?? createNoticeId(),
-        message,
-        type: notice.type ?? "info",
-        expiresAt: Date.now() + NOTICE_VISIBLE_MS,
-      },
-    });
-  }, []);
 
   const {
     modelNames,
@@ -251,11 +247,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     cancelModelRefresh,
   } = useSessionModels({ isNew, cwd: newSessionCwd ?? session?.cwd, refreshKey: modelsRefreshKey, addNotice });
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
-  const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
-  const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
-  const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
-  const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
-  const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const agentRunningRef = useRef(false);
   // Preserve the existing imperative handle while publishing render state through the reducer.
   const setAgentRunning = useCallback((value: boolean | ((running: boolean) => boolean)) => {
@@ -271,7 +262,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const ownedPromptRunIdRef = useRef<number | null>(null);
   const externalTurnRunIdRef = useRef<string | null>(null);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
-  const [runtimeGate] = useState(() => new SessionRuntimeGate());
   const prependAnchorRef = useRef<ReturnType<typeof useChatViewport>["capturePrependAnchor"] | null>(null);
   const capturePrependAnchor = useCallback(() => prependAnchorRef.current?.(), []);
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
@@ -286,10 +276,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setSystemPrompt(liveState.systemPrompt ?? null);
         if (liveState.thinkingLevel !== undefined && runtimeGate.accept(ticket, "thinking"))
           setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
-        if (liveState.extensionStatuses !== undefined && runtimeGate.accept(ticket, "statuses"))
-          setExtensionStatuses(liveState.extensionStatuses ?? []);
-        if (liveState.extensionWidgets !== undefined && runtimeGate.accept(ticket, "widgets"))
-          setExtensionWidgets(liveState.extensionWidgets ?? []);
+        applyExtensionSnapshot(liveState, ticket);
         if (liveState.isCompacting !== undefined && runtimeGate.accept(ticket, "compaction"))
           dispatchTurn({ type: "compaction-state", isCompacting: liveState.isCompacting });
         if (liveState.queuedMessages !== undefined && runtimeGate.accept(ticket, "queue"))
@@ -297,7 +284,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       } else if (snapshot && !snapshot.running && runtimeGate.accept(ticket, "queue"))
         dispatchTurn({ type: "queue-snapshot", queuedMessages: { steering: [], followUp: [] } });
     },
-    [runtimeGate],
+    [applyExtensionSnapshot, runtimeGate],
   );
   const applySessionSnapshot = useCallback(
     (d: SessionDetail, ticket = runtimeGate.capture()) => {
@@ -350,12 +337,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     onSessionLoaded: applySessionSnapshot,
     prepareSessionSnapshot,
   });
-  const { ensureEventsConnected, eventUnsubRef, handleAgentEventRef, isActive } = useSessionEvents({
-    sessionIdRef,
-    onSessionChanged: (sid) => {
-      void loadSession(sid);
-    },
-  });
+  loadSessionRef.current = loadSession;
   const viewport = useChatViewport({
     agentRunning,
     agentRunningRef,
@@ -476,98 +458,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setSlashCommandsLoading(false);
     }
   }, [ensureNewSession]);
-
-  const respondToExtensionUi = useCallback(
-    async (
-      request: ExtensionUiDialogRequest,
-      response: { value: string } | { confirmed: boolean } | { cancelled: true },
-    ) => {
-      const sid = sessionIdRef.current;
-      setExtensionDialog((current) => (current?.id === request.id ? null : current));
-      if (!sid) return;
-      try {
-        await sendAgentCommand(sid, {
-          type: "extension_ui_response",
-          id: request.id,
-          ...response,
-        });
-      } catch (e) {
-        console.error("Failed to send extension UI response:", e);
-      }
-    },
-    [],
-  );
-
-  const sendExtensionCustomInput = useCallback(async (request: ExtensionUiCustomRequest, data: string) => {
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    try {
-      await sendAgentCommand(sid, {
-        type: "extension_ui_input",
-        id: request.id,
-        data,
-      });
-    } catch (e) {
-      console.error("Failed to send extension custom UI input:", e);
-    }
-  }, []);
-
-  const handleExtensionUiRequest = useCallback(
-    (request: ExtensionUiRequest) => {
-      switch (request.method) {
-        case "select":
-        case "confirm":
-        case "input":
-        case "editor":
-          setExtensionDialog(request);
-          break;
-        case "notify": {
-          addNotice({
-            id: request.id,
-            message: request.message,
-            type: request.notifyType ?? "info",
-          });
-          break;
-        }
-        case "setStatus":
-          runtimeGate.touch("statuses");
-          setExtensionStatuses((prev) => {
-            const rest = prev.filter((item) => item.key !== request.statusKey);
-            return request.statusText ? [...rest, { key: request.statusKey, text: request.statusText }] : rest;
-          });
-          break;
-        case "setWidget":
-          runtimeGate.touch("widgets");
-          setExtensionWidgets((prev) => {
-            const rest = prev.filter((item) => item.key !== request.widgetKey);
-            return request.widgetLines
-              ? [
-                  ...rest,
-                  {
-                    key: request.widgetKey,
-                    lines: request.widgetLines,
-                    placement: request.widgetPlacement ?? "aboveEditor",
-                  },
-                ]
-              : rest;
-          });
-          break;
-        case "setTitle":
-          if (request.title) document.title = request.title;
-          break;
-        case "set_editor_text":
-          opts.chatInputRef?.current?.insertText(request.text);
-          break;
-        case "custom":
-          setExtensionCustomUi((current) => {
-            if (request.closed) return current?.id === request.id ? null : current;
-            return request;
-          });
-          break;
-      }
-    },
-    [addNotice, opts.chatInputRef, runtimeGate],
-  );
 
   const finishPromptWithoutStream = useCallback(
     async (sid: string | null = sessionIdRef.current, runId?: number) => {
@@ -1386,26 +1276,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [compactResult]);
 
   useEffect(() => {
-    if (noticeState.visible.length === 0) return;
-    const exiting = noticeState.visible.find((notice) => notice.exiting);
-    if (exiting) {
-      const t = setTimeout(() => {
-        dispatchNotice({ type: "remove", id: exiting.id, now: Date.now() });
-      }, NOTICE_EXIT_ANIMATION_MS);
-      return () => clearTimeout(t);
-    }
-    const oldest = noticeState.visible[0];
-    if (!oldest) return;
-    const t = setTimeout(
-      () => {
-        dispatchNotice({ type: "mark_oldest_exiting" });
-      },
-      noticeExpiryDelay(oldest, Date.now()),
-    );
-    return () => clearTimeout(t);
-  }, [noticeState.visible]);
-
-  useEffect(() => {
     setSessionStatsOverride(null);
   }, [messages.length, contextUsage?.tokens, contextUsage?.percent, contextUsage?.contextWindow]);
 
@@ -1444,7 +1314,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     hasOlder: previousCursor !== null,
     loadingOlder,
     historyRevision,
-    notices: noticeState.visible,
+    notices,
     extensionDialog,
     extensionCustomUi,
     extensionStatuses,

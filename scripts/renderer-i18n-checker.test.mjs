@@ -98,6 +98,19 @@ test("history hook extraction preserves localized load errors", (t) => {
   assert.match(checkRendererI18n(entry.options).failures.join("\n"), /hardcoded session error: History unavailable/);
 });
 
+test("extension UI hook retains the localized notification boundary", (t) => {
+  const entry = fixture(
+    'addNotice({message: "Extension request failed"});',
+    "export const enUS = {}; export const zhCN = {};",
+    "hooks/useSessionExtensionUi.ts",
+  );
+  t.after(entry.cleanup);
+  assert.match(
+    checkRendererI18n(entry.options).failures.join("\n"),
+    /hardcoded session message: Extension request failed/,
+  );
+});
+
 test("rejects dynamic calls, fallback drift, missing and duplicate entries, orphan keys, and placeholder mismatch", () => {
   const entry = fixture(
     `
