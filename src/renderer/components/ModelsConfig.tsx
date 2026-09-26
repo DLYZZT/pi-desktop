@@ -2137,12 +2137,14 @@ export function ModelsConfig({
   const refreshOAuthProviders = useCallback(() => {
     loadOAuthProviders();
     void loadModelPreferences();
-  }, [loadModelPreferences, loadOAuthProviders]);
+    onChanged?.();
+  }, [loadModelPreferences, loadOAuthProviders, onChanged]);
 
   const refreshApiKeyProviders = useCallback(() => {
     loadApiKeyProviders();
     void loadModelPreferences();
-  }, [loadApiKeyProviders, loadModelPreferences]);
+    onChanged?.();
+  }, [loadApiKeyProviders, loadModelPreferences, onChanged]);
 
   const [loadFailed, setLoadFailed] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
