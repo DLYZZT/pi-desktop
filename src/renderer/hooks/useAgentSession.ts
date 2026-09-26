@@ -19,6 +19,8 @@ import { useSessionModels } from "./useSessionModels";
 import { useSessionHistory } from "./useSessionHistory";
 import { useChatViewport } from "./useChatViewport";
 import { useSessionExtensionUi } from "./useSessionExtensionUi";
+import { abortableDelay } from "@/lib/abortable-delay";
+import { LatestRequestGate } from "@/lib/latest-request-gate";
 import { SessionRuntimeGate, type RuntimeSnapshotTicket } from "@/lib/session-runtime-gate";
 import { sessionClientErrorMessage } from "@/lib/session-error-message";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
@@ -93,10 +95,6 @@ const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
 const AGENT_STATE_RECONCILE_MS = 15_000;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function extractMessageText(message: Partial<AgentMessage>): string {
   const content = (message as { content?: unknown }).content;
@@ -205,6 +203,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     runtimeGate,
     chatInputRef: opts.chatInputRef,
   });
+  const captureCommandView = useCallback(() => {
+    const signal = getViewSignal(),
+      sid = sessionIdRef.current;
+    return () => !signal.aborted && signal === getViewSignal() && (sid === null || sid === sessionIdRef.current);
+  }, [getViewSignal]);
+  const toolsRequestGate = useRef(new LatestRequestGate()).current;
+  const commandsRequestGate = useRef(new LatestRequestGate()).current;
+  const modelRequestGate = useRef(new LatestRequestGate()).current;
 
   const [turnState, dispatchTurn] = useReducer(reduceSessionTurnState, undefined, createSessionTurnState);
   const {
@@ -378,16 +384,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const loadTools = useCallback(
     async (sid: string) => {
+      const ownsView = captureCommandView(),
+        request = toolsRequestGate.begin();
+      if (!ownsView()) return;
       try {
         const tools = await sendAgentCommand<ToolEntry[]>(sid, { type: "get_tools" });
-        if (tools && sessionIdRef.current === sid) {
+        if (tools && ownsView() && toolsRequestGate.isCurrent(request) && sessionIdRef.current === sid) {
           setToolPresetState(getPresetFromTools(tools));
         }
       } catch (e) {
         console.error("Failed to load tools:", e);
       }
     },
-    [setToolPresetState],
+    [captureCommandView, setToolPresetState, toolsRequestGate],
   );
 
   const promoteNewSession = useCallback(
@@ -439,7 +448,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [isNew, newSessionCwd, newSessionModel, newSessionDefaultModel, toolPreset, thinkingLevel]);
 
   const loadSlashCommands = useCallback(async () => {
+    const ownsView = captureCommandView(),
+      request = commandsRequestGate.begin();
+    const isCurrent = () => ownsView() && commandsRequestGate.isCurrent(request);
+    if (!isCurrent()) return [] as SlashCommandInfo[];
     const sid = sessionIdRef.current ?? (await ensureNewSession());
+    if (!isCurrent()) return [] as SlashCommandInfo[];
     if (!sid) {
       setSlashCommands([]);
       return [] as SlashCommandInfo[];
@@ -447,17 +461,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setSlashCommandsLoading(true);
     try {
       const data = await sendAgentCommand<SlashCommandsResponse>(sid, { type: "get_commands" });
+      if (!isCurrent()) return [] as SlashCommandInfo[];
       const commands = data?.commands ?? [];
       setSlashCommands(commands);
       return commands;
     } catch (e) {
+      if (!isCurrent()) return [] as SlashCommandInfo[];
       console.error("Failed to load slash commands:", e);
       setSlashCommands([]);
       return [] as SlashCommandInfo[];
     } finally {
-      setSlashCommandsLoading(false);
+      if (isCurrent()) setSlashCommandsLoading(false);
     }
-  }, [ensureNewSession]);
+  }, [captureCommandView, commandsRequestGate, ensureNewSession]);
 
   const finishPromptWithoutStream = useCallback(
     async (sid: string | null = sessionIdRef.current, runId?: number) => {
@@ -487,13 +503,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const waitForPromptSettlement = useCallback(
     async (sid: string, runId?: number) => {
+      const signal = getViewSignal();
       const ticket = runtimeGate.capture();
       const ownsRun = () =>
         isActive() &&
         sessionIdRef.current === sid &&
         runtimeGate.isCurrent(ticket, "run") &&
         (runId === undefined || promptRunIdRef.current === runId);
-      await delay(PROMPT_SETTLE_INITIAL_DELAY_MS);
+      if (!(await abortableDelay(PROMPT_SETTLE_INITIAL_DELAY_MS, signal))) return;
       const startedAt = Date.now();
 
       while (agentRunningRef.current && Date.now() - startedAt < PROMPT_SETTLE_MAX_MS) {
@@ -513,10 +530,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         } catch {
           // The live MessagePort stream remains the primary completion path.
         }
-        await delay(PROMPT_SETTLE_POLL_MS);
+        if (!(await abortableDelay(PROMPT_SETTLE_POLL_MS, signal))) return;
       }
     },
-    [finishPromptWithoutStream, isActive, runtimeGate],
+    [finishPromptWithoutStream, getViewSignal, isActive, runtimeGate],
   );
 
   // Reconcile client streaming state with the server. When stream events are
@@ -707,7 +724,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     async (message: string, images?: AttachedImage[]) => {
       const trimmedMessage = message.trim();
       if (!trimmedMessage && !images?.length) return;
-      if (agentRunning) return;
+      if (!isActive() || agentRunningRef.current) return;
+      const ownsView = captureCommandView();
       const isSlashCommandPrompt = !images?.length && trimmedMessage.startsWith("/");
       const promptRunId = promptRunIdRef.current + 1;
       runtimeGate.beginRun();
@@ -788,6 +806,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
       } catch (e) {
         console.error("Failed to send message:", e);
+        if (!ownsView() || ownedPromptRunIdRef.current !== promptRunId) throw e;
         const optimisticKey = optimisticUserMessageKeyRef.current;
         if (optimisticKey) {
           updateHistory((current) => {
@@ -811,12 +830,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     [
       isNew,
       beginLocalTurn,
+      captureCommandView,
       newSessionCwd,
       newSessionModel,
       newSessionDefaultModel,
       session,
       t,
-      agentRunning,
+      isActive,
       ensureNewSession,
       ensureEventsConnected,
       promoteNewSession,
@@ -840,7 +860,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleFork = useCallback(
     async (entryId: string) => {
       const sid = sessionIdRef.current;
-      if (!sid) return;
+      const ownsView = captureCommandView();
+      if (!sid || !ownsView()) return;
       setForkingEntryId(entryId);
       try {
         const result = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {
@@ -848,16 +869,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           entryId,
         });
         const { cancelled, newSessionId } = result ?? {};
-        if (isActive() && !cancelled && newSessionId) {
+        if (ownsView() && !cancelled && newSessionId) {
           onSessionForked?.(newSessionId);
         }
       } catch (e) {
         console.error("Fork failed:", e);
       } finally {
-        setForkingEntryId(null);
+        if (ownsView()) setForkingEntryId(null);
       }
     },
-    [isActive, onSessionForked],
+    [captureCommandView, onSessionForked],
   );
 
   const handleNavigate = useCallback(
@@ -912,6 +933,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const handleModelChange = useCallback(
     async (provider: string, modelId: string) => {
+      const ownsView = captureCommandView(),
+        request = modelRequestGate.begin();
+      if (!ownsView()) return;
       if (isNew) {
         setNewSessionModel({ provider, modelId });
         setPendingModel({ provider, modelId });
@@ -928,30 +952,33 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!sid) return;
       try {
         await sendAgentCommand(sid, { type: "set_model", provider, modelId });
-        setCurrentModelOverride({ provider, modelId });
+        if (ownsView() && modelRequestGate.isCurrent(request)) setCurrentModelOverride({ provider, modelId });
       } catch (e) {
         console.error("Failed to set model:", e);
       }
     },
-    [isNew, setNewSessionModel],
+    [captureCommandView, isNew, modelRequestGate, setNewSessionModel],
   );
 
   const handleCompact = useCallback(async () => {
     const sid = sessionIdRef.current;
-    if (!sid || isCompacting) return;
+    const ownsView = captureCommandView();
+    if (!sid || isCompacting || !ownsView()) return;
     runtimeGate.touch("compaction");
     dispatchTurn({ type: "compaction-start" });
     try {
       const result = await sendAgentCommand<CompactCommandResult>(sid, { type: "compact" });
+      if (!ownsView()) return;
       dispatchTurn({ type: "compaction-result", result: readCompactResult(result, "manual") });
       await loadSession(sid, true);
     } catch (e) {
+      if (!ownsView()) return;
       dispatchTurn({ type: "compaction-error", error: e instanceof Error ? e.message : String(e) });
       dispatchTurn({ type: "compaction-result", result: null });
     } finally {
-      dispatchTurn({ type: "compaction-state", isCompacting: false });
+      if (ownsView()) dispatchTurn({ type: "compaction-state", isCompacting: false });
     }
-  }, [isCompacting, loadSession, runtimeGate]);
+  }, [captureCommandView, isCompacting, loadSession, runtimeGate]);
 
   const handleBuiltinSlashCommand = useCallback(
     async (text: string): Promise<BuiltinSlashCommandResult> => {
@@ -960,9 +987,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!match) return { handled: false };
 
       const [, commandName, rawArgs = ""] = match;
+      const ownsView = captureCommandView();
+      if (!ownsView()) return { handled: true };
       const args = rawArgs.trim();
       const sid = sessionIdRef.current ?? (await ensureNewSession());
       const complete = (result: BuiltinSlashCommandResult): BuiltinSlashCommandResult => {
+        if (!ownsView()) return { handled: true };
         if (!result.handled) return result;
         if (result.error) {
           addNotice({ type: "error", message: result.error });
@@ -987,6 +1017,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               type: "compact",
               ...(args ? { customInstructions: args } : {}),
             });
+            if (!ownsView()) return { handled: true };
             dispatchTurn({ type: "compaction-result", result: readCompactResult(result, "manual") });
             if (await loadSession(sid, true)) promoteNewSession();
             return complete({ handled: true, message: t("contextCompacted", "Compacted context") });
@@ -997,6 +1028,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               return complete({ handled: true, error: t("noActiveSessionToReload", "No active session to reload") });
             }
             await sendAgentCommand(sid, { type: "reload" });
+            if (!ownsView()) return { handled: true };
             await Promise.all([loadSession(sid, false, true), loadTools(sid), loadSlashCommands(), loadModels()]);
             return complete({
               handled: true,
@@ -1020,6 +1052,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           case "session": {
             if (!sid) return complete({ handled: true, error: t("noActiveSession", "No active session") });
             const stats = await sendAgentCommand<SessionStatsInfo>(sid, { type: "get_session_stats" });
+            if (!ownsView()) return { handled: true };
             if (stats) {
               setSessionStatsOverride(stats);
             }
@@ -1030,6 +1063,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           case "copy": {
             if (!sid) return complete({ handled: true, error: t("noActiveSession", "No active session") });
             const data = await sendAgentCommand<LastAssistantTextResponse>(sid, { type: "get_last_assistant_text" });
+            if (!ownsView()) return { handled: true };
             const textToCopy = data?.text ?? "";
             if (!textToCopy) {
               return complete({
@@ -1050,11 +1084,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       } catch (e) {
         return complete({ handled: true, error: e instanceof Error ? e.message : String(e) });
       } finally {
-        if (commandName === "compact") dispatchTurn({ type: "compaction-state", isCompacting: false });
+        if (ownsView() && commandName === "compact") dispatchTurn({ type: "compaction-state", isCompacting: false });
       }
     },
     [
       addNotice,
+      captureCommandView,
       ensureNewSession,
       isCompacting,
       loadModels,
@@ -1175,12 +1210,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const handleRecallQueue = useCallback(async () => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
+    const ownsView = captureCommandView();
+    if (!sid || !ownsView()) return;
+    const snapshot = runtimeGate.capture();
     try {
       const result = await sendAgentCommand<{ steering?: string[]; followUp?: string[] }>(sid, { type: "clear_queue" });
+      if (!ownsView()) return;
       // clearQueue also emits an empty queue_update, but that only reaches us
       // while the stream is connected — clear locally so idle recalls update the UI.
-      dispatchTurn({ type: "queue-snapshot", queuedMessages: { steering: [], followUp: [] } });
+      if (runtimeGate.accept(snapshot, "queue"))
+        dispatchTurn({ type: "queue-snapshot", queuedMessages: { steering: [], followUp: [] } });
       const texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])].map(skillInvocationCommandText);
       if (texts.length > 0) {
         opts.chatInputRef?.current?.prependText(texts.join("\n\n"));
@@ -1189,10 +1228,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       console.error("Failed to recall queued messages:", e);
       addNotice({ type: "error", message: t("queuedMessagesRecallFailed", "Failed to recall queued messages") });
     }
-  }, [opts.chatInputRef, addNotice, t]);
+  }, [captureCommandView, opts.chatInputRef, addNotice, runtimeGate, t]);
 
   const handleThinkingLevelChange = useCallback(
     async (level: ThinkingLevelOption) => {
+      if (!isActive()) return;
       runtimeGate.touch("thinking");
       setThinkingLevel(level);
       if (level === "auto") return; // "auto" leaves pi's current setting untouched
@@ -1204,11 +1244,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         console.error("Failed to set thinking level:", e);
       }
     },
-    [runtimeGate],
+    [isActive, runtimeGate],
   );
 
   const handleToolPresetChange = useCallback(
     async (preset: "none" | "default" | "full") => {
+      if (!isActive()) return;
+      toolsRequestGate.invalidate();
       const toolNames = getToolNamesForPreset(preset);
       setToolPresetState(preset);
       const sid = sessionIdRef.current ?? (await ensuringNewSessionRef.current);
@@ -1219,7 +1261,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         console.error("Failed to set tools:", e);
       }
     },
-    [setToolPresetState],
+    [isActive, setToolPresetState, toolsRequestGate],
   );
 
   // Load session on mount

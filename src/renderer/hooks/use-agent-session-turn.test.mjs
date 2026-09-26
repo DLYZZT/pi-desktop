@@ -319,7 +319,7 @@ const runtimeDetail = (runtime, messages = []) => ({
   agentState: runtime,
 });
 
-async function mountRuntime(t, initial) {
+async function mountRuntime(t, initial, overrides = {}) {
   const originals = new Map();
   const listeners = new Map();
   const install = (name, value) => {
@@ -348,7 +348,12 @@ async function mountRuntime(t, initial) {
   let current,
     renderer,
     completions = 0;
-  const options = { session: { id: "fixture", cwd: "/fixture" }, newSessionCwd: null, onAgentEnd: () => completions++ };
+  const options = {
+    session: { id: "fixture", cwd: "/fixture" },
+    newSessionCwd: null,
+    onAgentEnd: () => completions++,
+    ...overrides,
+  };
   function Probe() {
     current = useAgentSession(options);
     return null;
@@ -378,6 +383,10 @@ async function mountRuntime(t, initial) {
       act(async () => {
         for (const listener of listeners.get("online") ?? []) listener();
       }),
+    async unmount() {
+      if (renderer) await act(async () => renderer.unmount());
+      renderer = null;
+    },
   };
 }
 
@@ -516,4 +525,130 @@ test("an idle reconciliation read cannot override events received while it was i
   assert.equal(fixture.current.isCompacting, true);
   assert.deepEqual(fixture.current.queuedMessages.steering, ["keep"]);
   assert.equal(fixture.completions, 0);
+});
+
+for (const action of ["recall", "stats", "tools"]) {
+  test(`a late ${action} result cannot mutate the next view's shared UI`, async (t) => {
+    const effects = [],
+      pending = createDeferred();
+    const input = { current: { prependText: (text) => effects.push(text) } };
+    const fixture = await mountRuntime(t, runtimeDetail({ running: false }), {
+      chatInputRef: input,
+      onSessionStatsPanelOpen: () => effects.push("open stats"),
+      setToolPreset: (value) => effects.push(value),
+    });
+    const type = { recall: "clear_queue", stats: "get_session_stats", tools: "get_tools" }[action];
+    testApi.queueCommand(type, pending.promise);
+    let operation;
+    await act(async () => {
+      operation =
+        action === "recall"
+          ? fixture.current.handleRecallQueue()
+          : action === "stats"
+            ? fixture.current.handleBuiltinSlashCommand("/session")
+            : fixture.current.loadTools("fixture");
+    });
+    await fixture.unmount();
+    input.current = { prependText: (text) => effects.push("new view: " + text) };
+    await act(async () => {
+      pending.resolve(
+        action === "recall" ? { steering: ["old draft"] } : action === "tools" ? [] : { sessionName: "old" },
+      );
+      await operation;
+    });
+    assert.deepEqual(effects, []);
+  });
+}
+
+test("an older command-directory failure cannot clear the newer loading owner", async (t) => {
+  const fixture = await mountRuntime(t, runtimeDetail({ running: false }));
+  const old = createDeferred(),
+    next = createDeferred();
+  let first, second;
+  await act(async () => {
+    testApi.queueCommand("get_commands", old.promise);
+    first = fixture.current.loadSlashCommands();
+    testApi.queueCommand("get_commands", next.promise);
+    second = fixture.current.loadSlashCommands();
+  });
+  assert.equal(fixture.current.slashCommandsLoading, true);
+  await act(async () => {
+    old.reject(new Error("late old failure"));
+    await first;
+  });
+  assert.equal(fixture.current.slashCommandsLoading, true);
+  const commands = [{ name: "new", source: "extension" }];
+  await act(async () => {
+    next.resolve({ commands });
+    await second;
+  });
+  assert.deepEqual(fixture.current.slashCommands, commands);
+  assert.equal(fixture.current.slashCommandsLoading, false);
+});
+
+test("an older model-selection response cannot overwrite the newer displayed choice", async (t) => {
+  const fixture = await mountRuntime(t, runtimeDetail({ running: false }));
+  const old = createDeferred(),
+    next = createDeferred();
+  let first, second;
+  await act(async () => {
+    testApi.queueCommand("set_model", old.promise);
+    first = fixture.current.handleModelChange("p", "old");
+    testApi.queueCommand("set_model", next.promise);
+    second = fixture.current.handleModelChange("p", "new");
+  });
+  await act(async () => {
+    next.resolve({});
+    await second;
+  });
+  await act(async () => {
+    old.resolve({});
+    await first;
+  });
+  assert.deepEqual(fixture.current.currentModel, { provider: "p", modelId: "new" });
+});
+
+test("two submit callbacks before the next render still send only one prompt", async (t) => {
+  const fixture = await mountRuntime(t, runtimeDetail({ running: false }));
+  testApi.queueCommand("prompt", {});
+  await act(async () => Promise.all([fixture.current.handleSend("same"), fixture.current.handleSend("same")]));
+  assert.equal(testApi.commands.filter(({ command }) => command.type === "prompt").length, 1);
+  assert.equal(fixture.current.messages.length, 1);
+});
+
+test("queue recall restores its text without clearing a newer queue event", async (t) => {
+  const restored = [],
+    pending = createDeferred();
+  const fixture = await mountRuntime(t, runtimeDetail({ running: false }), {
+    chatInputRef: { current: { prependText: (text) => restored.push(text) } },
+  });
+  testApi.queueCommand("clear_queue", pending.promise);
+  let recall;
+  await act(async () => {
+    recall = fixture.current.handleRecallQueue();
+  });
+  await fixture.emit({ type: "queue_update", steering: ["new queued message"], followUp: [] });
+  await act(async () => {
+    pending.resolve({ steering: ["recalled"] });
+    await recall;
+  });
+  assert.deepEqual(fixture.current.queuedMessages.steering, ["new queued message"]);
+  assert.deepEqual(restored, ["recalled"]);
+});
+
+test("unmount cancels the actual slash-command settlement wait and all view timers", async (t) => {
+  const timers = new Map();
+  let sequence = 0;
+  t.mock.method(globalThis, "setTimeout", (callback, delay) => {
+    const id = ++sequence;
+    timers.set(id, { callback, delay });
+    return id;
+  });
+  t.mock.method(globalThis, "clearTimeout", (id) => timers.delete(id));
+  const fixture = await mountRuntime(t, runtimeDetail({ running: false }));
+  testApi.queueCommand("prompt", {});
+  await act(async () => fixture.current.handleSend("/fixture-extension"));
+  assert.ok([...timers.values()].some((timer) => timer.delay === 800));
+  await fixture.unmount();
+  assert.equal(timers.size, 0);
 });
