@@ -25,7 +25,7 @@ import { useAudio } from "@/hooks/useAudio";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useObservedElementHeight } from "@/hooks/useObservedElementHeight";
-import type { SessionStatsInfo } from "@/lib/pi-types";
+import type { SessionPresentationStore } from "@/lib/session-presentation-store";
 import { MessageRenderKeyRegistry, type MessageRenderRole } from "@/lib/message-render-key";
 import { buildToolMessageIndex } from "@/lib/tool-message-index";
 import { useI18n } from "@/i18n";
@@ -47,11 +47,8 @@ interface Props {
     onLeafChange: (leafId: string | null) => void,
   ) => void;
   onSystemPromptChange?: (prompt: string | null) => void;
-  onSessionStatsChange?: (stats: SessionStatsInfo | null) => void;
+  presentationStore: SessionPresentationStore;
   onSessionStatsPanelOpen?: () => void;
-  onContextUsageChange?: (
-    usage: { percent: number | null; contextWindow: number; tokens: number | null } | null,
-  ) => void;
   onOpenFile?: (filePath: string) => void;
   thinkingExpansionStore: ThinkingExpansionStore;
   processDetailsExpansionStore: ThinkingExpansionStore;
@@ -187,9 +184,8 @@ export function ChatWindow({
   chatInputRef,
   onBranchDataChange,
   onSystemPromptChange,
-  onSessionStatsChange,
+  presentationStore,
   onSessionStatsPanelOpen,
-  onContextUsageChange,
   onOpenFile,
   thinkingExpansionStore,
   processDetailsExpansionStore,
@@ -231,13 +227,11 @@ export function ChatWindow({
     toolPreset,
     thinkingLevel,
     retryInfo,
-    contextUsage,
     forkingEntryId,
     isCompacting,
     compactError,
     compactResult,
     displayModel: displayModelValue,
-    sessionStats,
     slashCommands,
     slashCommandsLoading,
     queuedMessages,
@@ -288,56 +282,9 @@ export function ChatWindow({
     chatInputRef,
     onBranchDataChange,
     onSystemPromptChange,
+    presentationStore,
     onSessionStatsPanelOpen,
   });
-
-  // Push session stats up to AppShell for the top bar.
-  // Compare scalar fields to avoid loops from new object identity each render.
-  const statsKey = sessionStats
-    ? [
-        sessionStats.sessionId,
-        sessionStats.sessionFile ?? "",
-        sessionStats.sessionName ?? "",
-        sessionStats.userMessages,
-        sessionStats.assistantMessages,
-        sessionStats.toolCalls,
-        sessionStats.toolResults,
-        sessionStats.totalMessages,
-        sessionStats.tokens.input,
-        sessionStats.tokens.output,
-        sessionStats.tokens.cacheRead,
-        sessionStats.tokens.cacheWrite,
-        sessionStats.tokens.total,
-        sessionStats.cost ?? 0,
-      ].join("|")
-    : null;
-  const sessionStatsRef = useRef(sessionStats);
-  sessionStatsRef.current = sessionStats;
-  useEffect(() => {
-    onSessionStatsChange?.(sessionStatsRef.current);
-  }, [statsKey, onSessionStatsChange]);
-  useEffect(
-    () => () => {
-      onSessionStatsChange?.(null);
-    },
-    [onSessionStatsChange],
-  );
-
-  // Push context usage up to AppShell as well.
-  const ctxKey = contextUsage
-    ? `${contextUsage.percent ?? "null"}|${contextUsage.contextWindow}|${contextUsage.tokens ?? "null"}`
-    : null;
-  const contextUsageRef = useRef(contextUsage);
-  contextUsageRef.current = contextUsage;
-  useEffect(() => {
-    onContextUsageChange?.(contextUsageRef.current);
-  }, [ctxKey, onContextUsageChange]);
-  useEffect(
-    () => () => {
-      onContextUsageChange?.(null);
-    },
-    [onContextUsageChange],
-  );
 
   const onDrop = useCallback(
     (files: File[]) => {

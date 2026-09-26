@@ -6,9 +6,10 @@ import { act, create } from "react-test-renderer";
 import { importTestBundle } from "#test-bundle";
 import { createDeferred } from "#test-timing";
 
-const { useAgentSession, testApi } = await importTestBundle("session-turn-hook", {
+const { useAgentSession, testApi, SessionPresentationStore } = await importTestBundle("session-turn-hook", {
   stdin: {
-    contents: 'export { useAgentSession } from "./useAgentSession.ts"; export * as testApi from "@/lib/api-client";',
+    contents:
+      'export { useAgentSession } from "./useAgentSession.ts"; export * as testApi from "@/lib/api-client"; export {SessionPresentationStore} from "@/lib/session-presentation-store";',
     resolveDir: import.meta.dirname,
     loader: "ts",
   },
@@ -651,4 +652,24 @@ test("unmount cancels the actual slash-command settlement wait and all view time
   assert.ok([...timers.values()].some((timer) => timer.delay === 800));
   await fixture.unmount();
   assert.equal(timers.size, 0);
+});
+
+test("session presentation publishes the latest persisted title instead of the selection-time name", async (t) => {
+  const presentationStore = new SessionPresentationStore();
+  const detail = runtimeDetail({ running: false });
+  detail.info.name = "persisted title";
+  detail.stats = { sessionId: "fixture", sessionName: "persisted title", tokens: { input: 7 } };
+  const fixture = await mountRuntime(t, detail, {
+    presentationStore,
+    session: { id: "fixture", cwd: "/fixture", name: "selection-time title" },
+  });
+  assert.equal(presentationStore.getSnapshot().info.name, "persisted title");
+  assert.equal(presentationStore.getSnapshot().stats.sessionName, "persisted title");
+  testApi.setHistory({ ...detail, info: { ...detail.info, name: "generated title" } }, undefined);
+  await act(async () => testApi.emitChanges({ sessionId: "fixture" }));
+  assert.equal(presentationStore.getSnapshot().info.name, "generated title");
+  assert.equal(presentationStore.getSnapshot().stats.sessionName, "generated title");
+  assert.equal(presentationStore.getSnapshot().stats.tokens.input, 7);
+  await fixture.unmount();
+  assert.equal(presentationStore.getSnapshot(), null);
 });

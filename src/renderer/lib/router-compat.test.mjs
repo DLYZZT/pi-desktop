@@ -48,6 +48,13 @@ test("initial session id parsing handles present and absent values", () => {
 test("AppShell no longer creates a reactive search subscription or router object", () => {
   const source = fs.readFileSync(new URL("../components/AppShell.tsx", import.meta.url), "utf8");
 
-  assert.doesNotMatch(source, /useSearchParamsCompat|useRouterCompat|useSyncExternalStore/);
+  // Metadata may use an external store. The navigation invariant is that URL
+  // search is captured once, instead of a popstate subscription remounting chat.
+  assert.doesNotMatch(source, /useSearchParamsCompat|useRouterCompat/);
+  assert.doesNotMatch(source, /addEventListener\(\s*["'](?:popstate|hashchange)["']/);
+  assert.match(
+    source,
+    /const \[initialSessionId\] = useState<string \| null>\(\(\) => readSessionIdFromSearch\(window\.location\.search\)\)/,
+  );
   assert.match(source, /const router = routerCompat;/);
 });

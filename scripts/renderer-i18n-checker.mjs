@@ -8,6 +8,7 @@ const LOCALIZED_OWNER_SUFFIXES = [
   "components/FileExplorer.tsx",
   "components/BranchNavigator.tsx",
   "components/AppShell.tsx",
+  "components/SessionInfoPanel.tsx",
   "components/SkillsConfig.tsx",
   "components/PluginsConfig.tsx",
   "hooks/useAgentSession.ts",

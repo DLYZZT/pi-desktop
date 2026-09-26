@@ -21,6 +21,8 @@ import { useChatViewport } from "./useChatViewport";
 import { useSessionExtensionUi } from "./useSessionExtensionUi";
 import { abortableDelay } from "@/lib/abortable-delay";
 import { LatestRequestGate } from "@/lib/latest-request-gate";
+import type { SessionPresentationStore } from "@/lib/session-presentation-store";
+import { useSessionPresentation } from "./useSessionPresentation";
 import { SessionRuntimeGate, type RuntimeSnapshotTicket } from "@/lib/session-runtime-gate";
 import { sessionClientErrorMessage } from "@/lib/session-error-message";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
@@ -85,6 +87,7 @@ export interface UseAgentSessionOptions {
     onLeafChange: (leafId: string | null) => void,
   ) => void;
   onSystemPromptChange?: (prompt: string | null) => void;
+  presentationStore?: SessionPresentationStore;
   onSessionStatsPanelOpen?: () => void;
   setToolPreset?: (preset: "none" | "default" | "full") => void;
 }
@@ -373,14 +376,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
 
   const sessionStats = (() => {
-    if (sessionStatsOverride) return sessionStatsOverride;
-    if (!data?.stats) return null;
+    const stats = sessionStatsOverride ?? data?.stats;
+    if (!stats) return null;
     return {
-      ...data.stats,
-      sessionName: session?.name ?? data.stats.sessionName,
+      ...stats,
+      sessionName: data?.info ? data.info.name : (stats.sessionName ?? session?.name),
       ...(contextUsage ? { contextUsage } : {}),
     };
   })();
+  useSessionPresentation(opts.presentationStore, {
+    sessionId: sessionIdRef.current,
+    info: data?.info ?? session,
+    stats: sessionStats,
+    contextUsage,
+  });
 
   const loadTools = useCallback(
     async (sid: string) => {
