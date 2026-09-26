@@ -1,4 +1,5 @@
-import { call, listSessions, subscribe } from "@/lib/api-client";
+import { useSessionList } from "@/hooks/useSessionList";
+import { call, subscribe } from "@/lib/api-client";
 import {
   useState,
   useReducer,
@@ -103,6 +104,7 @@ export function AppShell({
   const router = routerCompat;
   const { isDark, toggleTheme } = useTheme();
   const { language, t } = useI18n();
+  const sessionList = useSessionList();
   const isMobile = useIsMobile();
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
   const [presentationStore] = useState(() => new SessionPresentationStore());
@@ -116,7 +118,7 @@ export function AppShell({
 
   // When user clicks +, we only store the cwd — no fake session id
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [worktreesRefreshKey, setWorktreesRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -498,13 +500,12 @@ export function AppShell({
     const offDeep = window.piBridge?.onDeepLinkSession?.((sessionId) => {
       void (async () => {
         try {
-          const { sessions } = await listSessions();
+          const sessions = await sessionList.refresh();
           const found = sessions.find((s) => s.id === sessionId);
           if (found) {
             setNewSessionCwd(null);
             setSelectedSession(found as SessionInfo);
             setSessionKey((k) => k + 1);
-            setRefreshKey((k) => k + 1);
             router.replace(`?session=${encodeURIComponent(sessionId)}`);
           }
         } catch (error) {
@@ -538,8 +539,8 @@ export function AppShell({
     // ISSUE-016: Switch Session palette — focus sidebar / open project list
     const offSwitch = window.piBridge?.onMenu?.("switch-session", () => {
       setSidebarOpen(true);
-      // Nudge sidebar to refresh sessions
-      setRefreshKey((k) => k + 1);
+      void sessionList.refresh().catch(() => {});
+      setWorktreesRefreshKey((k) => k + 1);
     });
     return () => {
       offDeep?.();
@@ -549,7 +550,7 @@ export function AppShell({
       offShowUpdate?.();
       offSwitch?.();
     };
-  }, [activeCwd, router]);
+  }, [activeCwd, router, sessionList]);
 
   const handleCwdChange = useCallback(
     (cwd: string | null, projectRoot?: string | null) => {
@@ -618,26 +619,25 @@ export function AppShell({
     [router, isMobile],
   );
 
-  // Client-built transient SessionInfo (new session / fork) lacks the
-  // server-computed projectRoot, which the same-project check in
-  // handleCwdChange relies on. Hydrate it from the session list so switching
-  // worktrees right after creating a session doesn't close the chat.
-  const hydrateSelectedSession = useCallback((sessionId: string) => {
-    void listSessions()
-      .then((d) => {
-        const full = d.sessions.find((s) => s.id === sessionId);
-        if (!full) return;
-        setSelectedSession((prev) => (prev && prev.id === sessionId && !prev.projectRoot ? full : prev));
-      })
-      .catch(() => {});
-  }, []);
+  // Complete transient selection metadata from the shared index before switching worktrees.
+  const hydrateSelectedSession = useCallback(
+    (sessionId: string) => {
+      void sessionList
+        .findSession(sessionId)
+        .then((full) => {
+          if (!full) return;
+          setSelectedSession((prev) => (prev && prev.id === sessionId && !prev.projectRoot ? full : prev));
+        })
+        .catch(() => {});
+    },
+    [sessionList],
+  );
 
   // Called by ChatWindow when a new session gets its real id from pi
   const handleSessionCreated = useCallback(
     (session: SessionInfo) => {
       setNewSessionCwd(null);
       setSelectedSession(session);
-      setRefreshKey((k) => k + 1);
       hydrateSelectedSession(session.id);
       router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
     },
@@ -645,13 +645,13 @@ export function AppShell({
   );
 
   const handleAgentEnd = useCallback(() => {
-    setRefreshKey((k) => k + 1);
+    sessionList.refreshIfDisconnected();
+    setWorktreesRefreshKey((k) => k + 1);
     setExplorerRefreshKey((k) => k + 1);
-  }, []);
+  }, [sessionList]);
 
   const handleSessionForked = useCallback(
     (newSessionId: string) => {
-      setRefreshKey((k) => k + 1);
       setSessionKey((k) => k + 1);
       setNewSessionCwd(null);
       setSelectedSession((prev) => ({
@@ -672,7 +672,6 @@ export function AppShell({
     (sessionId: string) => {
       thinkingExpansionRegistryRef.current.delete(sessionId);
       processDetailsExpansionRegistryRef.current.delete(sessionId);
-      setRefreshKey((k) => k + 1);
       if (selectedSession?.id === sessionId) {
         const cwd = selectedSession.cwd;
         setSelectedSession(null);
@@ -744,7 +743,8 @@ export function AppShell({
         onNewSession={handleNewSession}
         initialSessionId={initialSessionId}
         onInitialRestoreDone={handleInitialRestoreDone}
-        refreshKey={refreshKey}
+        sessionList={sessionList}
+        worktreesRefreshKey={worktreesRefreshKey}
         onSessionDeleted={handleSessionDeleted}
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
         onCwdChange={handleCwdChange}

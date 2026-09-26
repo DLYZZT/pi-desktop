@@ -1,4 +1,13 @@
-import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useCallback,
+  useRef,
+  useSyncExternalStore,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import type { SessionInfo } from "@/lib/types";
 import { APP_VERSION, PI_VERSION } from "@/lib/app-version";
 import { useI18n } from "@/i18n";
@@ -13,7 +22,8 @@ import {
   sessionDateGroup,
   type SessionDateGroup,
 } from "@/lib/session-list";
-import { applySessionChangedEvent } from "@/lib/session-sidebar-state";
+import type { SessionListStore } from "@/lib/session-list-store";
+import { SessionListResponseError } from "@/hooks/useSessionList";
 import { abbreviateHomePath } from "@/lib/display-path";
 import { formatNumber, formatRelativeDateTime } from "@/lib/locale-format";
 import { worktreePathsEqual } from "@shared/worktree-path";
@@ -24,7 +34,8 @@ interface Props {
   onNewSession?: (sessionId: string, cwd: string) => void;
   initialSessionId?: string | null;
   onInitialRestoreDone?: () => void;
-  refreshKey?: number;
+  sessionList: SessionListStore;
+  worktreesRefreshKey?: number;
   onSessionDeleted?: (sessionId: string) => void;
   selectedCwd?: string | null;
   onCwdChange?: (cwd: string | null, projectRoot?: string | null) => void;
@@ -342,15 +353,38 @@ export function SessionSidebar({
   onNewSession,
   initialSessionId,
   onInitialRestoreDone,
-  refreshKey,
+  sessionList,
+  worktreesRefreshKey,
   onSessionDeleted,
   selectedCwd: selectedCwdProp,
   onCwdChange,
 }: Props) {
   const { t } = useI18n();
-  const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    sessions: allSessions,
+    loading,
+    error: listError,
+    runningSessionIds: fallbackRunningIds,
+  } = useSyncExternalStore(sessionList.subscribe, sessionList.getSnapshot, sessionList.getSnapshot);
+  const error =
+    listError == null
+      ? null
+      : String(
+          listError instanceof SessionListResponseError
+            ? new Error(
+                listError.status === 401
+                  ? t(
+                      "sessionLoadUnauthorized",
+                      "Unauthorized (401). Restart Pi Desktop so the renderer can reconnect to the Agent Host.",
+                    )
+                  : listError.detail ||
+                      t("sessionLoadFailedStatus", "Failed to load sessions ({status})").replace(
+                        "{status}",
+                        String(listError.status),
+                      ),
+              )
+            : listError,
+        );
   const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
   const [homeDir, setHomeDir] = useState<string>("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -413,64 +447,32 @@ export function SessionSidebar({
 
   const loadSessions = useCallback(
     async (showLoading = false) => {
-      try {
-        if (showLoading) setLoading(true);
-        const res = await fetch("/api/sessions");
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(
-            res.status === 401
-              ? t(
-                  "sessionLoadUnauthorized",
-                  "Unauthorized (401). Restart Pi Desktop so the renderer can reconnect to the Agent Host.",
-                )
-              : errBody.error ||
-                  t("sessionLoadFailedStatus", "Failed to load sessions ({status})").replace(
-                    "{status}",
-                    String(res.status),
-                  ),
-          );
-        }
-        const data = (await res.json()) as { sessions?: SessionInfo[]; runningSessionIds?: string[] };
-        const sessions = Array.isArray(data.sessions) ? data.sessions : [];
-        setAllSessions(sessions);
-        // Treat the fetched running set as an initial fallback only. Once the stream is
-        // live it owns this state, so a slow fetch can't revive a stale snapshot.
-        if (!streamAuthoritativeRef.current) {
-          setRunningSessionIds(new Set(data.runningSessionIds ?? []));
-        }
-        // Drop unread markers for sessions that no longer exist (e.g. deleted).
-        const existingIds = new Set(sessions.map((s) => s.id));
-        setUnreadSessionIds((prev) => {
-          if (prev.size === 0) return prev;
-          const next = new Set([...prev].filter((id) => existingIds.has(id)));
-          return next.size === prev.size ? prev : next;
-        });
-        setError(null);
-        if (!showLoading) {
-          if (!sidebarMountedRef.current) return;
-          setSessionRefreshDone(true);
-          if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
-          sessionRefreshTimerRef.current = setTimeout(() => {
-            sessionRefreshTimerRef.current = null;
-            setSessionRefreshDone(false);
-          }, 2000);
-        }
-      } catch (e) {
-        setError(String(e));
-      } finally {
-        if (showLoading) setLoading(false);
+      await sessionList.refresh(showLoading).catch(() => {});
+      if (!sidebarMountedRef.current) return;
+      if (!showLoading && sessionList.getSnapshot().error === null) {
+        setSessionRefreshDone(true);
+        if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
+        sessionRefreshTimerRef.current = setTimeout(() => {
+          sessionRefreshTimerRef.current = null;
+          setSessionRefreshDone(false);
+        }, 2000);
       }
     },
-    [t],
+    [sessionList],
   );
 
-  const initialLoadDone = useRef(false);
   useEffect(() => {
-    const isFirst = !initialLoadDone.current;
-    initialLoadDone.current = true;
-    void loadSessions(isFirst);
-  }, [loadSessions, refreshKey]);
+    if (!streamAuthoritativeRef.current) setRunningSessionIds(new Set(fallbackRunningIds));
+  }, [fallbackRunningIds]);
+
+  useEffect(() => {
+    if (loading || listError !== null) return;
+    const existingIds = new Set(allSessions.map((session) => session.id));
+    setUnreadSessionIds((previous) => {
+      const next = new Set([...previous].filter((id) => existingIds.has(id)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [allSessions, listError, loading]);
 
   // Persist unread markers so they survive a browser refresh before the user
   // has actually opened the completed session.
@@ -501,37 +503,17 @@ export function SessionSidebar({
     return () => source.close();
   }, []);
 
-  // sessions.changed (CLI / disk watcher) → refresh sidebar without polling
   useEffect(() => {
-    let unsub: (() => void) | undefined;
-    let cancelled = false;
-    void import("@/lib/api-client").then(({ subscribeSessionsChanged }) => {
-      if (cancelled) return;
-      return subscribeSessionsChanged((event) => {
-        if (event.fullRefresh || (!event.session && !(event.deleted && event.sessionId))) {
-          void loadSessions(false);
-        } else {
-          setAllSessions((current) => applySessionChangedEvent(current, event) ?? current);
-        }
-        if (event.deleted && event.sessionId) {
-          setUnreadSessionIds((current) => {
-            if (!current.has(event.sessionId!)) return current;
-            const next = new Set(current);
-            next.delete(event.sessionId!);
-            return next;
-          });
-          onSessionDeleted?.(event.sessionId);
-        }
-      }).then((u) => {
-        if (cancelled) u();
-        else unsub = u;
+    return sessionList.subscribeDeleted((id) => {
+      setUnreadSessionIds((previous) => {
+        if (!previous.has(id)) return previous;
+        const next = new Set(previous);
+        next.delete(id);
+        return next;
       });
+      onSessionDeleted?.(id);
     });
-    return () => {
-      cancelled = true;
-      unsub?.();
-    };
-  }, [loadSessions, onSessionDeleted]);
+  }, [sessionList, onSessionDeleted]);
 
   useEffect(() => {
     const previous = previousRunningSessionIdsRef.current;
@@ -642,7 +624,7 @@ export function SessionSidebar({
     return () => {
       cancelled = true;
     };
-  }, [selectedCwd, wtRefreshKey, refreshKey]);
+  }, [selectedCwd, wtRefreshKey, worktreesRefreshKey]);
 
   // Auto-select cwd and restore session from URL on first load
   useEffect(() => {
@@ -1991,10 +1973,9 @@ export function SessionSidebar({
                         runningSessionIds={runningSessionIds}
                         unreadSessionIds={unreadSessionIds}
                         onSelectSession={handleSelectSessionFromList}
-                        onRenamed={loadSessions}
+                        onRenamed={sessionList.refreshIfDisconnected}
                         onSessionDeleted={(id) => {
-                          onSessionDeleted?.(id);
-                          void loadSessions();
+                          sessionList.applyChange({ cwd: null, sessionId: id, deleted: true });
                         }}
                         depth={0}
                       />

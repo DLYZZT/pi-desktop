@@ -21,8 +21,9 @@ export const architecturePolicy = {
       reason: "Existing provider, authorization and editor flows; scheduled for 22-08.",
     },
     "src/renderer/components/SessionSidebar.tsx": {
-      maxLines: 2767,
-      reason: "Existing session list and project operations; 22-04/08 separate their ownership.",
+      maxLines: 2748,
+      reason:
+        "Session list reads and change application now belong to the window store; project/list UI remains for 22-08.",
     },
 
     "src/renderer/components/MessageView.tsx": {
