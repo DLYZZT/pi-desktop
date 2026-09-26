@@ -1,35 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { subscribeSessionsChanged } from "@/lib/api-client";
-import { SessionListStore, type SessionListData } from "@/lib/session-list-store";
+import { listSessions, subscribeSessionsChanged } from "@/lib/api-client";
+import { SessionListStore } from "@/lib/session-list-store";
 import { connectTimedEventStream, EventStreamConnectionManager } from "@/lib/event-stream-connection";
-
-export class SessionListResponseError extends Error {
-  constructor(
-    readonly status: number,
-    readonly detail?: string,
-  ) {
-    super(detail || `Failed to load sessions (${status})`);
-  }
-}
-
-// Keep the existing compatibility transport while changing state ownership.
-// Plan 22-05 migrates this adapter after the shared lifecycle is verified.
-async function loadSessionList(): Promise<SessionListData> {
-  const response = await fetch("/api/sessions");
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new SessionListResponseError(response.status, body.error);
-  }
-  const data = (await response.json()) as Partial<SessionListData>;
-  return {
-    sessions: Array.isArray(data.sessions) ? data.sessions : [],
-    runningSessionIds: data.runningSessionIds ?? [],
-  };
-}
 
 /** One connection and one list loader for sidebar, deep links and session hydration. */
 export function useSessionList(): SessionListStore {
-  const [store] = useState(() => new SessionListStore(loadSessionList));
+  const [store] = useState(() => new SessionListStore(listSessions));
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const [connection] = useState(() => new EventStreamConnectionManager(unsubscribeRef));
   useEffect(() => {

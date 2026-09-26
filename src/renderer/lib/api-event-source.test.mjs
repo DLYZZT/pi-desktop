@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { importTestBundle } from "#test-bundle";
-import { createDeferred } from "#test-timing";
 
 const { apiFetch, ApiEventSource, testApi } = await importTestBundle("api-event-source-routing", {
   stdin: {
@@ -45,54 +44,6 @@ const { apiFetch, ApiEventSource, testApi } = await importTestBundle("api-event-
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-test("running EventSource uses the wildcard running stream and delivers status frames", async (t) => {
-  testApi.reset();
-  const source = new ApiEventSource("/api/agent/running/events");
-  t.after(() => source.close());
-  const messages = [];
-  source.onmessage = (event) => messages.push(JSON.parse(event.data));
-  await settle();
-  assert.equal(testApi.subscriptions.length, 1);
-  assert.equal(testApi.subscriptions[0].topic, "agent.running");
-  assert.equal(testApi.subscriptions[0].key, "*");
-  const status = { type: "running", sessionIds: ["owner"] };
-  testApi.subscriptions[0].on(status);
-  assert.deepEqual(messages, [status]);
-  source.close();
-  testApi.subscriptions[0].on({ type: "running", sessionIds: [] });
-  assert.deepEqual(messages, [status]);
-  assert.equal(testApi.subscriptions[0].released, 1);
-});
-
-test("individual agent events keep their decoded session key and connected notification", async (t) => {
-  testApi.reset();
-  const source = new ApiEventSource("/api/agent/owner%20one/events");
-  t.after(() => source.close());
-  const messages = [];
-  source.onmessage = (event) => messages.push(JSON.parse(event.data));
-  await settle();
-  assert.equal(testApi.subscriptions[0].topic, "agent.events");
-  assert.equal(testApi.subscriptions[0].key, "owner one");
-  assert.deepEqual(messages, [{ type: "connected" }]);
-  testApi.subscriptions[0].on({ type: "agent_end" });
-  assert.deepEqual(messages.at(-1), { type: "agent_end" });
-});
-
-test("a running stream installed after close is released without delivering late frames", async () => {
-  const installation = createDeferred();
-  testApi.reset(installation.promise);
-  const source = new ApiEventSource("/api/agent/running/events");
-  let delivered = 0;
-  source.onmessage = () => delivered++;
-  source.close();
-  installation.resolve();
-  await settle();
-  testApi.subscriptions[0].on({ type: "running", sessionIds: ["late"] });
-  assert.equal(testApi.subscriptions[0].released, 1);
-  assert.equal(source.readyState, ApiEventSource.CLOSED);
-  assert.equal(delivered, 0);
-});
-
 test("migrated skills and plugins routes cannot silently re-enter the compatibility adapter", async () => {
   testApi.reset();
   for (const [route, method] of [
@@ -134,6 +85,42 @@ test("model and auth operations no longer start through legacy routes or EventSo
   const source = new ApiEventSource("/api/auth/login/fixture");
   await settle();
   assert.equal(source.readyState, ApiEventSource.CLOSED);
+  assert.equal(testApi.subscriptions.length, 0);
+  assert.equal(testApi.unexpectedCalls, 0);
+});
+
+test("session, agent, model, workspace and system routes stay retired", async () => {
+  testApi.reset();
+  for (const [route, method] of [
+    ["/api/sessions", "GET"],
+    ["/api/sessions/one", "GET"],
+    ["/api/sessions/one", "PATCH"],
+    ["/api/sessions/one", "DELETE"],
+    ["/api/sessions/one/context", "GET"],
+    ["/api/agent/new", "POST"],
+    ["/api/agent/one", "GET"],
+    ["/api/agent/one", "POST"],
+    ["/api/models", "GET"],
+    ["/api/models/refresh", "POST"],
+    ["/api/models/refresh", "DELETE"],
+    ["/api/worktrees", "GET"],
+    ["/api/worktrees", "POST"],
+    ["/api/worktrees", "DELETE"],
+    ["/api/cwd/validate", "POST"],
+    ["/api/default-cwd", "POST"],
+    ["/api/home", "GET"],
+  ]) {
+    const response = await apiFetch(route, {
+      method,
+      body: JSON.stringify({ name: "fixture", path: "/fixture", cwd: "/fixture" }),
+    });
+    assert.equal(response.status, 404, `${method} ${route}`);
+  }
+  for (const route of ["/api/agent/running/events", "/api/agent/one/events"]) {
+    const stream = new ApiEventSource(route);
+    await settle();
+    assert.equal(stream.readyState, ApiEventSource.CLOSED);
+  }
   assert.equal(testApi.subscriptions.length, 0);
   assert.equal(testApi.unexpectedCalls, 0);
 });

@@ -1,30 +1,7 @@
 /**
  * Compatibility fetch + EventSource for migrated components that still call `/api/...`.
  */
-import {
-  agentCommand,
-  agentState,
-  call,
-  deleteSession,
-  exportSession,
-  fileIndex,
-  fileMeta,
-  getHome,
-  getSession,
-  getSessionContext,
-  listFiles,
-  listModels,
-  listSessions,
-  listWorktrees,
-  newAgent,
-  readFile,
-  renameSession,
-  subscribe,
-  subscribeAgentEvents,
-  subscribeRunning,
-  validateCwd,
-  defaultCwd,
-} from "./api-client";
+import { call, exportSession, fileIndex, fileMeta, listFiles, readFile, subscribe } from "./api-client";
 import { isApiShimRequest } from "./api-fetch-policy";
 
 type Json = unknown;
@@ -38,18 +15,6 @@ function jsonResponse(data: Json, status = 200): Response {
 
 function errorResponse(message: string, status = 500): Response {
   return jsonResponse({ error: message }, status);
-}
-
-async function parseBody(init?: RequestInit): Promise<Record<string, unknown>> {
-  if (!init?.body) return {};
-  if (typeof init.body === "string") {
-    try {
-      return JSON.parse(init.body) as Record<string, unknown>;
-    } catch {
-      return {};
-    }
-  }
-  return {};
 }
 
 export async function apiFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
@@ -68,33 +33,6 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
     .filter(Boolean);
 
   try {
-    if (segs[0] === "sessions" && segs.length === 1 && method === "GET") {
-      return jsonResponse(await listSessions());
-    }
-    if (segs[0] === "sessions" && segs.length === 2) {
-      const id = decodeURIComponent(segs[1]);
-      if (method === "GET") {
-        const includeState = u.searchParams.has("includeState");
-        return jsonResponse(await getSession(id, includeState));
-      }
-      if (method === "DELETE") {
-        await deleteSession(id);
-        return jsonResponse({ ok: true });
-      }
-      if (method === "PATCH" || method === "PUT") {
-        const body = await parseBody(init);
-        if (typeof body.name === "string") {
-          await renameSession(id, body.name);
-          return jsonResponse({ ok: true });
-        }
-        return errorResponse("name is required", 400);
-      }
-    }
-    if (segs[0] === "sessions" && segs[2] === "context" && method === "GET") {
-      const id = decodeURIComponent(segs[1]);
-      const leafId = u.searchParams.get("leafId") ?? undefined;
-      return jsonResponse(await getSessionContext(id, leafId));
-    }
     if (segs[0] === "sessions" && segs[2] === "export" && method === "GET") {
       const id = decodeURIComponent(segs[1]);
       const { content, suggestedName } = await exportSession(id);
@@ -106,43 +44,6 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
         if (saved) await window.piBridge.showItemInFolder(saved);
       }
       return jsonResponse({ ok: true, content });
-    }
-
-    if (segs[0] === "agent" && segs[1] === "new" && method === "POST") {
-      const body = await parseBody(init);
-      const result = await newAgent(body as never);
-      return jsonResponse({ success: true, ...result });
-    }
-    if (segs[0] === "agent" && segs.length === 2 && segs[1] !== "new" && segs[1] !== "running") {
-      const id = decodeURIComponent(segs[1]);
-      if (method === "GET") return jsonResponse(await agentState(id));
-      if (method === "POST") {
-        const body = await parseBody(init);
-        const data = await agentCommand(id, body);
-        return jsonResponse({ success: true, data });
-      }
-    }
-
-    if (segs[0] === "models" && segs[1] === "refresh") {
-      const body = method === "POST" ? await parseBody(init) : {};
-      const requestId = String(body.requestId ?? u.searchParams.get("requestId") ?? "");
-      if (method === "POST") {
-        const cwd = typeof body.cwd === "string" ? body.cwd : (u.searchParams.get("cwd") ?? undefined);
-        return jsonResponse(await call("models.refresh", { ...(cwd ? { cwd } : {}), requestId }));
-      }
-      if (method === "DELETE") {
-        return jsonResponse(await call("models.refreshCancel", { requestId }));
-      }
-    }
-
-    if (segs[0] === "models" && segs.length === 1 && method === "GET") {
-      const cwd = u.searchParams.get("cwd") ?? undefined;
-      const d = await listModels(cwd);
-      return jsonResponse({
-        ...d,
-        modelList: d.models,
-        models: d.nameMap ? Object.fromEntries(Object.entries(d.nameMap)) : d.models,
-      });
     }
 
     if (segs[0] === "files") {
@@ -182,46 +83,9 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       return jsonResponse(result);
     }
 
-    if (segs[0] === "worktrees" && method === "GET") {
-      const cwd = u.searchParams.get("cwd") ?? "";
-      return jsonResponse(await listWorktrees(cwd));
-    }
-    if (segs[0] === "worktrees" && method === "POST") {
-      const body = await parseBody(init);
-      const result = await call("worktrees.create", {
-        projectRoot: String(body.cwd ?? body.projectRoot ?? ""),
-        branch: String(body.branch ?? ""),
-        cwd: body.cwd as string | undefined,
-      });
-      // Preserve the legacy route shape consumed by SessionSidebar.
-      return jsonResponse(result.worktree);
-    }
-    if (segs[0] === "worktrees" && method === "DELETE") {
-      const body = await parseBody(init);
-      await call("worktrees.remove", {
-        path: String(body.path ?? ""),
-        cwd: body.cwd as string | undefined,
-        force: body.force as boolean | undefined,
-      });
-      return jsonResponse({ success: true });
-    }
-
     if (segs[0] === "git-status" && method === "GET") {
       const cwd = u.searchParams.get("cwd") ?? "";
       return jsonResponse(await call("git.status", { path: cwd }));
-    }
-
-    if (segs[0] === "cwd" && segs[1] === "validate" && method === "POST") {
-      const body = await parseBody(init);
-      const result = await validateCwd(String(body.path ?? body.cwd ?? ""));
-      if (!result.ok) return jsonResponse({ error: result.error ?? "Invalid path" }, 400);
-      return jsonResponse({ cwd: result.path, ok: true });
-    }
-    if (segs[0] === "default-cwd" && method === "POST") {
-      return jsonResponse(await defaultCwd());
-    }
-    if (segs[0] === "home" && method === "GET") {
-      return jsonResponse(await getHome());
     }
 
     return errorResponse(`Unmapped API route: ${method} ${u.pathname}`, 404);
@@ -292,39 +156,6 @@ export class ApiEventSource {
         .replace(/^\/api\//, "")
         .split("/")
         .filter(Boolean);
-
-      if (segs[0] === "agent" && segs[1] !== "running" && segs[2] === "events") {
-        const sessionId = decodeURIComponent(segs[1]);
-        this.unsub = await subscribeAgentEvents(sessionId, (event) => {
-          if (this.closed || gen !== this.generation) return;
-          this.readyState = ApiEventSource.OPEN;
-          // Agent events use onmessage only (useAgentSession)
-          this.onmessage?.({ data: JSON.stringify(event) } as MessageEvent);
-        });
-        if (this.closed || gen !== this.generation) {
-          this.unsub?.();
-          return;
-        }
-        this.readyState = ApiEventSource.OPEN;
-        this.onopen?.(new Event("open"));
-        this.onmessage?.({ data: JSON.stringify({ type: "connected" }) } as MessageEvent);
-        return;
-      }
-
-      if (segs[0] === "agent" && segs[1] === "running" && segs[2] === "events") {
-        this.unsub = await subscribeRunning((event) => {
-          if (this.closed || gen !== this.generation) return;
-          this.readyState = ApiEventSource.OPEN;
-          this.onmessage?.({ data: JSON.stringify(event) } as MessageEvent);
-        });
-        if (this.closed || gen !== this.generation) {
-          this.unsub?.();
-          return;
-        }
-        this.readyState = ApiEventSource.OPEN;
-        this.onopen?.(new Event("open"));
-        return;
-      }
 
       if (segs[0] === "files") {
         const rawPath = "/" + segs.slice(1).map(decodeURIComponent).join("/");

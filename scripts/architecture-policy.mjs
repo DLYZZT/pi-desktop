@@ -21,9 +21,8 @@ export const architecturePolicy = {
       reason: "Provider/auth/editor UI after typed RPC and explicit login ownership; scheduled for 22-08.",
     },
     "src/renderer/components/SessionSidebar.tsx": {
-      maxLines: 2748,
-      reason:
-        "Session list reads and change application now belong to the window store; project/list UI remains for 22-08.",
+      maxLines: 2700,
+      reason: "Window session index and typed sidebar RPC are in place; project/list UI remains for 22-08.",
     },
 
     "src/renderer/components/MessageView.tsx": {
@@ -81,7 +80,7 @@ export const architecturePolicy = {
   },
   dataModules: {
     "src/renderer/i18n-dictionaries.ts": {
-      baselineLines: 3543,
+      baselineLines: 3540,
       reason:
         "Translation data, checked for literal-only contents here and parity/duplicates/fallbacks by check:i18n; split under 22-08.",
     },
