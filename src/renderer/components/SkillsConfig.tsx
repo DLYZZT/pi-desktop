@@ -1,24 +1,13 @@
+import { call } from "@/lib/api-client";
 import { forwardRef, useState, useEffect, useCallback, useImperativeHandle, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
-import type { SkillSearchResult } from "@/lib/api-types";
+import type { SkillRecord as Skill, SkillSearchResult } from "@/lib/api-types";
 import { LatestAbortableRequest } from "@/lib/latest-abortable-request";
 import { CapabilityRequired, parseCapabilityIssue, type CapabilityIssue } from "@/components/CapabilityRequired";
 import { formatCompactNumber } from "@/lib/locale-format";
 
 type Translate = (key: string, fallback: string) => string;
-
-interface Skill {
-  name: string;
-  description: string;
-  filePath: string;
-  baseDir: string;
-  disableModelInvocation: boolean;
-  sourceInfo: {
-    source?: string;
-    scope?: string;
-  };
-}
 
 function shortenPath(p: string): string {
   // Match common home dir patterns: /Users/xxx, /home/xxx
@@ -119,8 +108,7 @@ const SkillDetail = forwardRef<
     let cancelled = false;
     setContentLoading(true);
     setContentError(null);
-    void import("@/lib/api-client")
-      .then(({ call }) => call("skills.getContent", { cwd, filePath: skill.filePath }))
+    void call("skills.getContent", { cwd, filePath: skill.filePath })
       .then((result) => {
         if (cancelled) return;
         setContent(result.content);
@@ -143,15 +131,7 @@ const SkillDetail = forwardRef<
     setContentSaving(true);
     setContentError(null);
     try {
-      const res = await fetch("/api/skills", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd, filePath: skill.filePath, content }),
-      });
-      const result = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok || result.error) {
-        throw new Error(result.error ?? t("httpErrorStatus", "HTTP {status}").replace("{status}", String(res.status)));
-      }
+      await call("skills.set", { cwd, filePath: skill.filePath, content });
       setSavedContent(content);
       onSaved();
       return true;
@@ -320,19 +300,7 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
       setSearchError(null);
       setResults([]);
       try {
-        const res = await fetch("/api/skills/search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: q.trim() }),
-        });
-        const d = (await res.json()) as {
-          results?: SkillSearchResult[];
-          error?: string;
-        };
-        if (d.error) {
-          setSearchError(d.error);
-          return;
-        }
+        const d = await call("skills.search", { query: q.trim() });
         setResults(d.results ?? []);
         if ((d.results ?? []).length === 0) setSearchError(t("noSkillsFound", "No skills found"));
       } catch (e) {
@@ -350,37 +318,17 @@ function AddSkillPanel({ cwd, onInstalled }: { cwd: string; onInstalled: () => v
       setInstallError(null);
       setCapabilityIssue(null);
       try {
-        const res = await fetch("/api/skills/install", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ package: pkg, scope, cwd }),
-        });
-        const d = (await res.json()) as {
-          success?: boolean;
-          error?: string;
-          code?: string;
-          capability?: string;
-        };
-        if (!res.ok || d.error) {
-          const issue = parseCapabilityIssue(d);
-          if (issue) {
-            setPendingInstallPackage(pkg);
-            setCapabilityIssue(issue);
-          } else {
-            setInstallError(
-              safeInstallError(
-                d.error,
-                t("httpErrorStatus", "HTTP {status}").replace("{status}", String(res.status)),
-                t,
-              ),
-            );
-          }
-          return;
-        }
+        await call("skills.install", { package: pkg, scope, cwd });
         setPendingInstallPackage(null);
         setInstalledPkgs((prev) => new Set(prev).add(pkg));
         onInstalled();
       } catch (e) {
+        const issue = parseCapabilityIssue(e);
+        if (issue) {
+          setPendingInstallPackage(pkg);
+          setCapabilityIssue(issue);
+          return;
+        }
         setInstallError(
           safeInstallError(
             e instanceof Error ? e.message : String(e),
@@ -733,14 +681,8 @@ export const SkillsConfig = forwardRef<
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/skills?cwd=${encodeURIComponent(cwd)}`, { signal: request.signal });
-      const result = (await response.json()) as { skills?: Skill[]; error?: string };
+      const result = await call("skills.list", { cwd });
       if (!skillsRequestRef.current.isCurrent(request.generation)) return;
-      if (!response.ok || result.error) {
-        throw new Error(
-          result.error ?? t("httpErrorStatus", "HTTP {status}").replace("{status}", String(response.status)),
-        );
-      }
       const list = result.skills ?? [];
       setSkills(list);
       setSelected((current) =>
@@ -770,20 +712,7 @@ export const SkillsConfig = forwardRef<
       setToggling((s) => new Set(s).add(skill.filePath));
       setSaveError(null);
       try {
-        const res = await fetch("/api/skills", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            cwd,
-            filePath: skill.filePath,
-            disableModelInvocation: next,
-          }),
-        });
-        const d = (await res.json()) as { success?: boolean; error?: string };
-        if (!res.ok || d.error) {
-          setSaveError(d.error ?? t("httpErrorStatus", "HTTP {status}").replace("{status}", String(res.status)));
-          return;
-        }
+        await call("skills.set", { cwd, filePath: skill.filePath, disableModelInvocation: next });
         setSkills((prev) =>
           prev.map((s) => (s.filePath === skill.filePath ? { ...s, disableModelInvocation: next } : s)),
         );

@@ -1,8 +1,9 @@
+import { call } from "@/lib/api-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
-import type { PluginPackageInfo, PluginsResponse } from "@/lib/api-types";
+import type { PluginActionParams, PluginPackageInfo, PluginsResponse } from "@/lib/api-types";
 import { CapabilityRequired, parseCapabilityIssue, type CapabilityIssue } from "@/components/CapabilityRequired";
 import { formatNumber } from "@/lib/locale-format";
 import { pluginResourceSummary, pluginStatusLabel, pluginVersionSummary } from "@/lib/plugin-presentation";
@@ -10,7 +11,7 @@ import { pluginResourceSummary, pluginStatusLabel, pluginVersionSummary } from "
 type Translate = (key: string, fallback: string) => string;
 
 type PluginScope = PluginPackageInfo["scope"];
-type PluginAction = "install" | "remove" | "update" | "disable" | "enable";
+type PluginAction = PluginActionParams["action"];
 type PendingCapabilityOperation =
   | { kind: "action"; action: PluginAction; pkg: PluginPackageInfo }
   | { kind: "install"; source: string; scope: PluginScope };
@@ -594,11 +595,7 @@ export function PluginsConfig({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/plugins?cwd=${encodeURIComponent(cwd)}`);
-      const next = (await res.json()) as PluginsResponse & { error?: string };
-      if (!res.ok || next.error) {
-        throw new Error(next.error ?? t("httpErrorStatus", "HTTP {status}").replace("{status}", String(res.status)));
-      }
+      const next = await call("plugins.list", { cwd });
       setData(next);
       setAddMode((current) => next.packages.length === 0 || current);
       setSelected((current) => {
@@ -624,31 +621,7 @@ export function PluginsConfig({
       setActionMessage(null);
       setCapabilityIssue(null);
       try {
-        const res = await fetch("/api/plugins", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, source: pkg.source, scope: pkg.scope, cwd }),
-        });
-        const next = (await res.json()) as PluginsResponse & {
-          error?: string;
-          code?: string;
-          capability?: string;
-        };
-        if (!res.ok || next.error) {
-          const issue = parseCapabilityIssue(next);
-          if (issue) {
-            setCapabilityIssue(issue);
-            setPendingCapabilityOperation({ kind: "action", action, pkg });
-            return;
-          }
-          throw new Error(
-            safePluginError(
-              next.error,
-              t("httpErrorStatus", "HTTP {status}").replace("{status}", String(res.status)),
-              t,
-            ),
-          );
-        }
+        const next = await call("plugins.set", { action, source: pkg.source, scope: pkg.scope, cwd });
         setPendingCapabilityOperation(null);
         setData(next);
         if (action === "remove") {
@@ -663,6 +636,12 @@ export function PluginsConfig({
           } else setActionMessage(t("pluginPackageEnabled", "Package enabled."));
         }
       } catch (err) {
+        const issue = parseCapabilityIssue(err);
+        if (issue) {
+          setCapabilityIssue(issue);
+          setPendingCapabilityOperation({ kind: "action", action, pkg });
+          return;
+        }
         setActionError(
           safePluginError(
             err instanceof Error ? err.message : undefined,
@@ -685,31 +664,7 @@ export function PluginsConfig({
       setActionMessage(null);
       setCapabilityIssue(null);
       try {
-        const res = await fetch("/api/plugins", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "install", source, scope, cwd }),
-        });
-        const next = (await res.json()) as PluginsResponse & {
-          error?: string;
-          code?: string;
-          capability?: string;
-        };
-        if (!res.ok || next.error) {
-          const issue = parseCapabilityIssue(next);
-          if (issue) {
-            setCapabilityIssue(issue);
-            setPendingCapabilityOperation({ kind: "install", source, scope });
-            return;
-          }
-          throw new Error(
-            safePluginError(
-              next.error,
-              t("httpErrorStatus", "HTTP {status}").replace("{status}", String(res.status)),
-              t,
-            ),
-          );
-        }
+        const next = await call("plugins.set", { action: "install", source, scope, cwd });
         setPendingCapabilityOperation(null);
         setData(next);
         const installed = findInstalledPackage(next.packages, source, scope);
@@ -718,6 +673,12 @@ export function PluginsConfig({
         setInstallSource("");
         setActionMessage(t("pluginPackageInstalled", "Package installed."));
       } catch (err) {
+        const issue = parseCapabilityIssue(err);
+        if (issue) {
+          setCapabilityIssue(issue);
+          setPendingCapabilityOperation({ kind: "install", source, scope });
+          return;
+        }
         setActionError(
           safePluginError(
             err instanceof Error ? err.message : undefined,

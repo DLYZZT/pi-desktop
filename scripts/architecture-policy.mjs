@@ -74,10 +74,6 @@ export const architecturePolicy = {
       maxLines: 1324,
       reason: "Existing process lifetime owner; moving shared helpers must not duplicate service instances.",
     },
-    "src/renderer/components/SkillsConfig.tsx": {
-      maxLines: 1222,
-      reason: "Existing skills configuration UI, close to the default limit.",
-    },
     "src/main/toolchains/manager.ts": {
       maxLines: 1219,
       reason: "Existing toolchain installation/validation owner; keep its bounded-operation behavior.",
@@ -85,7 +81,7 @@ export const architecturePolicy = {
   },
   dataModules: {
     "src/renderer/i18n-dictionaries.ts": {
-      baselineLines: 3549,
+      baselineLines: 3546,
       reason:
         "Translation data, checked for literal-only contents here and parity/duplicates/fallbacks by check:i18n; split under 22-08.",
     },

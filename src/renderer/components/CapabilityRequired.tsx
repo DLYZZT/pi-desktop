@@ -13,13 +13,16 @@ export function parseCapabilityIssue(value: unknown): CapabilityIssue | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   if (typeof record.code !== "string") return null;
-  const capability = isToolCapabilityId(record.capability) ? record.capability : capabilityFromCode(record.code);
+  const detail = record.detail && typeof record.detail === "object" ? (record.detail as Record<string, unknown>) : {};
+  const candidate = record.capability ?? detail.capability;
+  const capability = isToolCapabilityId(candidate) ? candidate : capabilityFromCode(record.code);
   const isRequired = record.code === "TOOLCHAIN_CAPABILITY_REQUIRED" || /_REQUIRED$/.test(record.code);
   if (!isRequired) return null;
   return {
     code: record.code,
     capability,
-    message: typeof record.error === "string" ? record.error : undefined,
+    message:
+      typeof record.error === "string" ? record.error : typeof record.message === "string" ? record.message : undefined,
   };
 }
 

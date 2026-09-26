@@ -2,6 +2,7 @@ import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
+import { RpcError } from "../../contract/types.ts";
 
 const { installActionForIssue, parseCapabilityIssue } = await importTestBundle(
   "src/renderer/components/capability-required",
@@ -53,4 +54,28 @@ test("recommends only the managed component that can satisfy the missing capabil
     action: "install-profile",
     profileId: "javascript-essentials",
   });
+});
+
+test("typed RPC errors preserve the capability and message nested by the Host serializer", () => {
+  assert.deepEqual(
+    parseCapabilityIssue(
+      new RpcError({
+        code: "TOOLCHAIN_CAPABILITY_REQUIRED",
+        message: "Bun is unavailable",
+        detail: { capability: "js.bun" },
+      }),
+    ),
+    { code: "TOOLCHAIN_CAPABILITY_REQUIRED", capability: "js.bun", message: "Bun is unavailable" },
+  );
+  assert.deepEqual(
+    parseCapabilityIssue(
+      new RpcError({
+        code: "TOOLCHAIN_CAPABILITY_REQUIRED",
+        message: "Unknown capability",
+        detail: { capability: "js.pnpm" },
+      }),
+    ),
+    { code: "TOOLCHAIN_CAPABILITY_REQUIRED", capability: undefined, message: "Unknown capability" },
+  );
+  assert.equal(parseCapabilityIssue(new RpcError({ code: "FORBIDDEN", message: "Not allowed" })), null);
 });

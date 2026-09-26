@@ -98,7 +98,7 @@ export const resourceHandlers = {
   searchSkills: async (params) => {
     const { query } = params as { query: string };
     try {
-      return (await searchSkills(query)) as never;
+      return await searchSkills(query);
     } catch (e) {
       if (e instanceof ToolchainError) throw e;
       throw new RpcError({
@@ -110,7 +110,7 @@ export const resourceHandlers = {
 
   installSkill: async (params) => {
     try {
-      return await installSkill(params as { package: string; scope?: "global" | "project"; cwd?: string });
+      return await installSkill(params);
     } catch (e) {
       if (e instanceof ToolchainError) throw e;
       throw new RpcError({

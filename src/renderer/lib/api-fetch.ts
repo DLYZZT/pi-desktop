@@ -194,52 +194,6 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
       return jsonResponse({ ok: true });
     }
 
-    if (segs[0] === "skills" && segs.length === 1 && method === "GET") {
-      const cwd = u.searchParams.get("cwd") ?? undefined;
-      return jsonResponse(await call("skills.list", cwd ? { cwd } : undefined));
-    }
-    if (segs[0] === "skills" && segs.length === 1 && (method === "PATCH" || method === "POST")) {
-      const body = await parseBody(init);
-      return jsonResponse(
-        await call("skills.set", {
-          cwd: String(body.cwd ?? ""),
-          filePath: String(body.filePath ?? ""),
-          ...(typeof body.disableModelInvocation === "boolean"
-            ? { disableModelInvocation: body.disableModelInvocation }
-            : {}),
-          ...(typeof body.content === "string" ? { content: body.content } : {}),
-        }),
-      );
-    }
-    if (segs[0] === "skills" && segs[1] === "search" && method === "POST") {
-      const body = await parseBody(init);
-      return jsonResponse(await call("skills.search", { query: String(body.query ?? "") }));
-    }
-    if (segs[0] === "skills" && segs[1] === "install" && method === "POST") {
-      const body = await parseBody(init);
-      return jsonResponse(await call("skills.install", body as never));
-    }
-
-    if (segs[0] === "plugins" && method === "GET") {
-      const cwd = u.searchParams.get("cwd") ?? undefined;
-      return jsonResponse(await call("plugins.list", cwd ? { cwd } : undefined));
-    }
-    if (segs[0] === "plugins" && (method === "POST" || method === "PUT" || method === "PATCH")) {
-      const body = await parseBody(init);
-      const action = String(body.action ?? "");
-      if (!["install", "remove", "update", "disable", "enable"].includes(action)) {
-        return errorResponse("Invalid plugin action", 400);
-      }
-      return jsonResponse(
-        await call("plugins.set", {
-          action: action as "install" | "remove" | "update" | "disable" | "enable",
-          cwd: String(body.cwd ?? ""),
-          ...(typeof body.source === "string" ? { source: body.source } : {}),
-          ...(body.scope === "project" || body.scope === "global" ? { scope: body.scope } : {}),
-        }),
-      );
-    }
-
     if (segs[0] === "files") {
       const rawPath = "/" + segs.slice(1).map(decodeURIComponent).join("/");
       const filePath = rawPath.match(/^\/[A-Za-z]:\//) ? rawPath.slice(1) : rawPath;

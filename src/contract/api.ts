@@ -25,6 +25,7 @@ import type {
   PluginActionParams,
   PluginsResponse,
   SkillRecord,
+  SkillSearchResult,
   SkillUpdateParams,
 } from "../shared/api-types";
 import type {
@@ -429,11 +430,11 @@ export interface Api {
   };
   "skills.search": {
     params: { query: string };
-    result: { results: unknown[] };
+    result: { results: SkillSearchResult[] };
   };
   "skills.install": {
-    params: { package: string; [key: string]: unknown };
-    result: { ok: true; [key: string]: unknown };
+    params: { package: string; scope?: "global" | "project"; cwd?: string };
+    result: { ok: true; output: string };
   };
   "skills.set": {
     params: SkillUpdateParams;

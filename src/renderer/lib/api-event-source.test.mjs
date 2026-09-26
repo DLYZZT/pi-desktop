@@ -3,9 +3,9 @@ import test from "node:test";
 import { importTestBundle } from "#test-bundle";
 import { createDeferred } from "#test-timing";
 
-const { ApiEventSource, testApi } = await importTestBundle("api-event-source-routing", {
+const { apiFetch, ApiEventSource, testApi } = await importTestBundle("api-event-source-routing", {
   stdin: {
-    contents: 'export { ApiEventSource } from "./api-fetch.ts"; export * as testApi from "./api-client";',
+    contents: 'export { apiFetch, ApiEventSource } from "./api-fetch.ts"; export * as testApi from "./api-client";',
     resolveDir: import.meta.dirname,
     loader: "ts",
   },
@@ -18,7 +18,8 @@ const { ApiEventSource, testApi } = await importTestBundle("api-event-source-rou
           contents: `
         export const subscriptions = [];
         let installation;
-        export function reset(next) {subscriptions.length = 0; installation = next;}
+        export let unexpectedCalls = 0;
+        export function reset(next) {subscriptions.length = 0; unexpectedCalls = 0; installation = next;}
         async function install(topic, key, on) {
           const entry = {topic, key, on, released: 0}; subscriptions.push(entry);
           if(installation) await installation;
@@ -28,7 +29,7 @@ const { ApiEventSource, testApi } = await importTestBundle("api-event-source-rou
         export const subscribeRunning = on => install('agent.running', '*', on);
         export const subscribeAuthLogin = (key, on) => install('auth.login', key, on);
         export const subscribe = install;
-        const unexpected = () => { throw new Error('Unexpected API call'); };
+        const unexpected = () => { unexpectedCalls++; throw new Error('Unexpected API call'); };
         export const agentCommand = unexpected, agentState = unexpected, call = unexpected,
           deleteSession = unexpected, exportSession = unexpected, fileIndex = unexpected,
           fileMeta = unexpected, getHome = unexpected, getSession = unexpected,
@@ -90,4 +91,23 @@ test("a running stream installed after close is released without delivering late
   assert.equal(testApi.subscriptions[0].released, 1);
   assert.equal(source.readyState, ApiEventSource.CLOSED);
   assert.equal(delivered, 0);
+});
+
+test("migrated skills and plugins routes cannot silently re-enter the compatibility adapter", async () => {
+  testApi.reset();
+  for (const [route, method] of [
+    ["/api/skills?cwd=/fixture", "GET"],
+    ["/api/skills", "PATCH"],
+    ["/api/skills/search", "POST"],
+    ["/api/skills/install", "POST"],
+    ["/api/plugins?cwd=/fixture", "GET"],
+    ["/api/plugins", "POST"],
+  ]) {
+    const response = await apiFetch(route, {
+      method,
+      body: JSON.stringify({ cwd: "/fixture", action: "install", source: "fixture", package: "fixture" }),
+    });
+    assert.equal(response.status, 404);
+  }
+  assert.equal(testApi.unexpectedCalls, 0);
 });
