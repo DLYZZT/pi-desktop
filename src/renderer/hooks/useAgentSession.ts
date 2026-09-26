@@ -14,24 +14,8 @@ import { agentState, newAgent, subscribeAgentEvents, subscribeSessionsChanged } 
 import { getToolNamesForPreset, getPresetFromTools, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { subscribeActiveSessionLiveSync } from "./active-session-live-sync";
-import {
-  isNearChatBottom,
-  isUpwardScrollKey,
-  isUpwardTouchGesture,
-  shouldDisengageScrollMagnet,
-  shouldStopChatAutoFollow,
-} from "./chat-scroll-policy";
 import { requestAutoSessionTitle, shouldAutoTitleMessage } from "../lib/auto-session-title";
 
-// Module-level scroll magnet: survives ChatWindow remounts (each session switch
-// uses key={sessionKey} in AppShell, which would otherwise wipe every useRef).
-let scrollMagnetEngaged = false;
-function getScrollMagnetEngaged(): boolean {
-  return scrollMagnetEngaged;
-}
-function setScrollMagnetEngaged(value: boolean): void {
-  scrollMagnetEngaged = value;
-}
 import {
   connectTimedEventStream,
   EventStreamConnectionManager,
@@ -47,6 +31,7 @@ import { NOTICE_VISIBLE_MS, noticeExpiryDelay, noticeReducer, type NoticeType } 
 import { useI18n } from "@/i18n";
 import { useSessionModels } from "./useSessionModels";
 import { useSessionHistory } from "./useSessionHistory";
+import { useChatViewport } from "./useChatViewport";
 import { sessionClientErrorMessage } from "@/lib/session-error-message";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
 
@@ -118,26 +103,12 @@ export interface UseAgentSessionOptions {
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-const PROGRAMMATIC_SCROLL_IGNORE_MS = 700;
-const USER_SCROLL_INTENT_MS = 1200;
-
-/** Near-bottom check that ignores the full-viewport run spacer. */
-function isNearBottomExcludingSpacer(container: HTMLElement): boolean {
-  const spacer = container.querySelector<HTMLElement>("[data-run-spacer]");
-  return isNearChatBottom({
-    scrollTop: container.scrollTop,
-    scrollHeight: container.scrollHeight,
-    clientHeight: container.clientHeight,
-    spacerHeight: spacer ? spacer.offsetHeight : 0,
-  });
-}
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
 const AGENT_STATE_RECONCILE_MS = 15_000;
 const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
 const NOTICE_EXIT_ANIMATION_MS = 180;
-const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Space", "Spacebar"]);
 
 class EventStreamConnectionError extends Error {
   constructor(public readonly status: Exclude<EventStreamConnectionStatus, "connected">) {
@@ -297,10 +268,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
-  // True when the chat viewport has scrolled away from the bottom; drives the
-  // floating "scroll to bottom" affordance in ChatWindow.
-  const [isAwayFromBottom, setIsAwayFromBottom] = useState(false);
-
   const eventUnsubRef = useRef<(() => void) | null>(null);
   const [eventConnectionManager] = useState(() => new EventStreamConnectionManager(eventUnsubRef));
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
@@ -312,53 +279,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     dispatchTurn({ type: "running", running });
   }, []);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
-  const initialScrollDoneRef = useRef(false);
-  const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
-  const pendingScrollToUserRef = useRef(false);
-  const pendingHistoryPrependRef = useRef(false);
-  const completionScrollAllowedRef = useRef(true);
-  const userScrollIntentUntilRef = useRef(0);
-  const ignoreProgrammaticScrollUntilRef = useRef(0);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const liveContentEndRef = useRef<HTMLDivElement | null>(null);
-  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const lastScrollTopRef = useRef(0);
-  const touchStartClientYRef = useRef<number | null>(null);
-  const externalTurnAutoFollowRef = useRef(false);
-  // Set when the user explicitly re-attaches the viewport to the newest
-  // content (clicks "scroll to bottom"); live-follow then stays engaged until
-  // the user scrolls away again or the run ends.
-  // Restored from the module flag so the magnet survives session switches that
-  // remount ChatWindow (key={sessionKey}).
-  const autoFollowMagnetRef = useRef(getScrollMagnetEngaged());
-  const sessionChangeIgnoreScrollUntilRef = useRef(0);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
   const externalTurnRunIdRef = useRef<string | null>(null);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
-  const capturePrependAnchor = useCallback(() => {
-    pendingHistoryPrependRef.current = true;
-    const element = scrollContainerRef.current;
-    if (!element) return;
-    const height = element.scrollHeight;
-    const top = element.scrollTop;
-    const run = promptRunIdRef.current;
-    const userIntent = userScrollIntentUntilRef.current;
-    const localJumpPending = pendingScrollToUserRef.current;
-    return () => {
-      if (
-        scrollContainerRef.current !== element ||
-        promptRunIdRef.current !== run ||
-        localJumpPending ||
-        pendingScrollToUserRef.current ||
-        userScrollIntentUntilRef.current !== userIntent
-      )
-        return;
-      ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
-      element.scrollTop = top + element.scrollHeight - height;
-    };
-  }, []);
+  const prependAnchorRef = useRef<ReturnType<typeof useChatViewport>["capturePrependAnchor"] | null>(null);
+  const capturePrependAnchor = useCallback(() => prependAnchorRef.current?.(), []);
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
 
   const applySessionSnapshot = useCallback(
@@ -408,6 +335,30 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     invalidateHistory,
     beginNavigation,
   } = useSessionHistory({ isNew, sessionIdRef, capturePrependAnchor, onSessionLoaded: applySessionSnapshot });
+  const viewport = useChatViewport({
+    agentRunning,
+    agentRunningRef,
+    agentPhase,
+    streamState,
+    messageCount: messages.length,
+    loading,
+  });
+  prependAnchorRef.current = viewport.capturePrependAnchor;
+  const {
+    isAwayFromBottom,
+    reattachAutoFollow,
+    beginLocalTurn,
+    beginExternalTurn,
+    endExternalTurn,
+    prepareSessionChange,
+    restoreFollowAfterLoad,
+    messagesEndRef,
+    liveContentEndRef,
+    scrollContainerRef,
+    lastUserMsgRef,
+    pendingScrollToUserRef,
+    initialScrollDoneRef,
+  } = viewport;
 
   const currentModel = currentModelOverride ?? data?.context.model ?? pendingModel ?? null;
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
@@ -733,18 +684,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       switch (event.type) {
         case "channel_turn_start": {
           externalTurnRunIdRef.current = typeof event.runId === "string" ? event.runId : null;
-          const container = scrollContainerRef.current;
-          const shouldFollow = container ? isNearBottomExcludingSpacer(container) : true;
-          externalTurnAutoFollowRef.current = shouldFollow;
-          completionScrollAllowedRef.current = shouldFollow;
-          if (container) lastScrollTopRef.current = container.scrollTop;
+          beginExternalTurn();
           break;
         }
         case "channel_turn_end":
         case "channel_turn_error": {
           if (externalTurnRunIdRef.current !== event.runId) break;
           externalTurnRunIdRef.current = null;
-          externalTurnAutoFollowRef.current = false;
+          endExternalTurn();
           if (agentRunningRef.current) void finishPromptWithoutStream(sessionIdRef.current);
           break;
         }
@@ -812,7 +759,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           break;
       }
     },
-    [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, t, updateHistory],
+    [
+      addNotice,
+      beginExternalTurn,
+      endExternalTurn,
+      finishPromptWithoutStream,
+      handleExtensionUiRequest,
+      loadSession,
+      t,
+      updateHistory,
+    ],
   );
   handleAgentEventRef.current = handleAgentEvent;
 
@@ -841,8 +797,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       externalTurnRunIdRef.current = null;
       agentRunningRef.current = true;
       dispatchTurn({ type: "start", phase: isSlashCommandPrompt ? "running_command" : "waiting_model" });
-      pendingScrollToUserRef.current = true;
-      completionScrollAllowedRef.current = true;
+      beginLocalTurn();
 
       const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
 
@@ -922,6 +877,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     },
     [
       isNew,
+      beginLocalTurn,
       newSessionCwd,
       newSessionModel,
       newSessionDefaultModel,
@@ -1325,168 +1281,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     [setToolPresetState],
   );
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
-    // Prefer the live-content end anchor. When the agent is running there is
-    // a full-viewport spacer below it (see ChatWindow), and messagesEndRef
-    // sits AFTER that spacer — scrolling to it lands in blank footer space
-    // with the real content still above the fold.
-    const el = agentRunningRef.current ? liveContentEndRef.current : messagesEndRef.current;
-    el?.scrollIntoView({ behavior, block: "end" });
-  }, []);
-
-  const scrollLiveContentToBottom = useCallback(() => {
-    ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
-    liveContentEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
-  }, []);
-
-  const scrollUserMsgToTop = useCallback(() => {
-    const container = scrollContainerRef.current;
-    const el = lastUserMsgRef.current;
-    if (!container || !el) return;
-    const elAbsTop = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
-    ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
-    container.scrollTo({ top: elAbsTop - 16, behavior: "smooth" });
-  }, []);
-
-  const updateScrollPresence = useCallback(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const nearBottom = isNearBottomExcludingSpacer(container);
-    // Bail out of re-renders when the value is unchanged.
-    setIsAwayFromBottom((prev) => (prev === !nearBottom ? prev : !nearBottom));
-  }, []);
-
-  // "Scroll to bottom": snap to the end and re-magnet the viewport so the next
-  // streaming ticks keep following until the user scrolls away again.
-  const reattachAutoFollow = useCallback(() => {
-    completionScrollAllowedRef.current = true;
-    externalTurnAutoFollowRef.current = false;
-    autoFollowMagnetRef.current = true;
-    setScrollMagnetEngaged(true);
-    pendingScrollToUserRef.current = false;
-    initialScrollDoneRef.current = true;
-    userScrollIntentUntilRef.current = 0;
-    scrollToBottom("auto");
-  }, [scrollToBottom]);
-
-  const disengageAutoFollowForExplicitUpwardGesture = useCallback(() => {
-    completionScrollAllowedRef.current = false;
-    externalTurnAutoFollowRef.current = false;
-    autoFollowMagnetRef.current = false;
-    setScrollMagnetEngaged(false);
-  }, []);
-
-  const markUserScrollIntent = useCallback(
-    (event: Event) => {
-      if (event instanceof KeyboardEvent) {
-        if (!SCROLL_KEYS.has(event.key)) return;
-        if (
-          event.target instanceof Element &&
-          event.target.closest("input, textarea, [contenteditable]:not([contenteditable='false'])")
-        )
-          return;
-      }
-      const container = scrollContainerRef.current;
-      if (container) lastScrollTopRef.current = container.scrollTop;
-      userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
-
-      // Explicit upward gestures release the follow magnet immediately. Waiting
-      // for scroll-position deltas loses during streaming: every follow frame
-      // refreshes the programmatic-scroll guard, so a small user scroll-up gets
-      // swallowed and the view snaps back down.
-      const isUpwardGesture =
-        (event instanceof WheelEvent && event.deltaY < 0 && !event.ctrlKey) || // ctrl+wheel = pinch-zoom, not scroll
-        (event instanceof KeyboardEvent && isUpwardScrollKey(event.key));
-      if (isUpwardGesture) disengageAutoFollowForExplicitUpwardGesture();
-    },
-    [disengageAutoFollowForExplicitUpwardGesture],
-  );
-
-  const handleTouchStart = useCallback(
-    (event: TouchEvent) => {
-      touchStartClientYRef.current = event.touches[0]?.clientY ?? null;
-      markUserScrollIntent(event);
-    },
-    [markUserScrollIntent],
-  );
-
-  const handleTouchMove = useCallback(
-    (event: TouchEvent) => {
-      const currentClientY = event.touches[0]?.clientY;
-      if (currentClientY === undefined || !isUpwardTouchGesture(touchStartClientYRef.current, currentClientY)) return;
-      markUserScrollIntent(event);
-      disengageAutoFollowForExplicitUpwardGesture();
-      touchStartClientYRef.current = currentClientY;
-    },
-    [disengageAutoFollowForExplicitUpwardGesture, markUserScrollIntent],
-  );
-
-  const handleTouchEnd = useCallback(() => {
-    touchStartClientYRef.current = null;
-  }, []);
-
-  const handleScrollPositionChange = useCallback(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const previousScrollTop = lastScrollTopRef.current;
-    const currentScrollTop = container.scrollTop;
-    lastScrollTopRef.current = currentScrollTop;
-    updateScrollPresence();
-    if (!agentRunningRef.current) {
-      // Idle upward movement normally disengages the magnet so the next run
-      // does not unexpectedly resume auto-follow. During session transitions,
-      // the policy filters synthetic movement but still accepts explicit user
-      // input. Scrolling back to the bottom re-engages the magnet.
-      const now = Date.now();
-      if (
-        shouldDisengageScrollMagnet({
-          previousScrollTop,
-          currentScrollTop,
-          now,
-          userIntentUntil: userScrollIntentUntilRef.current,
-          sessionChangeIgnoreUntil: sessionChangeIgnoreScrollUntilRef.current,
-        })
-      ) {
-        autoFollowMagnetRef.current = false;
-        setScrollMagnetEngaged(false);
-      } else if (now >= sessionChangeIgnoreScrollUntilRef.current && isNearBottomExcludingSpacer(container)) {
-        autoFollowMagnetRef.current = true;
-        setScrollMagnetEngaged(true);
-      }
-      return;
-    }
-    const now = Date.now();
-    // Local prompts deliberately move the user's message to the top; retain
-    // the old programmatic-scroll guard for that path. During external
-    // auto-follow, explicit upward input must win even while follow frames are
-    // producing their own scroll events.
-    if (
-      shouldStopChatAutoFollow({
-        previousScrollTop,
-        currentScrollTop,
-        now,
-        userIntentUntil: userScrollIntentUntilRef.current,
-        programmaticScrollUntil: ignoreProgrammaticScrollUntilRef.current,
-        externalAutoFollow: externalTurnAutoFollowRef.current,
-      })
-    ) {
-      completionScrollAllowedRef.current = false;
-      externalTurnAutoFollowRef.current = false;
-      // shouldStopChatAutoFollow only accepts explicit user intent, so it must
-      // win even while a session-transition guard is active.
-      autoFollowMagnetRef.current = false;
-      setScrollMagnetEngaged(false);
-    }
-  }, [updateScrollPresence]);
-
   // Load session on mount
   useEffect(() => {
     let disposed = false;
     let unsubscribeLiveSync: (() => void) | undefined;
     resetHistory();
     if (session) {
-      sessionChangeIgnoreScrollUntilRef.current = Date.now() + 1500;
+      prepareSessionChange();
       sessionIdRef.current = session.id;
 
       // Subscribe even when the session is currently idle. IM turns can start
@@ -1514,20 +1315,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
       void loadSession(session.id, true, true, true).then((agentState) => {
         if (disposed) return;
-        // When the magnet was engaged before switching sessions, scroll to
-        // the very last message after messages load; otherwise the viewport
-        // may show empty footer space while the real content sits above.
-        // Defer via rAF and re-check: the message list can render in multiple
-        // frames, so scroll target should be the live-content end (not the
-        // spacer after it).
-        if (autoFollowMagnetRef.current) {
-          const trySnap = () => {
-            const el = agentRunningRef.current ? liveContentEndRef.current : messagesEndRef.current;
-            if (el) el.scrollIntoView({ behavior: "auto", block: "end" });
-          };
-          requestAnimationFrame(trySnap);
-          requestAnimationFrame(() => requestAnimationFrame(trySnap));
-        }
+        restoreFollowAfterLoad();
         if (agentState?.running) {
           void loadTools(session.id);
           if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
@@ -1574,103 +1362,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (!onBranchDataChange) return;
     onBranchDataChange(data?.tree ?? [], activeLeafId, handleLeafChangeFromUi);
   }, [data?.tree, activeLeafId, handleLeafChangeFromUi, onBranchDataChange]);
-
-  useEffect(() => {
-    window.addEventListener("keydown", markUserScrollIntent);
-    window.addEventListener("pointerdown", markUserScrollIntent, { passive: true });
-    return () => {
-      window.removeEventListener("keydown", markUserScrollIntent);
-      window.removeEventListener("pointerdown", markUserScrollIntent);
-    };
-  }, [markUserScrollIntent]);
-
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    container.addEventListener("wheel", markUserScrollIntent, { passive: true });
-    container.addEventListener("touchstart", handleTouchStart, { passive: true });
-    container.addEventListener("touchmove", handleTouchMove, { passive: true });
-    container.addEventListener("touchend", handleTouchEnd, { passive: true });
-    container.addEventListener("touchcancel", handleTouchEnd, { passive: true });
-    container.addEventListener("scroll", handleScrollPositionChange, { passive: true });
-    return () => {
-      container.removeEventListener("wheel", markUserScrollIntent);
-      container.removeEventListener("touchstart", handleTouchStart);
-      container.removeEventListener("touchmove", handleTouchMove);
-      container.removeEventListener("touchend", handleTouchEnd);
-      container.removeEventListener("touchcancel", handleTouchEnd);
-      container.removeEventListener("scroll", handleScrollPositionChange);
-    };
-  }, [
-    messages.length,
-    loading,
-    handleScrollPositionChange,
-    markUserScrollIntent,
-    handleTouchStart,
-    handleTouchMove,
-    handleTouchEnd,
-  ]);
-
-  useEffect(() => {
-    if (messages.length > 0) {
-      const prepended = pendingHistoryPrependRef.current;
-      pendingHistoryPrependRef.current = false;
-      if (pendingScrollToUserRef.current) {
-        pendingScrollToUserRef.current = false;
-        initialScrollDoneRef.current = true;
-        scrollUserMsgToTop();
-      } else if (prepended && initialScrollDoneRef.current) {
-        // A prepend has its own viewport anchor; completion-follow would undo it.
-        return;
-      } else if (!initialScrollDoneRef.current) {
-        initialScrollDoneRef.current = true;
-        scrollToBottom("instant");
-      } else if (!agentRunningRef.current && completionScrollAllowedRef.current) {
-        scrollToBottom("smooth");
-      }
-    }
-  }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
-
-  useEffect(() => {
-    if (!agentRunning || !completionScrollAllowedRef.current) return;
-    if (!externalTurnAutoFollowRef.current && !autoFollowMagnetRef.current) return;
-    const frame = requestAnimationFrame(() => {
-      if (!completionScrollAllowedRef.current) return;
-      if (!externalTurnAutoFollowRef.current && !autoFollowMagnetRef.current) return;
-      if (Date.now() <= userScrollIntentUntilRef.current) return;
-      scrollLiveContentToBottom();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [
-    agentRunning,
-    agentPhase,
-    messages.length,
-    isAwayFromBottom,
-    scrollLiveContentToBottom,
-    streamState.streamingMessage,
-  ]);
-
-  // Keep "away from bottom" fresh when the viewport or message layout changes.
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const ro = new ResizeObserver(() => updateScrollPresence());
-    ro.observe(container);
-    // scrollHeight can change without resizing the viewport (for example when
-    // an image loads or process details expand), so observe the content too.
-    const content = liveContentEndRef.current?.parentElement;
-    if (content) ro.observe(content);
-    updateScrollPresence();
-    return () => ro.disconnect();
-  }, [loading, messages.length, updateScrollPresence]);
-
-  // Content can grow without firing a scroll event (the streaming tail makes
-  // the container taller while scrollTop stays put) — re-evaluate presence
-  // after messages/streaming change.
-  useEffect(() => {
-    const t = setTimeout(updateScrollPresence, 30);
-    return () => clearTimeout(t);
-  }, [messages.length, streamState.isStreaming, streamState.streamingMessage, updateScrollPresence]);
 
   // Compact error auto-dismiss
   useEffect(() => {
