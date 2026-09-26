@@ -4,6 +4,8 @@ import ts from "typescript";
 
 const LOCALIZED_OWNER_SUFFIXES = [
   "components/SessionSidebar.tsx",
+  "components/sidebar/SessionTree.tsx",
+  "components/sidebar/PiAgentTitle.tsx",
   "components/FileViewer.tsx",
   "components/FileExplorer.tsx",
   "components/BranchNavigator.tsx",

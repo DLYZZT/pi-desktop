@@ -150,6 +150,18 @@ test("model hook extraction preserves the localized-notification boundary", (t) 
   );
 });
 
+test("extracted sidebar components retain the visible-copy boundary", (t) => {
+  for (const componentPath of ["components/sidebar/SessionTree.tsx", "components/sidebar/PiAgentTitle.tsx"]) {
+    const entry = fixture(
+      'export const view = <button aria-label="Delete session">Delete session</button>;',
+      "export const enUS = {}; export const zhCN = {};",
+      componentPath,
+    );
+    t.after(entry.cleanup);
+    assert.match(checkRendererI18n(entry.options).failures.join("\n"), /visible English JSX literal: Delete session/);
+  }
+});
+
 test("history hook extraction preserves localized load errors", (t) => {
   const entry = fixture(
     'setError("History unavailable");',

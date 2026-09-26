@@ -331,6 +331,39 @@ test("rename commits typed id/name and relies on the index event without another
   assert.ok(fixture.renderer.root.find((node) => node.props["aria-label"] === "Session actions for Renamed"));
 });
 
+test("session tree expansion survives index updates and row menus close with Escape", async (t) => {
+  const fixture = await mount(t, { sidebar: true });
+  const child = { ...session("child", "Child"), parentSessionId: "parent" };
+  await fixture.reply(0, response([session("parent", "Parent"), child]));
+  const button = (label) =>
+    fixture.renderer.root.find((node) => node.type === "button" && node.props["aria-label"] === label);
+  assert.ok(button("Session actions for Child"));
+  await fixture.click("Collapse forks");
+  await fixture.change({ cwd: "/project", session: { ...child, name: "Updated child" } });
+  assert.equal(
+    fixture.renderer.root.findAll((node) => node.props["aria-label"] === "Session actions for Updated child").length,
+    0,
+  );
+  await fixture.click("Expand forks");
+  assert.ok(button("Session actions for Updated child"));
+  await fixture.click("Session actions for Updated child");
+  assert.equal(button("Session actions for Updated child").props["aria-expanded"], true);
+  let prevented = false;
+  await act(async () =>
+    button("Session actions for Updated child").parent.props.onKeyDown({
+      key: "Escape",
+      preventDefault() {
+        prevented = true;
+      },
+    }),
+  );
+  assert.equal(prevented, true);
+  assert.equal(button("Session actions for Updated child").props["aria-expanded"], false);
+  assert.equal(fixture.renderer.root.findAll((node) => node.props.role === "menu").length, 0);
+  assert.equal(fixture.requests.length, 1);
+  assert.equal(fixture.mutations.length, 0);
+});
+
 test("delete retains running guards and backend conflicts without issuing an implicit force", async (t) => {
   const fixture = await mount(t, { sidebar: true });
   await fixture.reply(0, response([session("one")]));
