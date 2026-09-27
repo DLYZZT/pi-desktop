@@ -107,3 +107,30 @@ test("failed installation can retry and one bad release does not prevent other c
   assert.equal(broken.calls.closed, 1);
   assert.equal(valid.calls.closed, 1);
 });
+
+test("bindings batch updates but flush completion immediately and cancel a retired source", () => {
+  const emitted = [];
+  const timers = new Set();
+  const options = {
+    now: () => 0,
+    schedule: (callback) => {
+      timers.add(callback);
+      return () => timers.delete(callback);
+    },
+  };
+  const registry = createSessionEventBindings({ emit: (...args) => emitted.push(args[2]) }, () => {}, options);
+  const first = source();
+  registry.ensure(first.instance, "session");
+  for (let i = 0; i < 100; i++) first.emit({ type: "message_update", message: { content: String(i) } });
+  assert.equal(emitted.length, 1);
+  first.emit({ type: "prompt_done" });
+  assert.deepEqual(
+    emitted.map((event) => event.type),
+    ["message_update", "message_update", "prompt_done"],
+  );
+  assert.equal(emitted[1].message.content, "99");
+  first.emit({ type: "message_update", message: { content: "retired" } });
+  registry.ensure(source().instance, "session");
+  assert.equal(timers.size, 0);
+  registry.close();
+});

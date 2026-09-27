@@ -146,7 +146,7 @@ function QueuedMessageRow({ kind, text }: { kind: "steer" | "follow-up"; text: s
   );
 }
 
-export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
+const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput(
   {
     onSend,
     onAbort,
@@ -200,6 +200,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const openAttachmentPicker = useCallback(() => fileInputRef.current?.click(), []);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
   const slashCommandsRequestedRef = useRef(false);
@@ -351,9 +352,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const hasInputText = Boolean(value.trim());
   const canQueueStreamingMessage = hasInputText || attachedFiles.length > 0 || attachedImages.length > 0;
 
-  // ── @ file autocomplete ──────────────────────────────────────────────────
-  // Recomputed from the text before the caret on every change/caret move.
-  // Disabled entirely when there is no cwd (new session without a directory).
   const updateAtQuery = useCallback(
     (text: string, cursor: number | null) => {
       if (!cwd) {
@@ -1538,9 +1536,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
           }}
           isMobile={isMobile}
           hasAttachments={attachedImages.length > 0 || attachedFiles.length > 0}
-          onAttach={() => fileInputRef.current?.click()}
+          onAttach={openAttachmentPicker}
         />
       </div>
     </div>
   );
 });
+
+export const ChatInput = React.memo(ChatInputComponent);

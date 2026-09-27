@@ -5,8 +5,12 @@ import { createElement } from "react";
 import { act, create } from "react-test-renderer";
 import { importTestBundle } from "#test-bundle";
 
-const { ComposerToolbar } = await importTestBundle("composer-toolbar", {
-  entryPoints: [path.join(import.meta.dirname, "ComposerToolbar.tsx")],
+const { ComposerToolbar, toolbarRenders } = await importTestBundle("composer-toolbar", {
+  stdin: {
+    contents: 'export { ComposerToolbar } from "./ComposerToolbar.tsx"; export { toolbarRenders } from "@/i18n";',
+    resolveDir: import.meta.dirname,
+    loader: "ts",
+  },
   tsconfig: path.join(import.meta.dirname, "../../../../tsconfig.renderer.json"),
   external: ["react"],
   plugins: [
@@ -18,7 +22,7 @@ const { ComposerToolbar } = await importTestBundle("composer-toolbar", {
           contents:
             path === "react-dom"
               ? "export const createPortal = (children) => children;"
-              : "const t=(_key,fallback)=>fallback; export const useI18n=()=>({t});",
+              : "export const toolbarRenders={count:0}; const t=(_key,fallback)=>fallback; export const useI18n=()=>{toolbarRenders.count++;return {t};};",
         }));
       },
     },
@@ -85,12 +89,13 @@ async function mount(t) {
     onToolPresetChange: (preset) => actions.push(["permission", preset]),
     onAbort: () => actions.push(["stop"]),
   };
+  const onAttach = () => actions.push(["attach"]);
   const element = () =>
     createElement(ComposerToolbar, {
       options,
       isMobile: false,
       hasAttachments: false,
-      onAttach: () => actions.push(["attach"]),
+      onAttach,
     });
   const unmount = async () => {
     if (renderer) await act(async () => renderer.unmount());
@@ -202,4 +207,13 @@ test("control menus are exclusive, restore focus on selection or Escape and clos
   );
   await f.clickText("Stop");
   assert.deepEqual(f.actions.at(-1), ["stop"]);
+});
+
+test("equivalent toolbar options skip rendering without hiding real control changes", async (t) => {
+  const fixture = await mount(t);
+  const before = toolbarRenders.count;
+  await fixture.update({});
+  assert.equal(toolbarRenders.count, before);
+  await fixture.update({ thinkingLevel: "high" });
+  assert.equal(toolbarRenders.count, before + 1);
 });

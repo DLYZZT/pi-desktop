@@ -1,5 +1,6 @@
 import {
   createContext,
+  memo,
   useContext,
   useEffect,
   useMemo,
@@ -51,7 +52,7 @@ function MarkdownCode({ className, children, node: _node, ...props }: MarkdownCo
     if (lang === "mermaid") {
       return <MermaidBlock code={raw.replace(/\n$/, "")} isStreaming={isStreaming} />;
     }
-    return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} />;
+    return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} />;
   }
   return (
     <code className="markdown-inline-code" {...props}>
@@ -161,7 +162,7 @@ const fileAwareUrlTransform: UrlTransform = (url, key, node) => {
   return (defaultUrlTransform as UrlTransform)(url, key, node);
 };
 
-export function MarkdownBody({
+export const MarkdownBody = memo(function MarkdownBody({
   children,
   className,
   isStreaming,
@@ -170,7 +171,12 @@ export function MarkdownBody({
   sourceSessionId,
   onOpenFile,
 }: MarkdownBodyProps) {
-  const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
+  // Bound synchronous parsing while content grows; settlement renders the original source in full.
+  const lightweightPreview = isStreaming && children.length > 2048;
+  const normalizedMarkdown = useMemo(
+    () => (lightweightPreview ? "" : normalizeDisplayMath(children)),
+    [children, lightweightPreview],
+  );
   const renderContext = useMemo(
     () => ({ isStreaming, cwd, imageBasePath, sourceSessionId, onOpenFile }),
     [cwd, imageBasePath, isStreaming, onOpenFile, sourceSessionId],
@@ -180,19 +186,25 @@ export function MarkdownBody({
     <SessionProfiler id="MarkdownBody">
       <MarkdownRenderContext.Provider value={renderContext}>
         <div className={["markdown-body", className].filter(Boolean).join(" ")}>
-          <ReactMarkdown
-            remarkPlugins={markdownRemarkPlugins}
-            rehypePlugins={markdownRehypePlugins}
-            urlTransform={fileAwareUrlTransform}
-            components={markdownComponents}
-          >
-            {normalizedMarkdown}
-          </ReactMarkdown>
+          {lightweightPreview ? (
+            <div data-streaming-preview style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+              {children}
+            </div>
+          ) : (
+            <ReactMarkdown
+              remarkPlugins={markdownRemarkPlugins}
+              rehypePlugins={markdownRehypePlugins}
+              urlTransform={fileAwareUrlTransform}
+              components={markdownComponents}
+            >
+              {normalizedMarkdown}
+            </ReactMarkdown>
+          )}
         </div>
       </MarkdownRenderContext.Provider>
     </SessionProfiler>
   );
-}
+});
 
 export function getMarkdownComponentIdentityForTest(): Components {
   return markdownComponents;
@@ -345,7 +357,7 @@ function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boole
   );
 
   if (!showPreview || isStreaming) {
-    return <CodeBlock code={code} lang="mermaid" headerAction={previewButton} />;
+    return <CodeBlock code={code} lang="mermaid" headerAction={previewButton} isStreaming={isStreaming} />;
   }
 
   const body =
@@ -368,7 +380,17 @@ function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boole
   );
 }
 
-function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; headerAction?: ReactNode }) {
+const CodeBlock = memo(function CodeBlock({
+  code,
+  lang,
+  headerAction,
+  isStreaming,
+}: {
+  code: string;
+  lang: string;
+  headerAction?: ReactNode;
+  isStreaming?: boolean;
+}) {
   const { isDark } = useTheme();
   const { copied, copy } = useCopyFeedback();
 
@@ -383,7 +405,7 @@ function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; h
           </button>
         </div>
       </div>
-      {shouldHighlightCode(code) ? (
+      {!isStreaming && shouldHighlightCode(code) ? (
         <SyntaxHighlighter
           language={lang || "text"}
           style={isDark ? vscDarkPlus : vs}
@@ -419,4 +441,4 @@ function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; h
       )}
     </div>
   );
-}
+});

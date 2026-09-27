@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
-import { createElement, useState } from "react";
+import { createElement, useCallback, useState } from "react";
 import { act, create } from "react-test-renderer";
 import { importTestBundle } from "#test-bundle";
 import { RpcError } from "../../contract/types.ts";
@@ -120,13 +120,14 @@ async function mount(t, { existing = false, running = false } = {}) {
   let current, renderer;
   function Harness() {
     const [session, setSession] = useState(existing ? { id: initialId, cwd } : null);
+    const onSessionCreated = useCallback((next) => {
+      promotions.push(next);
+      setSession(next);
+    }, []);
     current = useAgentSession({
       session,
       newSessionCwd: session ? null : cwd,
-      onSessionCreated(next) {
-        promotions.push(next);
-        setSession(next);
-      },
+      onSessionCreated,
     });
     return createElement(ChatInput, {
       cwd,
@@ -292,6 +293,37 @@ test("new-session promotion carries the live draft to the persistent session key
   await f.unmount();
   assert.equal(JSON.parse(f.values.get("pi-desktop-draft:promoted-with-draft")).value, "next draft");
   assert.equal(f.values.has(`pi-desktop-draft:new:${f.cwd}`), false);
+});
+
+test("streaming updates do not rerender an unchanged composer", async (t) => {
+  const forwarded = ChatInput.type ?? ChatInput;
+  const original = forwarded.render;
+  let renders = 0;
+  let previousProps;
+  const changes = [];
+  forwarded.render = (...args) => {
+    renders++;
+    if (previousProps) changes.push(Object.keys(args[0]).filter((key) => args[0][key] !== previousProps[key]));
+    previousProps = args[0];
+    return original(...args);
+  };
+  t.after(() => {
+    forwarded.render = original;
+  });
+  const f = await mount(t, { existing: true, running: true });
+  const before = renders;
+  for (let i = 0; i < 20; i++) {
+    await act(async () =>
+      f.current.handleAgentEventRef.current({
+        type: "message_update",
+        message: { role: "assistant", content: [{ type: "text", text: "stream ".repeat(i + 1) }] },
+      }),
+    );
+  }
+  assert.equal(renders, before, JSON.stringify(changes.slice(before)));
+  await f.type("draft typed while streaming");
+  assert.equal(f.value(), "draft typed while streaming");
+  assert.ok(renders > before);
 });
 
 test("restored idle sessions use persisted tools without starting an Agent command", async (t) => {

@@ -1,4 +1,5 @@
 import type { RpcServer } from "../contract/rpc";
+import { SessionEventBatcher, type SessionEventBatchOptions } from "./session-event-batcher.ts";
 
 export interface SessionEventSource {
   sessionId: string;
@@ -11,6 +12,7 @@ type Binding = {
   active: boolean;
   eventOff?: () => void;
   destroyOff?: () => void;
+  discardPending?: () => void;
 };
 
 /** One registry owns subscriptions for one Host RPC server lifetime. */
@@ -23,6 +25,7 @@ export function createSessionEventBindings(
       /* best effort */
     }
   },
+  batchOptions: SessionEventBatchOptions = {},
 ) {
   const byId = new Map<string, Binding>(),
     bySource = new WeakMap<object, Binding>();
@@ -39,6 +42,7 @@ export function createSessionEventBindings(
     binding.active = false;
     if (byId.get(binding.id) === binding) byId.delete(binding.id);
     if (bySource.get(binding.source) === binding) bySource.delete(binding.source);
+    release(binding.discardPending);
     release(binding.eventOff);
     release(binding.destroyOff);
   };
@@ -56,11 +60,13 @@ export function createSessionEventBindings(
       byId.set(id, binding);
       bySource.set(source, binding);
       try {
-        const eventOff = source.onEvent((event) => {
+        const batcher = new SessionEventBatcher((event) => {
           if (!binding.active || byId.get(id) !== binding) return;
           server.emit("agent.events", id, event as never);
           if (event.type === "agent_end") notifyEnd(id);
-        });
+        }, batchOptions);
+        binding.discardPending = () => batcher.dispose();
+        const eventOff = source.onEvent((event) => batcher.push(event));
         if (binding.active) binding.eventOff = eventOff;
         else release(eventOff);
         const destroyOff = source.onDestroy?.(() => retire(binding));

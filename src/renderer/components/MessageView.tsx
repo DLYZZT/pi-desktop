@@ -863,7 +863,7 @@ function AssistantMessageView({
             key={originalIndex}
             block={block}
             toolResults={toolResults}
-            isStreaming={isStreaming}
+            isStreaming={isStreaming && originalIndex === blockItems.at(-1)?.originalIndex}
             streamingDuration={
               streamingDurations.get(originalIndex) ??
               (block.type === "thinking" ? thinkingDurationFromFile : undefined)

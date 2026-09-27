@@ -21,7 +21,7 @@ const { MarkdownBody } = await importTestBundle("markdown-body-math", {
         build.onLoad({ filter: /.*/, namespace: "test-highlighter" }, () => ({
           resolveDir: import.meta.dirname,
           contents:
-            'import { createElement } from "react"; export const SyntaxHighlighter = ({ children }) => createElement("pre", null, children); export const vs = {}; export const vscDarkPlus = {};',
+            'import { createElement } from "react"; export const SyntaxHighlighter = ({ children }) => createElement("pre", {"data-highlighted":true}, children); export const vs = {}; export const vscDarkPlus = {};',
         }));
       },
     },
@@ -49,6 +49,27 @@ Line one<br>Line two
 $$x = 2！$$
 
 Final paragraph.`;
+
+test("long streaming text uses a cheap escaped preview and restores complete Markdown at settlement", () => {
+  const source = followingMarkdown.repeat(20) + "\n<script>unsafe()</script>";
+  const preview = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: true }, source));
+  assert.match(preview, /data-streaming-preview/);
+  assert.doesNotMatch(preview, /<table>|<script>|class="katex/);
+  assert.match(preview, /&lt;script&gt;/);
+  const settled = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: false }, source));
+  assertFollowingMarkdown(settled);
+  assert.match(settled, /class="katex/);
+  assert.doesNotMatch(settled, /data-streaming-preview|<script>/);
+});
+
+test("small streaming code stays readable without highlighting and highlights once complete", () => {
+  const code = "```typescript\nconst answer = 42;\n```";
+  const preview = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: true }, code));
+  assert.match(preview, /const answer = 42;/);
+  assert.doesNotMatch(preview, /data-highlighted/);
+  const settled = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: false }, code));
+  assert.match(settled, /data-highlighted/);
+});
 
 function assertFollowingMarkdown(html) {
   assert.match(html, /<h3>Following heading<\/h3>/);

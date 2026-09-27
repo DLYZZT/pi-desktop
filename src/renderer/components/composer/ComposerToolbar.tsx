@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ModelCatalogStatus } from "@contract/types";
 import { useI18n } from "@/i18n";
@@ -55,7 +55,7 @@ function compareModelOptions(a: ModelOption, b: ModelOption): number {
 const THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
 /** Local menu placement, dismissal and focus ownership for the composer controls. */
-export function ComposerToolbar({
+function ComposerToolbarView({
   options,
   isMobile,
   hasAttachments,
@@ -1087,3 +1087,17 @@ export function ComposerToolbar({
     </div>
   );
 }
+
+export const ComposerToolbar = memo(ComposerToolbarView, (previous, next) => {
+  if (
+    previous.isMobile !== next.isMobile ||
+    previous.hasAttachments !== next.hasAttachments ||
+    previous.onAttach !== next.onAttach
+  )
+    return false;
+  const keys = Object.keys(previous.options) as (keyof ComposerToolbarOptions)[];
+  return (
+    keys.length === Object.keys(next.options).length &&
+    keys.every((key) => Object.is(previous.options[key], next.options[key]))
+  );
+});
