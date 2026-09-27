@@ -31,20 +31,20 @@ const { ChatInput, useAgentSession, api } = await importTestBundle("composer-ses
       const t = (_key, fallback) => fallback; export const useI18n = () => ({t, language:'en-US'});
     `
               : `
-      export const requests = [], streams = [];
+      export const requests = [], streams = [], toolReadRequests = [];
       let cwd, running;
-      export function reset(directory, active) {requests.length = streams.length = 0; cwd=directory; running=active;}
+      export function reset(directory, active) {requests.length = streams.length = toolReadRequests.length = 0; cwd=directory; running=active;}
       function pending(method, params, commandType) {
         return new Promise((resolve,reject) => requests.push({method,params,commandType,resolve,reject,settled:false}));
       }
       export const newAgent = params => pending('agent.new', params, 'ensure_session');
       export async function agentCommand(sessionId, command) {
-        if(command.type === 'get_tools')return [];
+        if(command.type === 'get_tools'){toolReadRequests.push(sessionId);return [];}
         if(command.type === 'get_commands')return {commands:[]};
         return pending('agent.command', {sessionId,command}, command.type);
       }
       export const agentState = async () => ({running, state:{isStreaming:running, isPromptRunning:running}});
-      export const getSession = async (id) => ({sessionId:id,info:{id,cwd,firstMessage:'fixture',messageCount:0},tree:[],leafId:null,
+      export const getSession = async (id) => ({sessionId:id,toolNames:[],info:{id,cwd,firstMessage:'fixture',messageCount:0},tree:[],leafId:null,
         context:{messages:[],entryIds:[],model:null,thinkingLevel:'off',historyRevision:'fixture',totalMessages:0,loadedMessages:0,truncatedBefore:false},agentState:await agentState()});
       export const listModels = async () => ({models:[],catalog:{source:'cache',refreshed:false,aborted:false,warnings:[]}});
       export async function subscribeAgentEvents(key, on) {const stream={key,on,closed:0}; streams.push(stream); return()=>stream.closed++;}
@@ -294,10 +294,17 @@ test("new-session promotion carries the live draft to the persistent session key
   assert.equal(f.values.has(`pi-desktop-draft:new:${f.cwd}`), false);
 });
 
-test("restored sessions reconcile the actual tool list even when idle", async (t) => {
+test("restored idle sessions use persisted tools without starting an Agent command", async (t) => {
   const f = await mount(t, { existing: true });
   assert.equal(f.current.agentRunning, false);
   assert.equal(f.current.toolPreset, "none");
+  assert.deepEqual(api.toolReadRequests, []);
+});
+
+test("restored running sessions still query the active tool list", async (t) => {
+  const f = await mount(t, { existing: true, running: true });
+  assert.equal(f.current.agentRunning, true);
+  assert.equal(api.toolReadRequests.length, 1);
 });
 
 for (const mode of ["steer", "follow_up", "queued-prompt"])
