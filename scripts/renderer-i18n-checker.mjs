@@ -17,6 +17,7 @@ const LOCALIZED_OWNER_SUFFIXES = [
   "hooks/useSessionModels.ts",
   "hooks/useSessionHistory.ts",
   "hooks/useSessionExtensionUi.ts",
+  "hooks/useComposerDraft.ts",
 ];
 const VISIBLE_ATTRIBUTE_NAMES = new Set(["title", "aria-label", "aria-valuetext", "placeholder", "alt"]);
 const LOCALIZED_DICTIONARIES = [{ name: "zhCN", tag: "zh-CN" }];
@@ -72,9 +73,13 @@ export function checkRendererI18n({
     }
     if (
       localizedOwner &&
-      ["useAgentSession.ts", "useSessionModels.ts", "useSessionHistory.ts", "useSessionExtensionUi.ts"].some((name) =>
-        file.endsWith(`${path.sep}hooks${path.sep}${name}`),
-      )
+      [
+        "useAgentSession.ts",
+        "useSessionModels.ts",
+        "useSessionHistory.ts",
+        "useSessionExtensionUi.ts",
+        "useComposerDraft.ts",
+      ].some((name) => file.endsWith(`${path.sep}hooks${path.sep}${name}`))
     ) {
       checkSessionUserFacingSinks({ failures, root, file, source });
     }
@@ -286,7 +291,10 @@ function checkSessionUserFacingSinks({ failures, root, file, source }) {
       }
       return;
     }
-    if (["setError", "setCompactError"].includes(callee) && ts.isStringLiteralLike(node.arguments[0])) {
+    if (
+      ["setError", "setCompactError", "setSubmissionNotice", "setImageAttachNotice"].includes(callee) &&
+      ts.isStringLiteralLike(node.arguments[0])
+    ) {
       failures.push(
         `${relative(root, file)}:${lineOf(source, node)} hardcoded session error: ${node.arguments[0].text}`,
       );

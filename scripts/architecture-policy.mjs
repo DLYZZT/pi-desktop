@@ -8,9 +8,9 @@ export const architecturePolicy = {
   lineLimit: 1200,
   budgets: {
     "src/renderer/components/ChatInput.tsx": {
-      maxLines: 3059,
+      maxLines: 2690,
       reason:
-        "Explicit draft-ID handoff fixes proven data loss before draft/attachment extraction in 22-08; the increase is limited to that handoff.",
+        "Draft state, attachment resources and persistence now have one hook owner; submission and composer presentation remain for 22-08.",
     },
     "src/main/browser/browser-tab-manager.ts": {
       maxLines: 1840,

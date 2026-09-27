@@ -70,13 +70,14 @@ test("oversized screenshots are compressed before they enter the draft", async (
   assert.deepEqual(result.images, [{ data: "YQ==", mimeType: "image/jpeg", previewUrl: "blob:shot" }]);
 });
 
-test("ChatInput preserves successes, reports failures, and owns pending previews", () => {
-  const source = fs.readFileSync(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
+test("composer draft ownership preserves successes, reports failures, and owns pending previews", () => {
+  const source = fs.readFileSync(new URL("../hooks/useComposerDraft.ts", import.meta.url), "utf8");
+  const input = fs.readFileSync(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
 
   assert.match(source, /const \{ images, failures \} = await processImageFileBatch\(imageFiles\)/);
   assert.match(source, /selectDraftImageAdditions\(attachedImagesRef\.current, images\)/);
   assert.match(source, /selection\.rejected\.forEach\(\(\{ image \}\) => revokeImagePreview\(image\)\)/);
-  assert.match(source, /role="alert"/);
+  assert.match(input, /role="alert"/);
   assert.match(
     source,
     /selection\.accepted\.forEach\(\(image\) => pendingImagePreviewsRef\.current\.add\(image\.previewUrl\)\)/,

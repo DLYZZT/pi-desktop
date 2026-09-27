@@ -185,6 +185,18 @@ test("extension UI hook retains the localized notification boundary", (t) => {
   );
 });
 
+test("composer draft notices remain localized after extraction", (t) => {
+  const entry = fixture(
+    'setSubmissionNotice("Send failed"); setImageAttachNotice("Image failed");',
+    "export const enUS = {}; export const zhCN = {};",
+    "hooks/useComposerDraft.ts",
+  );
+  t.after(entry.cleanup);
+  const failures = checkRendererI18n(entry.options).failures.join("\n");
+  assert.match(failures, /hardcoded session error: Send failed/);
+  assert.match(failures, /hardcoded session error: Image failed/);
+});
+
 test("rejects dynamic calls, fallback drift, missing and duplicate entries, orphan keys, and placeholder mismatch", () => {
   const entry = fixture(
     `
