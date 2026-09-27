@@ -159,3 +159,29 @@ test("draft controller reports persistence failures", () => {
   assert.equal(controller.clear("two"), false);
   assert.deepEqual(errors, ["one", "two"]);
 });
+
+test("draft promotion clears the temporary owner only after the destination commits", () => {
+  for (const succeeds of [false, true]) {
+    const persisted = new Map([["temporary", { value: "live draft", images: [] }]]);
+    const staged = new Map();
+    const events = [];
+    const controller = new DraftPersistenceController(500, {
+      stage: (key, draft) => staged.set(key, draft),
+      flush(key) {
+        events.push(`flush:${key}`);
+        if (!succeeds) return false;
+        persisted.set(key, staged.get(key));
+      },
+      clear(key) {
+        events.push(`clear:${key}`);
+        persisted.delete(key);
+      },
+      setTimer: () => 1,
+      clearTimer() {},
+    });
+    assert.equal(controller.promote("temporary", "session", persisted.get("temporary")), succeeds);
+    assert.equal(persisted.has("temporary"), !succeeds);
+    assert.equal(persisted.has("session"), succeeds);
+    assert.deepEqual(events, succeeds ? ["flush:session", "clear:temporary"] : ["flush:session"]);
+  }
+});

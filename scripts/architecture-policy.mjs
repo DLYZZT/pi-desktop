@@ -8,9 +8,9 @@ export const architecturePolicy = {
   lineLimit: 1200,
   budgets: {
     "src/renderer/components/ChatInput.tsx": {
-      maxLines: 3046,
+      maxLines: 3059,
       reason:
-        "File candidate reads/cache have a dedicated hook; attachment, submission and composer UI remain for 22-08.",
+        "Explicit draft-ID handoff fixes proven data loss before draft/attachment extraction in 22-08; the increase is limited to that handoff.",
     },
     "src/main/browser/browser-tab-manager.ts": {
       maxLines: 1840,
@@ -56,8 +56,8 @@ export const architecturePolicy = {
       reason: "Existing Browser service and authorization routing; 22-06 changes must preserve its contracts.",
     },
     "src/renderer/components/ChatWindow.tsx": {
-      maxLines: 1449,
-      reason: "Existing chat presentation after metadata callbacks were removed; keep a fixed ceiling.",
+      maxLines: 1452,
+      reason: "Chat presentation and the explicit temporary draft owner retained across new-session promotion.",
     },
     "src/renderer/hooks/useAgentSession.ts": {
       maxLines: 1420,

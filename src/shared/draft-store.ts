@@ -266,6 +266,12 @@ export class DraftPersistenceController {
     return this.flushKey(key);
   }
 
+  /** Transfer a live new-session draft only after its destination is durable. */
+  promote(previousKey: string, key: string, draft: ChatDraft): boolean {
+    if (!this.commit(key, draft)) return false;
+    return previousKey === key || this.clear(previousKey);
+  }
+
   clear(key: string): boolean {
     if (this.pendingKey === key) {
       this.cancelTimer();

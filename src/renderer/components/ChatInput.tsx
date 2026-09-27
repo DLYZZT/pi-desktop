@@ -100,6 +100,8 @@ interface Props {
   onSoundToggle?: () => void;
   onAudioUnlock?: () => void;
   draftKey?: string;
+  /** Explicit temporary owner to carry forward when this view receives its real session ID. */
+  draftPromotionFrom?: string;
   /** Session working directory — enables the @ file autocomplete menu */
   cwd?: string | null;
 }
@@ -294,6 +296,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     onAudioUnlock,
     onPromptWithStreamingBehavior,
     draftKey,
+    draftPromotionFrom,
     cwd,
   }: Props,
   ref,
@@ -641,6 +644,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const previousDraftKey = draftKeyRef.current;
     if (previousDraftKey === draftKey) return;
 
+    if (draftKey && previousDraftKey && previousDraftKey === draftPromotionFrom) {
+      draftPersistenceRef.current?.promote(previousDraftKey, draftKey, {
+        value: valueRef.current,
+        images: attachedImagesRef.current.map(imageToDraftImage),
+        files: attachedFilesRef.current,
+      });
+      draftKeyRef.current = draftKey;
+      return;
+    }
+
     if (previousDraftKey) {
       draftPersistenceRef.current?.commit(previousDraftKey, {
         value: valueRef.current,
@@ -658,7 +671,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       return draft?.images.map(draftImageToAttachedImage) ?? [];
     });
     setAttachedFiles(draft?.files?.map((file) => ({ ...file })) ?? []);
-  }, [draftKey, setAttachedFiles, setAttachedImages, setValue]);
+  }, [draftKey, draftPromotionFrom, setAttachedFiles, setAttachedImages, setValue]);
 
   useEffect(() => {
     const ta = textareaRef.current;

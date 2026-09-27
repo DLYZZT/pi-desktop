@@ -193,6 +193,8 @@ export function ChatWindow({
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
   const { t } = useI18n();
+  // Promotion keeps this view mounted; selecting another session remounts it.
+  const [draftPromotionFrom] = useState(() => (!session && newSessionCwd ? `new:${newSessionCwd}` : undefined));
   const messageRenderKeys = useRef(new MessageRenderKeyRegistry()).current;
   const assistantRenderParts = useRef(new WeakMap<AssistantMessage, AssistantRenderParts>()).current;
 
@@ -383,6 +385,7 @@ export function ChatWindow({
       onSoundToggle={onSoundToggle}
       onAudioUnlock={unlockAudio}
       draftKey={session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined)}
+      draftPromotionFrom={session ? draftPromotionFrom : undefined}
       cwd={session?.cwd ?? newSessionCwd}
     />
   );
