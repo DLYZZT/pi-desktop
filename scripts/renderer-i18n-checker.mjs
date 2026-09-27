@@ -6,6 +6,8 @@ const LOCALIZED_OWNER_SUFFIXES = [
   "components/SessionSidebar.tsx",
   "components/sidebar/SessionTree.tsx",
   "components/sidebar/PiAgentTitle.tsx",
+  "components/sidebar/ProjectPicker.tsx",
+  "components/sidebar/WorktreePicker.tsx",
   "components/FileViewer.tsx",
   "components/FileExplorer.tsx",
   "components/BranchNavigator.tsx",

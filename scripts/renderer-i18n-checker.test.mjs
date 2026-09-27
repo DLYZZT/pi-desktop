@@ -241,3 +241,15 @@ test("rejects dynamic calls, fallback drift, missing and duplicate entries, orph
     entry.cleanup();
   }
 });
+
+for (const picker of ["ProjectPicker", "WorktreePicker"]) {
+  test(`${picker} retains the localized visible-text boundary`, (t) => {
+    const entry = fixture(
+      '<button title="Untranslated action">Untranslated label</button>',
+      "export const enUS = {}; export const zhCN = {};",
+      `components/sidebar/${picker}.tsx`,
+    );
+    t.after(entry.cleanup);
+    assert.match(checkRendererI18n(entry.options).failures.join("\n"), /visible English JSX literal: Untranslated/);
+  });
+}

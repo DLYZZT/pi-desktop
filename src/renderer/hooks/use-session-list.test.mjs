@@ -38,8 +38,8 @@ const { useSessionList, SessionSidebar, testApi } = await importTestBundle("sess
       `
               : `
         export const subscriptions = [], running = [], lists = [], requests = [];
-        let installation, runningInstallation;
-        export function reset(next, runningNext) {subscriptions.length = running.length = lists.length = requests.length = 0; installation = next; runningInstallation = runningNext;}
+        let installation, runningInstallation, worktrees;
+        export function reset(next, runningNext, worktreeResponse) { worktrees = worktreeResponse;subscriptions.length = running.length = lists.length = requests.length = 0; installation = next; runningInstallation = runningNext;}
         function pending(list, method, params) {let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});list.push({method,params,resolve,reject});return promise;}
         export function listSessions() {return pending(lists, 'sessions.list');}
         export async function subscribeRunning(on) {const entry={on,closed:0};running.push(entry);if(runningInstallation) await runningInstallation;return()=>entry.closed++;}
@@ -50,6 +50,7 @@ const { useSessionList, SessionSidebar, testApi } = await importTestBundle("sess
         }
         export async function call(method, params) {
           if(method === 'system.home') return {home:'/fixture'};
+          if(method === 'worktrees.list' && worktrees) return worktrees(params.projectRoot);
           if(method === 'worktrees.list') return {projectRoot: params.projectRoot, isGit: false, isTopLevel: true, worktrees: []};
           return pending(requests,method,params);
         }
@@ -73,8 +74,8 @@ const session = (id, name = id) => ({
 });
 const response = (sessions, runningSessionIds = []) => ({ sessions, runningSessionIds });
 
-async function mount(t, { sidebar = false, installation, runningInstallation, storedUnread = [] } = {}) {
-  testApi.reset(installation, runningInstallation);
+async function mount(t, { sidebar = false, installation, runningInstallation, storedUnread = [], worktrees } = {}) {
+  testApi.reset(installation, runningInstallation, worktrees);
   const previous = new Map(
     ["window", "document", "EventSource"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
   );
@@ -84,6 +85,7 @@ async function mount(t, { sidebar = false, installation, runningInstallation, st
     mutations = testApi.requests;
   const alerts = [],
     selectedDirectories = [],
+    selectedProjects = [],
     directoryChoices = [];
   globalThis.window = {
     alert: (message) => alerts.push(message),
@@ -113,7 +115,10 @@ async function mount(t, { sidebar = false, installation, runningInstallation, st
   const deleted = [];
   const onSessionDeleted = (id) => deleted.push(id);
   const onSelectSession = () => {};
-  const onCwdChange = (cwd) => selectedDirectories.push(cwd);
+  const onCwdChange = (cwd, projectRoot) => {
+    selectedDirectories.push(cwd);
+    selectedProjects.push(projectRoot);
+  };
   function Probe() {
     current = useSessionList();
     return sidebar
@@ -154,6 +159,7 @@ async function mount(t, { sidebar = false, installation, runningInstallation, st
     storage,
     alerts,
     selectedDirectories,
+    selectedProjects,
     directoryChoices,
     mutations,
     unmount,
@@ -173,10 +179,10 @@ async function mount(t, { sidebar = false, installation, runningInstallation, st
       req.settled = true;
       await act(async () => req.resolve(data));
     },
-    async failRpc(method, code, message) {
+    async failRpc(method, code, message, detail) {
       const req = this.next(method);
       req.settled = true;
-      await act(async () => req.reject(new RpcError({ code, message })));
+      await act(async () => req.reject(new RpcError({ code, message, detail })));
     },
     async click(label) {
       const text = (node) => (typeof node === "string" ? node : (node.children?.map(text).join("") ?? ""));
@@ -386,4 +392,44 @@ test("delete retains running guards and backend conflicts without issuing an imp
   await fixture.replyRpc("sessions.delete", { ok: true });
   await fixture.change({ cwd: "/project", sessionId: "one", deleted: true });
   assert.deepEqual(fixture.deleted, ["one"]);
+});
+
+test("worktree creation keeps project identity and dirty removal requires the explicit force action", async (t) => {
+  let entries = [{ path: "/project", branch: "main", isMain: true }];
+  const fixture = await mount(t, {
+    sidebar: true,
+    worktrees: () => ({ projectRoot: "/project", isGit: true, isTopLevel: true, worktrees: entries }),
+  });
+  await fixture.reply(0, response([session("one")]));
+  await fixture.click("Switch worktree: /project");
+  await fixture.click("New worktree…");
+  const input = fixture.renderer.root.find((node) => node.type === "input" && node.props.placeholder === "branch name");
+  await act(async () => input.props.onChange({ target: { value: "feature" } }));
+  await fixture.click("Create");
+  assert.deepEqual(fixture.next("worktrees.create").params, {
+    projectRoot: "/project",
+    cwd: "/project",
+    branch: "feature",
+  });
+  entries = [...entries, { path: "/project-feature", branch: "feature", isMain: false }];
+  await fixture.replyRpc("worktrees.create", { worktree: entries[1] });
+  assert.equal(fixture.selectedDirectories.at(-1), "/project-feature");
+  assert.equal(fixture.selectedProjects.at(-1), "/project");
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /Session actions for one/);
+  await fixture.click("Switch worktree: /project-feature");
+  await fixture.click("Remove worktree checkout /project-feature; the branch is kept");
+  assert.deepEqual(fixture.next("worktrees.remove").params, {
+    cwd: "/project",
+    path: "/project-feature",
+    force: false,
+  });
+  await fixture.failRpc("worktrees.remove", "CONFLICT", "Dirty checkout", { dirty: true });
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /Uncommitted changes. Force remove checkout/);
+  assert.equal(fixture.mutations.filter((request) => request.method === "worktrees.remove").length, 1);
+  await fixture.click("Force");
+  assert.equal(fixture.next("worktrees.remove").params.force, true);
+  entries = entries.slice(0, 1);
+  await fixture.replyRpc("worktrees.remove", { ok: true });
+  assert.equal(fixture.selectedDirectories.at(-1), "/project");
+  assert.equal(fixture.selectedProjects.at(-1), "/project");
 });

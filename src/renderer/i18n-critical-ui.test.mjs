@@ -5,7 +5,7 @@ import { enUS, zhCN } from "./i18n-dictionaries.ts";
 
 const owners = {
   session: readFileSync(new URL("./components/sidebar/SessionTree.tsx", import.meta.url), "utf8"),
-  workspace: readFileSync(new URL("./components/SessionSidebar.tsx", import.meta.url), "utf8"),
+  workspace: readFileSync(new URL("./components/sidebar/WorktreePicker.tsx", import.meta.url), "utf8"),
   models: readFileSync(new URL("./components/ModelsConfig.tsx", import.meta.url), "utf8"),
   channels: readFileSync(new URL("./components/channels/ChannelsConfig.tsx", import.meta.url), "utf8"),
   updates: readFileSync(new URL("./components/SettingsConfig.tsx", import.meta.url), "utf8"),
