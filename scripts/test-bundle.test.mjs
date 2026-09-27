@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -37,19 +37,19 @@ test("rejects output overrides and identifies legacy per-test bundling", async (
   assert.deepEqual(findLegacyTestBundleUsage('import { importTestBundle } from "#test-bundle";'), []);
 });
 
-test("repository policy reports every legacy bundle owner", () => {
+test("repository policy reports every legacy bundle owner", (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi test bundle policy "));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const files = new Map([
     ["src/direct.test.mjs", 'import { build } from "esbuild";'],
     ["src/artifact.test.mjs", 'const output = ".artifacts/test-modules/test.mjs";'],
   ]);
+  mkdirSync(path.join(root, "src"));
+  for (const [file, source] of files) writeFileSync(path.join(root, file), source);
   assert.throws(
-    () =>
-      assertNoLegacyTestBundleUsage("/fixture", {
-        globSync: () => [...files.keys()],
-        readFileSync: (file) => files.get(file.replace("/fixture/", "")),
-      }),
+    () => assertNoLegacyTestBundleUsage(root),
     (error) =>
-      error.message.includes("src/direct.test.mjs: direct esbuild import") &&
-      error.message.includes("src/artifact.test.mjs: repository test-modules output"),
+      error.message.replaceAll("\\", "/").includes("src/direct.test.mjs: direct esbuild import") &&
+      error.message.replaceAll("\\", "/").includes("src/artifact.test.mjs: repository test-modules output"),
   );
 });

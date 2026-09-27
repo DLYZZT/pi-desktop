@@ -14,12 +14,14 @@ test("open command envelopes retain extension fields while rejecting missing or 
   assert.equal(isAgentCommand({ type: "prompt", message: "/extension-command argument" }), true);
 });
 
-test("builtin command parameters and inferred results are checked while the raw endpoint stays open", () => {
-  const root = path.resolve(import.meta.dirname, "../..");
-  const config = ts.readConfigFile(path.join(root, "tsconfig.renderer.json"), ts.sys.readFile);
-  const { options } = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
-  const filename = path.join(root, "src/renderer/lib/__agent-command-type-fixture.ts");
-  const source = `
+for (const separator of ["/", "\\"])
+  test(`builtin command types remain checked with ${separator === "/" ? "forward-slash" : "backslash"} fixture paths`, () => {
+    const root = path.resolve(import.meta.dirname, "../..");
+    const config = ts.readConfigFile(path.join(root, "tsconfig.renderer.json"), ts.sys.readFile);
+    const { options } = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
+    const filename = path.join(root, "src/renderer/lib/__agent-command-type-fixture.ts");
+    const virtualFilename = filename.replace(/[\\/]/g, separator);
+    const source = `
     import { sendAgentCommand } from './agent-client';
     import { agentCommand } from './api-client';
     async function verify() {
@@ -49,21 +51,30 @@ test("builtin command parameters and inferred results are checked while the raw 
       raw.text;
     }
   `;
-  const host = ts.createCompilerHost(options);
-  const originalGetSourceFile = host.getSourceFile.bind(host);
-  host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) =>
-    file === filename
-      ? ts.createSourceFile(file, source, languageVersion, true)
-      : originalGetSourceFile(file, languageVersion, onError, shouldCreateNewSourceFile);
-  const program = ts.createProgram([filename, path.join(root, "src/renderer/global.d.ts")], options, host);
-  const diagnostics = ts.getPreEmitDiagnostics(program);
-  assert.equal(
-    diagnostics.length,
-    0,
-    ts.formatDiagnosticsWithColorAndContext(diagnostics, {
-      getCanonicalFileName: (file) => file,
-      getCurrentDirectory: () => root,
-      getNewLine: () => "\n",
-    }),
-  );
-});
+    const host = ts.createCompilerHost(options);
+    // TypeScript normalizes source filenames to forward slashes on every platform.
+    const canonical = (file) => host.getCanonicalFileName(file.replaceAll("\\", "/"));
+    const fixtureKey = canonical(virtualFilename);
+    const isFixture = (file) => canonical(file) === fixtureKey;
+    const originalFileExists = host.fileExists.bind(host);
+    const originalReadFile = host.readFile.bind(host);
+    const originalGetSourceFile = host.getSourceFile.bind(host);
+    host.fileExists = (file) => isFixture(file) || originalFileExists(file);
+    host.readFile = (file) => (isFixture(file) ? source : originalReadFile(file));
+    host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) =>
+      isFixture(file)
+        ? ts.createSourceFile(file, source, languageVersion, true)
+        : originalGetSourceFile(file, languageVersion, onError, shouldCreateNewSourceFile);
+    const program = ts.createProgram([filename, path.join(root, "src/renderer/global.d.ts")], options, host);
+    assert.ok(program.getSourceFile(filename), "the virtual fixture must be included in type checking");
+    const diagnostics = ts.getPreEmitDiagnostics(program);
+    assert.equal(
+      diagnostics.length,
+      0,
+      ts.formatDiagnosticsWithColorAndContext(diagnostics, {
+        getCanonicalFileName: (file) => file,
+        getCurrentDirectory: () => root,
+        getNewLine: () => "\n",
+      }),
+    );
+  });
