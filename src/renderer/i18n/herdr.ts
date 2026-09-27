@@ -1,5 +1,8 @@
 // Translation entries owned by the herdr domain.
 export const enUS: Record<string, string> = {
+  herdrResultNotSaved: "The original output was not saved in history.",
+  herdrFailedResultNotSaved: "The tool call failed. The original output was not saved in history.",
+  herdrFailedResultCodeNotSaved: "The tool call failed ({code}). The original output was not saved in history.",
   agentFleet: "Agent Fleet",
   agentFleetShort: "Fleet",
   allStates: "All states",
@@ -108,6 +111,9 @@ export const enUS: Record<string, string> = {
 };
 
 export const zhCN: Record<string, string> = {
+  herdrResultNotSaved: "原始输出未保存到历史记录。",
+  herdrFailedResultNotSaved: "工具调用失败，原始输出未保存到历史记录。",
+  herdrFailedResultCodeNotSaved: "工具调用失败（{code}），原始输出未保存到历史记录。",
   agentFleet: "Agent 舰队",
   agentFleetShort: "舰队",
   allStates: "全部状态",
@@ -212,6 +218,9 @@ export const zhCN: Record<string, string> = {
 };
 
 export const zhTW: Record<string, string> = {
+  herdrResultNotSaved: "原始輸出未儲存至歷史紀錄。",
+  herdrFailedResultNotSaved: "工具呼叫失敗，原始輸出未儲存至歷史紀錄。",
+  herdrFailedResultCodeNotSaved: "工具呼叫失敗（{code}），原始輸出未儲存至歷史紀錄。",
   agentFleet: "Agent 艦隊",
   agentFleetShort: "艦隊",
   allStates: "全部狀態",
