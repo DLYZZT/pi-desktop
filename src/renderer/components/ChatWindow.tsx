@@ -27,7 +27,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useObservedElementHeight } from "@/hooks/useObservedElementHeight";
 import type { SessionPresentationStore } from "@/lib/session-presentation-store";
 import { MessageRenderKeyRegistry, type MessageRenderRole } from "@/lib/message-render-key";
-import { buildToolMessageIndex } from "@/lib/tool-message-index";
+import { ToolMessageIndex } from "@/lib/tool-message-index";
 import { useI18n } from "@/i18n";
 import type { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
@@ -198,10 +198,7 @@ export function ChatWindow({
   const messageRenderKeys = useRef(new MessageRenderKeyRegistry()).current;
   const assistantRenderParts = useRef(new WeakMap<AssistantMessage, AssistantRenderParts>()).current;
 
-  // Wrap onAgentEnd to play the completion sound. This is more reliable than
-  // wrapping handleAgentEventRef because useAgentSession overwrites that ref
-  // on every render (it syncs the latest callback), which would blow away an
-  // externally-installed wrapper after the first re-render.
+  // Keep completion audio on the current callback; event-handler refs change each render.
   const playDoneSoundRef = useRef(playDoneSound);
   playDoneSoundRef.current = playDoneSound;
   const soundEnabledRef = useRef(soundEnabled);
@@ -305,7 +302,8 @@ export function ChatWindow({
     () => (streamState.streamingMessage ? toMinimapMessage(streamState.streamingMessage) : null),
     [streamState.streamingMessage],
   );
-  const toolMessageIndex = useMemo(() => buildToolMessageIndex(messages), [messages]);
+  const [toolIndex] = useState(() => new ToolMessageIndex());
+  const toolMessageIndex = useMemo(() => toolIndex.build(messages), [messages, toolIndex]);
   const insertEditedContent = useCallback(
     (content: string) => chatInputRef?.current?.insertIfEmpty(content),
     [chatInputRef],

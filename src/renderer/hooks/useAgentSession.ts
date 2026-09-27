@@ -158,12 +158,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const [runtimeGate] = useState(() => new SessionRuntimeGate());
+  const agentRunningRef = useRef(false);
   const loadSessionRef = useRef<((sid: string) => Promise<unknown>) | null>(null);
-  const { ensureEventsConnected, eventUnsubRef, handleAgentEventRef, isActive, getViewSignal } = useSessionEvents({
+  const {
+    ensureEventsConnected,
+    eventUnsubRef,
+    handleAgentEventRef,
+    isActive,
+    getViewSignal,
+    cancelPendingSessionRefresh,
+  } = useSessionEvents({
     sessionIdRef,
-    onSessionChanged: (sid) => {
-      void loadSessionRef.current?.(sid);
-    },
+    onSessionChanged: (sid) => loadSessionRef.current?.(sid),
+    sessionRefreshDelay: () => (agentRunningRef.current ? 1000 : 0),
   });
   const {
     extensionDialog,
@@ -232,7 +239,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     cancelModelRefresh,
   } = useSessionModels({ isNew, cwd: newSessionCwd ?? session?.cwd, refreshKey: modelsRefreshKey, addNotice });
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
-  const agentRunningRef = useRef(false);
   // Preserve the existing imperative handle while publishing render state through the reducer.
   const setAgentRunning = useCallback((value: boolean | ((running: boolean) => boolean)) => {
     const running = typeof value === "function" ? value(agentRunningRef.current) : value;
@@ -472,6 +478,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         (runId === undefined || promptRunIdRef.current === runId);
       if (!ownsRun()) return;
       try {
+        cancelPendingSessionRefresh();
         if (sid) await loadSession(sid, false, true, false, ownsRun);
       } finally {
         if (!ownsRun()) return;
@@ -483,7 +490,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         onAgentEnd?.();
       }
     },
-    [isActive, loadSession, onAgentEnd, runtimeGate],
+    [isActive, loadSession, onAgentEnd, runtimeGate, cancelPendingSessionRefresh],
   );
 
   const waitForPromptSettlement = useCallback(

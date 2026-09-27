@@ -55,10 +55,11 @@ const { useAgentSession, testApi, SessionPresentationStore } = await importTestB
             return await result;
           }
           export const newAgent = (params) => sendAgentCommand(null, params);
-          export function resetCommands() { pendingCommands.clear(); commands.length = connections.length = 0; }
+          export let historyReads = 0;
+          export function resetCommands() { pendingCommands.clear(); commands.length = connections.length = historyReads = 0; }
           let detail, page;
           export function setHistory(nextDetail, nextPage) { detail = nextDetail; page = nextPage; }
-          export async function getSession() { if (!detail) throw new Error("unexpected detail read"); return detail; }
+          export async function getSession() { historyReads++; if (!detail) throw new Error("unexpected detail read"); return detail; }
           export async function getSessionContextPage() { if (!page) throw new Error("unexpected page read"); return page; }
           const unexpected = async () => { throw new Error("unexpected session IO"); };
           export { unexpected as getSessionContext,
@@ -526,6 +527,27 @@ test("an idle reconciliation read cannot override events received while it was i
   assert.equal(fixture.current.isCompacting, true);
   assert.deepEqual(fixture.current.queuedMessages.steering, ["keep"]);
   assert.equal(fixture.completions, 0);
+});
+
+test("running views coalesce persisted changes and prompt completion immediately reconciles the final history", async (t) => {
+  const fixture = await mountRuntime(t, runtimeDetail({ running: true, state: { isStreaming: true } }));
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const initialReads = testApi.historyReads;
+  const message = { role: "assistant", content: [{ type: "text", text: "persisted" }] };
+  testApi.setHistory(runtimeDetail({ running: false }, [message]), undefined);
+  await act(async () => {
+    for (let i = 0; i < 100; i++) testApi.emitChanges({ sessionId: "fixture" });
+  });
+  assert.equal(testApi.historyReads, initialReads);
+  await act(async () => t.mock.timers.tick(1000));
+  assert.equal(testApi.historyReads, initialReads + 1);
+  assert.deepEqual(fixture.current.messages, [message]);
+  await act(async () => testApi.emitChanges({ sessionId: "fixture" }));
+  await fixture.emit({ type: "prompt_done" });
+  assert.equal(testApi.historyReads, initialReads + 2);
+  assert.equal(fixture.current.agentRunning, false);
+  await act(async () => t.mock.timers.tick(1000));
+  assert.equal(testApi.historyReads, initialReads + 2, "completion cancels the pending redundant read");
 });
 
 for (const action of ["recall", "stats", "tools"]) {

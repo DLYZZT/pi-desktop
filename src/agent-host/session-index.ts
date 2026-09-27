@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { readSessionSnapshot } from "./session-readonly.ts";
-import type { SessionEntry, SessionInfo } from "../shared/types";
+import { getSessionContentSnapshot } from "./session-content-cache.ts";
+import type { SessionInfo } from "../shared/types";
 import { buildSessionInfoFromManager } from "./session-reader";
 import { getProjectCacheRevision, resolveProject } from "../shared/worktree";
 
@@ -138,8 +138,7 @@ export class SessionIndex {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const before = attempt === 0 ? currentFingerprint : fingerprint(filePath);
       try {
-        const manager = readSessionSnapshot(filePath);
-        const entries = manager.getEntries() as unknown as SessionEntry[];
+        const { manager, entries } = getSessionContentSnapshot(filePath);
         const header = manager.getHeader();
         const info = await buildSessionInfoFromManager(filePath, manager, entries, { resolveProjectInfo });
         const after = fingerprint(filePath);

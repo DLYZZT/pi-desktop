@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { AgentEvent } from "@contract/types";
 import { subscribeAgentEvents, subscribeSessionsChanged } from "@/lib/api-client";
+import { SessionRefreshQueue } from "@/lib/session-refresh-queue";
 import {
   connectTimedEventStream,
   EventStreamConnectionManager,
@@ -21,15 +22,21 @@ export class EventStreamConnectionError extends Error {
 export function useSessionEvents({
   sessionIdRef,
   onSessionChanged,
+  sessionRefreshDelay,
 }: {
   sessionIdRef: RefObject<string | null>;
-  onSessionChanged: (sessionId: string) => void;
+  onSessionChanged: (sessionId: string) => unknown | Promise<unknown>;
+  sessionRefreshDelay?: () => number;
 }) {
   const eventUnsubRef = useRef<(() => void) | null>(null);
   const changesUnsubRef = useRef<(() => void) | null>(null);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
   const onSessionChangedRef = useRef(onSessionChanged);
   onSessionChangedRef.current = onSessionChanged;
+  const delayRef = useRef(sessionRefreshDelay);
+  delayRef.current = sessionRefreshDelay;
+  const refreshQueueRef = useRef<SessionRefreshQueue | null>(null);
+  const cancelPendingSessionRefresh = useCallback(() => refreshQueueRef.current?.cancel(), []);
   const [events] = useState(() => new EventStreamConnectionManager(eventUnsubRef));
   const [changes] = useState(() => new EventStreamConnectionManager(changesUnsubRef));
   const lifetimeRef = useRef(new AbortController());
@@ -67,6 +74,11 @@ export function useSessionEvents({
   useEffect(() => {
     const lifetime = new AbortController();
     lifetimeRef.current = lifetime;
+    const refreshQueue = new SessionRefreshQueue(() => {
+      const current = sessionIdRef.current;
+      if (current && !lifetime.signal.aborted) return onSessionChangedRef.current(current);
+    });
+    refreshQueueRef.current = refreshQueue;
     const report = (label: string) => (result: EventStreamConnectionResult) => {
       if (!lifetime.signal.aborted && result.status !== "connected") {
         console.error(`Failed to subscribe to ${label}:`, new EventStreamConnectionError(result.status));
@@ -85,7 +97,7 @@ export function useSessionEvents({
       onEvent: (event) => {
         const current = sessionIdRef.current;
         if (current && (event.sessionId === current || event.fullRefresh === true)) {
-          onSessionChangedRef.current(current);
+          refreshQueue.request(event.deleted || event.fullRefresh ? 0 : (delayRef.current?.() ?? 0));
         }
       },
       timeoutMs: EVENT_STREAM_CONNECT_TIMEOUT_MS,
@@ -93,10 +105,20 @@ export function useSessionEvents({
 
     return () => {
       lifetime.abort();
+      refreshQueue.dispose();
+      if (refreshQueueRef.current === refreshQueue) refreshQueueRef.current = null;
       events.invalidate();
       changes.invalidate();
     };
   }, [changes, connectEvents, events, sessionIdRef]);
 
-  return { connectEvents, ensureEventsConnected, eventUnsubRef, handleAgentEventRef, isActive, getViewSignal };
+  return {
+    connectEvents,
+    ensureEventsConnected,
+    eventUnsubRef,
+    handleAgentEventRef,
+    isActive,
+    getViewSignal,
+    cancelPendingSessionRefresh,
+  };
 }

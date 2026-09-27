@@ -10,7 +10,23 @@ const EMPTY_TOOL_DATA: ToolMessageData = {
   durations: new Map(),
 };
 
-export function buildToolMessageIndex(messages: AgentMessage[]): ReadonlyMap<AgentMessage, ToolMessageData> {
+function sameEntries<T>(left: ReadonlyMap<string, T>, right: ReadonlyMap<string, T>): boolean {
+  return left.size === right.size && [...left].every(([id, value]) => right.has(id) && right.get(id) === value);
+}
+
+export class ToolMessageIndex {
+  private previous: ReadonlyMap<AgentMessage, ToolMessageData> = new Map();
+
+  build(messages: AgentMessage[]): ReadonlyMap<AgentMessage, ToolMessageData> {
+    this.previous = buildToolMessageIndex(messages, this.previous);
+    return this.previous;
+  }
+}
+
+export function buildToolMessageIndex(
+  messages: AgentMessage[],
+  previous?: ReadonlyMap<AgentMessage, ToolMessageData>,
+): ReadonlyMap<AgentMessage, ToolMessageData> {
   const resultsById = new Map<string, ToolResultMessage>();
   for (const message of messages) {
     if (message.role === "toolResult") resultsById.set(message.toolCallId, message as ToolResultMessage);
@@ -33,7 +49,15 @@ export function buildToolMessageIndex(messages: AgentMessage[]): ReadonlyMap<Age
         if (seconds > 0) durations.set(callId, seconds);
       }
     }
-    byMessage.set(message, results.size > 0 ? { results, durations } : EMPTY_TOOL_DATA);
+    const cached = previous?.get(message);
+    byMessage.set(
+      message,
+      results.size === 0
+        ? EMPTY_TOOL_DATA
+        : cached && sameEntries(cached.results, results) && sameEntries(cached.durations, durations)
+          ? cached
+          : { results, durations },
+    );
   }
   return byMessage;
 }

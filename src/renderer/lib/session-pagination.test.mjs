@@ -54,3 +54,36 @@ test("prepend deduplicates entries and rejects stale revisions", () => {
   assert.equal(prepended.previousCursor, "older");
   assert.equal(prependHistoryPage(current, page("stale", ["one"])), null);
 });
+
+test("unchanged tail messages retain identity while a corrected message is replaced", () => {
+  const first = { role: "assistant", content: [{ type: "text", text: "cached markdown" }], usage: { output: 7 } };
+  const second = { role: "toolResult", content: [{ type: "text", text: "old result" }], toolCallId: "call" };
+  const current = { messages: [first, second], entryIds: ["first", "second"], revision: "same", previousCursor: null };
+  const unchanged = { ...page("same", current.entryIds), messages: structuredClone(current.messages) };
+  assert.equal(mergeHistoryTail(current, unchanged), current);
+  unchanged.messages[1].content[0].text = "corrected result";
+  const corrected = mergeHistoryTail(current, unchanged);
+  assert.equal(corrected.messages[0], first);
+  assert.notEqual(corrected.messages[1], second);
+  assert.equal(corrected.messages[1].content[0].text, "corrected result");
+  assert.notEqual(mergeHistoryTail(current, unchanged, true).messages[0], first);
+});
+
+test("history reuse respects nested tool inputs, removed fields and entry identities", () => {
+  const original = { role: "assistant", content: [{ type: "toolCall", input: { value: [1, { text: "before" }] } }] };
+  const current = { messages: [original], entryIds: ["one"], revision: "same", previousCursor: null };
+  for (const mutate of [
+    (value) => {
+      value.content[0].input.value[1].text = "after";
+    },
+    (value) => {
+      delete value.content[0].input;
+    },
+  ]) {
+    const changed = structuredClone(original);
+    mutate(changed);
+    assert.equal(mergeHistoryTail(current, { ...page("same", ["one"]), messages: [changed] }).messages[0], changed);
+  }
+  const differentEntry = { ...page("same", ["two"]), messages: [structuredClone(original)] };
+  assert.notEqual(mergeHistoryTail(current, differentEntry).messages[0], original);
+});
