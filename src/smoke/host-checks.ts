@@ -539,7 +539,10 @@ export async function runSmokeHostChecks(
                 if (activityToggle.getAttribute("aria-expanded") !== "true") {
                   throw new Error("Recent channel activity cannot be expanded");
                 }
-                const status = await fetch(${JSON.stringify(`/api/git-status?cwd=${encodeURIComponent(process.cwd())}`)}).then((response) => response.json());
+                // Internal consumers use RPC; startup must leave real web APIs native.
+                const nativeNetworking = [window.fetch, window.EventSource].every((value) =>
+                  typeof value === "function" && Function.prototype.toString.call(value).includes("[native code]")
+                );
                 const token = "pi-html-preview-smoke-" + Math.random().toString(36).slice(2);
                 const previewUrl = await window.piBridge.createHtmlPreview(
                   "<!doctype html><img id='asset' src='./icon.png'><script>addEventListener('load',()=>{if(asset.naturalWidth)parent.postMessage(" + JSON.stringify(token) + ",'*')})<\\/script>",
@@ -571,7 +574,7 @@ export async function runSmokeHostChecks(
                 resolve({
                   bridge: typeof window.piBridge.saveBinaryFile === "function",
                   rendered: root.childElementCount > 0,
-                  gitStatus: typeof status.isGit === "boolean",
+                  nativeNetworking,
                   htmlPreview: previewRendered,
                   chatAppearance,
                   cacheWarming,
@@ -592,7 +595,7 @@ export async function runSmokeHostChecks(
       `)) as {
         bridge?: boolean;
         rendered?: boolean;
-        gitStatus?: boolean;
+        nativeNetworking?: boolean;
         htmlPreview?: boolean;
         chatAppearance?: boolean;
         cacheWarming?: boolean;
@@ -602,7 +605,7 @@ export async function runSmokeHostChecks(
       if (
         !rendererResult.bridge ||
         !rendererResult.rendered ||
-        !rendererResult.gitStatus ||
+        !rendererResult.nativeNetworking ||
         !rendererResult.htmlPreview ||
         !rendererResult.chatAppearance ||
         !rendererResult.cacheWarming ||

@@ -163,7 +163,7 @@ export async function subscribe<T extends StreamTopic>(
 }
 
 // ---------------------------------------------------------------------------
-// Convenience wrappers matching old HTTP routes
+// Domain helpers used by Renderer consumers
 // ---------------------------------------------------------------------------
 
 export async function listSessions() {
@@ -193,18 +193,6 @@ export async function getSessionContextPage(id: string, cursor: string, maxTurns
 
 export async function getSessionEntryContent(id: string, entryId: string, blockIndex?: number) {
   return call("sessions.entryContent", { id, entryId, blockIndex });
-}
-
-export async function exportSession(id: string, format: "md" | "json" = "md") {
-  return call("sessions.export", { id, format });
-}
-
-export async function deleteSession(id: string) {
-  return call("sessions.delete", { id });
-}
-
-export async function renameSession(id: string, name: string) {
-  return call("sessions.rename", { id, name });
 }
 
 export async function newAgent(params: ApiParams<"agent.new">) {
@@ -246,34 +234,6 @@ export async function getModelPreferences(cwd?: string) {
 
 export async function setModelPreferences(cwd: string | undefined, enabledModels: string[] | null) {
   return call("models.preferences.set", { ...(cwd ? { cwd } : {}), enabledModels });
-}
-
-export async function listWorktrees(projectRoot: string) {
-  return call("worktrees.list", { projectRoot });
-}
-
-export async function validateCwd(path: string) {
-  return call("system.validateCwd", { path });
-}
-
-export async function defaultCwd() {
-  return call("system.defaultCwd");
-}
-
-export async function getHome() {
-  return call("system.home");
-}
-
-export async function listFiles(path: string) {
-  return call("files.list", { path });
-}
-
-export async function readFile(path: string, sourceSessionId?: string) {
-  return call("files.read", { path, sourceSessionId });
-}
-
-export async function fileMeta(path: string, sourceSessionId?: string) {
-  return call("files.meta", { path, sourceSessionId });
 }
 
 export async function fileIndex(root: string, query?: string) {

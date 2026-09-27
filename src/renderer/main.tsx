@@ -4,10 +4,6 @@ import "katex/dist/katex.min.css";
 import { App } from "./App";
 import "./globals.css";
 import { ensureRpc } from "./lib/api-client";
-import { installApiShims } from "./lib/api-fetch";
-
-// Install /api fetch + EventSource shims before any component mounts
-installApiShims();
 
 // Boot RPC early so the first UI interactions are ready
 void ensureRpc().catch((err) => {
