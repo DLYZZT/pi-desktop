@@ -163,3 +163,35 @@ test("snapshots stay stable on no-op notifications and disposed stores cannot st
   store.invalidate();
   assert.equal(requests.length, 0);
 });
+
+test("a newly allocated session reconciles an in-flight empty list before accepting its result", async (t) => {
+  const { store, requests } = fixture(t);
+  const initial = store.refresh();
+  await Promise.resolve();
+  store.ensureIndexed("new-session");
+  const hydrated = store.findSession("new-session");
+  requests[0].resolve({ sessions: [] });
+  await Promise.resolve();
+  assert.equal(requests.length, 2);
+  requests[1].resolve({ sessions: [session("new-session")] });
+  await initial;
+  assert.equal((await hydrated).id, "new-session");
+  assert.deepEqual(store.getSnapshot().sessions, [session("new-session")]);
+});
+
+test("completion reconciles a session created after the initial index read", async (t) => {
+  const { store, requests } = fixture(t);
+  store.setLive(true);
+  store.ensureIndexed("new-session");
+  const initial = store.refresh();
+  await Promise.resolve();
+  requests[0].resolve({ sessions: [] });
+  await initial;
+  assert.deepEqual(store.getSnapshot().sessions, []);
+  store.ensureIndexed("new-session");
+  const completed = store.refresh();
+  await Promise.resolve();
+  requests[1].resolve({ sessions: [session("new-session")] });
+  await completed;
+  assert.deepEqual(store.getSnapshot().sessions, [session("new-session")]);
+});

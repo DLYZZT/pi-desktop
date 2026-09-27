@@ -332,6 +332,9 @@ export class AgentSessionWrapper {
         this.inner.extensionRunner.setUIContext?.(uiContext, "rpc");
       }
       this.extensionsBound = true;
+      // The SDK may activate tools registered during session_start. Apply the
+      // explicit no-tools choice again before a prompt or tool query can see it.
+      if (this.forceEmptySystemPrompt) this.syncDesktopToolActivation();
       console.log(`[pi-desktop] session_start dispatched to extensions for session ${this.inner.sessionId}`);
     })()
       .catch((err) => {
@@ -363,7 +366,7 @@ export class AgentSessionWrapper {
   }
 
   private shouldWaitForExtensions(type: string): boolean {
-    return type === "prompt" || type === "steer" || type === "follow_up" || type === "get_commands";
+    return ["prompt", "steer", "follow_up", "get_commands", "get_tools"].includes(type);
   }
 
   private async withFinalRunningNotification<T>(operation: () => Promise<T>): Promise<T> {
@@ -541,6 +544,7 @@ export class AgentSessionWrapper {
     this.resetIdleTimer();
     const type = command.type as string;
     if (this.shouldWaitForExtensions(type)) await this.waitForExtensionsBound();
+    if (this.forceEmptySystemPrompt && this.shouldWaitForExtensions(type)) this.syncDesktopToolActivation();
 
     switch (type) {
       case "prompt": {

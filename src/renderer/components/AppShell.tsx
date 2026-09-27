@@ -619,7 +619,6 @@ export function AppShell({
     [router, isMobile],
   );
 
-  // Complete transient selection metadata from the shared index before switching worktrees.
   const hydrateSelectedSession = useCallback(
     (sessionId: string) => {
       void sessionList
@@ -638,17 +637,19 @@ export function AppShell({
     (session: SessionInfo) => {
       setNewSessionCwd(null);
       setSelectedSession(session);
+      sessionList.ensureIndexed(session.id);
       hydrateSelectedSession(session.id);
       router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
     },
-    [router, hydrateSelectedSession],
+    [router, hydrateSelectedSession, sessionList],
   );
 
   const handleAgentEnd = useCallback(() => {
+    if (selectedSession?.id) sessionList.ensureIndexed(selectedSession.id);
     sessionList.refreshIfDisconnected();
     setWorktreesRefreshKey((k) => k + 1);
     setExplorerRefreshKey((k) => k + 1);
-  }, [sessionList]);
+  }, [sessionList, selectedSession?.id]);
 
   const handleSessionForked = useCallback(
     (newSessionId: string) => {

@@ -11,6 +11,7 @@ import {
   createAgentSessionFromServices,
 } from "@earendil-works/pi-coding-agent";
 import { importTestBundle } from "#test-bundle";
+import { createDeferred } from "#test-timing";
 
 const { AgentSessionWrapper, SessionPromptPolicy, createDesktopPromptExtension } = await importTestBundle(
   "pi-session-prompt-policy",
@@ -154,4 +155,71 @@ test("zero-tool prompt remains empty through tool changes without mutating Agent
   await wrapper.runExternalTurn({ runId: "im-prompt-fixture", message: "IM message", channel: "telegram" });
   assert.equal(requestPrompt(requests.at(-1)), "");
   assert.deepEqual(requestToolNames(requests.at(-1)), []);
+});
+
+test("late extension tool registration cannot reactivate a no-tools session", async (t) => {
+  let active = [];
+  const inner = {
+    sessionId: "late-tool-fixture",
+    sessionManager: { getHeader: () => ({ cwd: "/fixture" }) },
+    agent: { state: { messages: [] } },
+    extensionRunner: {},
+    getActiveToolNames: () => [...active],
+    setActiveToolsByName: (names) => {
+      active = [...names];
+    },
+    async bindExtensions() {
+      // The SDK activates tools that become available during extension setup.
+      active = ["mcp_fixture_tool"];
+    },
+  };
+  const wrapper = new AgentSessionWrapper(inner, [], () => undefined, new SessionPromptPolicy(true));
+  t.after(() => wrapper.destroy());
+  await wrapper.ensureExtensionsBound();
+  assert.deepEqual(active, [], "no-tools selection must survive extension registration");
+});
+
+test("tool queries wait for late extension registration and return the enforced no-tools state", async (t) => {
+  const registered = createDeferred();
+  const release = createDeferred();
+  let active = [];
+  const inner = {
+    sessionId: "late-tool-query",
+    sessionManager: { getHeader: () => ({ cwd: "/fixture" }) },
+    agent: { state: { messages: [] } },
+    extensionRunner: {},
+    getAllTools: () => [{ name: "mcp_fixture_tool", description: "fixture" }],
+    getActiveToolNames: () => [...active],
+    setActiveToolsByName: (names) => {
+      active = [...names];
+    },
+    async bindExtensions() {
+      active = ["mcp_fixture_tool"];
+      registered.resolve();
+      await release.promise;
+    },
+  };
+  const wrapper = new AgentSessionWrapper(inner, [], () => undefined, new SessionPromptPolicy(true));
+  t.after(() => wrapper.destroy());
+  wrapper.beginExtensionBinding({ forceEmptySystemPrompt: true });
+  await registered.promise;
+  let settled = false;
+  const query = wrapper.send({ type: "get_tools" }).then((result) => {
+    settled = true;
+    return result;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false, "a partial extension registry is not a stable tool snapshot");
+  release.resolve();
+  assert.deepEqual(await query, [{ name: "mcp_fixture_tool", description: "fixture", active: false }]);
+  assert.deepEqual(active, []);
+});
+
+test("tool queries clear tools reactivated after extension binding", async (t) => {
+  const { session, wrapper } = await createFixture(t, []);
+  session.setActiveToolsByName(["read"]);
+  assert.deepEqual(session.getActiveToolNames(), ["read"]);
+  const tools = await wrapper.send({ type: "get_tools" });
+  assert.equal(tools.find((tool) => tool.name === "read")?.active, false);
+  assert.deepEqual(session.getActiveToolNames(), []);
 });

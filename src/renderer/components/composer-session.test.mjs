@@ -294,6 +294,12 @@ test("new-session promotion carries the live draft to the persistent session key
   assert.equal(f.values.has(`pi-desktop-draft:new:${f.cwd}`), false);
 });
 
+test("restored sessions reconcile the actual tool list even when idle", async (t) => {
+  const f = await mount(t, { existing: true });
+  assert.equal(f.current.agentRunning, false);
+  assert.equal(f.current.toolPreset, "none");
+});
+
 for (const mode of ["steer", "follow_up", "queued-prompt"])
   for (const newerDraft of [false, true]) {
     test(`${mode} rejection ${newerDraft ? "preserves newer input" : "restores the submitted draft"} through the actual session callback`, async (t) => {

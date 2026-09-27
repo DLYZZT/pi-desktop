@@ -94,6 +94,12 @@ export class SessionListStore {
     else void this.refresh().catch(() => {});
   };
 
+  /** Reconcile a promoted session even when a native file event was missed. */
+  ensureIndexed = (id: string): void => {
+    if (this.snapshot.sessions.some((session) => session.id === id && session.projectRoot)) return;
+    this.invalidate();
+  };
+
   refreshIfDisconnected = (): void => {
     if (!this.snapshot.live) this.invalidate();
   };

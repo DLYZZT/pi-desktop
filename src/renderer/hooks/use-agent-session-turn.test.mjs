@@ -538,6 +538,7 @@ for (const action of ["recall", "stats", "tools"]) {
       onSessionStatsPanelOpen: () => effects.push("open stats"),
       setToolPreset: (value) => effects.push(value),
     });
+    const initialEffects = [...effects];
     const type = { recall: "clear_queue", stats: "get_session_stats", tools: "get_tools" }[action];
     testApi.queueCommand(type, pending.promise);
     let operation;
@@ -557,7 +558,7 @@ for (const action of ["recall", "stats", "tools"]) {
       );
       await operation;
     });
-    assert.deepEqual(effects, []);
+    assert.deepEqual(effects, initialEffects);
   });
 }
 

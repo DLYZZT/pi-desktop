@@ -1258,9 +1258,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const ticket = runtimeGate.capture();
       void loadSession(session.id, true, true, true).then((agentState) => {
         if (disposed) return;
+        void loadTools(session.id);
         restoreFollowAfterLoad();
         if (agentState?.running && runtimeGate.accept(ticket, "run")) {
-          void loadTools(session.id);
           if (!agentRunningRef.current && (agentState.state?.isStreaming || agentState.state?.isPromptRunning)) {
             agentRunningRef.current = true;
             dispatchTurn({ type: "start", phase: agentState.state.isStreaming ? "waiting_model" : "running_command" });

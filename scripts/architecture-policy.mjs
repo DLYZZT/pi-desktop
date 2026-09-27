@@ -31,16 +31,18 @@ export const architecturePolicy = {
       reason: "Existing browser permission and profile settings; preserve their security checks.",
     },
     "src/renderer/components/AppShell.tsx": {
-      maxLines: 1583,
-      reason: "Reduced by 22-04 presentation extraction; remaining workspace and panel coordination.",
+      maxLines: 1584,
+      reason:
+        "Reduced by 22-04 presentation extraction; one completion-time index reconciliation covers missed first-session file events.",
     },
     "src/agent-host/herdr/bridge.ts": {
       maxLines: 1580,
       reason: "Existing terminal/session coordination; lifecycle changes require native integration evidence.",
     },
     "src/agent-host/rpc-manager.ts": {
-      maxLines: 1537,
-      reason: "Existing SDK wrapper and extension bridge; retain runtime compatibility during extraction.",
+      maxLines: 1541,
+      reason:
+        "Late extension registration must reapply the explicit no-tools choice at binding and command boundaries; four additional lines are fixed by real-model regressions.",
     },
     "src/renderer/components/SettingsConfig.tsx": {
       maxLines: 1480,
