@@ -18,6 +18,7 @@ const LOCALIZED_OWNER_SUFFIXES = [
   "hooks/useSessionHistory.ts",
   "hooks/useSessionExtensionUi.ts",
   "hooks/useComposerDraft.ts",
+  "hooks/useComposerSubmission.ts",
 ];
 const VISIBLE_ATTRIBUTE_NAMES = new Set(["title", "aria-label", "aria-valuetext", "placeholder", "alt"]);
 const LOCALIZED_DICTIONARIES = [{ name: "zhCN", tag: "zh-CN" }];
@@ -79,6 +80,7 @@ export function checkRendererI18n({
         "useSessionHistory.ts",
         "useSessionExtensionUi.ts",
         "useComposerDraft.ts",
+        "useComposerSubmission.ts",
       ].some((name) => file.endsWith(`${path.sep}hooks${path.sep}${name}`))
     ) {
       checkSessionUserFacingSinks({ failures, root, file, source });

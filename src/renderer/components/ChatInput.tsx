@@ -1,4 +1,5 @@
-import { useComposerDraft, type AttachedImage } from "@/hooks/useComposerDraft";
+import { useComposerDraft } from "@/hooks/useComposerDraft";
+import { useComposerSubmission, type ComposerActions } from "@/hooks/useComposerSubmission";
 import React, {
   useRef,
   useState,
@@ -11,20 +12,14 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { scaledChatFont } from "@/lib/chat-appearance";
-import type {
-  BuiltinSlashCommandResult,
-  CompactResultInfo,
-  QueuedMessages,
-  SlashCommandInfo,
-} from "@/hooks/useAgentSession";
+import type { CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import { buildAtInsertText, extractAtQuery, type AtQueryMatch, type FileIndexEntry } from "@/lib/file-fuzzy";
 import { useFileSuggestions } from "@/hooks/useFileSuggestions";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import type { ModelCatalogStatus } from "@contract/types";
-import { localFilePathKey, localFileReferenceToMarkdown, splitLocalFileReferenceMarkdown } from "@/lib/file-url";
-import { captureComposerSubmission } from "@/lib/composer-submission";
+import { localFilePathKey, splitLocalFileReferenceMarkdown } from "@/lib/file-url";
 
 export type { AttachedImage } from "@/hooks/useComposerDraft";
 
@@ -34,16 +29,8 @@ interface ModelOption {
   name: string;
 }
 
-interface Props {
-  onSend: (message: string, images?: AttachedImage[]) => void;
+interface Props extends ComposerActions {
   onAbort: () => void;
-  onSteer?: (message: string, images?: AttachedImage[]) => Promise<void> | void;
-  onFollowUp?: (message: string, images?: AttachedImage[]) => Promise<void> | void;
-  onPromptWithStreamingBehavior?: (
-    message: string,
-    behavior: "steer" | "followUp",
-    images?: AttachedImage[],
-  ) => Promise<void> | void;
   isStreaming: boolean;
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
@@ -71,10 +58,8 @@ interface Props {
   slashCommands?: SlashCommandInfo[];
   slashCommandsLoading?: boolean;
   onLoadSlashCommands?: () => Promise<SlashCommandInfo[]> | SlashCommandInfo[];
-  onBuiltinCommand?: (message: string) => Promise<BuiltinSlashCommandResult>;
   soundEnabled?: boolean;
   onSoundToggle?: () => void;
-  onAudioUnlock?: () => void;
   draftKey?: string;
   /** Explicit temporary owner to carry forward when this view receives its real session ID. */
   draftPromotionFrom?: string;
@@ -288,6 +273,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const atItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const resetAtQuery = useCallback(() => setAtQuery(null), []);
+  const draft = useComposerDraft({ draftKey, draftPromotionFrom, cwd, onReplace: resetAtQuery });
   const {
     value,
     setValue,
@@ -302,16 +288,24 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     removeImage,
     removeFile,
     clearDraft,
-    restoreFailedSubmission,
-    commitCurrentDraft,
-    validateLocalFileReferences,
-    getRevision,
-  } = useComposerDraft({ draftKey, draftPromotionFrom, cwd, onReplace: resetAtQuery });
+  } = draft;
   const clearInput = useCallback(() => {
     clearDraft();
     setAtQuery(null);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   }, [clearDraft]);
+
+  const { handleSend, sendQueued } = useComposerSubmission({
+    draft,
+    clearInput,
+    isStreaming,
+    onSend,
+    onSteer,
+    onFollowUp,
+    onPromptWithStreamingBehavior,
+    onBuiltinCommand,
+    onAudioUnlock,
+  });
 
   useImperativeHandle(ref, () => ({
     insertIfEmpty(text: string) {
@@ -378,58 +372,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     ta.style.height = "auto";
     if (value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [value]);
-
-  const handleSend = useCallback(async () => {
-    const text = value.trim();
-    const msg = [text, ...attachedFiles.map(localFileReferenceToMarkdown)].filter(Boolean).join(" ");
-    if (!msg && !attachedImages.length) return;
-    if (isStreaming) return;
-    const validationRevision = getRevision();
-    if (!(await validateLocalFileReferences(attachedFiles))) return;
-    if (validationRevision !== getRevision()) {
-      setSubmissionNotice(t("draftChangedDuringValidation", "The draft changed while files were checked. Send again."));
-      return;
-    }
-    onAudioUnlock?.();
-    const snapshot = captureComposerSubmission(value, attachedImages, attachedFiles);
-    setSubmissionNotice(null);
-    commitCurrentDraft();
-    clearInput();
-    const clearedAtRevision = getRevision();
-    try {
-      if (!attachedImages.length && !attachedFiles.length && msg.startsWith("/") && onBuiltinCommand) {
-        const result = await onBuiltinCommand(msg);
-        if (result.handled) {
-          if (result.error) restoreFailedSubmission(snapshot, clearedAtRevision, "send");
-          return;
-        }
-      }
-      const result = onSend(msg, attachedImages.length ? attachedImages : undefined) as
-        void | Promise<unknown> | { ok?: boolean };
-      const settled = await Promise.resolve(result);
-      if (settled && typeof settled === "object" && "ok" in settled && settled.ok === false) {
-        restoreFailedSubmission(snapshot, clearedAtRevision, "send");
-        return;
-      }
-    } catch {
-      restoreFailedSubmission(snapshot, clearedAtRevision, "send");
-    }
-  }, [
-    attachedFiles,
-    attachedImages,
-    clearInput,
-    commitCurrentDraft,
-    getRevision,
-    isStreaming,
-    onAudioUnlock,
-    onBuiltinCommand,
-    onSend,
-    restoreFailedSubmission,
-    setSubmissionNotice,
-    t,
-    validateLocalFileReferences,
-    value,
-  ]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1)) ? value.slice(1).toLowerCase() : null;
 
@@ -568,66 +510,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
       });
     },
     [setValue],
-  );
-
-  const sendQueued = useCallback(
-    async (mode: "steer" | "followup") => {
-      // Pi 0.84 queues image content but exposes only message strings through
-      // queue_update/clearQueue. Keep images in the composer until the Agent is
-      // idle so recall can never silently discard them.
-      if (attachedImages.length > 0) {
-        setSubmissionNotice(
-          t("queuedImagesUnsupported", "Image messages can be sent after the current response finishes."),
-        );
-        return;
-      }
-      const msg = [value.trim(), ...attachedFiles.map(localFileReferenceToMarkdown)].filter(Boolean).join(" ");
-      if (!msg && !attachedImages.length) return;
-      const validationRevision = getRevision();
-      if (!(await validateLocalFileReferences(attachedFiles))) return;
-      if (validationRevision !== getRevision()) {
-        setSubmissionNotice(
-          t("draftChangedDuringValidation", "The draft changed while files were checked. Send again."),
-        );
-        return;
-      }
-      onAudioUnlock?.();
-      const snapshot = captureComposerSubmission(value, attachedImages, attachedFiles);
-      const streamingBehavior = mode === "steer" ? "steer" : "followUp";
-      setSubmissionNotice(null);
-      commitCurrentDraft();
-      clearInput();
-      const clearedAtRevision = getRevision();
-      try {
-        if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
-          await Promise.resolve(onPromptWithStreamingBehavior(msg, streamingBehavior));
-          return;
-        }
-        if (mode === "steer" && onSteer) {
-          await Promise.resolve(onSteer(msg));
-        } else if (mode === "followup" && onFollowUp) {
-          await Promise.resolve(onFollowUp(msg));
-        }
-      } catch {
-        restoreFailedSubmission(snapshot, clearedAtRevision, "queue");
-      }
-    },
-    [
-      attachedFiles,
-      attachedImages,
-      clearInput,
-      commitCurrentDraft,
-      getRevision,
-      onAudioUnlock,
-      onFollowUp,
-      onPromptWithStreamingBehavior,
-      onSteer,
-      restoreFailedSubmission,
-      setSubmissionNotice,
-      t,
-      validateLocalFileReferences,
-      value,
-    ],
   );
 
   const getNextSlashIndex = useCallback(

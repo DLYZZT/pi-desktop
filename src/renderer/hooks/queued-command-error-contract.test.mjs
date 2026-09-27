@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const hookSource = readFileSync(new URL("./useAgentSession.ts", import.meta.url), "utf8");
-const inputSource = readFileSync(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
+const submissionSource = readFileSync(new URL("./useComposerSubmission.ts", import.meta.url), "utf8");
 
 test("queued command handlers notify and reject on command failures", () => {
   for (const [logMessage, translationKey] of [
@@ -27,11 +27,11 @@ test("queued command handlers reject a missing-session race", () => {
   assert.equal((hookSource.match(/throw error;/g) ?? []).length >= 6, true);
 });
 
-test("ChatInput blocks unrecoverable image queues, awaits text handlers, and restores rejected snapshots", () => {
-  assert.match(inputSource, /onSteer\?:[\s\S]*?Promise<void> \| void/);
-  assert.match(inputSource, /onFollowUp\?:[\s\S]*?Promise<void> \| void/);
-  assert.match(inputSource, /if \(attachedImages\.length > 0\)[\s\S]*?queuedImagesUnsupported[\s\S]*?return;/);
-  assert.match(inputSource, /await Promise\.resolve\(onSteer\(msg\)\)/);
-  assert.match(inputSource, /await Promise\.resolve\(onFollowUp\(msg\)\)/);
-  assert.match(inputSource, /catch \{\s*restoreFailedSubmission\(snapshot, clearedAtRevision, "queue"\)/);
+test("composer submission blocks unrecoverable image queues, awaits text handlers, and restores rejected snapshots", () => {
+  assert.match(submissionSource, /onSteer\?:[\s\S]*?Promise<void> \| void/);
+  assert.match(submissionSource, /onFollowUp\?:[\s\S]*?Promise<void> \| void/);
+  assert.match(submissionSource, /if \(attachedImages\.length > 0\)[\s\S]*?queuedImagesUnsupported[\s\S]*?return;/);
+  assert.match(submissionSource, /await Promise\.resolve\(onSteer\(msg\)\)/);
+  assert.match(submissionSource, /await Promise\.resolve\(onFollowUp\(msg\)\)/);
+  assert.match(submissionSource, /catch \{\s*restoreFailedSubmission\(snapshot, clearedAtRevision, "queue"\)/);
 });

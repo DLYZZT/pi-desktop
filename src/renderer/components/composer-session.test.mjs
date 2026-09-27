@@ -135,6 +135,7 @@ async function mount(t, { existing = false, running = false } = {}) {
       isStreaming: current.agentRunning,
       onSend: current.handleSend,
       onAbort: current.handleAbort,
+      onBuiltinCommand: current.handleBuiltinSlashCommand,
       onSteer: current.agentRunning ? current.handleSteer : undefined,
       onFollowUp: current.agentRunning ? current.handleFollowUp : undefined,
       onPromptWithStreamingBehavior: current.agentRunning ? current.handlePromptWithStreamingBehavior : undefined,
@@ -312,3 +313,20 @@ for (const mode of ["steer", "follow_up", "queued-prompt"])
       assert.equal(f.current.agentRunning, true);
     });
   }
+
+test("a built-in command failure restores the draft and a successful retry never sends a prompt", async (t) => {
+  const f = await mount(t, { existing: true });
+  await f.type("/name composer fixture");
+  await f.enter();
+  assert.equal(f.next("set_session_name").params.command.name, "composer fixture");
+  assert.equal(f.value(), "");
+  await f.reject("set_session_name");
+  assert.equal(f.value(), "/name composer fixture");
+  await f.enter();
+  await f.type("new draft while renaming");
+  await f.reply("set_session_name", null);
+  assert.equal(f.count("set_session_name"), 2);
+  assert.equal(f.count("prompt"), 0);
+  assert.equal(f.count("ensure_session"), 0);
+  assert.equal(f.value(), "new draft while renaming");
+});

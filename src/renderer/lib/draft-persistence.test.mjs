@@ -138,7 +138,7 @@ test("an in-memory empty draft hides stale persisted content before debounce flu
 
 test("composer draft ownership schedules edits and commits exact refs on key switch and unmount", () => {
   const source = fs.readFileSync(new URL("../hooks/useComposerDraft.ts", import.meta.url), "utf8");
-  const input = fs.readFileSync(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
+  const submission = fs.readFileSync(new URL("../hooks/useComposerSubmission.ts", import.meta.url), "utf8");
 
   assert.match(source, /draftPersistenceRef\.current\?\.schedule\(draftKey/);
   assert.match(source, /draftPersistenceRef\.current\?\.commit\(previousDraftKey/);
@@ -147,5 +147,5 @@ test("composer draft ownership schedules edits and commits exact refs on key swi
   assert.match(source, /mergeFailedSubmissionFiles\(current, snapshot\.files\)/);
   assert.match(source, /const setAttachedFiles = useCallback[\s\S]*?inputRevisionRef\.current \+= 1/);
   assert.match(source, /draftPersistenceRef\.current\?\.clear\(draftKey\)/);
-  assert.match(input, /commitCurrentDraft\(\);\s*clearInput\(\)/);
+  assert.match(submission, /commitCurrentDraft\(\);\s*clearInput\(\)/);
 });
