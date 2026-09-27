@@ -433,3 +433,36 @@ test("worktree creation keeps project identity and dirty removal requires the ex
   assert.equal(fixture.selectedDirectories.at(-1), "/project");
   assert.equal(fixture.selectedProjects.at(-1), "/project");
 });
+
+test("toolchain project invalidation refreshes worktrees and session grouping without another directory selection", async (t) => {
+  let ready = false;
+  const reads = [];
+  const fixture = await mount(t, {
+    sidebar: true,
+    worktrees: (cwd) => {
+      reads.push(cwd);
+      return {
+        projectRoot: ready ? "/canonical/project" : "/project",
+        isGit: ready,
+        isTopLevel: ready,
+        worktrees: ready ? [{ path: "/project", branch: "main", isMain: true }] : [],
+      };
+    },
+  });
+  await fixture.reply(0, response([session("one")]));
+  assert.equal(reads.length, 1);
+  const selections = [...fixture.selectedDirectories];
+  ready = true;
+  await fixture.change({ cwd: null, projectInfoChanged: true });
+  await fixture.reply(1, response([{ ...session("one"), projectRoot: "/canonical/project" }]));
+  assert.equal(reads.length, 2);
+  assert.equal(fixture.selectedDirectories.at(-1), "/project");
+  assert.deepEqual(fixture.selectedDirectories, selections, "metadata refresh must not navigate or remount chat");
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /Switch worktree: \/project/);
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /Session actions for one/);
+  await fixture.change({
+    cwd: "/project",
+    session: { ...session("one", "renamed"), projectRoot: "/canonical/project" },
+  });
+  assert.equal(reads.length, 2, "ordinary message and title changes do not refetch worktrees");
+});

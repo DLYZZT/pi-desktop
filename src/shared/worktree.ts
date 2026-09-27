@@ -158,6 +158,7 @@ function inferRemovedWorktree(cwd: string): ProjectInfo | null {
 
 export async function resolveProject(cwd: string): Promise<ProjectInfo> {
   const cache = getProjectCache();
+  const revision = getProjectCacheRevision();
   const cached = cache.get(cwd);
   if (cached && cached.expiresAt > Date.now()) return cached.info;
 
@@ -209,7 +210,7 @@ export async function resolveProject(cwd: string): Promise<ProjectInfo> {
     info = { projectRoot: cwd, branch: null, isWorktree: false, isTopLevel: false };
   }
 
-  cache.set(cwd, { info, expiresAt: Date.now() + PROJECT_CACHE_TTL_MS });
+  if (revision === getProjectCacheRevision()) cache.set(cwd, { info, expiresAt: Date.now() + PROJECT_CACHE_TTL_MS });
   return info;
 }
 

@@ -477,6 +477,8 @@ export interface Streams {
     session?: SessionInfo;
     deleted?: boolean;
     fullRefresh?: boolean;
+    /** Project metadata was invalidated after the Git toolchain changed. */
+    projectInfoChanged?: boolean;
   };
   "files.changed": {
     path: string;

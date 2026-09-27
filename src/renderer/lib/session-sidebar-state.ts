@@ -1,12 +1,8 @@
 import type { SessionInfo } from "./types";
 
-export type SessionChangedEvent = {
-  cwd: string | null;
-  sessionId?: string;
-  session?: SessionInfo;
-  deleted?: boolean;
-  fullRefresh?: boolean;
-};
+import type { Streams } from "@contract/api";
+
+export type SessionChangedEvent = Streams["sessions.changed"];
 
 export function applySessionChangedEvent(sessions: SessionInfo[], event: SessionChangedEvent): SessionInfo[] | null {
   if (event.fullRefresh) return null;

@@ -145,6 +145,7 @@ export class ToolchainRuntime {
     trusted: boolean,
   ) => Promise<ToolchainResolution>;
   private snapshot: ToolchainSnapshot | null = null;
+  private readonly revisionListeners = new Set<() => void>();
   private readonly resolutions = new Map<string, ToolchainResolution>();
   private readonly resolutionByRequest = new Map<string, ToolchainResolution>();
 
@@ -158,6 +159,13 @@ export class ToolchainRuntime {
       ((cwd, intent, trusted) => callMain<ToolchainResolution>("toolchain.resolve", { cwd, intent, trusted }, 15_000));
   }
 
+  subscribeRevision(listener: () => void): () => void {
+    this.revisionListeners.add(listener);
+    return () => {
+      this.revisionListeners.delete(listener);
+    };
+  }
+
   apply(snapshot: ToolchainSnapshot): boolean {
     if (!snapshot || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) {
       throw new ToolchainError({ code: "TOOLCHAIN_INTERNAL", message: "Invalid toolchain snapshot" });
@@ -168,6 +176,7 @@ export class ToolchainRuntime {
     if (revisionChanged) {
       this.resolutions.clear();
       this.resolutionByRequest.clear();
+      for (const listener of [...this.revisionListeners]) listener();
     }
     return true;
   }

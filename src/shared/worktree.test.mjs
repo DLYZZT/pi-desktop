@@ -35,3 +35,32 @@ test("reports a clean repository for empty porcelain output", async () => {
   assert.equal(result.clean, true);
   assert.deepEqual(result.entries, []);
 });
+
+test("a Git read from before invalidation cannot refill the newer project cache", async (t) => {
+  const { mkdtempSync, realpathSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createDeferred } = await import("#test-timing");
+  const { resolveProject, invalidateProjectCache, setGitCommandRunner } = await import("./worktree.ts");
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "pi-project-cache-generation-")));
+  const oldRead = createDeferred();
+  let reads = 0;
+  const restore = setGitCommandRunner({
+    run: async () => {
+      if (++reads === 1) return oldRead.promise;
+      return { stdout: `${directory}/.git\n${directory}/.git\n${directory}\nmain\n` };
+    },
+  });
+  invalidateProjectCache();
+  t.after(() => {
+    restore();
+    invalidateProjectCache();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const stale = resolveProject(directory);
+  invalidateProjectCache();
+  oldRead.reject(new Error("Old Git capability unavailable"));
+  assert.equal((await stale).isTopLevel, false);
+  assert.equal((await resolveProject(directory)).isTopLevel, true);
+  assert.equal(reads, 2);
+});

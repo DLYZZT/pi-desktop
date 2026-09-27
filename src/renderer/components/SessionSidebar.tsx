@@ -69,6 +69,7 @@ export function SessionSidebar({
     loading,
     error: listError,
     runningSessionIds: fallbackRunningIds,
+    projectInfoRevision,
   } = useSyncExternalStore(sessionList.subscribe, sessionList.getSnapshot, sessionList.getSnapshot);
   const error =
     listError == null
@@ -84,7 +85,13 @@ export function SessionSidebar({
     worktreeLoadingCwd,
     registerCreatedWorktree,
     refreshWorktrees,
-  } = useSidebarWorkspace({ allSessions, selectedCwd: selectedCwdProp, onCwdChange, worktreesRefreshKey });
+  } = useSidebarWorkspace({
+    allSessions,
+    selectedCwd: selectedCwdProp,
+    onCwdChange,
+    worktreesRefreshKey,
+    projectInfoRevision,
+  });
   const [sessionFilter, setSessionFilter] = useState("");
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());

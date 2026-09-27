@@ -90,6 +90,7 @@ test("idle views receive live events and only their persisted changes, using the
   );
   agent.onEvent({ type: "agent_start" });
   changes.onEvent({ sessionId: "b" });
+  changes.onEvent({ cwd: null, projectInfoChanged: true });
   changes.onEvent({ sessionId: "a" });
   changes.onEvent({ fullRefresh: true });
   assert.deepEqual(fixture.events, [{ type: "agent_start" }]);

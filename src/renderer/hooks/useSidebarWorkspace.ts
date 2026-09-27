@@ -42,11 +42,13 @@ export function useSidebarWorkspace({
   selectedCwd: selectedCwdProp,
   onCwdChange,
   worktreesRefreshKey,
+  projectInfoRevision,
 }: {
   allSessions: SessionInfo[];
   selectedCwd?: string | null;
   onCwdChange?: (cwd: string | null, projectRoot?: string | null) => void;
   worktreesRefreshKey?: number;
+  projectInfoRevision: number;
 }) {
   const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
   const [homeDir, setHomeDir] = useState<string>("");
@@ -74,8 +76,8 @@ export function useSidebarWorkspace({
     [worktreeState, allSessions],
   );
 
-  // Notify parent only when the effective cwd actually changes (not when
-  // projectRootFor identity changes due to session/worktree refreshes).
+  // Metadata reconciliation updates grouping without treating it as directory
+  // navigation or remounting the active chat.
   const lastNotifiedCwdRef = useRef<string | null>(null);
   useEffect(() => {
     if (lastNotifiedCwdRef.current === selectedCwd) return;
@@ -131,7 +133,7 @@ export function useSidebarWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [selectedCwd, wtRefreshKey, worktreesRefreshKey]);
+  }, [selectedCwd, wtRefreshKey, worktreesRefreshKey, projectInfoRevision]);
 
   const registerCreatedWorktree = useCallback((worktreePath: string, branch: string) => {
     // Optimistically register the new worktree so projectRootFor() resolves

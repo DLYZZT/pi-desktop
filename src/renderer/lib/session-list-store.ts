@@ -12,6 +12,7 @@ export interface SessionListSnapshot {
   loading: boolean;
   error: unknown;
   live: boolean;
+  projectInfoRevision: number;
 }
 
 type Read = {
@@ -29,6 +30,7 @@ export class SessionListStore {
     loading: true,
     error: null,
     live: false,
+    projectInfoRevision: 0,
   };
   private readonly listeners = new Set<() => void>();
   private readonly deletedListeners = new Set<(id: string) => void>();
@@ -104,6 +106,7 @@ export class SessionListStore {
 
   applyChange = (event: SessionChangedEvent): void => {
     if (!this.scope) return;
+    if (event.projectInfoChanged) this.publish({ projectInfoRevision: this.snapshot.projectInfoRevision + 1 });
     const sessions = applySessionChangedEvent(this.snapshot.sessions, event);
     if (sessions === null) {
       this.invalidate();

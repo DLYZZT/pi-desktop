@@ -1,5 +1,5 @@
 import type { GitCommandRunner } from "../shared/worktree.ts";
-import { setGitCommandRunner } from "../shared/worktree.ts";
+import { invalidateProjectCache, setGitCommandRunner } from "../shared/worktree.ts";
 import { toolchainRuntime, type ToolchainRuntime } from "./toolchain-runtime.ts";
 
 export function createToolchainGitRunner(runtime: ToolchainRuntime = toolchainRuntime): GitCommandRunner {
@@ -17,6 +17,17 @@ export function createToolchainGitRunner(runtime: ToolchainRuntime = toolchainRu
   };
 }
 
-export function installToolchainGitRunner(runtime: ToolchainRuntime = toolchainRuntime): () => void {
-  return setGitCommandRunner(createToolchainGitRunner(runtime));
+export function installToolchainGitRunner(
+  runtime: ToolchainRuntime = toolchainRuntime,
+  onProjectInfoChanged?: () => void,
+): () => void {
+  const restore = setGitCommandRunner(createToolchainGitRunner(runtime));
+  const unsubscribe = runtime.subscribeRevision(() => {
+    invalidateProjectCache();
+    onProjectInfoChanged?.();
+  });
+  return () => {
+    unsubscribe();
+    restore();
+  };
 }

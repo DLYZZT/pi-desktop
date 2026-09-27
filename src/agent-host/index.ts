@@ -19,7 +19,11 @@ import { herdrRuntimeController } from "./herdr/runtime-controller";
 const piRuntimeVersion = readPiRuntimeVersion();
 
 const server = createRpcServer();
-const restoreGitRunner = installToolchainGitRunner();
+const restoreGitRunner = installToolchainGitRunner(toolchainRuntime, () => {
+  // Emitted after the Host accepts the revision and invalidates its Git cache.
+  // Chat histories are unchanged; only project metadata needs reconciliation.
+  server.emit("sessions.changed", "*", { cwd: null, projectInfoChanged: true });
+});
 const stopHandlers = registerHandlers(server);
 const stopWatcher = startSessionWatcher(server);
 
