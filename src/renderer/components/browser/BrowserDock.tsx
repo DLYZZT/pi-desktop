@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "@/i18n";
 import { browserErrorMessage as messageOf } from "./browser-error-message";
+import { browserSurfaceBounds } from "./browser-surface-bounds";
 import type {
   BrowserDownloadInfo,
   BrowserEvent,
@@ -86,27 +87,45 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
     const tabId = activeTab?.id;
     if (!element || !tabId || !visible) return;
     let frame = 0;
+    let lastBoundsKey = "";
+    const panel = element.closest(".right-panel-container");
     const sync = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const rect = element.getBoundingClientRect();
+        const surfaceRect = element.getBoundingClientRect();
+        const rect = browserSurfaceBounds(surfaceRect, panel?.getBoundingClientRect() ?? surfaceRect);
+        if (!rect) return;
+        const scaleFactorVersion = Math.round(window.devicePixelRatio * 1000);
+        const key = `${rect.x}:${rect.y}:${rect.width}:${rect.height}:${scaleFactorVersion}`;
+        if (key === lastBoundsKey) return;
+        lastBoundsKey = key;
         void window.piBridge
           .browserSetBounds({
             tabId,
-            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-            scaleFactorVersion: Math.round(window.devicePixelRatio * 1000),
+            rect,
+            scaleFactorVersion,
           })
-          .catch(handleTabSyncError);
+          .catch((cause) => {
+            if (lastBoundsKey === key) lastBoundsKey = "";
+            handleTabSyncError(cause);
+          });
       });
     };
     const observer = new ResizeObserver(sync);
     observer.observe(element);
+    if (panel) observer.observe(panel);
     window.addEventListener("resize", sync);
+    window.addEventListener("scroll", sync, true);
+    // A flex layout can move the panel without resizing the surface. Native
+    // WebContentsView bounds need that position change even after CSS settles.
+    const positionCheck = window.setInterval(sync, 120);
     sync();
     return () => {
       cancelAnimationFrame(frame);
+      window.clearInterval(positionCheck);
       observer.disconnect();
       window.removeEventListener("resize", sync);
+      window.removeEventListener("scroll", sync, true);
     };
   }, [activeTab?.id, handleTabSyncError, visible]);
 
