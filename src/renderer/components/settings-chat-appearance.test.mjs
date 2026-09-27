@@ -7,6 +7,7 @@ const settingsSource = readFileSync(new URL("./SettingsConfig.tsx", import.meta.
 const cssSource = readFileSync(new URL("../globals.css", import.meta.url), "utf8");
 const chatWindowSource = readFileSync(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
 const chatInputSource = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+const toolbarSource = readFileSync(new URL("./composer/ComposerToolbar.tsx", import.meta.url), "utf8");
 const messageViewSource = readFileSync(new URL("./MessageView.tsx", import.meta.url), "utf8");
 
 test("General settings exposes complete accessible chat appearance controls", () => {
@@ -62,5 +63,6 @@ test("chat text uses the shared scale while glyph-only icons remain fixed", () =
   assert.match(chatInputSource, /fontSize:\s*scaledChatFont\(14\)/);
   assert.match(messageViewSource, /fontSize:\s*scaledChatFont\(13\.5\)/);
   assert.deepEqual(chatInputSource.match(/fontSize:\s*[0-9]+(?:\.[0-9]+)?/g) ?? [], []);
+  assert.deepEqual(toolbarSource.match(/fontSize:\s*[0-9]+(?:\.[0-9]+)?/g) ?? [], []);
   assert.deepEqual(messageViewSource.match(/fontSize:\s*[0-9]+(?:\.[0-9]+)?/g) ?? [], ["fontSize: 10"]);
 });

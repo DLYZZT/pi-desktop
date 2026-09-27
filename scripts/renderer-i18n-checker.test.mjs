@@ -253,3 +253,13 @@ for (const picker of ["ProjectPicker", "WorktreePicker"]) {
     assert.match(checkRendererI18n(entry.options).failures.join("\n"), /visible English JSX literal: Untranslated/);
   });
 }
+
+test("composer toolbar keeps localized visible labels after extraction", (t) => {
+  const entry = fixture(
+    '<button title="Untranslated setting">Untranslated action</button>',
+    "export const enUS = {}; export const zhCN = {};",
+    "components/composer/ComposerToolbar.tsx",
+  );
+  t.after(entry.cleanup);
+  assert.match(checkRendererI18n(entry.options).failures.join("\n"), /visible English JSX literal: Untranslated/);
+});

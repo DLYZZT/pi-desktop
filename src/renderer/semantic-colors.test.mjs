@@ -6,6 +6,7 @@ const componentFiles = [
   "components/FileViewer.tsx",
   "components/channels/ChannelsConfig.tsx",
   "components/ChatInput.tsx",
+  "components/composer/ComposerToolbar.tsx",
   "components/PluginsConfig.tsx",
   "components/ToolchainsConfig.tsx",
   "components/MessageView.tsx",
