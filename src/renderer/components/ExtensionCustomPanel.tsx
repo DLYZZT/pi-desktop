@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { ExtensionUiRequest } from "@/lib/types";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { scaledChatFont } from "@/lib/chat-appearance";
@@ -297,6 +297,7 @@ export function ExtensionCustomPanel({
             // Terminal ANSI colors use a stable dark canvas, independent of app chrome.
             background: "#1c1917",
             color: "#fafaf9",
+            ...({ "--text": "#fafaf9", "--bg-panel": "#1c1917" } as CSSProperties),
             colorScheme: "dark",
             fontFamily: "var(--font-mono)",
             fontSize,

@@ -58,6 +58,8 @@ function lastNonSpaceVisibleCharIndex(text: string): number {
 }
 
 function trimEndVisibleSpaces(text: string): string {
+  // A focused TUI input draws its caret as an inverted trailing space.
+  if (text.includes("\x1b[7m")) return text;
   let next = text;
   while (true) {
     const positions = visibleCharPositions(next);

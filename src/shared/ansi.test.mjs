@@ -61,6 +61,14 @@ test("normalization removes cursor metadata but retains cursor highlight", async
   assert.equal(parseAnsiLine(line)[0].style.backgroundColor, "var(--text)");
 });
 
+test("normalization preserves an inverted trailing-space caret", async () => {
+  const { normalizeCustomPanelLines, parseAnsiLine } = await loadSubject();
+  const [line] = normalizeCustomPanelLines(["│ > \x1b[7m \x1b[27m│"]);
+  assert.ok(
+    parseAnsiLine(line).some((segment) => segment.text === " " && segment.style.backgroundColor === "var(--text)"),
+  );
+});
+
 test("maps 256-color SGR codes", async () => {
   const { ansi256Color, parseAnsiLine } = await loadSubject();
 
