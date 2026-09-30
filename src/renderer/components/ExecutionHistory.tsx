@@ -4,6 +4,7 @@ import { call, subscribe } from "@/lib/api-client";
 import { useI18n } from "@/i18n";
 import { buildExecutionTree, type ExecutionTreeNode } from "@/lib/execution-tree";
 import { LatestRequestGate } from "@/lib/latest-request-gate";
+import { McpSessionMenu } from "./mcp/McpSessionMenu";
 
 interface Props {
   sessionId: string | null;
@@ -92,38 +93,46 @@ export function ExecutionHistory({ sessionId, leafId, revision }: Props) {
   useEffect(() => {
     refresh.current();
   }, [revision]);
-  if (!sessionId || (!records.length && !error && complete)) return null;
+  if (!sessionId) return null;
   const tree = buildExecutionTree(records);
   return (
-    <details className="execution-history" data-execution-history>
-      <summary>
-        {t("executionHistory", "Tool execution history")} · {records.length}
-      </summary>
-      {!complete && (
-        <p role="status">{t("executionHistoryIncomplete", "Some history could not be read completely.")}</p>
+    <>
+      <McpSessionMenu key={sessionId} sessionId={sessionId} />
+      {(records.length > 0 || error || !complete) && (
+        <details className="execution-history" data-execution-history>
+          <summary>
+            {t("executionHistory", "Tool execution history")} · {records.length}
+          </summary>
+          {!complete && (
+            <p role="status">{t("executionHistoryIncomplete", "Some history could not be read completely.")}</p>
+          )}
+          {error && (
+            <p role="alert">
+              {t("executionHistoryFailed", "Could not read execution history.")}{" "}
+              <button onClick={() => void read()}>{t("executionRetry", "Retry")}</button>
+            </p>
+          )}
+          <ul>
+            {tree.map((node) => (
+              <ExecutionNode key={node.record.executionId} node={node} sessionId={sessionId} leafId={leafId} />
+            ))}
+          </ul>
+          {next !== undefined && records.length < 1000 && (
+            <button disabled={loading} onClick={() => void read(next)}>
+              {t("executionLoadMore", "Load earlier calls")}
+            </button>
+          )}
+          {next !== undefined && records.length >= 1000 && (
+            <p>
+              {t(
+                "executionHistoryBudget",
+                "Showing the most recent 1,000 calls. The full history is retained on disk.",
+              )}
+            </p>
+          )}
+        </details>
       )}
-      {error && (
-        <p role="alert">
-          {t("executionHistoryFailed", "Could not read execution history.")}{" "}
-          <button onClick={() => void read()}>{t("executionRetry", "Retry")}</button>
-        </p>
-      )}
-      <ul>
-        {tree.map((node) => (
-          <ExecutionNode key={node.record.executionId} node={node} sessionId={sessionId} leafId={leafId} />
-        ))}
-      </ul>
-      {next !== undefined && records.length < 1000 && (
-        <button disabled={loading} onClick={() => void read(next)}>
-          {t("executionLoadMore", "Load earlier calls")}
-        </button>
-      )}
-      {next !== undefined && records.length >= 1000 && (
-        <p>
-          {t("executionHistoryBudget", "Showing the most recent 1,000 calls. The full history is retained on disk.")}
-        </p>
-      )}
-    </details>
+    </>
   );
 }
 
@@ -159,7 +168,7 @@ export function ExecutionNode({
         <div className="execution-detail">
           {record.outcomeUnknown && (
             <p role="status">
-              {t("executionOutcomeUnknown", "The tool was interrupted; its actual outcome is unknown.")}
+              {t("executionOutcomeUnknown", "The operation's actual outcome is unknown; verify before repeating it.")}
             </p>
           )}
           {record.error && <pre>{record.error}</pre>}
@@ -196,6 +205,15 @@ export function ExecutionNode({
               payload={record.result}
             />
           )}
+          {record.output && (
+            <OriginalPayload
+              sessionId={sessionId}
+              leafId={leafId}
+              record={record}
+              field="output"
+              payload={record.output}
+            />
+          )}
         </div>
       </details>
       {!!node.children.length && depth < 32 && (
@@ -225,7 +243,7 @@ function OriginalPayload({
   sessionId: string;
   leafId?: string | null;
   record: ToolExecutionRecord;
-  field: "arguments" | "result";
+  field: "arguments" | "result" | "output";
   payload: ExecutionPayload;
 }) {
   const { t } = useI18n();
@@ -287,7 +305,11 @@ function OriginalPayload({
   return (
     <div>
       <strong>
-        {field === "arguments" ? t("executionField_arguments", "Arguments") : t("executionField_result", "Result")}
+        {field === "arguments"
+          ? t("executionField_arguments", "Arguments")
+          : field === "output"
+            ? t("executionField_output", "Full output")
+            : t("executionField_result", "Result")}
       </strong>
       {!payload.complete && (
         <p>{payload.reason ?? t("executionContentIncomplete", "The original tool output is incomplete.")}</p>

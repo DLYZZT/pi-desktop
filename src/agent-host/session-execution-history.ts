@@ -5,6 +5,7 @@ import type { ExecutionHistoryPage, ExecutionQuery, ToolExecutionRecord } from "
 import { validateExecutionQuery } from "../contract/executions";
 import { ExecutionLogStore, isTerminalExecution } from "./execution-log-store";
 import { getAgentSessionSource } from "./session-source";
+import { captureExecutionOutput } from "./execution-output";
 
 type ToolEvent = {
   toolCallId: string;
@@ -103,7 +104,13 @@ export class SessionExecutionHistory {
         ...(error ? { error: text.slice(0, 8192) } : {}),
         result: await this.store.payload(event.result),
       };
+    next.output = await captureExecutionOutput(this.store, event.toolName, event.result);
     const refs: Record<string, string> = {};
+    if (result?.details && typeof result.details === "object") {
+      const mcp = (result.details as Record<string, unknown>).mcp;
+      if (mcp && typeof mcp === "object" && (mcp as Record<string, unknown>).outcomeUnknown === true)
+        next.outcomeUnknown = true;
+    }
     let observed = result?.details;
     if (!observed && text.length < 2 * 1024 * 1024) {
       try {
@@ -187,12 +194,14 @@ export class SessionExecutionHistory {
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
         includeContent: Type.Optional(Type.Boolean()),
         maxContentBytes: Type.Optional(Type.Integer({ minimum: 0, maximum: 2097152 })),
-        contentField: Type.Optional(Type.Union([Type.Literal("arguments"), Type.Literal("result")])),
+        contentField: Type.Optional(
+          Type.Union([Type.Literal("arguments"), Type.Literal("result"), Type.Literal("output")]),
+        ),
         contentOffset: Type.Optional(Type.Integer({ minimum: 0 })),
       }),
       execute: async (
         _id: string,
-        params: ExecutionQuery & { contentField?: "arguments" | "result"; contentOffset?: number },
+        params: ExecutionQuery & { contentField?: "arguments" | "result" | "output"; contentOffset?: number },
       ) => {
         const source = getAgentSessionSource(this.manager) === "channel" ? "channel" : "local";
         const page = await this.query(params, source, true);

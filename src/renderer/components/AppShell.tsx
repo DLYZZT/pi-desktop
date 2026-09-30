@@ -1,3 +1,8 @@
+import {
+  initialRightPanelPreferredWidth,
+  persistRightPanelPreferredWidth,
+  loadBrowserPanelPreferredWidth,
+} from "@/lib/panel-preferences";
 import { useSessionList } from "@/hooks/useSessionList";
 import { call, subscribe } from "@/lib/api-client";
 import {
@@ -19,6 +24,7 @@ import { FileExplorer } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
 import { SettingsConfig, type SettingsTab } from "./SettingsConfig";
+import { useMcpSettingsRequests } from "../hooks/useMcpSettingsRequests";
 import { QuickChannelBinding } from "./channels/QuickChannelBinding";
 import { BrowserDock } from "./browser/BrowserDock";
 import { BrowserAuthorizationDialog } from "./browser/BrowserAuthorizationDialog";
@@ -41,8 +47,6 @@ import {
   clampRightPanelWidth,
   getKeyboardAdjustedRightPanelWidth,
   getRightPanelWidthBounds,
-  loadRightPanelPreferredWidth,
-  saveRightPanelPreferredWidth,
   shouldCollapseSidebarForRightPanel,
   type RightPanelResizeKey,
 } from "@/lib/layout-preferences";
@@ -63,34 +67,7 @@ const PROCESSES_TAB_ID = "processes";
 const HERDR_TERMINAL_TAB_ID = "herdr-terminal";
 const HERDR_TERMINAL_PANEL_RATIO = 0.55;
 const HERDR_TERMINAL_EXPANDED_RATIO = 0.72;
-const BROWSER_PANEL_WIDTH_KEY = "pi-desktop.browser-panel-width";
 const EMPTY_CHANNELS: ChannelsSnapshot = { accounts: [], statuses: [], pairings: [], bindings: [], activities: [] };
-
-function initialRightPanelPreferredWidth(): number {
-  try {
-    return loadRightPanelPreferredWidth(window.localStorage);
-  } catch {
-    return RIGHT_PANEL_DEFAULT_WIDTH;
-  }
-}
-
-function persistRightPanelPreferredWidth(width: number, browser = false): void {
-  try {
-    if (browser) window.localStorage.setItem(BROWSER_PANEL_WIDTH_KEY, String(Math.round(width)));
-    else saveRightPanelPreferredWidth(window.localStorage, width);
-  } catch {
-    // Storage can become unavailable after startup; keep the in-memory preference.
-  }
-}
-
-function loadBrowserPanelPreferredWidth(): number {
-  try {
-    const value = Number(window.localStorage.getItem(BROWSER_PANEL_WIDTH_KEY));
-    return Number.isFinite(value) && value >= RIGHT_PANEL_MIN_WIDTH ? value : 520;
-  } catch {
-    return 520;
-  }
-}
 
 export function AppShell({
   chatAppearance,
@@ -125,6 +102,12 @@ export function AppShell({
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("general");
   const [settingsNavigationRequestId, setSettingsNavigationRequestId] = useState(0);
   const [authorizationSettingsSessionId, setAuthorizationSettingsSessionId] = useState<string | null>(null);
+  useMcpSettingsRequests(
+    setSettingsOpen,
+    setSettingsInitialTab,
+    setAuthorizationSettingsSessionId,
+    setSettingsNavigationRequestId,
+  );
   const [browserAuthorization, setBrowserAuthorization] = useState<BrowserAgentAuthorizationRequest | null>(null);
   const [channelSnapshot, setChannelSnapshot] = useState<ChannelsSnapshot>(EMPTY_CHANNELS);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);

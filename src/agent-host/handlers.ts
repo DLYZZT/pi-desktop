@@ -16,6 +16,8 @@ import { resourceHandlers } from "./handlers/resources";
 import { createChannelHandlers, initializeChannels } from "./handlers/channels";
 import { createHerdrHandlers } from "./handlers/herdr";
 import { createProcessHandlers } from "./handlers/processes";
+import { createMcpHandlers } from "./handlers/mcp";
+import { initializeMcpService } from "./mcp/runtime";
 export { generateSessionTitleWithFallback, applySessionNameIfEmpty } from "./handlers/agent-title";
 export { createAgentNewLockKey } from "./handlers/agent";
 export { initializeChannels } from "./handlers/channels";
@@ -55,6 +57,8 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
   const channelManager = new ChannelManager(server, (session, sessionId) => bindings.ensure(session, sessionId));
   initializeChannels(channelManager);
   const managedProcesses = initializeManagedProcessService(server);
+  const mcp = initializeMcpService(server),
+    mcpHandlers = createMcpHandlers(mcp);
   const worktreeHandlers = createWorktreeHandlers(managedProcesses);
   const sessionHandlers = createSessionHandlers({ server, managedProcesses, clearSessionEventBinding: bindings.clear });
   const herdr = initializeHerdrBridge(server, { assertAllowedPath: (target) => assertPathAllowed(target) });
@@ -114,6 +118,26 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     };
 
   server.handle({
+    "mcp.config.get": guard(mcpHandlers["mcp.config.get"]),
+    "mcp.config.upsert": guard(mcpHandlers["mcp.config.upsert"]),
+    "mcp.config.remove": guard(mcpHandlers["mcp.config.remove"]),
+    "mcp.import.preview": guard(mcpHandlers["mcp.import.preview"]),
+    "mcp.import.apply": guard(mcpHandlers["mcp.import.apply"]),
+    "mcp.snapshot": guard(mcpHandlers["mcp.snapshot"]),
+    "mcp.probe": guard(mcpHandlers["mcp.probe"]),
+    "mcp.probe.cancel": guard(mcpHandlers["mcp.probe.cancel"]),
+    "mcp.reconnect": guard(mcpHandlers["mcp.reconnect"]),
+    "mcp.grants": guard(mcpHandlers["mcp.grants"]),
+    "mcp.declarations": guard(mcpHandlers["mcp.declarations"]),
+    "mcp.extension.update": guard(mcpHandlers["mcp.extension.update"]),
+    "mcp.resources": guard(mcpHandlers["mcp.resources"]),
+    "mcp.resource.read": guard(mcpHandlers["mcp.resource.read"]),
+    "mcp.resource.content": guard(mcpHandlers["mcp.resource.content"]),
+    "mcp.oauth.start": guard(mcpHandlers["mcp.oauth.start"]),
+    "mcp.oauth.get": guard(mcpHandlers["mcp.oauth.get"]),
+    "mcp.oauth.submit": guard(mcpHandlers["mcp.oauth.submit"]),
+    "mcp.oauth.cancel": guard(mcpHandlers["mcp.oauth.cancel"]),
+    "mcp.oauth.logout": guard(mcpHandlers["mcp.oauth.logout"]),
     "host.ping": guard(() => ({ ok: true as const, ts: Date.now() })),
     "host.runtimeProbe": guard(probePiRuntimeModules),
 
@@ -336,6 +360,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     { name: "channels", stop: () => channelManager.shutdown() },
     { name: "file watches", stop: stopAllFileWatches },
     { name: "Agent sessions", stop: disposeAllRpcSessions },
+    { name: "MCP", stop: () => mcp.shutdown() },
   ]);
   return () => {
     closing = true;

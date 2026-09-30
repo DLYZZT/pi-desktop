@@ -1,3 +1,10 @@
+import {
+  updateStatusColor,
+  displayVersion,
+  formatUpdateDate,
+  formatBytes,
+  updateDetailStyle,
+} from "@/lib/update-display";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -18,9 +25,10 @@ import appIconUrl from "../../../build/icon.png";
 import { isAutoSessionTitleEnabled, setAutoSessionTitleEnabled } from "../lib/auto-session-title";
 import { getCacheWarmingStatus, setCacheWarmingMode } from "../lib/api-client";
 import { HerdrSettings } from "./herdr/HerdrSettings";
+import { McpConfig, type McpConfigHandle } from "./mcp/McpConfig";
 
 export type SettingsTab =
-  "general" | "herdr" | "browser" | "channels" | "models" | "tools" | "skills" | "plugins" | "about";
+  "general" | "herdr" | "browser" | "channels" | "models" | "tools" | "skills" | "plugins" | "mcp" | "about";
 
 interface SettingsConfigProps {
   cwd: string | null;
@@ -58,6 +66,7 @@ export function SettingsConfig({
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const skillsConfigRef = useRef<SkillsConfigHandle>(null);
+  const mcpConfigRef = useRef<McpConfigHandle>(null);
   const returnFocusRef = useRef<HTMLElement | null>(
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   );
@@ -65,6 +74,10 @@ export function SettingsConfig({
   const requestSettingsTransition = useCallback((action: () => void) => {
     if (activeTabRef.current === "skills" && skillsConfigRef.current) {
       skillsConfigRef.current.requestLeave(action);
+      return;
+    }
+    if (activeTabRef.current === "mcp" && mcpConfigRef.current) {
+      mcpConfigRef.current.requestLeave(action);
       return;
     }
     action();
@@ -95,6 +108,7 @@ export function SettingsConfig({
     { id: "models", label: t("models", "Models") },
     { id: "skills", label: t("skills", "Skills") },
     { id: "plugins", label: t("plugins", "Plugins") },
+    { id: "mcp", label: t("mcpTab", "MCP") },
     { id: "browser", label: t("browser", "Browser") },
     { id: "herdr", label: t("herdr", "Herdr") },
     { id: "channels", label: t("channels", "Channels") },
@@ -302,6 +316,7 @@ export function SettingsConfig({
               />
             )}
             {activeTab === "browser" && <BrowserSettings sessionId={sessionId} />}
+            {activeTab === "mcp" && <McpConfig ref={mcpConfigRef} cwd={cwd} sessionId={sessionId} />}
             {activeTab === "herdr" && <HerdrSettings />}
             {activeTab === "models" && (
               <ModelsConfig embedded cwd={cwd} onClose={() => undefined} onChanged={onModelsChanged} />
@@ -888,38 +903,6 @@ function getUpdateErrorMessage(
       return t("updateErrorUnknown", "An unexpected update error occurred. This version was not changed.");
   }
 }
-
-function updateStatusColor(phase: DesktopUpdateState["phase"] | undefined): string {
-  if (phase === "error") return "#f87171";
-  if (phase === "available" || phase === "downloaded") return "var(--accent)";
-  if (phase === "up-to-date") return "#4ade80";
-  return "var(--text-dim)";
-}
-
-function displayVersion(version: string): string {
-  return version.startsWith("v") ? version : `v${version}`;
-}
-
-function formatUpdateDate(value: string, language: AppLanguage): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(date);
-}
-
-function formatBytes(value: number, language: AppLanguage): string {
-  if (!Number.isFinite(value) || value <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  const unitIndex = Math.max(0, Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1));
-  const amount = value / 1024 ** unitIndex;
-  return `${new Intl.NumberFormat(language, { maximumFractionDigits: unitIndex === 0 ? 0 : 1 }).format(amount)} ${units[unitIndex]}`;
-}
-
-const updateDetailStyle: React.CSSProperties = {
-  margin: "12px 0 0",
-  fontSize: 12,
-  lineHeight: 1.55,
-  color: "var(--text-muted)",
-};
 
 function AboutRow({ label, value, last = false }: { label: string; value: React.ReactNode; last?: boolean }) {
   return (

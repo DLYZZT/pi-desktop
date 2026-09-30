@@ -1,5 +1,111 @@
 @import "tailwindcss";
 
+.mcp-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  color: var(--text);
+}
+.mcp-config h3,
+.mcp-config h4,
+.mcp-config p {
+  margin: 0;
+}
+.mcp-config p {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mcp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.mcp-config button,
+.mcp-config input,
+.mcp-config select,
+.mcp-config textarea {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.mcp-config button {
+  cursor: pointer;
+}
+.mcp-config button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.mcp-config label {
+  display: block;
+  font-size: 12px;
+  margin: 6px 0;
+}
+.mcp-config input:not([type="checkbox"]),
+.mcp-config textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.mcp-config textarea {
+  min-height: 80px;
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+.mcp-config pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  max-height: 360px;
+  font-size: 11px;
+}
+.mcp-server-row,
+.mcp-editor,
+.mcp-tools {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 0;
+}
+.mcp-config .mcp-error {
+  color: var(--danger);
+}
+.mcp-config fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.mcp-tool-row {
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+}
+.mcp-tool-row span {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.mcp-config summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.mcp-config [role="alertdialog"] {
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+.mcp-config button:focus-visible,
+.mcp-config input:focus-visible,
+.mcp-config textarea:focus-visible,
+.mcp-config select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .execution-history {
   margin: 12px 0;
   border: 1px solid var(--border);

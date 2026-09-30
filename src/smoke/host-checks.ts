@@ -2,6 +2,7 @@ import type { BrowserWindow } from "electron";
 import path from "path";
 import type { HostManager } from "../main/host-manager";
 import { appendMainLog } from "../main/logger";
+import { runMcpUiChecks } from "./mcp-ui-checks";
 
 export async function runSmokeHostChecks(
   manager: HostManager,
@@ -705,6 +706,7 @@ export async function runSmokeHostChecks(
       if (finalWarming.mode !== "idle" || finalSettings.cacheWarming !== "idle") {
         throw new Error("Renderer cache warming choice did not persist through Host RPC");
       }
+      await runMcpUiChecks(smokeWindow, call);
       if (rendererSecurityViolation) {
         throw new Error(`Renderer security violation: ${rendererSecurityViolation}`);
       }

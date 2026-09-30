@@ -5,6 +5,7 @@ import { getAgentSessionSource } from "./session-source";
 import { isHerdrToolName } from "./herdr/tool-names";
 import { isManagedProcessToolName } from "./managed-process/tool-names";
 import { CODING_TOOL_NAMES } from "./tool-activation";
+import { isMcpManagedTool } from "../shared/mcp-tool-policy";
 
 /** A Desktop grant is independent from SDK declaration/callable membership. */
 export class SessionToolPolicy {
@@ -14,6 +15,7 @@ export class SessionToolPolicy {
     private readonly manager: object,
     private requested?: string[],
     private execution?: string[],
+    private mcpExecution?: string[],
   ) {}
   bind(session: AgentSessionLike): void {
     this.session = session;
@@ -24,9 +26,21 @@ export class SessionToolPolicy {
     this.requested = [...names];
     if (names.length === 0) this.execution = [];
     else if (wasEmpty) this.execution = undefined;
+    if (names.length === 0) this.mcpExecution = [];
+    else if (wasEmpty) this.mcpExecution = undefined;
+  }
+  isEmpty(): boolean {
+    return this.requested?.length === 0;
+  }
+  setMcpExecution(names: string[]): void {
+    this.mcpExecution = [...names];
+  }
+  getMcpExecution(): string[] | undefined {
+    return this.mcpExecution ? [...this.mcpExecution] : undefined;
   }
   setExecution(names: string[]): void {
     this.execution = filterDesktopToolNames(names);
+    this.mcpExecution = undefined;
   }
   getExecution(): string[] | undefined {
     return this.execution ? [...this.execution] : undefined;
@@ -39,6 +53,11 @@ export class SessionToolPolicy {
     const tool =
       this.session.getToolDefinition?.(name) ?? this.session.getAllTools().find((entry) => entry.name === name);
     if (!tool || tool.exposure === "hidden") return false;
+    if (isMcpManagedTool(name)) {
+      if (this.mcpExecution !== undefined) return this.mcpExecution.includes(name);
+      if (this.execution !== undefined) return this.execution.includes(name);
+      return this.requested?.includes(name) === true && this.session.getActiveToolNames().includes(name);
+    }
     if (CODING_TOOL_NAMES.has(name))
       return (
         (this.requested ? this.requested.includes(name) : this.initialActive.has(name)) &&

@@ -47,8 +47,10 @@ import { peekManagedProcessService } from "./managed-process/runtime";
 import { createManagedProcessToolDefinitions } from "./managed-process/tools";
 import { peekHerdrBridge } from "./herdr/runtime";
 import { createHerdrToolDefinitions, herdrToolNamesForRuntime, isHerdrToolName } from "./herdr/tools";
-import { createDesktopPromptExtension, SessionPromptPolicy } from "./session-prompt-policy";
-import { createLegacyChannelContextExtension } from "./legacy-channel-context";
+import { SessionPromptPolicy } from "./session-prompt-policy";
+import { desktopSessionExtensions } from "./desktop-session-extensions";
+import { peekMcpService } from "./mcp/runtime";
+import { getDesktopSessionMcpExecutionTools, copyDesktopMcpTools } from "./session-tool-store";
 import { SessionExecutionHistory } from "./session-execution-history";
 
 // ============================================================================
@@ -149,6 +151,7 @@ export class AgentSessionWrapper {
     promptPolicy?: SessionPromptPolicy,
     private readonly executionHistory?: SessionExecutionHistory,
     private readonly toolPolicy?: SessionToolPolicy,
+    private readonly disposeMcp?: () => Promise<void>,
   ) {
     this.inner = inner;
     this.persistToolNames = persistToolNames;
@@ -624,6 +627,7 @@ export class AgentSessionWrapper {
         );
         const execution = this.toolPolicy?.getExecution();
         if (execution) setDesktopSessionExecutionTools(newSessionId, execution);
+        copyDesktopMcpTools(this.sessionId, newSessionId);
         cacheSessionPath(newSessionId, newSessionFile);
         await this.dispose({ abort: true, reason: "fork" });
         return { cancelled: false, newSessionId };
@@ -821,6 +825,7 @@ export class AgentSessionWrapper {
           );
         }
         try {
+          await this.disposeMcp?.();
           await agent.dispose?.();
           await this.executionHistory?.flush();
         } catch (error) {
@@ -1445,6 +1450,7 @@ export async function startRpcSession(
       sessionManager,
       sessionToolNames,
       getDesktopSessionExecutionTools(sessionId),
+      getDesktopSessionMcpExecutionTools(managerSessionId),
     );
 
     // Build services first so extension-registered providers are available
@@ -1454,12 +1460,12 @@ export async function startRpcSession(
       cwd,
       agentDir,
       resourceLoaderOptions: {
-        extensionFactories: [
-          toolPolicy.extension(),
-          executionHistory.extension(),
-          createLegacyChannelContextExtension(),
-          createDesktopPromptExtension(promptPolicy),
-        ],
+        extensionFactories: desktopSessionExtensions(
+          toolPolicy,
+          executionHistory,
+          promptPolicy,
+          () => getRpcSession(managerSessionId)?.isRunning() ?? false,
+        ),
       },
     });
     const executionContext = await toolchainRuntime.createExecutionContext({
@@ -1510,6 +1516,7 @@ export async function startRpcSession(
       promptPolicy,
       executionHistory,
       toolPolicy,
+      () => peekMcpService()?.detach(realSessionId) ?? Promise.resolve(),
     );
     wrapper.setRuntimeDiagnostics(services.diagnostics);
     wrapper.setToolchainSummary(executionContext.inventoryRevision, executionContext.summary);

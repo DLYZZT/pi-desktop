@@ -6,6 +6,7 @@ import { enUS as commonEnUS, zhCN as commonZhCN, zhTW as commonZhTW } from "./i1
 import { enUS as composerEnUS, zhCN as composerZhCN, zhTW as composerZhTW } from "./i18n/composer.ts";
 import { enUS as filesEnUS, zhCN as filesZhCN, zhTW as filesZhTW } from "./i18n/files.ts";
 import { enUS as executionsEnUS, zhCN as executionsZhCN, zhTW as executionsZhTW } from "./i18n/executions.ts";
+import { enUS as mcpEnUS, zhCN as mcpZhCN, zhTW as mcpZhTW } from "./i18n/mcp.ts";
 import { enUS as herdrEnUS, zhCN as herdrZhCN, zhTW as herdrZhTW } from "./i18n/herdr.ts";
 import { enUS as modelsEnUS, zhCN as modelsZhCN, zhTW as modelsZhTW } from "./i18n/models.ts";
 import { enUS as resourcesEnUS, zhCN as resourcesZhCN, zhTW as resourcesZhTW } from "./i18n/resources.ts";
@@ -19,6 +20,7 @@ export const enUS = mergeDictionaries(
   composerEnUS,
   filesEnUS,
   executionsEnUS,
+  mcpEnUS,
   herdrEnUS,
   modelsEnUS,
   resourcesEnUS,
@@ -32,6 +34,7 @@ export const zhCN = mergeDictionaries(
   composerZhCN,
   filesZhCN,
   executionsZhCN,
+  mcpZhCN,
   herdrZhCN,
   modelsZhCN,
   resourcesZhCN,
@@ -45,6 +48,7 @@ export const zhTW = mergeDictionaries(
   composerZhTW,
   filesZhTW,
   executionsZhTW,
+  mcpZhTW,
   herdrZhTW,
   modelsZhTW,
   resourcesZhTW,

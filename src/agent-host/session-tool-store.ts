@@ -6,6 +6,8 @@ import { desktopDataRoot } from "./desktop-data-root";
 type StoredSessionTools = {
   toolNames: string[];
   executionToolNames?: string[];
+  mcpExecutionToolNames?: string[];
+  mcpDeclarationToolNames?: string[];
   updatedAt: string;
 };
 
@@ -39,6 +41,12 @@ function normalizeState(value: unknown): SessionToolStateFile {
       ...(entry.executionToolNames === undefined
         ? {}
         : { executionToolNames: normalizeToolNames(entry.executionToolNames) ?? [] }),
+      ...(entry.mcpExecutionToolNames === undefined
+        ? {}
+        : { mcpExecutionToolNames: normalizeToolNames(entry.mcpExecutionToolNames) ?? [] }),
+      ...(entry.mcpDeclarationToolNames === undefined
+        ? {}
+        : { mcpDeclarationToolNames: normalizeToolNames(entry.mcpDeclarationToolNames) ?? [] }),
       updatedAt: typeof entry.updatedAt === "string" && entry.updatedAt ? entry.updatedAt : new Date(0).toISOString(),
     };
   }
@@ -86,6 +94,18 @@ export class DesktopSessionToolStore {
     state.sessions[normalizedId] = {
       toolNames: normalizedToolNames,
       ...(normalizedToolNames.length === 0
+        ? { mcpDeclarationToolNames: [] }
+        : state.sessions[normalizedId]?.mcpDeclarationToolNames !== undefined &&
+            state.sessions[normalizedId].toolNames.length !== 0
+          ? { mcpDeclarationToolNames: state.sessions[normalizedId].mcpDeclarationToolNames }
+          : {}),
+      ...(normalizedToolNames.length === 0
+        ? { mcpExecutionToolNames: [] }
+        : state.sessions[normalizedId]?.mcpExecutionToolNames !== undefined &&
+            state.sessions[normalizedId].toolNames.length !== 0
+          ? { mcpExecutionToolNames: state.sessions[normalizedId].mcpExecutionToolNames }
+          : {}),
+      ...(normalizedToolNames.length === 0
         ? { executionToolNames: [] }
         : state.sessions[normalizedId]?.executionToolNames !== undefined &&
             state.sessions[normalizedId].toolNames.length !== 0
@@ -111,10 +131,33 @@ export class DesktopSessionToolStore {
     const names = this.load().sessions[sessionId.trim()]?.executionToolNames;
     return names ? [...names] : undefined;
   }
+  getMcpExecution(sessionId: string): string[] | undefined {
+    const names = this.load().sessions[sessionId.trim()]?.mcpExecutionToolNames;
+    return names ? [...names] : undefined;
+  }
+  getMcpDeclaration(sessionId: string): string[] | undefined {
+    const names = this.load().sessions[sessionId.trim()]?.mcpDeclarationToolNames;
+    return names ? [...names] : undefined;
+  }
+  setMcpDeclaration(sessionId: string, names: string[]): void {
+    const entry = this.load().sessions[sessionId.trim()];
+    if (!entry) throw new Error("Missing session tool selection");
+    entry.mcpDeclarationToolNames = entry.toolNames.length === 0 ? [] : [...names];
+    entry.updatedAt = new Date().toISOString();
+    atomicWrite(this.filePath, this.load());
+  }
+  setMcpExecution(sessionId: string, names: string[]): void {
+    const entry = this.load().sessions[sessionId.trim()];
+    if (!entry) throw new Error("Session tool selection must be saved before MCP grants");
+    entry.mcpExecutionToolNames = entry.toolNames.length === 0 ? [] : filterDesktopToolNames(names);
+    entry.updatedAt = new Date().toISOString();
+    atomicWrite(this.filePath, this.load());
+  }
   setExecution(sessionId: string, names: string[]): void {
     const entry = this.load().sessions[sessionId.trim()];
     if (!entry) throw new Error("Session tool selection must be saved before execution grants");
     entry.executionToolNames = entry.toolNames.length === 0 ? [] : filterDesktopToolNames(names);
+    delete entry.mcpExecutionToolNames;
     entry.updatedAt = new Date().toISOString();
     atomicWrite(this.filePath, this.load());
   }
@@ -140,4 +183,22 @@ export function getDesktopSessionExecutionTools(sessionId: string): string[] | u
 }
 export function setDesktopSessionExecutionTools(sessionId: string, names: string[]): void {
   getDefaultStore().setExecution(sessionId, names);
+}
+export function getDesktopSessionMcpExecutionTools(sessionId: string): string[] | undefined {
+  return getDefaultStore().getMcpExecution(sessionId);
+}
+export function setDesktopSessionMcpExecutionTools(sessionId: string, names: string[]): void {
+  getDefaultStore().setMcpExecution(sessionId, names);
+}
+export function getDesktopSessionMcpDeclarations(sessionId: string): string[] | undefined {
+  return getDefaultStore().getMcpDeclaration(sessionId);
+}
+export function setDesktopSessionMcpDeclarations(sessionId: string, names: string[]): void {
+  getDefaultStore().setMcpDeclaration(sessionId, names);
+}
+export function copyDesktopMcpTools(sourceId: string, targetId: string): void {
+  const grants = getDesktopSessionMcpExecutionTools(sourceId),
+    declarations = getDesktopSessionMcpDeclarations(sourceId);
+  if (grants) setDesktopSessionMcpExecutionTools(targetId, grants);
+  if (declarations) setDesktopSessionMcpDeclarations(targetId, declarations);
 }

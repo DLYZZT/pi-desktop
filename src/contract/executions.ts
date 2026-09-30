@@ -37,6 +37,7 @@ export interface ToolExecutionRecord {
   durationMs?: number;
   arguments?: ExecutionPayload;
   result?: ExecutionPayload;
+  output?: ExecutionPayload;
   error?: string;
   isError?: boolean;
   outcomeUnknown?: boolean;

@@ -75,3 +75,22 @@ test("execution grants are optional v1 metadata, survive reopen and ordinary sel
   assert.equal(new DesktopSessionToolStore(filename).getExecution("fixture"), undefined);
   assert.equal(JSON.parse(readFileSync(filename)).version, 1);
 });
+
+test("MCP-specific grants preserve ordinary execution choices and are revoked by empty mode", async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-mcp-grants-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "session-tools.json"),
+    store = new DesktopSessionToolStore(file);
+  store.set("fixture", ["read"]);
+  store.setExecution("fixture", ["ordinary"]);
+  store.setMcpExecution("fixture", ["mcp__fixture__echo", "codemode"]);
+  const reopened = new DesktopSessionToolStore(file);
+  assert.deepEqual(reopened.getExecution("fixture"), ["ordinary"]);
+  assert.deepEqual(reopened.getMcpExecution("fixture"), ["mcp__fixture__echo", "codemode"]);
+  store.set("fixture", ["read", "write"]);
+  assert.deepEqual(new DesktopSessionToolStore(file).getMcpExecution("fixture"), ["mcp__fixture__echo", "codemode"]);
+  store.set("fixture", []);
+  assert.deepEqual(new DesktopSessionToolStore(file).getMcpExecution("fixture"), []);
+  store.set("fixture", ["read"]);
+  assert.equal(new DesktopSessionToolStore(file).getMcpExecution("fixture"), undefined);
+});

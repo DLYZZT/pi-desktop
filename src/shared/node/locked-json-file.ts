@@ -24,6 +24,7 @@ export async function withLockedJsonFile<T>(
   filename: string,
   action: (current: JsonRecord, save: (next: JsonRecord) => Promise<void>) => Promise<T>,
   signal?: AbortSignal,
+  options: { allowEmpty?: boolean } = {},
 ): Promise<T> {
   await mkdir(path.dirname(filename), { recursive: true, mode: 0o700 });
   let compromised: Error | undefined;
@@ -54,7 +55,8 @@ export async function withLockedJsonFile<T>(
     assertOwned();
     let current: JsonRecord;
     try {
-      current = parseJsonRecord(await readFile(filename, "utf8"));
+      const text = await readFile(filename, "utf8");
+      current = options.allowEmpty && !text.trim() ? {} : parseJsonRecord(text);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       current = {};

@@ -108,5 +108,6 @@ test("an unsaved empty session does not display a false history failure", async 
   await act(async () => {
     renderer = create(createElement(ExecutionHistory, { sessionId: "empty" }));
   });
-  assert.equal(renderer.toJSON(), null);
+  assert.doesNotMatch(JSON.stringify(renderer.toJSON()), /Could not read execution history|data-execution-history/);
+  assert.match(JSON.stringify(renderer.toJSON()), /Open MCP settings/);
 });

@@ -34,6 +34,37 @@ test("default declaration respects exposure and defaultActive while explicit too
   assert.deepEqual(withExtensionTools(session, []), []);
 });
 
+test("MCP scoped authorization does not persist or revoke other Desktop tool capabilities", () => {
+  const manager = {},
+    definitions = [
+      { name: "ordinary", exposure: "direct" },
+      { name: "herdr_list", exposure: "direct" },
+      { name: "mcp__fixture__echo", exposure: "deferred" },
+      { name: "mcp__fixture__direct", exposure: "direct", defaultActive: true },
+      { name: "codemode", exposure: "model-only", defaultActive: false },
+    ];
+  setAgentSessionSource(manager, "local");
+  const policy = new SessionToolPolicy(manager);
+  policy.bind({
+    getActiveToolNames: () => ["ordinary", "herdr_list", "codemode", "mcp__fixture__direct"],
+    getAllTools: () => definitions,
+    getToolDefinition: (name) => definitions.find((tool) => tool.name === name),
+  });
+  assert.equal(policy.isAllowed("herdr_list"), true);
+  assert.equal(policy.isAllowed("mcp__fixture__echo"), false);
+  assert.equal(policy.isAllowed("mcp__fixture__direct"), false);
+  policy.setMcpExecution(["mcp__fixture__echo", "codemode"]);
+  assert.equal(policy.isAllowed("ordinary"), true);
+  assert.equal(policy.isAllowed("herdr_list"), true);
+  assert.equal(policy.isAllowed("mcp__fixture__echo"), true);
+  policy.setMcpExecution([]);
+  assert.equal(policy.isAllowed("mcp__fixture__echo"), false);
+  assert.equal(policy.isAllowed("ordinary"), true);
+  policy.setRequested([]);
+  assert.equal(policy.isAllowed("ordinary"), false);
+  assert.equal(policy.isAllowed("herdr_list"), false);
+});
+
 test("actual SDK nested calls respect grants, source changes, no-tools and immediate revocation", async (t) => {
   const cwd = mkdtempSync(path.join(tmpdir(), "pi-tool-policy-")),
     manager = SessionManager.inMemory(cwd);

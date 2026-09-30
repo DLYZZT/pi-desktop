@@ -69,9 +69,56 @@ import type {
 import type { PiRuntimeProbeResult } from "./runtime";
 import type { CredentialMutationOptions } from "./auth";
 import type { ExecutionHistoryPage, ExecutionQuery, ExecutionContentChunk } from "./executions";
+import type {
+  McpConfigurationSnapshot,
+  McpScope,
+  McpServerConfig,
+  McpPanelSnapshot,
+  McpTarget,
+  McpOAuthSnapshot,
+  McpResourcePage,
+} from "./mcp";
 
 /** Request/response API surface (replaces HTTP routes). */
 export interface Api {
+  "mcp.config.get": { params: { scope: McpScope; cwd?: string }; result: McpConfigurationSnapshot };
+  "mcp.config.upsert": {
+    params: { scope: McpScope; cwd?: string; name: string; config: McpServerConfig; expectedRevision: string };
+    result: McpConfigurationSnapshot;
+  };
+  "mcp.config.remove": {
+    params: { scope: McpScope; cwd?: string; name: string; expectedRevision: string };
+    result: McpConfigurationSnapshot;
+  };
+  "mcp.import.preview": {
+    params: { scope: McpScope; cwd?: string; json: string };
+    result: { entries: string[]; conflicts: string[] };
+  };
+  "mcp.import.apply": {
+    params: { scope: McpScope; cwd?: string; json: string; expectedRevision: string };
+    result: McpConfigurationSnapshot;
+  };
+  "mcp.snapshot": { params: { sessionId: string }; result: McpPanelSnapshot };
+  "mcp.probe": { params: McpTarget & { requestId: string }; result: McpPanelSnapshot };
+  "mcp.probe.cancel": { params: { requestId: string }; result: { ok: true } };
+  "mcp.reconnect": { params: { sessionId: string; name: string }; result: McpPanelSnapshot };
+  "mcp.grants": { params: { sessionId: string; toolNames: string[] }; result: McpPanelSnapshot };
+  "mcp.declarations": { params: { sessionId: string; toolNames: string[] }; result: McpPanelSnapshot };
+  "mcp.extension.update": {
+    params: { sessionId: string; name: string; config: McpServerConfig; expectedRevision: string };
+    result: McpPanelSnapshot;
+  };
+  "mcp.resources": { params: McpTarget & { cursor?: string; templateCursor?: string }; result: McpResourcePage };
+  "mcp.resource.read": {
+    params: McpTarget & { uri: string };
+    result: { content?: unknown; preview?: string; hash?: string; bytes?: number };
+  };
+  "mcp.resource.content": { params: { hash: string; offset: number }; result: ExecutionContentChunk };
+  "mcp.oauth.start": { params: McpTarget; result: McpOAuthSnapshot };
+  "mcp.oauth.get": { params: { requestId: string }; result: McpOAuthSnapshot };
+  "mcp.oauth.submit": { params: { requestId: string; callbackUrl: string }; result: McpOAuthSnapshot };
+  "mcp.oauth.cancel": { params: { requestId: string }; result: McpOAuthSnapshot };
+  "mcp.oauth.logout": { params: McpTarget; result: { ok: true } };
   "sessions.executions": { params: { id: string; leafId?: string } & ExecutionQuery; result: ExecutionHistoryPage };
   "sessions.executionContent": {
     params: { id: string; hash: string; maxBytes?: number; offset?: number };
@@ -478,6 +525,9 @@ export interface Api {
 
 /** Server-push streams delivered over MessagePort RPC. */
 export interface Streams {
+  "mcp.changed": { sessionId: string; instances: import("./mcp").McpInstanceSnapshot[] };
+  "mcp.oauth": McpOAuthSnapshot;
+  "mcp.settings": { sessionId: string };
   "agent.events": AgentEvent;
   "agent.running": RunningStateEvent;
   "auth.login": LoginProgressEvent;

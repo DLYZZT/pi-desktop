@@ -109,7 +109,7 @@ export class ExecutionLogStore {
     const selected = records.slice(0, limit);
     let remaining = Math.max(0, Math.min(2 * 1024 * 1024, query.maxContentBytes ?? 128 * 1024));
     for (const entry of selected)
-      for (const key of ["arguments", "result"] as const) {
+      for (const key of ["arguments", "result", "output"] as const) {
         const payload = entry[key];
         if (!payload) continue;
         if (payload.ref) {
@@ -266,7 +266,7 @@ export class ExecutionLogStore {
     for (const record of [...page.records].reverse()) {
       if (!record.anchorEntryId || !anchorIds.has(record.anchorEntryId)) continue;
       const copy = { ...record };
-      for (const key of ["arguments", "result"] as const)
+      for (const key of ["arguments", "result", "output"] as const)
         if (copy[key]?.ref)
           copy[key] = await target.payload(await this.readContent(copy[key]!.ref!.hash, MAX_PAYLOAD_BYTES));
       await target.append(copy);
@@ -286,7 +286,7 @@ export class ExecutionLogStore {
     let bytes = Buffer.byteLength(JSON.stringify(page.records));
     if (bytes > MAX_PAYLOAD_BYTES) throw new Error("Execution export exceeds the 32 MiB budget");
     for (const record of page.records)
-      for (const payload of [record.arguments, record.result])
+      for (const payload of [record.arguments, record.result, record.output])
         if (payload?.ref && !(payload.ref.hash in content)) {
           bytes += payload.ref.bytes;
           if (bytes > MAX_PAYLOAD_BYTES) throw new Error("Execution export exceeds the 32 MiB budget");
