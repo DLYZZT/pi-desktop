@@ -16,6 +16,7 @@ import {
   type ExternalSessionCommand,
 } from "../rpc-manager";
 import type { ChannelTurnProgressEvent, StagedInboundAttachment } from "./types";
+import { projectChannelToolProgress } from "./tool-progress";
 import { resolveSessionPath } from "../session-reader";
 import { collectOutboundFiles } from "./outbound-files";
 import { setDesktopSessionToolNames } from "../session-tool-store";
@@ -178,30 +179,8 @@ export class PiSessionBridge {
                 }
                 return;
               }
-              if (event.type === "tool_execution_start") {
-                onProgress({
-                  type: "tool_start",
-                  toolCallId: String(event.toolCallId ?? ""),
-                  toolName: String(event.toolName ?? "tool"),
-                  args: event.args,
-                });
-              } else if (event.type === "tool_execution_update") {
-                onProgress({
-                  type: "tool_update",
-                  toolCallId: String(event.toolCallId ?? ""),
-                  toolName: String(event.toolName ?? "tool"),
-                  args: event.args,
-                  partialResult: event.partialResult,
-                });
-              } else if (event.type === "tool_execution_end") {
-                onProgress({
-                  type: "tool_end",
-                  toolCallId: String(event.toolCallId ?? ""),
-                  toolName: String(event.toolName ?? "tool"),
-                  result: event.result,
-                  isError: event.isError === true,
-                });
-              }
+              const progress = projectChannelToolProgress(event);
+              if (progress) onProgress(progress);
             },
           }
         : {}),

@@ -55,6 +55,18 @@ test("parallel tool phases deduplicate starts and wait until the last tool finis
   assert.deepEqual(state.agentPhase, { kind: "waiting_model" });
 });
 
+test("nested tool progress stays inside the parent phase until the parent ends", () => {
+  let state = event(createSessionTurnState(), "agent_start");
+  state = event(state, "tool_execution_start", { toolCallId: "parent", toolName: "caller" });
+  const parent = state;
+  state = event(state, "tool_execution_start", { toolCallId: "child", parentToolCallId: "parent", toolName: "child" });
+  assert.equal(state, parent);
+  state = event(state, "tool_execution_end", { toolCallId: "child", parentToolCallId: "parent", isError: true });
+  assert.equal(state, parent);
+  state = event(state, "tool_execution_end", { toolCallId: "parent" });
+  assert.deepEqual(state.agentPhase, { kind: "waiting_model" });
+});
+
 test("retry state ends independently of the enclosing prompt", () => {
   let state = reduceSessionTurnState(createSessionTurnState(), { type: "start", phase: "running_command" });
   assert.deepEqual(state.agentPhase, { kind: "running_command" });

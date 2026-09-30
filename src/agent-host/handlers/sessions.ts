@@ -63,7 +63,9 @@ export function createSessionHandlers({
   clearSessionEventBinding: (sessionId: string) => void;
 }) {
   return {
-    executions: async ({ id, ...query }) => {
+    executions: async ({ id, leafId, ...query }) => {
+      if (leafId !== undefined && (typeof leafId !== "string" || !leafId.length || leafId.length > 512))
+        throw new RpcError({ code: "BAD_REQUEST", message: "Invalid execution history branch" });
       try {
         validateExecutionQuery(query);
       } catch (error) {
@@ -72,7 +74,7 @@ export function createSessionHandlers({
       const filePath = await resolveSessionPath(id);
       if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
       const { manager } = getSessionContentSnapshot(filePath);
-      return new SessionExecutionHistory(manager).query(query);
+      return new SessionExecutionHistory(manager).query(query, undefined, false, leafId);
     },
     executionContent: async ({ id, hash, offset, maxBytes = 2 * 1024 * 1024 }) => {
       if (

@@ -1,3 +1,4 @@
+import { phaseLabel } from "@/lib/agent-phase-label";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type {
   AgentMessage,
@@ -16,11 +17,12 @@ import {
   splitFinalAssistantBlocks,
 } from "@/lib/message-display";
 import { MessageView } from "./MessageView";
+import { ExecutionHistory } from "./ExecutionHistory";
 import { ProcessDetailsGroup } from "./ProcessDetailsGroup";
 import { SessionProfiler } from "./SessionProfiler";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs, type ChatMinimapMessage } from "./ChatMinimap";
-import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
+import { useAgentSession, type NoticeItem } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -52,20 +54,6 @@ interface Props {
   onOpenFile?: (filePath: string) => void;
   thinkingExpansionStore: ThinkingExpansionStore;
   processDetailsExpansionStore: ThinkingExpansionStore;
-}
-
-function phaseLabel(phase: AgentPhase, t: (key: string, fallback: string) => string): string {
-  if (phase?.kind === "running_tools") {
-    const names = phase.tools.map((t) => t.name);
-    const running = t("runningTools", "Running");
-    if (names.length === 0) return t("runningTool", "Running tool…");
-    if (names.length === 1) return `${running} ${names[0]}…`;
-    if (names.length <= 3) return `${running} ${names.join(", ")}…`;
-    return `${running} ${names.slice(0, 2).join(", ")} (+${names.length - 2})…`;
-  }
-  if (phase?.kind === "waiting_model") return t("waitingForModel", "Waiting for model…");
-  if (phase?.kind === "running_command") return t("runningCommand", "Running command…");
-  return t("thinking", "Thinking…");
 }
 
 const CHAT_MINIMAP_WIDTH = 36;
@@ -211,6 +199,9 @@ export function ChatWindow({
   }, [onAgentEnd]);
 
   const {
+    sessionId: executionSessionId,
+    activeLeafId: executionLeafId,
+    historyRevision: executionRevision,
     loading,
     error,
     messages,
@@ -284,6 +275,10 @@ export function ChatWindow({
     presentationStore,
     onSessionStatsPanelOpen,
   });
+  const runningToolCallIds = useMemo(
+    () => new Set(agentPhase?.kind === "running_tools" ? agentPhase.tools.map((tool) => tool.id) : []),
+    [agentPhase],
+  );
 
   const onDrop = useCallback(
     (files: File[]) => {
@@ -664,6 +659,7 @@ export function ChatWindow({
                             message={msg}
                             toolResults={toolData?.results}
                             toolCallDurations={toolData?.durations}
+                            runningToolCallIds={runningToolCallIds}
                             modelNames={modelNames}
                             cwd={messageCwd}
                             onOpenFile={onOpenFile}
@@ -833,6 +829,11 @@ export function ChatWindow({
                     </div>
                   )}
 
+                  <ExecutionHistory
+                    sessionId={executionSessionId}
+                    leafId={agentRunning ? undefined : executionLeafId}
+                    revision={executionRevision ?? undefined}
+                  />
                   <div ref={liveContentEndRef} />
 
                   {agentRunning && <div data-run-spacer style={{ height: chatViewportHeight }} />}

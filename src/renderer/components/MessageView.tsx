@@ -1,3 +1,4 @@
+import { formatTime, formatByteSize } from "@/lib/message-metadata";
 import { memo, useState, useRef, useEffect, useMemo, useSyncExternalStore } from "react";
 import { MarkdownBody } from "./MarkdownBody";
 import { scaledChatFont } from "@/lib/chat-appearance";
@@ -36,6 +37,7 @@ interface Props {
   isStreaming?: boolean;
   toolResults?: ReadonlyMap<string, ToolResultMessage>;
   toolCallDurations?: ReadonlyMap<string, number>;
+  runningToolCallIds?: ReadonlySet<string>;
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -49,28 +51,6 @@ interface Props {
   prevTimestamp?: number;
   onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
   thinkingExpansionStore?: ThinkingExpansionStore;
-}
-
-function formatTime(ts?: number): string | null {
-  if (!ts) return null;
-  const d = new Date(ts);
-  const now = new Date();
-  const isToday =
-    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (isToday) return time;
-  const date = d.toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-    year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
-  });
-  return `${date} ${time}`;
-}
-
-function formatByteSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 102.4) / 10} KB`;
-  return `${Math.round(bytes / 1024 / 102.4) / 10} MB`;
 }
 
 function DeferredContentActions({
@@ -132,6 +112,7 @@ export const MessageView = memo(function MessageView({
   isStreaming,
   toolResults,
   toolCallDurations,
+  runningToolCallIds,
   modelNames,
   cwd,
   onOpenFile,
@@ -169,6 +150,7 @@ export const MessageView = memo(function MessageView({
         isStreaming={isStreaming}
         toolResults={toolResults}
         toolCallDurations={toolCallDurations}
+        runningToolCallIds={runningToolCallIds}
         modelNames={modelNames}
         cwd={cwd}
         onOpenFile={onOpenFile}
@@ -648,6 +630,7 @@ function AssistantMessageView({
   isStreaming,
   toolResults,
   toolCallDurations,
+  runningToolCallIds,
   modelNames,
   cwd,
   onOpenFile,
@@ -661,6 +644,7 @@ function AssistantMessageView({
   isStreaming?: boolean;
   toolResults?: ReadonlyMap<string, ToolResultMessage>;
   toolCallDurations?: ReadonlyMap<string, number>;
+  runningToolCallIds?: ReadonlySet<string>;
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -869,6 +853,7 @@ function AssistantMessageView({
               (block.type === "thinking" ? thinkingDurationFromFile : undefined)
             }
             toolCallDurations={toolCallDurations}
+            runningToolCallIds={runningToolCallIds}
             cwd={cwd}
             onOpenFile={onOpenFile}
             onLoadDeferredContent={onLoadDeferredContent}
@@ -986,6 +971,7 @@ function BlockView({
   isStreaming,
   streamingDuration,
   toolCallDurations,
+  runningToolCallIds,
   cwd,
   onOpenFile,
   onLoadDeferredContent,
@@ -997,6 +983,7 @@ function BlockView({
   isStreaming?: boolean;
   streamingDuration?: number;
   toolCallDurations?: ReadonlyMap<string, number>;
+  runningToolCallIds?: ReadonlySet<string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
   onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
@@ -1025,7 +1012,13 @@ function BlockView({
     const duration = toolCallDurations?.get(tc.toolCallId);
     return (
       <>
-        <ToolCallBlock block={tc} result={result} duration={duration} onLoadDeferredContent={onLoadDeferredContent} />
+        <ToolCallBlock
+          block={tc}
+          result={result}
+          duration={duration}
+          running={runningToolCallIds?.has(tc.toolCallId)}
+          onLoadDeferredContent={onLoadDeferredContent}
+        />
         <DeferredContentActions content={[block]} onLoad={onLoadDeferredContent} />
       </>
     );
@@ -1150,11 +1143,13 @@ function ToolCallBlock({
   block,
   result,
   duration,
+  running,
   onLoadDeferredContent,
 }: {
   block: ToolCallContent;
   result?: ToolResultMessage;
   duration?: number;
+  running?: boolean;
   onLoadDeferredContent?: (entryId: string, blockIndex?: number) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -1167,7 +1162,7 @@ function ToolCallBlock({
   const resultText = getToolResultDisplayText(block.toolName, result, t);
   const resultIsEmpty = resultText === null ? false : resultText.trim() === "(no output)" || resultText.trim() === "";
   const isError = result?.isError ?? false;
-  const isRunning = !result;
+  const isRunning = !result && running !== false;
   const preview = getToolPreview(block);
   const browserTabId = isBrowserToolName(block.toolName) ? browserTabIdFromResult(resultText) : null;
   const browserSummary =
@@ -1260,6 +1255,11 @@ function ToolCallBlock({
           running
           <span className="stream-caret" aria-hidden="true" />
         </div>
+      )}
+      {!result && running === false && (
+        <p style={{ padding: "8px 12px", color: "var(--text-dim)", margin: 0 }}>
+          {t("executionResultMissing", "Result was not recorded in the conversation; check execution history.")}
+        </p>
       )}
 
       {/* ── Paired result — always show summary; expand for full detail ── */}

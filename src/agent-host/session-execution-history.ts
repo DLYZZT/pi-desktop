@@ -137,9 +137,10 @@ export class SessionExecutionHistory {
     query: ExecutionQuery = {},
     source?: "local" | "channel",
     excludeLookups = false,
+    leafId?: string,
   ): Promise<ExecutionHistoryPage> {
     validateExecutionQuery(query);
-    const branch = new Set(this.manager.getBranch().map((entry) => entry.id));
+    const branch = new Set(this.manager.getBranch(leafId).map((entry) => entry.id));
     return this.store.readLatest({ ...query, limit: Math.min(200, query.limit ?? 50) }, branch, {
       project: true,
       ...(source === "channel" ? { source } : {}),

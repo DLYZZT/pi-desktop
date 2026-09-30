@@ -36,6 +36,20 @@ test("MessageView is memoized to preserve unchanged historical messages", () => 
   assert.equal(MessageView.$$typeof, Symbol.for("react.memo"));
 });
 
+test("a historical tool without a canonical result is not displayed as still running", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", toolCallId: "interrupted", toolName: "fixture", input: {} }],
+      },
+      runningToolCallIds: new Set(),
+    }),
+  );
+  assert.match(html, /check execution history/);
+  assert.doesNotMatch(html, /stream-caret/);
+});
+
 test("keeps the user copy action without timestamp or branch actions", () => {
   const html = renderToStaticMarkup(
     createElement(MessageView, {

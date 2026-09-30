@@ -282,3 +282,34 @@ test("invalid input is preserved as a failed attempt without executing the targe
   assert.equal(attempt.status, "failed");
   assert.equal(attempt.arguments.value.extra, "ORIGINAL_INVALID_INPUT");
 });
+
+test("execution RPC branch selection excludes original results from a sibling branch", async (t) => {
+  const f = await fixture(t);
+  await f.session.prompt("Original branch", { source: "rpc" });
+  const originalLeaf = f.manager.getLeafId(),
+    original = f.manager.getBranch();
+  f.manager.branch(original.find((entry) => entry.type === "message" && entry.message.role === "user").id);
+  f.manager.appendMessage({
+    ...original.find((entry) => entry.type === "message" && entry.message.role === "assistant").message,
+    content: [{ type: "text", text: "Sibling branch" }],
+    stopReason: "stop",
+  });
+  await f.history.requested({
+    toolCallId: "sibling-call",
+    toolName: "sibling",
+    args: { text: "SIBLING_RAW_ARGUMENT" },
+  });
+  await f.history.running({ toolCallId: "sibling-call", toolName: "sibling" });
+  await f.history.ended({
+    toolCallId: "sibling-call",
+    toolName: "sibling",
+    result: { content: [{ type: "text", text: "SIBLING_RAW_RESULT" }] },
+  });
+  const current = await f.history.query({ includeContent: true });
+  assert.equal(current.records.length, 1);
+  assert.equal(current.records[0].toolName, "sibling");
+  const old = await f.history.query({ includeContent: true }, undefined, false, originalLeaf);
+  assert.equal(old.records.length, 2);
+  assert.doesNotMatch(JSON.stringify(old), /SIBLING_RAW/);
+  assert.match(JSON.stringify(old), /ORIGINAL_CHILD_RESULT_PRIVATE_ORIGINAL/);
+});

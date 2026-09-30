@@ -1314,6 +1314,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   return {
     // State
+    sessionId: sessionIdRef.current,
     data,
     loading,
     error,

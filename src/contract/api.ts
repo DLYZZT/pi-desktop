@@ -72,7 +72,7 @@ import type { ExecutionHistoryPage, ExecutionQuery, ExecutionContentChunk } from
 
 /** Request/response API surface (replaces HTTP routes). */
 export interface Api {
-  "sessions.executions": { params: { id: string } & ExecutionQuery; result: ExecutionHistoryPage };
+  "sessions.executions": { params: { id: string; leafId?: string } & ExecutionQuery; result: ExecutionHistoryPage };
   "sessions.executionContent": {
     params: { id: string; hash: string; maxBytes?: number; offset?: number };
     result: { value?: unknown; chunk?: ExecutionContentChunk };
