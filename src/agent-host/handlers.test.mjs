@@ -1,4 +1,5 @@
 import { importTestBundle } from "#test-bundle";
+import { extractInterfaceProperties } from "../../scripts/check-contract-coverage.mjs";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -153,10 +154,15 @@ test("model connection tests use isolated configuration and preserve success and
 
 test("registerHandlers exposes every contract method exactly once", async () => {
   const { handlers } = await captureHandlers();
-  // Keep in sync with src/contract/api.ts: one handler per contract method.
-  assert.equal(Object.keys(handlers).length, 104);
+  const expected = extractInterfaceProperties(
+    "api.ts",
+    readFileSync(path.join(root, "src/contract/api.ts"), "utf8"),
+    "Api",
+  );
+  assert.deepEqual(Object.keys(handlers).sort(), expected.sort());
   for (const method of [
     "host.ping",
+    "host.runtimeProbe",
     "host.toolchain",
     "sessions.list",
     "sessions.contextPage",

@@ -66,9 +66,12 @@ import type {
   HerdrDiagnostics,
 } from "./herdr";
 
+import type { PiRuntimeProbeResult } from "./runtime";
+
 /** Request/response API surface (replaces HTTP routes). */
 export interface Api {
   "host.ping": { params: void; result: { ok: true; ts: number } };
+  "host.runtimeProbe": { params: void; result: PiRuntimeProbeResult };
   "host.toolchain": {
     params: { cwd: string };
     result: {

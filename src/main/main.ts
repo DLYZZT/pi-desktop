@@ -8,6 +8,7 @@ import { app, BrowserWindow, crashReporter, dialog, nativeTheme, nativeImage, ne
 import fs from "node:fs";
 import os from "node:os";
 import path from "path";
+import type { PiRuntimeProbeResult } from "../contract/runtime";
 import { HostManager, getUserDataPath, resolveHostEntry } from "./host-manager";
 import { appendMainLog } from "./logger";
 import { installAppMenu } from "./menu";
@@ -139,6 +140,9 @@ async function cleanupManagedProcesses(deadline: number, requireConfirmedEmpty: 
   });
 }
 
+let startupPiRuntimeProbe: PiRuntimeProbeResult | undefined;
+let startupPiRuntimeProbeStarted = false;
+
 function finishPackagedStartupValidation(error?: string): void {
   if (!packagedStartupValidation || startupCheckFinished) return;
   if (!error) {
@@ -152,6 +156,24 @@ function finishPackagedStartupValidation(error?: string): void {
       const candidates = snapshot.publicState.capabilities[capability]?.candidates ?? [];
       if (!candidates.some((candidate) => candidate.provider === "bundled" && candidate.health === "healthy")) return;
     }
+    if (!startupPiRuntimeProbe) {
+      if (!startupPiRuntimeProbeStarted && hostManager) {
+        startupPiRuntimeProbeStarted = true;
+        void hostManager
+          .call<PiRuntimeProbeResult>("host.runtimeProbe")
+          .then((probe) => {
+            if (probe.piVersion !== expectedPiVersion || !probe.openaiOAuthLoaded || !probe.mcpLoaded) {
+              throw new Error("Packaged Pi lazy runtime modules did not load");
+            }
+            startupPiRuntimeProbe = probe;
+            finishPackagedStartupValidation();
+          })
+          .catch((failure: unknown) =>
+            finishPackagedStartupValidation(failure instanceof Error ? failure.message : "Pi runtime probe failed"),
+          );
+      }
+      return;
+    }
   }
 
   startupCheckFinished = true;
@@ -163,6 +185,7 @@ function finishPackagedStartupValidation(error?: string): void {
           ok: true,
           appVersion: app.getVersion(),
           piVersion: hostManager?.getPiVersion(),
+          runtimeModules: startupPiRuntimeProbe,
           platformArch: `${process.platform}-${process.arch}`,
           revision: startupToolchainSnapshot?.revision,
           rendererReady: startupRendererReady,

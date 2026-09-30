@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { validatePiPackageGraph, probePiRuntime } from "./pi-runtime-contract.mjs";
+import {
+  PI_RUNTIME_ROOTS,
+  validatePiPackageGraph,
+  validatePiRuntimeAssets,
+  probePiRuntime,
+} from "./pi-runtime-contract.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const directPackages = ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-telemetry"];
+const directPackages = PI_RUNTIME_ROOTS.map((name) => `@earendil-works/${name}`);
 
 function fail(message) {
   console.error(`[pi-compat] ${message}`);
@@ -29,7 +34,9 @@ const graph = validatePiPackageGraph({
   readPackage: readJson,
   exists: (entry) => existsSync(path.join(root, entry)),
   version: targetVersion,
+  rootPackages: PI_RUNTIME_ROOTS,
 });
+validatePiRuntimeAssets({ graph, readPackage: readJson, exists: (entry) => existsSync(path.join(root, entry)) });
 for (const [entry, version] of graph) {
   if (lockfile.packages?.[entry]?.version !== version) fail(`installed Pi package differs from lockfile: ${entry}`);
 }

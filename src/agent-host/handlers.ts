@@ -8,6 +8,7 @@ import { createAuthHandlers } from "./handlers/auth";
 import { createFileHandlers } from "./handlers/files";
 import { createWorktreeHandlers } from "./handlers/worktrees";
 import { systemHandlers } from "./handlers/system";
+import { probePiRuntimeModules } from "./pi-runtime-probe";
 import { createSessionHandlers } from "./handlers/sessions";
 import { createTitleHandlers } from "./handlers/agent-title";
 import { createAgentHandlers } from "./handlers/agent";
@@ -114,6 +115,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
   server.handle({
     "host.ping": guard(() => ({ ok: true as const, ts: Date.now() })),
+    "host.runtimeProbe": guard(probePiRuntimeModules),
 
     "herdr.runtime.get": guard(herdrHandlers.runtimeGet),
 

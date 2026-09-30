@@ -95,6 +95,8 @@ export async function runSmokeHostChecks(
 
   try {
     await call("host.ping");
+    const runtime = await call<{ openaiOAuthLoaded?: boolean; mcpLoaded?: boolean }>("host.runtimeProbe");
+    if (!runtime.openaiOAuthLoaded || !runtime.mcpLoaded) throw new Error("Pi lazy runtime modules did not load");
     const ackDeadline = Date.now() + 5_000;
     while (manager.getToolchainAckRevision() < 0 && Date.now() < ackDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 25));

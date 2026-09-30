@@ -1,4 +1,5 @@
 import type {
+  AgentSession,
   AgentSessionEvent,
   SessionManager,
   SettingsManager,
@@ -173,8 +174,8 @@ export interface AgentSessionLike {
   setAutoCompactionEnabled(enabled: boolean): void;
   setAutoRetryEnabled(enabled: boolean): void;
   setCacheWarmingMode(mode: "off" | "streaming" | "idle"): void;
-  steer(text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): Promise<void>;
-  followUp(text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): Promise<void>;
+  steer: AgentSession["steer"];
+  followUp: AgentSession["followUp"];
   readonly pendingMessageCount: number;
   getSteeringMessages(): readonly string[];
   getFollowUpMessages(): readonly string[];

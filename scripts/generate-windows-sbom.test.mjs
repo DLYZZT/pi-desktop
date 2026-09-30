@@ -146,19 +146,33 @@ test("Windows SBOM fails closed on helper bytes or release provenance drift", ()
   assert.throws(() => createWindowsSbom(development), /manifest does not match/);
 });
 
-test("current production lock includes the complete Pi 0.87.1 graph in the Windows SBOM", () => {
+test("current production lock includes the complete pinned Pi graph in the Windows SBOM", () => {
   const input = facts();
+  const targetVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).dependencies[
+    "@earendil-works/pi-coding-agent"
+  ];
   input.packageLock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
   const sbom = createWindowsSbom(input);
-  for (const name of ["pi-ai", "pi-coding-agent", "pi-agent-core", "pi-telemetry", "pi-tui", "chord"]) {
+  for (const name of [
+    "pi-ai",
+    "pi-coding-agent",
+    "pi-agent-core",
+    "pi-telemetry",
+    "pi-tui",
+    "pi-codemode",
+    "pi-mcp",
+    "chord",
+  ]) {
     const matches = sbom.components.filter((entry) => entry.name === `@earendil-works/${name}`);
     assert.ok(matches.length > 0, name);
     assert.ok(
-      matches.every((entry) => entry.version === "0.87.1"),
+      matches.every((entry) => entry.version === targetVersion),
       name,
     );
   }
   assert.ok(sbom.components.some((entry) => entry.name === "typebox" && entry.version === "1.3.27"));
+  assert.ok(sbom.components.some((entry) => entry.name === "quickjs-wasi" && entry.version === "3.6.2"));
+  assert.ok(sbom.components.some((entry) => entry.name === "openai" && entry.version === "7.19.0"));
   for (const name of ["pi-server", "pi-client", "pi-protocol"]) {
     assert.equal(
       sbom.components.some((entry) => entry.name === "@earendil-works/" + name),

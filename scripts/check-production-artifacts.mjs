@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
-import { validatePiPackageGraph } from "./pi-runtime-contract.mjs";
+import { PI_RUNTIME_ROOTS, validatePiPackageGraph, validatePiRuntimeAssets } from "./pi-runtime-contract.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mainBundle = readFileSync(path.join(root, "out", "main", "main.js"), "utf8");
@@ -11,10 +11,16 @@ const agentHostBundle = readFileSync(path.join(root, "out", "main", "agent-host.
 const builderConfig = readFileSync(path.join(root, "electron-builder.yml"), "utf8");
 const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 const packageLock = JSON.parse(readFileSync(path.join(root, "package-lock.json"), "utf8"));
-validatePiPackageGraph({
+const piGraph = validatePiPackageGraph({
   readPackage: (entry) => JSON.parse(readFileSync(path.join(root, entry), "utf8")),
   exists: (entry) => existsSync(path.join(root, entry)),
   version: packageJson.dependencies["@earendil-works/pi-coding-agent"],
+  rootPackages: PI_RUNTIME_ROOTS,
+});
+validatePiRuntimeAssets({
+  graph: piGraph,
+  readPackage: (entry) => JSON.parse(readFileSync(path.join(root, entry), "utf8")),
+  exists: (entry) => existsSync(path.join(root, entry)),
 });
 const updaterVersion = packageJson.dependencies?.["electron-updater"];
 const lockedUpdaterVersion = packageLock.packages?.["node_modules/electron-updater"]?.version;

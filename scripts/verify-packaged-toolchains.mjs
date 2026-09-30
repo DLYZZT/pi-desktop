@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { darwinCodeDigest } from "../src/main/toolchains/darwin-binary-integrity.ts";
 import { extractFile, listPackage } from "@electron/asar";
 import { verifyWindowsHelperPe } from "./windows-helper-pe.mjs";
-import { validatePiPackageGraph } from "./pi-runtime-contract.mjs";
+import { PI_RUNTIME_ROOTS, validatePiPackageGraph, validatePiRuntimeAssets } from "./pi-runtime-contract.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const expectedPiVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).dependencies?.[
@@ -269,6 +269,12 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
     readPackage: (entry) => JSON.parse(extractAsarFile(asarPath, entry).toString("utf8")),
     exists: (entry) => entries.has(entry),
     version: expectedPiVersion,
+    rootPackages: PI_RUNTIME_ROOTS,
+  });
+  validatePiRuntimeAssets({
+    graph,
+    readPackage: (entry) => JSON.parse(extractAsarFile(asarPath, entry).toString("utf8")),
+    exists: (entry) => entries.has(entry),
   });
   for (const [entry, version] of graph) {
     // electron-builder can hoist a nested dependency; every artifact must correspond to a locked instance.
@@ -534,6 +540,9 @@ function runPackagedStartup(executable, toolTarget, environmentPatch = {}, extra
       report.rendererReady !== true ||
       report.hostReady !== true ||
       report.piVersion !== expectedPiVersion ||
+      report.runtimeModules?.piVersion !== expectedPiVersion ||
+      report.runtimeModules?.openaiOAuthLoaded !== true ||
+      report.runtimeModules?.mcpLoaded !== true ||
       report.hostAckRevision !== report.revision
     ) {
       throw new Error(`Invalid packaged startup report: ${JSON.stringify(report)}`);
