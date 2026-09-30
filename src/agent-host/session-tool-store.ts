@@ -5,6 +5,7 @@ import { filterDesktopToolNames } from "../shared/pi-tool-policy.ts";
 
 type StoredSessionTools = {
   toolNames: string[];
+  executionToolNames?: string[];
   updatedAt: string;
 };
 
@@ -35,6 +36,9 @@ function normalizeState(value: unknown): SessionToolStateFile {
     if (toolNames === undefined) continue;
     sessions[sessionId] = {
       toolNames,
+      ...(entry.executionToolNames === undefined
+        ? {}
+        : { executionToolNames: normalizeToolNames(entry.executionToolNames) ?? [] }),
       updatedAt: typeof entry.updatedAt === "string" && entry.updatedAt ? entry.updatedAt : new Date(0).toISOString(),
     };
   }
@@ -81,6 +85,12 @@ export class DesktopSessionToolStore {
     const state = this.load();
     state.sessions[normalizedId] = {
       toolNames: normalizedToolNames,
+      ...(normalizedToolNames.length === 0
+        ? { executionToolNames: [] }
+        : state.sessions[normalizedId]?.executionToolNames !== undefined &&
+            state.sessions[normalizedId].toolNames.length !== 0
+          ? { executionToolNames: state.sessions[normalizedId].executionToolNames }
+          : {}),
       updatedAt: new Date().toISOString(),
     };
     atomicWrite(this.filePath, state);
@@ -95,6 +105,18 @@ export class DesktopSessionToolStore {
       this.state = structuredClone(EMPTY_STATE);
     }
     return this.state;
+  }
+
+  getExecution(sessionId: string): string[] | undefined {
+    const names = this.load().sessions[sessionId.trim()]?.executionToolNames;
+    return names ? [...names] : undefined;
+  }
+  setExecution(sessionId: string, names: string[]): void {
+    const entry = this.load().sessions[sessionId.trim()];
+    if (!entry) throw new Error("Session tool selection must be saved before execution grants");
+    entry.executionToolNames = entry.toolNames.length === 0 ? [] : filterDesktopToolNames(names);
+    entry.updatedAt = new Date().toISOString();
+    atomicWrite(this.filePath, this.load());
   }
 }
 
@@ -119,4 +141,11 @@ export function getDesktopSessionToolNames(sessionId: string): string[] | undefi
 
 export function setDesktopSessionToolNames(sessionId: string, toolNames: string[]): void {
   getDefaultStore().set(sessionId, toolNames);
+}
+
+export function getDesktopSessionExecutionTools(sessionId: string): string[] | undefined {
+  return getDefaultStore().getExecution(sessionId);
+}
+export function setDesktopSessionExecutionTools(sessionId: string, names: string[]): void {
+  getDefaultStore().setExecution(sessionId, names);
 }

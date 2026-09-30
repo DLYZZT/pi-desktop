@@ -4,6 +4,7 @@ import type {
   SessionManager,
   SettingsManager,
   SlashCommandInfo,
+  ToolInfo as SdkToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { ExtensionUiConfirmLocalization } from "./types";
 
@@ -21,6 +22,12 @@ export interface ModelLike {
 export interface ToolInfo {
   name: string;
   description: string;
+  exposure?: SdkToolInfo["exposure"];
+  namespace?: SdkToolInfo["namespace"];
+  annotations?: SdkToolInfo["annotations"];
+  active?: boolean;
+  callable?: boolean;
+  executionAllowed?: boolean;
 }
 
 export interface NavigateTreeResult {
@@ -181,6 +188,8 @@ export interface AgentSessionLike {
   getFollowUpMessages(): readonly string[];
   clearQueue(): { steering: string[]; followUp: string[] };
   getAllTools(): ToolInfo[];
+  getToolDefinition?: AgentSession["getToolDefinition"];
+  getCallableToolNames?: AgentSession["getCallableToolNames"];
   getActiveToolNames(): string[];
   setActiveToolsByName(names: string[]): void;
   abortCompaction(): void;

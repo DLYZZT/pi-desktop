@@ -54,3 +54,24 @@ test("Desktop session tool store tolerates a corrupt sidecar without touching Pi
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("execution grants are optional v1 metadata, survive reopen and ordinary selections, and close with no-tools", async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-execution-grants-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const filename = path.join(dir, "session-tools.json");
+  const store = new DesktopSessionToolStore(filename);
+  store.set("fixture", ["read"]);
+  assert.equal(store.getExecution("fixture"), undefined);
+  store.setExecution("fixture", [" deferred ", "deferred", "powershell"]);
+  const granted = store.getExecution("fixture");
+  assert.deepEqual(granted, ["deferred"]);
+  granted.push("other");
+  assert.deepEqual(store.getExecution("fixture"), ["deferred"]);
+  store.set("fixture", ["read", "write"]);
+  assert.deepEqual(new DesktopSessionToolStore(filename).getExecution("fixture"), ["deferred"]);
+  store.set("fixture", []);
+  assert.deepEqual(new DesktopSessionToolStore(filename).getExecution("fixture"), []);
+  store.set("fixture", ["read"]);
+  assert.equal(new DesktopSessionToolStore(filename).getExecution("fixture"), undefined);
+  assert.equal(JSON.parse(readFileSync(filename)).version, 1);
+});

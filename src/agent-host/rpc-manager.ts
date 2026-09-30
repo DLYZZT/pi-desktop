@@ -12,7 +12,7 @@ import { EXCLUDED_PI_TOOLS, filterDesktopToolNames, validateDesktopToolNames } f
 import { assertSessionWritable } from "./session-readonly.ts";
 import { cacheSessionPath } from "./session-reader";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
-import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "../shared/pi-types";
+import type { AgentSessionLike, ExtensionUiContextLike } from "../shared/pi-types";
 import type { ChannelId } from "../shared/channel-types";
 import type {
   ChannelMessageAttachment,
@@ -32,7 +32,17 @@ import {
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
 import { browserAgentRuntime } from "./browser-agent-runtime";
 import { projectExtensionDiagnostics } from "./extension-diagnostics";
-import { getDesktopSessionToolNames, setDesktopSessionToolNames } from "./session-tool-store";
+import {
+  getDesktopSessionToolNames,
+  setDesktopSessionToolNames,
+  getDesktopSessionExecutionTools,
+  setDesktopSessionExecutionTools,
+} from "./session-tool-store";
+import { withExtensionTools } from "./tool-activation";
+export { withExtensionTools } from "./tool-activation";
+import { SessionToolPolicy } from "./session-tool-policy";
+import { getLegacySessionToolNames } from "./legacy-session-tools";
+export { getLegacySessionToolNames } from "./legacy-session-tools";
 import { peekManagedProcessService } from "./managed-process/runtime";
 import { createManagedProcessToolDefinitions } from "./managed-process/tools";
 import { installManagedProcessSessionRedaction } from "./managed-process/session-redaction";
@@ -94,50 +104,6 @@ type ExtensionBindingOptions = {
 
 export type ExternalSessionCommand = "compact" | "reload";
 
-const CODING_TOOL_NAMES = ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"];
-const SESSION_TOOLS_ENTRY = "pi-desktop-session-tools";
-
-type PersistedSessionTools = {
-  version: 1;
-  toolNames: string[];
-};
-
-function parsePersistedSessionTools(value: unknown): string[] | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const state = value as Partial<PersistedSessionTools>;
-  if (
-    state.version !== 1 ||
-    !Array.isArray(state.toolNames) ||
-    !state.toolNames.every((name) => typeof name === "string")
-  ) {
-    return undefined;
-  }
-  return filterDesktopToolNames(state.toolNames);
-}
-
-export function getLegacySessionToolNames(sessionManager: Pick<SessionManager, "getEntries">): string[] | undefined {
-  const entries = sessionManager.getEntries();
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (entry.type !== "custom" || entry.customType !== SESSION_TOOLS_ENTRY) continue;
-    const toolNames = parsePersistedSessionTools(entry.data);
-    if (toolNames !== undefined) return toolNames;
-  }
-  return undefined;
-}
-
-export function withExtensionTools(session: AgentSessionLike, toolNames: string[]): string[] {
-  if (toolNames.length === 0) return [];
-
-  const codingToolNames = new Set(CODING_TOOL_NAMES);
-  const extensionToolNames = session
-    .getAllTools()
-    .map((t) => t.name)
-    .filter((name) => !codingToolNames.has(name) && !isBrowserToolName(name));
-
-  return filterDesktopToolNames([...toolNames, ...extensionToolNames]);
-}
-
 // ============================================================================
 // AgentSessionWrapper
 // Wraps AgentSession with the same interface the rest of the app expects
@@ -184,6 +150,7 @@ export class AgentSessionWrapper {
     persistToolNames: (sessionId: string, toolNames: string[]) => void = setDesktopSessionToolNames,
     promptPolicy?: SessionPromptPolicy,
     private readonly ephemeralContext?: SessionEphemeralContext,
+    private readonly toolPolicy?: SessionToolPolicy,
   ) {
     this.inner = inner;
     this.persistToolNames = persistToolNames;
@@ -379,6 +346,7 @@ export class AgentSessionWrapper {
 
   private applyRequestedTools(toolNames: string[]): void {
     this.requestedToolNames = [...toolNames];
+    this.toolPolicy?.setRequested(toolNames);
     this.forceEmptySystemPrompt = toolNames.length === 0;
     this.promptPolicy.setForceEmpty(this.forceEmptySystemPrompt);
     this.inner.setActiveToolsByName(withExtensionTools(this.inner, toolNames));
@@ -655,6 +623,8 @@ export class AgentSessionWrapper {
           newSessionId,
           filterDesktopToolNames(this.requestedToolNames ?? this.inner.getActiveToolNames()),
         );
+        const execution = this.toolPolicy?.getExecution();
+        if (execution) setDesktopSessionExecutionTools(newSessionId, execution);
         cacheSessionPath(newSessionId, newSessionFile);
         await this.dispose({ abort: true, reason: "fork" });
         return { cancelled: false, newSessionId };
@@ -734,7 +704,8 @@ export class AgentSessionWrapper {
       }
 
       case "get_tools": {
-        const all: ToolInfo[] = this.inner.getAllTools();
+        if (this.toolPolicy) return this.toolPolicy.describe();
+        const all = this.inner.getAllTools();
         const active = new Set<string>(this.inner.getActiveToolNames());
         return all.map((t) => ({
           name: t.name,
@@ -770,6 +741,16 @@ export class AgentSessionWrapper {
           });
         }
         return { commands };
+      }
+
+      case "set_execution_tools": {
+        validateDesktopToolNames(command.toolNames);
+        if (!this.toolPolicy) throw new Error("Session execution policy is unavailable");
+        if (getDesktopSessionToolNames(this.sessionId) === undefined)
+          this.persistToolNames(this.sessionId, this.requestedToolNames ?? this.inner.getActiveToolNames());
+        setDesktopSessionExecutionTools(this.sessionId, command.toolNames);
+        this.toolPolicy.setExecution(command.toolNames);
+        return this.toolPolicy.describe();
       }
 
       case "set_tools": {
@@ -1466,6 +1447,11 @@ export async function startRpcSession(
     const legacyToolNames = desktopToolNames === undefined ? getLegacySessionToolNames(sessionManager) : undefined;
     const persistedToolNames = desktopToolNames ?? legacyToolNames;
     const sessionToolNames = persistedToolNames ?? toolNames;
+    const toolPolicy = new SessionToolPolicy(
+      sessionManager,
+      sessionToolNames,
+      getDesktopSessionExecutionTools(sessionId),
+    );
 
     // Build services first so extension-registered providers are available
     // before the SDK restores the saved model from the session file.
@@ -1475,6 +1461,7 @@ export async function startRpcSession(
       agentDir,
       resourceLoaderOptions: {
         extensionFactories: [
+          toolPolicy.extension(),
           createLegacyChannelContextExtension(),
           createEphemeralContextExtension(ephemeralContext),
           createDesktopPromptExtension(promptPolicy),
@@ -1512,6 +1499,7 @@ export async function startRpcSession(
       excludeTools: [...EXCLUDED_PI_TOOLS],
     });
     const realSessionId = inner.sessionId as string;
+    toolPolicy.bind(inner);
 
     // Keep every tool registered so a session initialized with no tools can enable
     // them later. Narrow only the active set, never the registry allow-list.
@@ -1520,7 +1508,14 @@ export async function startRpcSession(
       if (desktopToolNames === undefined) setDesktopSessionToolNames(realSessionId, sessionToolNames);
     }
 
-    const wrapper = new AgentSessionWrapper(inner, sessionToolNames, undefined, promptPolicy, ephemeralContext);
+    const wrapper = new AgentSessionWrapper(
+      inner,
+      sessionToolNames,
+      undefined,
+      promptPolicy,
+      ephemeralContext,
+      toolPolicy,
+    );
     wrapper.setRuntimeDiagnostics(services.diagnostics);
     wrapper.setToolchainSummary(executionContext.inventoryRevision, executionContext.summary);
     wrapper.start();
