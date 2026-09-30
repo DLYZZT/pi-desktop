@@ -3,6 +3,7 @@ import { useComposerDraft } from "@/hooks/useComposerDraft";
 import { useComposerSubmission, type ComposerActions } from "@/hooks/useComposerSubmission";
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
 import { scaledChatFont } from "@/lib/chat-appearance";
+import { useSlashArguments } from "@/hooks/useSlashArguments";
 import type { CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import { buildAtInsertText, extractAtQuery, type AtQueryMatch, type FileIndexEntry } from "@/lib/file-fuzzy";
 import { useFileSuggestions } from "@/hooks/useFileSuggestions";
@@ -20,7 +21,7 @@ interface Props extends ComposerActions, ComposerToolbarOptions {
   onRecallQueue?: () => void;
   slashCommands?: SlashCommandInfo[];
   slashCommandsLoading?: boolean;
-  onLoadSlashCommands?: () => Promise<SlashCommandInfo[]> | SlashCommandInfo[];
+  onLoadSlashCommands?: (input?: string) => Promise<SlashCommandInfo[]> | SlashCommandInfo[];
   draftKey?: string;
   /** Explicit temporary owner to carry forward when this view receives its real session ID. */
   draftPromotionFrom?: string;
@@ -30,7 +31,7 @@ interface Props extends ComposerActions, ComposerToolbarOptions {
 
 export interface ChatInputHandle {
   insertText: (text: string) => void;
-  insertIfEmpty: (text: string) => void;
+  insertIfEmpty: (text: string, strict?: boolean) => boolean;
   prependText: (text: string) => void;
   addFiles: (files: File[]) => void;
 }
@@ -203,7 +204,6 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
   const openAttachmentPicker = useCallback(() => fileInputRef.current?.click(), []);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
-  const slashCommandsRequestedRef = useRef(false);
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const atItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const resetAtQuery = useCallback(() => setAtQuery(null), []);
@@ -242,18 +242,22 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
   });
 
   useImperativeHandle(ref, () => ({
-    insertIfEmpty(text: string) {
+    insertIfEmpty(text: string, strict = false) {
       const ta = textareaRef.current;
       const current = ta ? ta.value : value;
-      if (current.trim()) return;
+      if (current.trim() || (strict && (isComposingRef.current || attachedFiles.length || attachedImages.length)))
+        return false;
+      if (ta) ta.value = text;
       setValue(text);
       setAtQuery(null);
+      if (strict) return true;
       requestAnimationFrame(() => {
         if (!ta) return;
         ta.focus();
         ta.style.height = "auto";
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
       });
+      return true;
     },
     prependText(text: string) {
       if (!text.trim()) return;
@@ -307,11 +311,13 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
     if (value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [value]);
 
-  const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1)) ? value.slice(1).toLowerCase() : null;
+  const { argumentMode, items: argumentItems } = useSlashArguments(value, onLoadSlashCommands);
+  const slashQuery = value.startsWith("/") && !value.includes("\n") ? value.slice(1).toLowerCase() : null;
 
   const filteredSlashCommands = (() => {
     if (slashQuery === null) return [];
-    const commands = [...(isStreaming ? [] : BUILTIN_SLASH_COMMANDS), ...(slashCommands ?? [])];
+    if (argumentMode) return argumentItems;
+    const commands = [...(isStreaming || value.includes(" ") ? [] : BUILTIN_SLASH_COMMANDS), ...(slashCommands ?? [])];
     return [...commands]
       .filter((command) => {
         const name = command.name.toLowerCase();
@@ -496,7 +502,8 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
         return;
       }
 
-      if (slashMenuOpen && slashQuery !== null) {
+      if (isComposing) return;
+      if (slashMenuOpen && slashQuery !== null && filteredSlashCommands.length > 0) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
           setSlashActiveIndex(getNextSlashIndex("down"));
@@ -607,18 +614,11 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
     if (slashQuery === null) {
       setSlashMenuOpen(false);
       setSlashActiveIndex(0);
-      slashCommandsRequestedRef.current = false;
       return;
     }
     setSlashMenuOpen(true);
     setSlashActiveIndex(0);
-    if (!slashCommandsRequestedRef.current && onLoadSlashCommands) {
-      slashCommandsRequestedRef.current = true;
-      Promise.resolve(onLoadSlashCommands()).catch(() => {
-        slashCommandsRequestedRef.current = false;
-      });
-    }
-  }, [slashQuery, onLoadSlashCommands]);
+  }, [slashQuery, argumentMode, onLoadSlashCommands]);
 
   useEffect(() => {
     if (slashActiveIndex >= filteredSlashCommands.length) {
@@ -1062,7 +1062,7 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
 
         {/* Main input */}
         <div style={{ position: "relative" }}>
-          {slashMenuOpen && slashQuery !== null && (
+          {slashMenuOpen && slashQuery !== null && (!value.includes(" ") || filteredSlashCommands.length > 0) && (
             <div
               style={{
                 position: "absolute",
@@ -1177,7 +1177,7 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
                                   wordBreak: "break-word",
                                 }}
                               >
-                                /{command.name}
+                                /{"label" in command ? (command.label ?? command.name) : command.name}
                               </span>
                               {command.description && (
                                 <span

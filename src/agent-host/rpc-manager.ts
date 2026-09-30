@@ -3,11 +3,15 @@ import {
   createAgentSessionServices,
   createBashToolDefinition,
   getAgentDir,
+  initTheme,
   SessionManager,
   type CreateAgentSessionFromServicesOptions,
   type AgentSessionRuntimeDiagnostic,
 } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "crypto";
+import { commandArgumentCompletions } from "./command-completions";
+import { DesktopCustomUiBridge } from "./desktop-custom-ui.ts";
+import { DESKTOP_CUSTOM_UI } from "../shared/desktop-custom-ui.ts";
 import { EXCLUDED_PI_TOOLS, filterDesktopToolNames, validateDesktopToolNames } from "../shared/pi-tool-policy.ts";
 import { assertSessionWritable } from "./session-readonly.ts";
 import { cacheSessionPath } from "./session-reader";
@@ -43,6 +47,8 @@ import { createDesktopPromptExtension, SessionPromptPolicy } from "./session-pro
 import { createEphemeralContextExtension, SessionEphemeralContext } from "./session-ephemeral-context";
 import { createLegacyChannelContextExtension } from "./legacy-channel-context";
 
+let desktopThemeInitialized = false;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -57,20 +63,6 @@ type EventListener = (event: AgentEvent) => void;
 type PendingUiResponse = {
   resolve: (response: ExtensionUiResponse) => void;
   cancel: () => void;
-};
-
-type CustomUiComponent = {
-  render: (width: number) => string[];
-  handleInput?: (data: string) => void;
-  dispose?: () => void;
-  invalidate?: () => void;
-};
-
-type ActiveCustomUi = {
-  component: CustomUiComponent;
-  width: number;
-  resolve: (value: unknown) => void;
-  settled: boolean;
 };
 
 type ExtensionUiRequestBody = Record<string, unknown> & {
@@ -148,7 +140,21 @@ export class AgentSessionWrapper {
   private listeners: EventListener[] = [];
   private pendingUiResponses = new Map<string, PendingUiResponse>();
   private pendingUiRequests = new Map<string, AgentEvent>();
-  private activeCustomUis = new Map<string, ActiveCustomUi>();
+  private readonly customUiBridge = new DesktopCustomUiBridge({
+    frame: (frame) => {
+      const event = { type: "extension_ui_request", method: "custom", ...frame } as ExtensionUiRequest as AgentEvent;
+      if (frame.closed) this.pendingUiRequests.delete(frame.id);
+      else this.pendingUiRequests.set(frame.id, event);
+      this.emit(event);
+    },
+    error: (id, error) =>
+      this.emit({
+        type: "extension_error",
+        extensionPath: `custom-ui:${id}`,
+        event: "custom_ui",
+        error: error instanceof Error ? error.message : String(error),
+      }),
+  });
   private extensionStatuses = new Map<string, string>();
   private runtimeDiagnosticStatuses = new Map<string, string>();
   private extensionWidgets = new Map<string, ExtensionWidgetItem>();
@@ -661,6 +667,7 @@ export class AgentSessionWrapper {
       }
 
       case "navigate_tree": {
+        this.customUiBridge.closeAll();
         const result = await this.inner.navigateTree(command.targetId as string, {});
         if (!result.cancelled) this.ephemeralContext?.clear();
         return { cancelled: result.cancelled };
@@ -744,6 +751,14 @@ export class AgentSessionWrapper {
       }
 
       case "get_commands": {
+        if (typeof command.input === "string" && /^\/\S+ /.test(command.input)) {
+          return {
+            commands: await commandArgumentCompletions(
+              command.input,
+              this.inner.extensionRunner.getRegisteredCommands(),
+            ),
+          };
+        }
         const commands: SlashCommandInfo[] = [];
         for (const registered of this.inner.extensionRunner.getRegisteredCommands()) {
           commands.push({
@@ -781,6 +796,8 @@ export class AgentSessionWrapper {
       }
 
       case "reload": {
+        // A pending custom() can own the current command; close it before waiting for that command.
+        this.customUiBridge.closeAll();
         await this.enqueueTurn(() => this.reloadSessionResources());
         this.syncDesktopToolActivation();
         return { success: true };
@@ -797,7 +814,12 @@ export class AgentSessionWrapper {
       }
 
       case "extension_ui_input": {
-        this.handleExtensionUiInput(command.id as string, command.data as string);
+        this.customUiBridge.input(command.id, command.data);
+        return null;
+      }
+
+      case "extension_ui_action": {
+        this.customUiBridge.action(command.id, command.action);
         return null;
       }
 
@@ -881,7 +903,7 @@ export class AgentSessionWrapper {
     this.unsubscribe?.();
     this.unsubscribe = null;
     for (const pending of this.pendingUiResponses.values()) pending.cancel();
-    for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
+    this.customUiBridge.dispose();
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
     this.listeners = [];
@@ -947,70 +969,6 @@ export class AgentSessionWrapper {
     return Array.from(this.extensionWidgets.values());
   }
 
-  private getCustomUiWidth(options: unknown): number {
-    if (!options || typeof options !== "object") return 92;
-    const overlayOptions = (options as { overlayOptions?: unknown }).overlayOptions;
-    const resolved = typeof overlayOptions === "function" ? overlayOptions() : overlayOptions;
-    if (!resolved || typeof resolved !== "object") return 92;
-    const width = (resolved as { width?: unknown }).width;
-    return typeof width === "number" && Number.isFinite(width) ? Math.max(40, Math.min(140, Math.round(width))) : 92;
-  }
-
-  private emitCustomUiRender(id: string, custom: ActiveCustomUi): void {
-    let lines: string[];
-    try {
-      lines = custom.component.render(custom.width);
-    } catch (error) {
-      lines = [`Extension custom UI render failed: ${error instanceof Error ? error.message : String(error)}`];
-    }
-    const event = {
-      type: "extension_ui_request",
-      id,
-      method: "custom",
-      lines,
-    } as ExtensionUiRequest as AgentEvent;
-    this.pendingUiRequests.set(id, event);
-    this.emit(event);
-  }
-
-  private closeCustomUi(id: string, value: unknown): void {
-    const custom = this.activeCustomUis.get(id);
-    if (!custom || custom.settled) return;
-    custom.settled = true;
-    this.activeCustomUis.delete(id);
-    this.pendingUiRequests.delete(id);
-    try {
-      custom.component.dispose?.();
-    } catch {
-      // Ignore dispose errors from extension UI components.
-    }
-    this.emit({
-      type: "extension_ui_request",
-      id,
-      method: "custom",
-      lines: [],
-      closed: true,
-    } as ExtensionUiRequest as AgentEvent);
-    custom.resolve(value);
-  }
-
-  private handleExtensionUiInput(id: string, data: string): void {
-    const custom = this.activeCustomUis.get(id);
-    if (!custom || typeof data !== "string") return;
-    try {
-      custom.component.handleInput?.(data);
-      if (this.activeCustomUis.has(id)) this.emitCustomUiRender(id, custom);
-    } catch (error) {
-      this.closeCustomUi(id, undefined);
-      this.emit({
-        type: "extension_error",
-        extensionPath: `custom-ui:${id}`,
-        event: "custom_ui_input",
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
   private requestExtensionCustomUi<T>(factory: unknown, options?: unknown): Promise<T> {
     if (this.externalTurnActive) {
       this.emit({
@@ -1020,50 +978,7 @@ export class AgentSessionWrapper {
       });
       return Promise.resolve(undefined as T);
     }
-    if (typeof factory !== "function") return Promise.resolve(undefined as T);
-
-    const id = randomUUID();
-    const width = this.getCustomUiWidth(options);
-
-    return new Promise<T>((resolve) => {
-      const tui = {
-        requestRender: () => {
-          const custom = this.activeCustomUis.get(id);
-          if (custom) this.emitCustomUiRender(id, custom);
-        },
-      };
-      const done = (value: T) => this.closeCustomUi(id, value);
-
-      Promise.resolve()
-        .then(() => factory(tui, undefined, undefined, done))
-        .then((component) => {
-          if (
-            !component ||
-            typeof component !== "object" ||
-            typeof (component as CustomUiComponent).render !== "function"
-          ) {
-            resolve(undefined as T);
-            return;
-          }
-          const custom: ActiveCustomUi = {
-            component: component as CustomUiComponent,
-            width,
-            resolve: (value) => resolve(value as T),
-            settled: false,
-          };
-          this.activeCustomUis.set(id, custom);
-          this.emitCustomUiRender(id, custom);
-        })
-        .catch((error) => {
-          this.emit({
-            type: "extension_error",
-            extensionPath: `custom-ui:${id}`,
-            event: "custom_ui",
-            error: error instanceof Error ? error.message : String(error),
-          });
-          resolve(undefined as T);
-        });
-    });
+    return this.customUiBridge.open<T>(factory, options);
   }
 
   private requestExtensionUi<T>(
@@ -1072,6 +987,7 @@ export class AgentSessionWrapper {
     parseResponse: (response: ExtensionUiResponse) => T,
     timeout?: number,
     signal?: AbortSignal,
+    replay = true,
   ): Promise<T> {
     if (this.externalTurnActive) {
       this.emit({
@@ -1108,7 +1024,7 @@ export class AgentSessionWrapper {
       if (timeout) timeoutId = setTimeout(() => settle(defaultValue), timeout);
       signal?.addEventListener("abort", onAbort, { once: true });
 
-      this.pendingUiRequests.set(id, fullRequest as AgentEvent);
+      if (replay) this.pendingUiRequests.set(id, fullRequest as AgentEvent);
       this.pendingUiResponses.set(id, {
         resolve: (response) => settle(parseResponse(response)),
         cancel: () => settle(defaultValue),
@@ -1119,6 +1035,7 @@ export class AgentSessionWrapper {
 
   private createExtensionUiContext(): ExtensionUiContextLike {
     return {
+      getDesktopUiCapabilities: () => (this._alive && !this.externalTurnActive ? DESKTOP_CUSTOM_UI : undefined),
       select: (title, options, opts) =>
         this.requestExtensionUi(
           { method: "select", title, options, ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
@@ -1251,6 +1168,20 @@ export class AgentSessionWrapper {
           text,
         } as ExtensionUiRequest as AgentEvent);
       },
+      insertEditorTextIfEmpty: async (text) => {
+        const owner = this.customUiBridge.getOwner();
+        if (!this._alive || !owner || typeof text !== "string" || text.length > 100_000) return "unavailable";
+        const result = await this.requestExtensionUi<"inserted" | "not_empty" | "unavailable">(
+          { method: "insert_editor_text_if_empty", text, ownerId: owner.id },
+          "unavailable",
+          (response) => ("confirmed" in response ? (response.confirmed ? "inserted" : "not_empty") : "unavailable"),
+          2000,
+          owner.signal,
+          false,
+        );
+        if (result === "inserted") this.extensionEditorText = text;
+        return result;
+      },
       setEditorText: (text) => {
         this.extensionEditorText = text;
         this.emit({
@@ -1264,9 +1195,7 @@ export class AgentSessionWrapper {
       addAutocompleteProvider: () => this.reportUnsupportedExtensionFeature("TUI autocomplete provider"),
       setEditorComponent: () => this.reportUnsupportedExtensionFeature("custom TUI editor component"),
       getEditorComponent: () => undefined,
-      get theme() {
-        return undefined;
-      },
+      theme: this.customUiBridge.theme,
       getAllThemes: () => [],
       getTheme: () => undefined,
       setTheme: () => ({
@@ -1302,6 +1231,7 @@ export class AgentSessionWrapper {
         return { cancelled: true };
       },
       reload: async () => {
+        this.customUiBridge.closeAll();
         this.extensionStatuses.clear();
         this.extensionWidgets.clear();
         this.ephemeralContext?.clear();
@@ -1481,6 +1411,12 @@ export async function startRpcSession(
         ],
       },
     });
+    // Pi's Markdown/Editor helpers use a shared theme even in RPC custom panels.
+    if (!desktopThemeInitialized) {
+      // ponytail: fixed per host lifetime; synchronize appearance over IPC for live switching.
+      initTheme(process.env.PI_DESKTOP_APPEARANCE === "light" ? "light" : "dark", false);
+      desktopThemeInitialized = true;
+    }
     const executionContext = await toolchainRuntime.createExecutionContext({
       cwd,
       intent: "agent-shell",

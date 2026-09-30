@@ -67,6 +67,12 @@ interface ResourceLoaderLike {
 interface ExtensionRunnerLike {
   getRegisteredCommands(): Array<{
     invocationName: string;
+    getArgumentCompletions?: (
+      prefix: string,
+    ) =>
+      | Promise<Array<{ value: string; label: string; description?: string }> | null>
+      | Array<{ value: string; label: string; description?: string }>
+      | null;
     description?: string;
     sourceInfo: SlashCommandInfo["sourceInfo"];
   }>;
@@ -83,6 +89,8 @@ type WidgetOptionsLike = {
 };
 
 export interface ExtensionUiContextLike {
+  insertEditorTextIfEmpty?: (text: string) => Promise<"inserted" | "not_empty" | "unavailable">;
+  getDesktopUiCapabilities?(): import("./desktop-custom-ui").DesktopCustomUiCapabilities | undefined;
   select(title: string, options: string[], opts?: DialogOptionsLike): Promise<string | undefined>;
   confirm(title: string, message: string, opts?: DialogOptionsLike): Promise<boolean>;
   confirmLocalized?(

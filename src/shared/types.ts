@@ -220,9 +220,18 @@ export type ExtensionUiRequest =
   | {
       type: "extension_ui_request";
       id: string;
+      method: "insert_editor_text_if_empty";
+      ownerId: string;
+      text: string;
+      expiresAt: number;
+    }
+  | {
+      type: "extension_ui_request";
+      id: string;
       method: "custom";
       lines: string[];
       closed?: boolean;
+      desktopUiVersion?: 1;
     };
 
 export type ExtensionUiResponse =

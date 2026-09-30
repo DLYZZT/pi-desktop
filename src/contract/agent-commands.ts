@@ -5,6 +5,7 @@ import type { AgentCommand, SessionRuntimeState } from "./types";
 
 export interface SlashCommandInfo {
   name: string;
+  label?: string;
   description?: string;
   source: "extension" | "prompt" | "skill";
   sourceInfo?: {
@@ -38,12 +39,13 @@ export interface BuiltinAgentCommands {
   set_auto_compaction: Command<{ enabled: boolean }, null>;
   clear_queue: Command<Empty, { steering: string[]; followUp: string[] }>;
   get_tools: Command<Empty, ToolEntry[]>;
-  get_commands: Command<Empty, { commands: SlashCommandInfo[] }>;
+  get_commands: Command<{ input?: string }, { commands: SlashCommandInfo[] }>;
   set_tools: Command<{ toolNames: string[] }, null>;
   reload: Command<Empty, { success: boolean }>;
   abort_compaction: Command<Empty, null>;
   extension_ui_response: Command<ExtensionUiResponse, null>;
   extension_ui_input: Command<{ id: string; data: string }, null>;
+  extension_ui_action: Command<{ id: string; action: import("../shared/desktop-custom-ui").CustomUiAction }, null>;
   set_auto_retry: Command<{ enabled: boolean }, null>;
 }
 
