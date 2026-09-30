@@ -2,14 +2,7 @@
  * Supervises the Agent Host utilityProcess.
  * Forwards MessagePorts between renderer and Host; restarts on crash.
  */
-import {
-  app,
-  nativeTheme,
-  utilityProcess,
-  MessageChannelMain,
-  type UtilityProcess,
-  type MessagePortMain,
-} from "electron";
+import { app, utilityProcess, MessageChannelMain, type UtilityProcess, type MessagePortMain } from "electron";
 import fs from "fs";
 import path from "path";
 import { appendMainLog, appendMainLogs } from "./logger";
@@ -251,7 +244,6 @@ export class HostManager {
     delete env.ELECTRON_RUN_AS_NODE;
     env.PI_AGENT_HOST = "1";
     env.PI_DESKTOP_USER_DATA = app.getPath("userData");
-    env.PI_DESKTOP_APPEARANCE = nativeTheme.shouldUseDarkColors ? "dark" : "light";
     env.PI_DESKTOP_VERSION = app.getVersion();
 
     const spawnResult = trySpawnHost(() =>

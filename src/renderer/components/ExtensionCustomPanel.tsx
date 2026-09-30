@@ -294,8 +294,10 @@ export function ExtensionCustomPanel({
             minHeight: 0,
             maxHeight: "calc(100vh - 130px)",
             overflow: "auto",
-            background: "var(--bg-panel)",
-            color: "var(--text)",
+            // Terminal ANSI colors use a stable dark canvas, independent of app chrome.
+            background: "#1c1917",
+            color: "#fafaf9",
+            colorScheme: "dark",
             fontFamily: "var(--font-mono)",
             fontSize,
             lineHeight: 1.45,

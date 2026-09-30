@@ -1413,8 +1413,8 @@ export async function startRpcSession(
     });
     // Pi's Markdown/Editor helpers use a shared theme even in RPC custom panels.
     if (!desktopThemeInitialized) {
-      // ponytail: fixed per host lifetime; synchronize appearance over IPC for live switching.
-      initTheme(process.env.PI_DESKTOP_APPEARANCE === "light" ? "light" : "dark", false);
+      // The ANSI compatibility surface has a stable dark canvas in both app themes.
+      initTheme("dark", false);
       desktopThemeInitialized = true;
     }
     const executionContext = await toolchainRuntime.createExecutionContext({
