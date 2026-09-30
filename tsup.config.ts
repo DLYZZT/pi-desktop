@@ -40,6 +40,7 @@ export default defineConfig([
       "plugin-worker": "src/agent-host/plugin-worker.ts",
       "managed-process-worker": "src/agent-host/managed-process/worker.ts",
       "mcp-stdio-launcher": "src/agent-host/mcp/stdio-launcher.ts",
+      "mcp-runtime-fixture": "src/agent-host/mcp/runtime-fixture.ts",
     },
     format: ["esm"],
     platform: "node",

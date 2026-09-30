@@ -2,9 +2,10 @@ import type { CredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { PiRuntimeProbeResult } from "../contract/runtime";
 import { readPiRuntimeVersion } from "./runtime-version";
+import { probePiToolRuntime } from "./pi-tool-runtime-probe";
 
 /** Exercises the real lazy login import without a callback server or network request. */
-export async function probePiRuntimeModules(): Promise<PiRuntimeProbeResult> {
+export async function probePiRuntimeModules(exerciseTools = false): Promise<PiRuntimeProbeResult> {
   const credentials: CredentialStore = {
     async read() {
       return undefined;
@@ -45,5 +46,6 @@ export async function probePiRuntimeModules(): Promise<PiRuntimeProbeResult> {
   if (typeof mcp.McpClient !== "function" || typeof oauth.authorizeMcp !== "function") {
     throw new Error("MCP client or OAuth public entry is missing");
   }
-  return { piVersion: readPiRuntimeVersion(), openaiOAuthLoaded: true, mcpLoaded: true };
+  const tools = exerciseTools ? await probePiToolRuntime(runtime) : {};
+  return { piVersion: readPiRuntimeVersion(), openaiOAuthLoaded: true, mcpLoaded: true, ...tools };
 }

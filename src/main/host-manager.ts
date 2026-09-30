@@ -85,6 +85,9 @@ export class HostManager {
   getPiVersion(): string | null {
     return this.piVersion;
   }
+  getPid(): number | null {
+    return this.child?.pid ?? null;
+  }
 
   getManagedProcessOwnerState(): { hostInstanceId: string | null; ready: boolean } {
     return { hostInstanceId: this.hostInstanceId, ready: this.managedProcessOwnerReady };

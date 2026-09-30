@@ -6,6 +6,7 @@ import { validateExecutionQuery } from "../contract/executions";
 import { ExecutionLogStore, isTerminalExecution } from "./execution-log-store";
 import { getAgentSessionSource } from "./session-source";
 import { captureExecutionOutput } from "./execution-output";
+import { executionRecoveryCheckpoint } from "./execution-recovery-checkpoint";
 
 type ToolEvent = {
   toolCallId: string;
@@ -65,6 +66,7 @@ export class SessionExecutionHistory {
     };
     await this.store.append(entry);
     this.active.set(key, entry);
+    await executionRecoveryCheckpoint("requested", entry);
     return entry;
   }
   async running(event: ToolEvent): Promise<void> {
@@ -138,6 +140,7 @@ export class SessionExecutionHistory {
     }
     await this.store.append(next);
     this.active.set(this.key(event.toolCallId), next);
+    await executionRecoveryCheckpoint("settled", next);
   }
 
   async query(

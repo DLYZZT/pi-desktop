@@ -82,6 +82,12 @@ v0.3.0 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows AR
 - Pi Session 与 Herdr Session 完全并存；关闭 Pi Desktop terminal 不关闭 Herdr pane/Agent，未知协议会 fail-closed
 - 设置导航中的 Herdr 位于“浏览器”和“消息渠道”之间；安装、更新、修复和卸载仍统一在“开发工具”中管理
 
+### MCP 服务与工具
+
+- 在“设置 → MCP”管理全局及当前项目的 stdio／Streamable HTTP 服务，支持配置导入、连接测试、重连、OAuth 登录和普通资源／模板预览。
+- 会话工具面板区分模型入口、可被嵌套查找的工具与实际执行授权；保存配置后，仍需在当前会话授权工具。项目配置覆盖同名全局配置，扩展注册来源及待应用状态会单独显示。
+- MCP 原始结果进入执行历史，Codemode 收到完整结构化内容，模型通过摘要及 `tool_history_get` 查询全文；SDK bash／Codemode 的临时全文另存为可分页读取的持久 `output`。
+
 ### 围绕项目工作的文件体验
 
 - 原生选择项目目录，管理 Git 分支与 Worktree

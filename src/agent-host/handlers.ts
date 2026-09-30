@@ -139,7 +139,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     "mcp.oauth.cancel": guard(mcpHandlers["mcp.oauth.cancel"]),
     "mcp.oauth.logout": guard(mcpHandlers["mcp.oauth.logout"]),
     "host.ping": guard(() => ({ ok: true as const, ts: Date.now() })),
-    "host.runtimeProbe": guard(probePiRuntimeModules),
+    "host.runtimeProbe": guard(() => probePiRuntimeModules(true)),
 
     "herdr.runtime.get": guard(herdrHandlers.runtimeGet),
 

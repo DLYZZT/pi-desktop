@@ -162,7 +162,14 @@ function finishPackagedStartupValidation(error?: string): void {
         void hostManager
           .call<PiRuntimeProbeResult>("host.runtimeProbe")
           .then((probe) => {
-            if (probe.piVersion !== expectedPiVersion || !probe.openaiOAuthLoaded || !probe.mcpLoaded) {
+            if (
+              probe.piVersion !== expectedPiVersion ||
+              !probe.openaiOAuthLoaded ||
+              !probe.mcpLoaded ||
+              !probe.codemodeMcpRoundTrip ||
+              !probe.codemodeCancellation ||
+              !probe.mcpStdioRoundTrip
+            ) {
               throw new Error("Packaged Pi lazy runtime modules did not load");
             }
             startupPiRuntimeProbe = probe;

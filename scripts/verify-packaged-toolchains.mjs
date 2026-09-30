@@ -508,6 +508,7 @@ function runPackagedStartup(executable, toolTarget, environmentPatch = {}, extra
     XDG_CACHE_HOME: path.join(isolated, ".cache"),
     XDG_DATA_HOME: path.join(isolated, ".local", "share"),
     ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
+    PI_DESKTOP_RUNTIME_PROBE_NODE: process.execPath,
     ...environmentPatch,
   };
   try {
@@ -522,7 +523,11 @@ function runPackagedStartup(executable, toolTarget, environmentPatch = {}, extra
         windowsHide: true,
       },
     );
-    if (result.error) throw result.error;
+    if (result.error) {
+      throw new Error(
+        `Packaged startup failed: ${result.error.message}\n${[result.stdout, result.stderr].filter(Boolean).join("\n").slice(-4000)}`,
+      );
+    }
     if (result.status !== 0) {
       throw new Error(
         `Packaged startup exited ${result.status}: ${[result.stdout, result.stderr].filter(Boolean).join("\n").slice(-4_000)}`,
@@ -543,6 +548,9 @@ function runPackagedStartup(executable, toolTarget, environmentPatch = {}, extra
       report.runtimeModules?.piVersion !== expectedPiVersion ||
       report.runtimeModules?.openaiOAuthLoaded !== true ||
       report.runtimeModules?.mcpLoaded !== true ||
+      report.runtimeModules?.codemodeMcpRoundTrip !== true ||
+      report.runtimeModules?.codemodeCancellation !== true ||
+      report.runtimeModules?.mcpStdioRoundTrip !== true ||
       report.hostAckRevision !== report.revision
     ) {
       throw new Error(`Invalid packaged startup report: ${JSON.stringify(report)}`);

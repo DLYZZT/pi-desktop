@@ -14,6 +14,13 @@ import { ToolchainManager } from "../main/toolchains/manager";
 import { resolveRuntimeCatalogPath } from "../main/toolchains/catalog";
 import { resolveBundledCorePaths } from "../main/toolchains/bundled-core";
 import { isExecutionIntent } from "../shared/toolchains/types";
+import os from "node:os";
+import { ManagedProcessReaper, secureWindowsReaperDirectory } from "../main/managed-process/reaper";
+import { projectManagedProcessCapability } from "../main/managed-process/capability";
+import {
+  resolveWindowsManagedProcessHelper,
+  type WindowsManagedProcessHelperResolution,
+} from "../shared/windows-managed-process-helper";
 
 const smokeUserData = process.env.PI_DESKTOP_SMOKE_USER_DATA;
 if (!smokeUserData || !path.isAbsolute(smokeUserData)) {
@@ -33,18 +40,29 @@ let hostManager: HostManager | null = null;
 let smokeWindow: BrowserWindow | null = null;
 let updateManager: UpdateManager | null = null;
 let checksStarted = false;
+let reaper: ManagedProcessReaper | null = null;
+let helper: WindowsManagedProcessHelperResolution | null = null;
+let finishing = false;
 
 function finish(exitCode: number, error?: unknown): void {
+  if (finishing) return;
+  finishing = true;
   if (error) {
     appendMainLog(`smoke: checks failed — ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
   }
-  void hostManager?.stop();
-  hostManager = null;
-  updateManager?.dispose();
-  updateManager = null;
-  if (smokeWindow && !smokeWindow.isDestroyed()) smokeWindow.destroy();
-  smokeWindow = null;
-  app.exit(exitCode);
+  void (async () => {
+    await hostManager?.stop();
+    await reaper?.reapAll();
+    hostManager = null;
+    updateManager?.dispose();
+    updateManager = null;
+    if (smokeWindow && !smokeWindow.isDestroyed()) smokeWindow.destroy();
+    smokeWindow = null;
+    app.exit(exitCode);
+  })().catch((failure) => {
+    appendMainLog("smoke shutdown failed: " + String(failure));
+    app.exit(1);
+  });
 }
 
 void app.whenReady().then(async () => {
@@ -74,6 +92,35 @@ void app.whenReady().then(async () => {
   await toolchainManager.initialize();
 
   hostManager = new HostManager(resolveHostEntry(runtimeMainDirectory));
+  const reaperDirectory = path.join(smokeUserData, "managed-process-reaper");
+  if (process.platform === "win32")
+    helper = resolveWindowsManagedProcessHelper({
+      isPackaged: false,
+      resourcesPath: process.resourcesPath,
+      projectRoot: process.cwd(),
+    });
+  const secured =
+    process.platform !== "win32" ||
+    Boolean(helper?.ok && (await secureWindowsReaperDirectory(reaperDirectory, helper.descriptor, appendMainLog)));
+  reaper = new ManagedProcessReaper(path.join(reaperDirectory, "journal-v2.json"), {
+    log: appendMainLog,
+    ...(helper?.ok && secured ? { windowsHelper: helper.descriptor } : {}),
+  });
+  await reaper.initialize();
+  hostManager.setBeforeRestartHandler(async () => {
+    const status = await reaper!.reapAll();
+    if (!status.ready || status.records) throw new Error("Smoke process cleanup blocked Host restart");
+  });
+  const capability = () =>
+    projectManagedProcessCapability({
+      platform: process.platform,
+      arch: process.arch,
+      reaperReady: reaper?.status().ready === true,
+      helper,
+      ownerReady: hostManager?.getManagedProcessOwnerState().ready === true,
+      windowsRelease: os.release(),
+      windowsVersion: os.version(),
+    });
   const smokeVaultPath = path.join(app.getPath("userData"), "smoke-channel-secrets.json");
   const credentialVault = new CredentialVault(smokeVaultPath);
   hostManager.setToolchainSnapshot(toolchainManager.getSnapshot());
@@ -81,6 +128,21 @@ void app.whenReady().then(async () => {
   hostManager.setRequestHandler(async (method, params) => {
     if (method.startsWith("channelSecrets.")) return credentialRequestHandler(method, params);
     if (method === "toolchain.getSnapshot") return toolchainManager.getSnapshot();
+    if (method === "managedProcesses.getSettings")
+      return {
+        enabled: true,
+        reaperReady: reaper!.status().ready,
+        capability: capability(),
+        ...(helper?.ok ? { windowsHelper: helper.descriptor } : {}),
+      };
+    if (method === "managedProcesses.register") {
+      const record = (params as { record?: { platform?: string; hostInstanceId?: string } }).record;
+      const owner = hostManager!.getManagedProcessOwnerState();
+      if (record?.platform === "win32" && (!owner.ready || record.hostInstanceId !== owner.hostInstanceId))
+        throw new Error("Smoke Windows process owner generation mismatch");
+      return reaper!.register(record);
+    }
+    if (method === "managedProcesses.unregister") return reaper!.unregister(params);
     if (method === "toolchain.resolve") {
       const body = (params ?? {}) as { cwd?: unknown; intent?: unknown; trusted?: unknown };
       if (
@@ -131,14 +193,7 @@ void app.whenReady().then(async () => {
     setChannelCredential: (payload) =>
       credentialVault.set(`channel:${payload.channel}:${payload.accountId}`, payload.credential),
     getBrowserService: () => null,
-    getManagedProcessCapability: () => ({
-      platform: process.platform,
-      arch: process.arch,
-      supported: false,
-      ready: false,
-      backend: "none",
-      errorCode: process.platform === "win32" ? "ARCH_UNSUPPORTED" : "PLATFORM_UNSUPPORTED",
-    }),
+    getManagedProcessCapability: capability,
     updateManager,
   });
 
@@ -163,6 +218,7 @@ void app.whenReady().then(async () => {
         (error) => finish(1, error),
       );
     } else if (status === "crashed") {
+      if (process.env.PI_DESKTOP_EXECUTION_RECOVERY === "1" && detail?.includes("restart budget exhausted")) return;
       finish(1, new Error(`Agent Host crashed: ${detail ?? "unknown error"}`));
     }
   });

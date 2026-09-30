@@ -3,6 +3,7 @@ import path from "path";
 import type { HostManager } from "../main/host-manager";
 import { appendMainLog } from "../main/logger";
 import { runMcpUiChecks } from "./mcp-ui-checks";
+import { runExecutionRecoveryChecks } from "./execution-recovery-checks";
 
 export async function runSmokeHostChecks(
   manager: HostManager,
@@ -96,14 +97,27 @@ export async function runSmokeHostChecks(
 
   try {
     await call("host.ping");
-    const runtime = await call<{ openaiOAuthLoaded?: boolean; mcpLoaded?: boolean }>("host.runtimeProbe");
-    if (!runtime.openaiOAuthLoaded || !runtime.mcpLoaded) throw new Error("Pi lazy runtime modules did not load");
     const ackDeadline = Date.now() + 5_000;
     while (manager.getToolchainAckRevision() < 0 && Date.now() < ackDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     const acknowledgedRevision = manager.getToolchainAckRevision();
     if (acknowledgedRevision < 0) throw new Error("Agent Host did not acknowledge its toolchain snapshot");
+    const runtime = await call<{
+      openaiOAuthLoaded?: boolean;
+      mcpLoaded?: boolean;
+      codemodeMcpRoundTrip?: boolean;
+      codemodeCancellation?: boolean;
+      mcpStdioRoundTrip?: boolean;
+    }>("host.runtimeProbe");
+    if (
+      !runtime.openaiOAuthLoaded ||
+      !runtime.mcpLoaded ||
+      !runtime.codemodeMcpRoundTrip ||
+      !runtime.codemodeCancellation ||
+      !runtime.mcpStdioRoundTrip
+    )
+      throw new Error("Pi packaged runtime modules or tool round-trip did not pass");
     const hostToolchain = await call<{
       inventoryRevision?: number;
       resolutionId?: string;
@@ -707,6 +721,7 @@ export async function runSmokeHostChecks(
         throw new Error("Renderer cache warming choice did not persist through Host RPC");
       }
       await runMcpUiChecks(smokeWindow, call);
+      if (process.env.PI_DESKTOP_EXECUTION_RECOVERY === "1") await runExecutionRecoveryChecks(manager);
       if (rendererSecurityViolation) {
         throw new Error(`Renderer security violation: ${rendererSecurityViolation}`);
       }
