@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { filterDesktopToolNames } from "../shared/pi-tool-policy.ts";
+import { desktopDataRoot } from "./desktop-data-root";
 
 type StoredSessionTools = {
   toolNames: string[];
@@ -120,18 +120,10 @@ export class DesktopSessionToolStore {
   }
 }
 
-function desktopUserDataPath(): string {
-  return (
-    process.env.PI_DESKTOP_USER_DATA?.trim() ||
-    (process.env.PI_CODING_AGENT_DIR ? path.join(process.env.PI_CODING_AGENT_DIR, "desktop") : "") ||
-    path.join(homedir(), ".pi", "desktop")
-  );
-}
-
 let defaultStore: DesktopSessionToolStore | undefined;
 
 function getDefaultStore(): DesktopSessionToolStore {
-  defaultStore ??= new DesktopSessionToolStore(path.join(desktopUserDataPath(), "session-tools.json"));
+  defaultStore ??= new DesktopSessionToolStore(path.join(desktopDataRoot(), "session-tools.json"));
   return defaultStore;
 }
 

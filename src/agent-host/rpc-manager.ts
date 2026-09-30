@@ -45,13 +45,11 @@ import { getLegacySessionToolNames } from "./legacy-session-tools";
 export { getLegacySessionToolNames } from "./legacy-session-tools";
 import { peekManagedProcessService } from "./managed-process/runtime";
 import { createManagedProcessToolDefinitions } from "./managed-process/tools";
-import { installManagedProcessSessionRedaction } from "./managed-process/session-redaction";
 import { peekHerdrBridge } from "./herdr/runtime";
 import { createHerdrToolDefinitions, herdrToolNamesForRuntime, isHerdrToolName } from "./herdr/tools";
-import { installHerdrSessionRedaction } from "./herdr/session-redaction";
 import { createDesktopPromptExtension, SessionPromptPolicy } from "./session-prompt-policy";
-import { createEphemeralContextExtension, SessionEphemeralContext } from "./session-ephemeral-context";
 import { createLegacyChannelContextExtension } from "./legacy-channel-context";
+import { SessionExecutionHistory } from "./session-execution-history";
 
 // ============================================================================
 // Types
@@ -149,7 +147,7 @@ export class AgentSessionWrapper {
     requestedToolNames?: string[],
     persistToolNames: (sessionId: string, toolNames: string[]) => void = setDesktopSessionToolNames,
     promptPolicy?: SessionPromptPolicy,
-    private readonly ephemeralContext?: SessionEphemeralContext,
+    private readonly executionHistory?: SessionExecutionHistory,
     private readonly toolPolicy?: SessionToolPolicy,
   ) {
     this.inner = inner;
@@ -186,7 +184,8 @@ export class AgentSessionWrapper {
   start(): void {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
       this.resetIdleTimer();
-      const displayEvent = this.withExternalChannelSource(event);
+      const sourceEvent = this.withExternalChannelSource(event);
+      const displayEvent = this.executionHistory?.projectEvent(sourceEvent) ?? sourceEvent;
       this.emit(displayEvent);
       try {
         this.externalTurnProgress?.(displayEvent);
@@ -396,7 +395,6 @@ export class AgentSessionWrapper {
       this.externalTurnChannel = params.channel;
       this.externalTurnAttachments = params.channelAttachments ?? null;
       setBrowserSessionSource(this.inner.sessionManager, "channel");
-      this.ephemeralContext?.beginChannelTurn(params.runId);
       browserAgentRuntime.beginTurn(this.sessionId, "channel");
       this.externalTurnProgress = params.onProgress ?? null;
       try {
@@ -440,7 +438,6 @@ export class AgentSessionWrapper {
         this.externalTurnActive = false;
         this.externalTurnChannel = null;
         this.externalTurnAttachments = null;
-        this.ephemeralContext?.endChannelTurn();
         setBrowserSessionSource(this.inner.sessionManager, "local");
       }
     });
@@ -459,7 +456,6 @@ export class AgentSessionWrapper {
     this.extensionBindingError = null;
     this.extensionStatuses.clear();
     this.extensionWidgets.clear();
-    this.ephemeralContext?.clear();
     await this.inner.reload();
     await this.ensureExtensionsBound();
     if (this.requestedToolNames !== undefined) this.applyRequestedTools(this.requestedToolNames);
@@ -525,7 +521,6 @@ export class AgentSessionWrapper {
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
         if (!streamingBehavior) browserAgentRuntime.beginTurn(this.sessionId, "local");
         const invokePrompt = () => {
-          if (!streamingBehavior) this.ephemeralContext?.beginLocalTurn();
           return this.inner.prompt(command.message as string, {
             ...(promptImages?.length ? { images: promptImages } : {}),
             ...(streamingBehavior ? { streamingBehavior } : {}),
@@ -549,7 +544,6 @@ export class AgentSessionWrapper {
       }
 
       case "abort":
-        this.ephemeralContext?.suspendAfterAbort();
         await this.withFinalRunningNotification(() => this.inner.abort());
         return null;
 
@@ -618,7 +612,12 @@ export class AgentSessionWrapper {
           newSessionFile = forkedPath;
         }
 
-        const newSessionId = SessionManager.open(newSessionFile, sessionDir).getSessionId();
+        const forkManager = SessionManager.open(newSessionFile, sessionDir);
+        const newSessionId = forkManager.getSessionId();
+        await this.executionHistory?.store.copyBranch(
+          newSessionId,
+          new Set(forkManager.getBranch().map((entry) => entry.id)),
+        );
         this.persistToolNames(
           newSessionId,
           filterDesktopToolNames(this.requestedToolNames ?? this.inner.getActiveToolNames()),
@@ -632,7 +631,6 @@ export class AgentSessionWrapper {
 
       case "navigate_tree": {
         const result = await this.inner.navigateTree(command.targetId as string, {});
-        if (!result.cancelled) this.ephemeralContext?.clear();
         return { cancelled: result.cancelled };
       }
 
@@ -824,6 +822,7 @@ export class AgentSessionWrapper {
         }
         try {
           await agent.dispose?.();
+          await this.executionHistory?.flush();
         } catch (error) {
           console.warn(
             `[pi-desktop] session dispose failed during ${reason} for ${this.sessionId}: ${error instanceof Error ? error.name : "UnknownError"}`,
@@ -856,7 +855,6 @@ export class AgentSessionWrapper {
   destroy(): void {
     if (!this._alive) return;
     this._alive = false;
-    this.ephemeralContext?.dispose();
     browserAgentRuntime.clearSession(this.sessionId);
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.unsubscribe?.();
@@ -1275,7 +1273,6 @@ export class AgentSessionWrapper {
       },
       navigateTree: async (targetId, options) => {
         const result = await this.inner.navigateTree(targetId, { summarize: options?.summarize });
-        if (!result.cancelled) this.ephemeralContext?.clear();
         return { cancelled: result.cancelled };
       },
       switchSession: async () => {
@@ -1285,7 +1282,6 @@ export class AgentSessionWrapper {
       reload: async () => {
         this.extensionStatuses.clear();
         this.extensionWidgets.clear();
-        this.ephemeralContext?.clear();
         await this.inner.reload({
           beforeSessionStart: () => {
             this.inner.extensionRunner.setUIContext?.(this.createExtensionUiContext(), "rpc");
@@ -1435,10 +1431,8 @@ export async function startRpcSession(
     // Unknown provenance is fail-closed for desktop tools. A session becomes
     // local only at this explicit desktop-owned construction boundary.
     setBrowserSessionSource(sessionManager, "local");
-    installManagedProcessSessionRedaction(sessionManager);
-    installHerdrSessionRedaction(sessionManager);
-    const ephemeralContext = new SessionEphemeralContext(sessionManager);
-    ephemeralContext.install();
+    const executionHistory = new SessionExecutionHistory(sessionManager);
+    await executionHistory.recover();
 
     // Desktop-owned session choices live outside Pi's shared JSONL so the CLI
     // remains unaffected. Read the old custom entry only for one-way migration.
@@ -1462,8 +1456,8 @@ export async function startRpcSession(
       resourceLoaderOptions: {
         extensionFactories: [
           toolPolicy.extension(),
+          executionHistory.extension(),
           createLegacyChannelContextExtension(),
-          createEphemeralContextExtension(ephemeralContext),
           createDesktopPromptExtension(promptPolicy),
         ],
       },
@@ -1480,6 +1474,7 @@ export async function startRpcSession(
       (command) => browserAgentRuntime.guardBash(sessionManager.getSessionId(), command),
     );
     const customTools = [
+      executionHistory.tool(),
       createBashToolDefinition(cwd, bashOptions),
       ...createDesktopSearchToolDefinitions(cwd, executionContext, toolchainRuntime),
       ...createBrowserToolDefinitions(),
@@ -1513,7 +1508,7 @@ export async function startRpcSession(
       sessionToolNames,
       undefined,
       promptPolicy,
-      ephemeralContext,
+      executionHistory,
       toolPolicy,
     );
     wrapper.setRuntimeDiagnostics(services.diagnostics);

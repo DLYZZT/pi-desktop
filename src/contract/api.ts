@@ -68,9 +68,15 @@ import type {
 
 import type { PiRuntimeProbeResult } from "./runtime";
 import type { CredentialMutationOptions } from "./auth";
+import type { ExecutionHistoryPage, ExecutionQuery, ExecutionContentChunk } from "./executions";
 
 /** Request/response API surface (replaces HTTP routes). */
 export interface Api {
+  "sessions.executions": { params: { id: string } & ExecutionQuery; result: ExecutionHistoryPage };
+  "sessions.executionContent": {
+    params: { id: string; hash: string; maxBytes?: number; offset?: number };
+    result: { value?: unknown; chunk?: ExecutionContentChunk };
+  };
   "host.ping": { params: void; result: { ok: true; ts: number } };
   "host.runtimeProbe": { params: void; result: PiRuntimeProbeResult };
   "host.toolchain": {
@@ -190,7 +196,7 @@ export interface Api {
     result: EntryContentResult;
   };
   "sessions.export": {
-    params: { id: string; format?: "md" | "json" };
+    params: { id: string; format?: "md" | "json" | "bundle" };
     result: { content: string; suggestedName: string };
   };
   "sessions.delete": { params: { id: string; force?: boolean }; result: { ok: true } };

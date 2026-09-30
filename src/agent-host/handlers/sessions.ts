@@ -2,6 +2,9 @@ import { readFileSync, statSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { ApiHandler, RpcServer } from "../../contract/rpc";
+import { SessionExecutionHistory } from "../session-execution-history";
+import { ExecutionLogStore } from "../execution-log-store";
+import { validateExecutionQuery } from "../../contract/executions";
 import { RpcError, type HistoryWindow, type SessionDetail, type SessionRuntimeState } from "../../contract/types";
 import type { SessionTreeNode } from "../../shared/types";
 import { getRpcSession, getRunningRpcSessionIds } from "../rpc-manager";
@@ -38,6 +41,8 @@ import { callMain } from "../parent-rpc";
 import type { ManagedProcessService } from "../managed-process/service";
 
 type SessionHandlers = {
+  executions: NonNullable<ApiHandler["sessions.executions"]>;
+  executionContent: NonNullable<ApiHandler["sessions.executionContent"]>;
   list: NonNullable<ApiHandler["sessions.list"]>;
   get: NonNullable<ApiHandler["sessions.get"]>;
   context: NonNullable<ApiHandler["sessions.context"]>;
@@ -58,6 +63,33 @@ export function createSessionHandlers({
   clearSessionEventBinding: (sessionId: string) => void;
 }) {
   return {
+    executions: async ({ id, ...query }) => {
+      try {
+        validateExecutionQuery(query);
+      } catch (error) {
+        throw new RpcError({ code: "BAD_REQUEST", message: (error as Error).message });
+      }
+      const filePath = await resolveSessionPath(id);
+      if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+      const { manager } = getSessionContentSnapshot(filePath);
+      return new SessionExecutionHistory(manager).query(query);
+    },
+    executionContent: async ({ id, hash, offset, maxBytes = 2 * 1024 * 1024 }) => {
+      if (
+        !Number.isSafeInteger(maxBytes) ||
+        maxBytes < 0 ||
+        maxBytes > 2 * 1024 * 1024 ||
+        !/^[a-f0-9]{64}$/u.test(hash)
+      )
+        throw new RpcError({ code: "BAD_REQUEST", message: "Invalid execution content reference or budget" });
+      if (!(await resolveSessionPath(id))) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+      if (offset !== undefined) {
+        if (!Number.isSafeInteger(offset) || offset < 0 || maxBytes < 4)
+          throw new RpcError({ code: "BAD_REQUEST", message: "Invalid execution content offset" });
+        return { chunk: await new ExecutionLogStore(id).readContentChunk(hash, offset, maxBytes) };
+      }
+      return { value: await new ExecutionLogStore(id).readContent(hash, Math.min(2 * 1024 * 1024, maxBytes)) };
+    },
     list: async (params) => {
       const traceId = resolveSessionTraceId();
       const startedAt = performance.now();
@@ -254,10 +286,17 @@ export function createSessionHandlers({
     },
 
     export: async (params) => {
-      const { id, format = "md" } = params as { id: string; format?: "md" | "json" };
+      const { id, format = "md" } = params as { id: string; format?: "md" | "json" | "bundle" };
       const filePath = await resolveSessionPath(id);
       if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
       const raw = readFileSync(filePath, "utf8");
+      if (format === "bundle") {
+        const executionHistory = await new ExecutionLogStore(id).exportBundle();
+        return {
+          content: JSON.stringify({ format: "pi-desktop-session", version: 1, sessionJsonl: raw, executionHistory }),
+          suggestedName: `session-${id}-bundle.json`,
+        };
+      }
       if (format === "json") {
         return { content: raw, suggestedName: `session-${id}.json` };
       }
@@ -316,6 +355,7 @@ export function createSessionHandlers({
         });
       }
       invalidateSessionContent(filePath);
+      await new ExecutionLogStore(id).remove();
       const deletedSession = sessionIndex.removePath(filePath);
       invalidateSessionPathCache(id);
       void callMain("browser.sessionEnded", { sessionId: id }).catch(() => undefined);

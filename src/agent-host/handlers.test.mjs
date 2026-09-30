@@ -1,7 +1,16 @@
 import { importTestBundle } from "#test-bundle";
 import { extractInterfaceProperties } from "../../scripts/check-contract-coverage.mjs";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import { MessageChannel } from "node:worker_threads";
@@ -27,7 +36,7 @@ async function loadHandlersModule() {
       absWorkingDir: root,
       stdin: {
         contents:
-          'export * from "./handlers.ts"; export { setDesktopSessionToolNames } from "./session-tool-store.ts"; export {createRpcServer, createRpcClient} from "../contract/rpc.ts";',
+          'export * from "./handlers.ts"; export { setDesktopSessionToolNames } from "./session-tool-store.ts"; export {createRpcServer, createRpcClient} from "../contract/rpc.ts"; export {ExecutionLogStore} from "./execution-log-store.ts";',
         resolveDir: import.meta.dirname,
         loader: "ts",
       },
@@ -640,6 +649,48 @@ test("file routes retain canonical and exact-session-reference authorization aft
     handlers["files.list"]({ path: outside, sourceSessionId }),
     (error) => error.code === "FORBIDDEN",
   );
+});
+
+test("execution RPC validates budgets, exports original history and removes owned content with the session", async () => {
+  const { handlers } = await captureHandlers();
+  const { ExecutionLogStore } = await loadHandlersModule();
+  for (const query of [{ limit: NaN }, { limit: 201 }, { maxContentBytes: -1 }, { includeContent: "yes" }])
+    await assert.rejects(
+      handlers["sessions.executions"]({ id: "missing", ...query }),
+      (error) => error.code === "BAD_REQUEST",
+    );
+  const manager = SessionManager.create(isolatedAgentDirectory, process.env.PI_CODING_AGENT_SESSION_DIR);
+  manager.appendMessage({ role: "user", content: "Original history fixture", timestamp: Date.now() });
+  const id = manager.getSessionId(),
+    store = new ExecutionLogStore(id);
+  const result = await store.payload({ text: "RPC_ORIGINAL_" + "x".repeat(64 * 1024) });
+  await store.append({
+    executionId: "rpc-fixture",
+    runId: "run",
+    toolCallId: "call",
+    rootToolCallId: "call",
+    anchorEntryId: manager.getLeafId(),
+    source: "local",
+    toolName: "fixture",
+    status: "succeeded",
+    requestedAt: 1,
+    result,
+  });
+  const page = await handlers["sessions.executions"]({ id, includeContent: true });
+  assert.match(page.records[0].result.value.text, /^RPC_ORIGINAL_/);
+  const content = await handlers["sessions.executionContent"]({ id, hash: result.ref.hash });
+  assert.equal(content.value.text, page.records[0].result.value.text);
+  await assert.rejects(
+    handlers["sessions.executionContent"]({ id, hash: result.ref.hash, maxBytes: NaN }),
+    (error) => error.code === "BAD_REQUEST",
+  );
+  const bundle = JSON.parse((await handlers["sessions.export"]({ id, format: "bundle" })).content);
+  assert.match(bundle.sessionJsonl, /Original history fixture/);
+  assert.equal(bundle.executionHistory.content[result.ref.hash].text, content.value.text);
+  await handlers["sessions.delete"]({ id });
+  assert.equal(existsSync(manager.getSessionFile()), false);
+  assert.deepEqual((await store.readLatest()).records, []);
+  await assert.rejects(store.readContent(result.ref.hash, 131072), /ENOENT/);
 });
 
 test("session, model configuration, and auth handlers isolate state and preserve error codes", async () => {

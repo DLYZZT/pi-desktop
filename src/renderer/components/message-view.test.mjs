@@ -4,7 +4,6 @@ import path from "node:path";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { redactHerdrPersistedMessage } from "../../agent-host/herdr/session-redaction.ts";
 
 const { MessageView } = await importTestBundle("src/renderer/components/message-view", {
   stdin: {
@@ -166,13 +165,22 @@ function renderToolResult(result) {
 }
 
 function persistedHerdrResult(isError = false, output = "PRIVATE_FIXTURE_OUTPUT") {
-  return redactHerdrPersistedMessage({
+  const code = isError && output.includes("HERDR_REQUEST_TIMEOUT") ? "HERDR_REQUEST_TIMEOUT" : null;
+  return {
     role: "toolResult",
     toolCallId: "herdr-result",
     toolName: "herdr_list",
-    content: [{ type: "text", text: output }],
+    content: [
+      {
+        type: "text",
+        text: code
+          ? `[Herdr tool failed: ${code}. Live Herdr content was not saved.]`
+          : "[Sensitive Herdr result was not saved. Ask Pi to inspect the live Herdr fleet again.]",
+      },
+    ],
     isError,
-  });
+    ...(code ? { details: { errorCode: code } } : {}),
+  };
 }
 
 test("persisted Herdr results show a neutral history notice without changing the stored message", () => {

@@ -12,8 +12,6 @@ import {
   createAgentSessionFromServices,
 } from "@earendil-works/pi-coding-agent";
 import { importTestBundle } from "#test-bundle";
-import { SessionEphemeralContext, createEphemeralContextExtension } from "./session-ephemeral-context.ts";
-import { installManagedProcessSessionRedaction } from "./managed-process/session-redaction.ts";
 import { setAgentSessionSource } from "./session-source.ts";
 
 const { AgentSessionWrapper } = await importTestBundle("pi-prompt-boundary", {
@@ -255,14 +253,7 @@ test("steering and follow-up queued during a tool run settle as one Desktop prom
     });
     return stream;
   };
-  const liveContextScope = {
-    begins: 0,
-    beginLocalTurn() {
-      this.begins++;
-    },
-    dispose() {},
-  };
-  const wrapper = new AgentSessionWrapper(session, undefined, () => undefined, undefined, liveContextScope);
+  const wrapper = new AgentSessionWrapper(session, undefined, () => undefined, undefined);
   t.after(() => {
     releaseTool();
     void wrapper.dispose();
@@ -305,7 +296,6 @@ test("steering and follow-up queued during a tool run settle as one Desktop prom
   assert.deepEqual(userMessages, ["start", "steer this run", "follow up afterwards"]);
   assert.equal(events.filter((event) => event.type === "prompt_done").length, 1);
   assert.equal(events.filter((event) => event.type === "prompt_error").length, 0);
-  assert.equal(liveContextScope.begins, 1, "queued messages must not begin another sensitive-result scope");
   assert.equal(
     requests.some((request) => JSON.stringify(request.messages).includes("steer this run")),
     true,
@@ -316,13 +306,10 @@ test("steering and follow-up queued during a tool run settle as one Desktop prom
   );
 });
 
-test("Desktop abort prevents a delayed sensitive tool result from reviving in the next prompt", async (t) => {
+test("Desktop abort settles once while preserving a tool's completed late result in canonical history", async (t) => {
   const directory = mkdtempSync(path.join(tmpdir(), "pi-desktop-abort-context-"));
   const manager = SessionManager.create(directory, directory);
   setAgentSessionSource(manager, "local");
-  installManagedProcessSessionRedaction(manager);
-  const ephemeral = new SessionEphemeralContext(manager);
-  ephemeral.install();
   let releaseTool;
   const toolGate = new Promise((resolve) => {
     releaseTool = resolve;
@@ -340,7 +327,7 @@ test("Desktop abort prevents a delayed sensitive tool result from reviving in th
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      extensionFactories: [createEphemeralContextExtension(ephemeral)],
+      extensionFactories: [],
     },
   });
   await services.modelRuntime.setRuntimeApiKey("anthropic", "offline-fixture-key");
@@ -396,11 +383,10 @@ test("Desktop abort prevents a delayed sensitive tool result from reviving in th
     });
     return stream;
   };
-  const wrapper = new AgentSessionWrapper(session, undefined, () => undefined, undefined, ephemeral);
+  const wrapper = new AgentSessionWrapper(session, undefined, () => undefined, undefined);
   t.after(async () => {
     releaseTool();
     await wrapper.dispose();
-    ephemeral.dispose();
     rmSync(directory, { recursive: true, force: true });
   });
   wrapper.start();
@@ -411,26 +397,30 @@ test("Desktop abort prevents a delayed sensitive tool result from reviving in th
         if (event.type !== "prompt_done" || event.clientRunId !== runId) return;
         clearTimeout(timeout);
         unsubscribe();
-        resolve();
+        resolve(event);
       });
     });
 
   const abortedDone = waitForDone(70);
   await wrapper.send({ type: "prompt", message: "Start the delayed tool", clientRunId: 70 });
-  await toolStarted;
+  await Promise.race([
+    toolStarted,
+    abortedDone.then((event) => {
+      throw new Error(`Delayed fixture tool did not start: ${JSON.stringify(event)}`);
+    }),
+  ]);
   const aborting = wrapper.send({ type: "abort" });
   await Promise.resolve();
-  assert.equal(ephemeral.shouldStopCacheWarming(), true);
   releaseTool();
   await aborting;
   await abortedDone;
   const sessionFile = manager.getSessionFile();
   assert.ok(sessionFile);
-  assert.equal(readFileSync(sessionFile, "utf8").includes("LATE_PROCESS_RESULT_42"), false);
+  assert.equal(readFileSync(sessionFile, "utf8").includes("LATE_PROCESS_RESULT_42"), true);
 
   const nextDone = waitForDone(71);
   await wrapper.send({ type: "prompt", message: "Continue after cancellation", clientRunId: 71 });
   await nextDone;
   assert.equal(requests.length >= 2, true);
-  assert.equal(JSON.stringify(requests.slice(1)).includes("LATE_PROCESS_RESULT_42"), false);
+  assert.equal(JSON.stringify(requests.slice(1)).includes("LATE_PROCESS_RESULT_42"), true);
 });

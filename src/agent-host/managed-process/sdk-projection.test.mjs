@@ -12,30 +12,21 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { importTestBundle } from "#test-bundle";
 
-const {
-  ManagedProcessService,
-  createManagedProcessToolDefinitions,
-  setAgentSessionSource,
-  installManagedProcessSessionRedaction,
-  SessionEphemeralContext,
-  createEphemeralContextExtension,
-  AgentSessionWrapper,
-} = await importTestBundle("pi-managed-process-sdk-projection", {
-  packages: "external",
-  stdin: {
-    contents: [
-      'export { ManagedProcessService } from "./service.ts";',
-      'export { createManagedProcessToolDefinitions } from "./tools.ts";',
-      'export { setAgentSessionSource } from "../session-source.ts";',
-      'export { installManagedProcessSessionRedaction } from "./session-redaction.ts";',
-      'export { SessionEphemeralContext, createEphemeralContextExtension } from "../session-ephemeral-context.ts";',
-      'export { AgentSessionWrapper } from "../rpc-manager.ts";',
-    ].join("\n"),
-    resolveDir: import.meta.dirname,
-    sourcefile: "managed-process-sdk-projection-entry.ts",
-    loader: "ts",
-  },
-});
+const { ManagedProcessService, createManagedProcessToolDefinitions, setAgentSessionSource, AgentSessionWrapper } =
+  await importTestBundle("pi-managed-process-sdk-projection", {
+    packages: "external",
+    stdin: {
+      contents: [
+        'export { ManagedProcessService } from "./service.ts";',
+        'export { createManagedProcessToolDefinitions } from "./tools.ts";',
+        'export { setAgentSessionSource } from "../session-source.ts";',
+        'export { AgentSessionWrapper } from "../rpc-manager.ts";',
+      ].join("\n"),
+      resolveDir: import.meta.dirname,
+      sourcefile: "managed-process-sdk-projection-entry.ts",
+      loader: "ts",
+    },
+  });
 
 function assistant(model, content, stopReason) {
   const stream = createAssistantMessageEventStream();
@@ -63,7 +54,7 @@ function assistant(model, content, stopReason) {
   return stream;
 }
 
-test("real process readiness and an aborted wait use live SDK context without leaking JSONL", async (t) => {
+test("real process readiness and an aborted wait use live SDK context with original canonical JSONL", async (t) => {
   if (process.platform === "win32") return t.skip("Windows helper requires its target-host integration suite");
   const directory = mkdtempSync(path.join(tmpdir(), "pi-managed-sdk-projection-"));
   const script = path.join(directory, "ready.mjs");
@@ -116,20 +107,15 @@ test("real process readiness and an aborted wait use live SDK context without le
   );
   let session;
   let wrapper;
-  let ephemeral;
   t.after(async () => {
     if (wrapper) await wrapper.dispose();
     else session?.dispose();
-    ephemeral?.dispose();
     await service.stopAll("host");
     rmSync(directory, { recursive: true, force: true });
   });
 
   const manager = SessionManager.create(directory, directory);
   setAgentSessionSource(manager, "local");
-  installManagedProcessSessionRedaction(manager);
-  ephemeral = new SessionEphemeralContext(manager);
-  ephemeral.install();
   const services = await createAgentSessionServices({
     cwd: directory,
     agentDir: directory,
@@ -139,7 +125,7 @@ test("real process readiness and an aborted wait use live SDK context without le
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      extensionFactories: [createEphemeralContextExtension(ephemeral)],
+      extensionFactories: [],
     },
   });
   await services.modelRuntime.setRuntimeApiKey("anthropic", "offline-fixture-key");
@@ -216,10 +202,10 @@ test("real process readiness and an aborted wait use live SDK context without le
   const sessionFile = manager.getSessionFile();
   assert.ok(sessionFile);
   const persisted = readFileSync(sessionFile, "utf8");
-  assert.equal(persisted.includes(secretResult), false);
-  assert.match(persisted, /Sensitive managed process result was not saved/);
+  assert.equal(persisted.includes(secretResult), true);
+  assert.doesNotMatch(persisted, /Sensitive managed process result was not saved/);
 
-  wrapper = new AgentSessionWrapper(session, undefined, () => undefined, undefined, ephemeral);
+  wrapper = new AgentSessionWrapper(session, undefined, () => undefined, undefined);
   wrapper.start();
   const waitForEvent = (predicate, label) =>
     new Promise((resolve, reject) => {
@@ -291,7 +277,6 @@ test("real process readiness and an aborted wait use live SDK context without le
   await waiting;
   await wrapper.send({ type: "abort" });
   await abortedDone;
-  assert.equal(ephemeral.shouldStopCacheWarming(), true);
 
   const afterAbortRequests = [];
   session.agent.streamFunction = (requestModel, context) => {
@@ -305,6 +290,6 @@ test("real process readiness and an aborted wait use live SDK context without le
   await wrapper.send({ type: "prompt", message: "Continue after stopping the wait", clientRunId: 78 });
   await nextDone;
   assert.equal(afterAbortRequests.length, 1);
-  assert.equal(JSON.stringify(afterAbortRequests[0].messages).includes(secretResult), false);
-  assert.equal(readFileSync(sessionFile, "utf8").includes(secretResult), false);
+  assert.equal(JSON.stringify(afterAbortRequests[0].messages).includes(secretResult), true);
+  assert.equal(readFileSync(sessionFile, "utf8").includes(secretResult), true);
 });

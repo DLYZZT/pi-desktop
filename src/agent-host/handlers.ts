@@ -190,6 +190,8 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     "sessions.contextPage": guard(sessionHandlers.contextPage),
 
     "sessions.entryContent": guard(sessionHandlers.entryContent),
+    "sessions.executions": guard(sessionHandlers.executions),
+    "sessions.executionContent": guard(sessionHandlers.executionContent),
 
     "sessions.export": guard(sessionHandlers.export),
 

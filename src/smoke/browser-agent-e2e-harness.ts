@@ -564,10 +564,10 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
 
   assert.ok(status.sessionFile && fs.existsSync(status.sessionFile), "Agent session file was unavailable");
   const persistedSession = fs.readFileSync(status.sessionFile!, "utf8");
-  assert.equal(persistedSession.includes("managed-e2e-fixture.mjs"), false, "raw process command entered JSONL");
-  assert.equal(persistedSession.includes("electron-input"), false, "managed stdin or output entered JSONL");
-  assert.match(persistedSession, /Sensitive managed process result was not saved/);
-  log("Agent managed process tools, UI control, Browser evidence, stop barrier and JSONL redaction passed");
+  assert.equal(persistedSession.includes("managed-e2e-fixture.mjs"), true, "raw process command entered JSONL");
+  assert.equal(persistedSession.includes("electron-input"), true, "managed stdin or output entered JSONL");
+  assert.doesNotMatch(persistedSession, /Sensitive managed process result was not saved/);
+  log("Agent managed process tools, UI control, Browser evidence, stop barrier and original JSONL history passed");
 
   browserService.revokeSession(sessionId);
   await waitFor(
