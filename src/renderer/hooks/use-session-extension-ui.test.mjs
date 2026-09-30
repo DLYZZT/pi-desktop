@@ -59,7 +59,17 @@ async function mount(t) {
     sessionIdRef,
     runtimeGate,
     getViewSignal: () => controller.signal,
-    chatInputRef: { current: { insertText: (text) => inserted.push(text) } },
+    chatInputRef: {
+      current: {
+        insertText: (text) => inserted.push(text),
+        insertIfEmpty: (text, strict) => {
+          assert.equal(strict, true);
+          if (inserted.length) return false;
+          inserted.push(text);
+          return true;
+        },
+      },
+    },
   };
   let current, renderer;
   function Probe() {
@@ -104,6 +114,41 @@ async function mount(t) {
     },
   };
 }
+
+test("atomic insertion rejects expired, replaced and switched-session owners", async (t) => {
+  const f = await mount(t);
+  await f.emit({ id: "panel", method: "custom", lines: ["body"], desktopUiVersion: 1 });
+  const request = {
+    id: "insert",
+    method: "insert_editor_text_if_empty",
+    ownerId: "panel",
+    text: "answer",
+    expiresAt: 4000,
+  };
+  await f.emit({ ...request, expiresAt: 1100 });
+  assert.deepEqual(f.inserted, []);
+  f.sessionIdRef.current = "b";
+  await f.emit(request);
+  assert.deepEqual(f.inserted, []);
+  f.sessionIdRef.current = "a";
+  await f.emit({ ...request, ownerId: "old" });
+  assert.deepEqual(f.inserted, []);
+  await f.emit(request);
+  assert.deepEqual(f.inserted, ["answer"]);
+  assert.equal(commands.at(-1).command.confirmed, true);
+  await f.emit({ ...request, id: "second" });
+  assert.equal(commands.at(-1).command.confirmed, false);
+  await f.emit({ id: "panel", method: "custom", lines: [], closed: true });
+  await f.emit({ ...request, id: "late" });
+  assert.equal(commands.length, 2);
+});
+
+test("detaching a view does not cancel the host-owned panel", async (t) => {
+  const f = await mount(t);
+  await f.emit({ id: "panel", method: "custom", lines: ["body"] });
+  await f.unmount();
+  assert.deepEqual(commands, []);
+});
 
 test("replaced dialogs and duplicate clicks cannot send a stale response", async (t) => {
   const fixture = await mount(t);

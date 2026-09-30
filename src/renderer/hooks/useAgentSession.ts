@@ -129,7 +129,7 @@ function userMessageKey(message: Partial<AgentMessage>): string {
 
 export interface ChatInputHandle {
   insertText: (text: string) => void;
-  insertIfEmpty: (content: string) => void;
+  insertIfEmpty: (content: string, strict?: boolean) => boolean;
   prependText: (text: string) => void;
   addFiles: (files: File[]) => void;
 }
@@ -438,33 +438,36 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [isNew, newSessionCwd, newSessionModel, newSessionDefaultModel, toolPreset, thinkingLevel]);
 
-  const loadSlashCommands = useCallback(async () => {
-    const ownsView = captureCommandView(),
-      request = commandsRequestGate.begin();
-    const isCurrent = () => ownsView() && commandsRequestGate.isCurrent(request);
-    if (!isCurrent()) return [] as SlashCommandInfo[];
-    const sid = sessionIdRef.current ?? (await ensureNewSession());
-    if (!isCurrent()) return [] as SlashCommandInfo[];
-    if (!sid) {
-      setSlashCommands([]);
-      return [] as SlashCommandInfo[];
-    }
-    setSlashCommandsLoading(true);
-    try {
-      const data = await sendAgentCommand(sid, { type: "get_commands" });
+  const loadSlashCommands = useCallback(
+    async (input?: string) => {
+      const ownsView = captureCommandView(),
+        request = commandsRequestGate.begin();
+      const isCurrent = () => ownsView() && commandsRequestGate.isCurrent(request);
       if (!isCurrent()) return [] as SlashCommandInfo[];
-      const commands = data?.commands ?? [];
-      setSlashCommands(commands);
-      return commands;
-    } catch (e) {
+      const sid = sessionIdRef.current ?? (await ensureNewSession());
       if (!isCurrent()) return [] as SlashCommandInfo[];
-      console.error("Failed to load slash commands:", e);
-      setSlashCommands([]);
-      return [] as SlashCommandInfo[];
-    } finally {
-      if (isCurrent()) setSlashCommandsLoading(false);
-    }
-  }, [captureCommandView, commandsRequestGate, ensureNewSession]);
+      if (!sid) {
+        setSlashCommands([]);
+        return [] as SlashCommandInfo[];
+      }
+      setSlashCommandsLoading(true);
+      try {
+        const data = await sendAgentCommand(sid, { type: "get_commands", input });
+        if (!isCurrent()) return [] as SlashCommandInfo[];
+        const commands = data?.commands ?? [];
+        if (input === undefined) setSlashCommands(commands);
+        return commands;
+      } catch (e) {
+        if (!isCurrent()) return [] as SlashCommandInfo[];
+        console.error("Failed to load slash commands:", e);
+        if (input === undefined) setSlashCommands([]);
+        return [] as SlashCommandInfo[];
+      } finally {
+        if (isCurrent()) setSlashCommandsLoading(false);
+      }
+    },
+    [captureCommandView, commandsRequestGate, ensureNewSession],
+  );
 
   const finishPromptWithoutStream = useCallback(
     async (sid: string | null = sessionIdRef.current, runId?: number) => {

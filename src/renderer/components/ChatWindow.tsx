@@ -32,6 +32,7 @@ import { useI18n } from "@/i18n";
 import type { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
 import { localizedExtensionConfirmCopy } from "@/lib/extension-ui-copy";
+import { ExtensionCustomPanel as DesktopExtensionCustomPanel } from "./ExtensionCustomPanel";
 
 interface Props {
   session: SessionInfo | null;
@@ -390,6 +391,7 @@ export function ChatWindow({
 
   const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");
   const belowEditorWidgets = extensionWidgets.filter((widget) => widget.placement === "belowEditor");
+  const CustomPanel = extensionCustomUi?.desktopUiVersion === 1 ? DesktopExtensionCustomPanel : ExtensionCustomPanel;
 
   if (loading) {
     return <div className="flex h-full items-center justify-center text-text-muted">Loading session...</div>;
@@ -485,7 +487,7 @@ export function ChatWindow({
 
       {extensionDialog && <ExtensionDialog request={extensionDialog} onRespond={respondToExtensionUi} />}
 
-      {extensionCustomUi && <ExtensionCustomPanel request={extensionCustomUi} onInput={sendExtensionCustomInput} />}
+      {extensionCustomUi && <CustomPanel request={extensionCustomUi} onInput={sendExtensionCustomInput} />}
 
       {isEmptyNew ? (
         <div className="relative z-[1] flex min-h-0 flex-[1_1_0] flex-col items-center justify-end overflow-y-auto px-4 pt-8">

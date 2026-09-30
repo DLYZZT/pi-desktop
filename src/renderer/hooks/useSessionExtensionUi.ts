@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState, type RefObject } 
 import type { ExtensionStatusItem, ExtensionWidgetItem, ExtensionUiRequest } from "@/lib/types";
 import type { SessionRuntimeState } from "@contract/types";
 import { sendAgentCommand } from "@/lib/agent-client";
+import type { CustomUiInput } from "@shared/desktop-custom-ui";
 import { NOTICE_VISIBLE_MS, noticeExpiryDelay, noticeReducer, type NoticeType } from "@/lib/notice-queue";
 import type { RuntimeSnapshotTicket, SessionRuntimeGate } from "@/lib/session-runtime-gate";
 
@@ -25,7 +26,10 @@ export function useSessionExtensionUi({
   sessionIdRef: RefObject<string | null>;
   getViewSignal: () => AbortSignal;
   runtimeGate: SessionRuntimeGate;
-  chatInputRef?: RefObject<{ insertText: (text: string) => void } | null>;
+  chatInputRef?: RefObject<{
+    insertText: (text: string) => void;
+    insertIfEmpty?: (text: string, strict?: boolean) => boolean;
+  } | null>;
 }) {
   const [extensionDialog, setExtensionDialog] = useState<DialogRequest | null>(null);
   const [extensionCustomUi, setExtensionCustomUi] = useState<CustomRequest | null>(null);
@@ -89,11 +93,15 @@ export function useSessionExtensionUi({
   );
 
   const sendExtensionCustomInput = useCallback(
-    async (request: CustomRequest, data: string) => {
+    async (request: CustomRequest, input: CustomUiInput) => {
       const owner = customOwnerRef.current;
       if (!owner || customRequestsRef.current.get(request) !== owner || !owns(owner)) return;
       try {
-        await sendAgentCommand(owner.sessionId, { type: "extension_ui_input", id: request.id, data });
+        if (typeof input === "string") {
+          await sendAgentCommand(owner.sessionId, { type: "extension_ui_input", id: request.id, data: input });
+        } else {
+          await sendAgentCommand(owner.sessionId, { type: "extension_ui_action", id: request.id, action: input });
+        }
       } catch (error) {
         console.error("Failed to send extension custom UI input:", error);
       }
@@ -146,6 +154,17 @@ export function useSessionExtensionUi({
         case "setTitle":
           if (request.title) document.title = request.title;
           break;
+        case "insert_editor_text_if_empty": {
+          const owner = customOwnerRef.current;
+          if (!owner || !owns(owner) || owner.request.id !== request.ownerId || Date.now() > request.expiresAt - 250)
+            break;
+          const insert = chatInputRef?.current?.insertIfEmpty;
+          const response = insert ? { confirmed: insert(request.text, true) } : { cancelled: true as const };
+          void sendAgentCommand(sid, { type: "extension_ui_response", id: request.id, ...response }).catch((error) =>
+            console.error("Insertion acknowledgement failed:", error),
+          );
+          break;
+        }
         case "set_editor_text":
           chatInputRef?.current?.insertText(request.text);
           break;
