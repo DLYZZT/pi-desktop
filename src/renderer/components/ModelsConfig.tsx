@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useReducer, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
+import { oauthProviderName } from "./models/provider-display";
 import {
   addModelTransition,
   deleteProviderTransition,
@@ -109,15 +110,22 @@ export function ModelsConfig({
 
   const refreshOAuthProviders = useCallback(() => {
     loadOAuthProviders();
-    void loadModelPreferences();
-    onChanged?.();
-  }, [loadModelPreferences, loadOAuthProviders, onChanged]);
-
-  const refreshApiKeyProviders = useCallback(() => {
     loadApiKeyProviders();
     void loadModelPreferences();
     onChanged?.();
-  }, [loadApiKeyProviders, loadModelPreferences, onChanged]);
+  }, [loadModelPreferences, loadOAuthProviders, loadApiKeyProviders, onChanged]);
+
+  const refreshApiKeyProviders = useCallback(() => {
+    loadApiKeyProviders();
+    loadOAuthProviders();
+    void loadModelPreferences();
+    onChanged?.();
+  }, [loadApiKeyProviders, loadOAuthProviders, loadModelPreferences, onChanged]);
+
+  const reloadCredentials = useCallback(() => {
+    loadOAuthProviders();
+    loadApiKeyProviders();
+  }, [loadOAuthProviders, loadApiKeyProviders]);
 
   const [loadFailed, setLoadFailed] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -280,6 +288,7 @@ export function ModelsConfig({
           key={p.id}
           provider={p}
           onRefresh={refreshOAuthProviders}
+          onReloadCredentials={reloadCredentials}
           modelSelection={{
             preferences: modelPreferences,
             loading: modelPreferencesLoading,
@@ -300,6 +309,7 @@ export function ModelsConfig({
           baseUrl={config.providers?.[p.id]?.baseUrl ?? ""}
           onBaseUrlChange={(baseUrl) => setConfig((prev) => setProviderBaseUrl(prev, p.id, baseUrl))}
           onRefresh={refreshApiKeyProviders}
+          onReloadCredentials={reloadCredentials}
           modelSelection={{
             preferences: modelPreferences,
             loading: modelPreferencesLoading,
@@ -476,7 +486,7 @@ export function ModelsConfig({
                           whiteSpace: "nowrap",
                         }}
                       >
-                        {p.name}
+                        {oauthProviderName(p.id, p.name, t)}
                       </span>
                     </div>
                   );

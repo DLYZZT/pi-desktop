@@ -67,6 +67,7 @@ import type {
 } from "./herdr";
 
 import type { PiRuntimeProbeResult } from "./runtime";
+import type { CredentialMutationOptions } from "./auth";
 
 /** Request/response API surface (replaces HTTP routes). */
 export interface Api {
@@ -406,21 +407,21 @@ export interface Api {
   "auth.providers": { params: void; result: { providers: ProviderStatus[] } };
   "auth.allProviders": { params: void; result: { providers: ApiKeyProviderStatus[] } };
   "auth.setApiKey": {
-    params: { provider: string; key: string };
+    params: { provider: string; key: string } & CredentialMutationOptions;
     result: CredentialMutationResult;
   };
   "auth.deleteApiKey": {
-    params: { provider: string };
+    params: { provider: string; expectedVersion?: string };
     result: CredentialMutationResult;
   };
-  "auth.logout": { params: { provider: string }; result: CredentialMutationResult };
+  "auth.logout": { params: { provider: string; expectedVersion?: string }; result: CredentialMutationResult };
   "auth.loginSubmit": {
     params: { provider: string; token: string; code: string };
     result: { ok: true };
   };
   /** Kick off OAuth login; progress arrives on Streams["auth.login"]. */
   "auth.loginStart": {
-    params: { provider: string };
+    params: { provider: string } & CredentialMutationOptions;
     result: { ok: true; started: boolean };
   };
   "auth.loginCancel": {

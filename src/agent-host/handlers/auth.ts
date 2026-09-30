@@ -5,6 +5,7 @@ import { RpcError, type ApiKeyProviderStatus } from "../../contract/types";
 import { getSharedModelRuntime } from "../model-runtime";
 import { credentialStateMatches, recoverCommittedCredential, type CredentialTarget } from "../credential-sync";
 import { resolveLoginCode, type createAuthLoginService } from "../auth-login";
+import { getCredentialMutations } from "../credential-mutations";
 
 export async function credentialMutationFailure(
   modelRuntime: ModelRuntime,
@@ -12,6 +13,7 @@ export async function credentialMutationFailure(
   target: CredentialTarget,
   error: unknown,
 ) {
+  if (error instanceof RpcError) throw error;
   if (error instanceof CredentialSynchronizationError) {
     const recovered = await recoverCommittedCredential(modelRuntime, providerId, target);
     if (recovered) {
@@ -41,26 +43,29 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
   return {
     providers: async () => {
       const modelRuntime = await getSharedModelRuntime();
-      const storedProviders = new Set(
-        (await modelRuntime.listCredentials())
-          .filter((entry) => entry.type === "oauth")
-          .map((entry) => entry.providerId),
-      );
       const EXCLUDED = new Set(["anthropic"]);
       const DISPLAY_NAMES: Record<string, string> = {
-        "openai-codex": "ChatGPT Plus/Pro",
+        "openai-codex": "OpenAI Codex (legacy)",
+        openai: "OpenAI / ChatGPT",
         "github-copilot": "GitHub Copilot",
       };
-      const result = modelRuntime
-        .getProviders()
-        .filter((p) => p.auth.oauth && !EXCLUDED.has(p.id))
-        .map((p) => ({
-          id: p.id,
-          name: DISPLAY_NAMES[p.id] ?? p.name,
-          usesCallbackServer: false,
-          authenticated: storedProviders.has(p.id),
-          loggedIn: storedProviders.has(p.id),
-        }));
+      const result = await Promise.all(
+        modelRuntime
+          .getProviders()
+          .filter((p) => p.auth.oauth && !EXCLUDED.has(p.id))
+          .map(async (p) => {
+            const credential = await getCredentialMutations().snapshot(p.id);
+            return {
+              id: p.id,
+              name: DISPLAY_NAMES[p.id] ?? p.name,
+              usesCallbackServer: false,
+              authenticated: credential.type === "oauth",
+              loggedIn: credential.type === "oauth",
+              storedAuthType: credential.type,
+              credentialVersion: credential.version,
+            };
+          }),
+      );
       return { providers: result };
     },
 
@@ -77,12 +82,17 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
         const provider = modelRuntime.getProvider(model.provider);
         if (!provider?.auth.apiKey) continue;
         const status = modelRuntime.getProviderAuthStatus(model.provider);
+        const credential = await getCredentialMutations().snapshot(model.provider);
         if (status.source === "models_json_key") continue;
         result.push({
           id: model.provider,
           displayName: provider.name,
-          configured: status.configured,
-          source: status.label ?? status.source,
+          configured:
+            credential.type === "api_key" ||
+            (credential.type === null && status.source !== "stored" && status.configured),
+          source: credential.type === "oauth" ? "stored_oauth" : (status.label ?? status.source),
+          storedAuthType: credential.type,
+          credentialVersion: credential.version,
           modelCount: all.filter((candidate) => candidate.provider === model.provider).length,
         });
       }
@@ -90,7 +100,7 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
     },
 
     setApiKey: async (params) => {
-      const { provider, key } = params as { provider: string; key: string };
+      const { provider, key, expectedVersion, replaceExisting } = params;
       if (!provider || !key?.trim()) {
         throw new RpcError({ code: "BAD_REQUEST", message: "provider and key required" });
       }
@@ -107,7 +117,10 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
         notify() {},
       };
       try {
-        await modelRuntime.login(provider, "api_key", interaction);
+        await getCredentialMutations().login(modelRuntime, provider, "api_key", interaction, undefined, {
+          expectedVersion,
+          replaceExisting,
+        });
       } catch (error) {
         return credentialMutationFailure(modelRuntime, provider, { present: true, type: "api_key" }, error);
       }
@@ -121,10 +134,10 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
     },
 
     deleteApiKey: async (params) => {
-      const { provider } = params as { provider: string };
+      const { provider, expectedVersion } = params;
       const modelRuntime = await getSharedModelRuntime();
       try {
-        await modelRuntime.logout(provider);
+        await getCredentialMutations().logout(modelRuntime, provider, "api_key", expectedVersion);
       } catch (error) {
         return credentialMutationFailure(modelRuntime, provider, { present: false, type: "api_key" }, error);
       }
@@ -135,10 +148,10 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
     },
 
     logout: async (params) => {
-      const { provider } = params as { provider: string };
+      const { provider, expectedVersion } = params;
       const modelRuntime = await getSharedModelRuntime();
       try {
-        await modelRuntime.logout(provider);
+        await getCredentialMutations().logout(modelRuntime, provider, "oauth", expectedVersion);
       } catch (error) {
         return credentialMutationFailure(modelRuntime, provider, { present: false }, error);
       }
@@ -161,8 +174,8 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
     },
 
     startLogin: async (params) => {
-      const { provider } = params as { provider: string };
-      const result = await authLogin.start(provider);
+      const { provider, expectedVersion, replaceExisting } = params;
+      const result = await authLogin.start(provider, { expectedVersion, replaceExisting });
       return { ok: true as const, started: result.started };
     },
 

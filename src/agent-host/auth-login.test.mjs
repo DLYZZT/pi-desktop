@@ -1,11 +1,16 @@
 import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { CredentialSynchronizationError } from "@earendil-works/pi-coding-agent";
 import { createDeferred } from "#test-timing";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
+const isolatedAgentDir = mkdtempSync(path.join(tmpdir(), "pi-auth-login-"));
+process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+test.after(() => rmSync(isolatedAgentDir, { recursive: true, force: true }));
 let modulePromise;
 
 async function loadAuthLoginModule() {

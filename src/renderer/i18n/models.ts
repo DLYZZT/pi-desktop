@@ -1,5 +1,12 @@
 // Translation entries owned by the models domain.
 export const enUS: Record<string, string> = {
+  modelAuthReplacementNotice: "Switching authentication replaces the credential currently saved for this provider.",
+  modelConfirmAuthSwitch: "Switch authentication",
+  modelOAuthActive: "Account login active",
+  modelOAuthInsteadOfKey: "This provider uses account login. Saving an API key switches its authentication method.",
+  modelChatGPTLogin: "OpenAI / ChatGPT subscription",
+  modelCodexLegacy: "OpenAI Codex (legacy)",
+
   addProvider: "Add provider",
   configured: "configured",
   model: "Model",
@@ -99,6 +106,13 @@ export const enUS: Record<string, string> = {
 };
 
 export const zhCN: Record<string, string> = {
+  modelAuthReplacementNotice: "切换认证方式会替换此服务商当前保存的凭据。",
+  modelConfirmAuthSwitch: "切换认证方式",
+  modelOAuthActive: "已通过账号登录",
+  modelOAuthInsteadOfKey: "此服务商已通过账号登录。保存 API Key 将切换其认证方式。",
+  modelChatGPTLogin: "OpenAI / ChatGPT 订阅登录",
+  modelCodexLegacy: "OpenAI Codex（旧版）",
+
   addProvider: "添加服务商",
   configured: "已配置",
   model: "模型",
@@ -194,6 +208,13 @@ export const zhCN: Record<string, string> = {
 };
 
 export const zhTW: Record<string, string> = {
+  modelAuthReplacementNotice: "切換驗證方式會取代此服務商目前儲存的憑據。",
+  modelConfirmAuthSwitch: "切換驗證方式",
+  modelOAuthActive: "已透過帳號登入",
+  modelOAuthInsteadOfKey: "此服務商已透過帳號登入。儲存 API Key 將切換其驗證方式。",
+  modelChatGPTLogin: "OpenAI / ChatGPT 訂閱登入",
+  modelCodexLegacy: "OpenAI Codex（舊版）",
+
   addProvider: "新增模型服務商",
   configured: "已設定",
   model: "模型",

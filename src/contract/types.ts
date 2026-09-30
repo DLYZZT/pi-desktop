@@ -178,6 +178,8 @@ export interface ProviderStatus {
   authenticated?: boolean;
   usesCallbackServer: boolean;
   loggedIn: boolean;
+  storedAuthType?: "api_key" | "oauth" | null;
+  credentialVersion?: string;
 }
 
 export interface ApiKeyProviderStatus {
@@ -186,6 +188,8 @@ export interface ApiKeyProviderStatus {
   configured: boolean;
   source?: string;
   modelCount: number;
+  storedAuthType?: "api_key" | "oauth" | null;
+  credentialVersion?: string;
 }
 
 export interface SkillInfo {

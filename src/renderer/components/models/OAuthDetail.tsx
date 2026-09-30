@@ -4,6 +4,9 @@ import { useI18n } from "@/i18n";
 import { call, subscribeAuthLogin } from "@/lib/api-client";
 import type { ProviderStatus as OAuthProvider, LoginProgressEvent } from "@contract/types";
 import { type ModelSelectionControl, ManagedModelsControl } from "./ManagedModelsControl";
+import { AuthReplacementNotice } from "./AuthReplacementNotice";
+import type { CredentialMutationOptions } from "@contract/auth";
+import { oauthProviderName } from "./provider-display";
 
 type OAuthLoginState =
   | { phase: "idle" }
@@ -25,15 +28,18 @@ type OAuthLoginState =
 export function OAuthDetail({
   provider,
   onRefresh,
+  onReloadCredentials,
   modelSelection,
 }: {
   provider: OAuthProvider;
   onRefresh: () => void;
+  onReloadCredentials?: () => void;
   modelSelection: ModelSelectionControl;
 }) {
   const { t } = useI18n();
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
   const [inputValue, setInputValue] = useState("");
+  const [replacement, setReplacement] = useState<{ version?: string } | null>(null);
   const progressUnsubRef = useRef<(() => void) | null>(null);
   const challengeRef = useRef<string | null>(null);
   const submissionRef = useRef<{ attempt: number; token: string } | null>(null);
@@ -59,6 +65,7 @@ export function OAuthDetail({
     loginAttemptRef.current += 1;
     setLoginState({ phase: "idle" });
     setInputValue("");
+    setReplacement(null);
     closeProgress();
     challengeRef.current = null;
     return () => {
@@ -69,112 +76,125 @@ export function OAuthDetail({
     };
   }, [closeProgress, provider.id]);
 
-  const handleLogin = useCallback(async () => {
-    const attempt = loginAttemptRef.current + 1;
-    loginAttemptRef.current = attempt;
-    closeProgress();
-    challengeRef.current = null;
-    setLoginState({ phase: "connecting" });
-    setInputValue("");
-
-    try {
-      // Do not race cancellation with startup: a late cancel would abort the
-      // brand-new OAuth flow and make the Login button appear unresponsive.
-      await call("auth.loginCancel", { provider: provider.id });
-    } catch (error) {
-      if (loginAttemptRef.current !== attempt) return;
-      setLoginState({
-        phase: "error",
-        message: error instanceof Error ? error.message : t("modelUnableResetLogin", "Unable to reset login"),
-      });
-      return;
-    }
-    if (loginAttemptRef.current !== attempt) return;
-
-    let startRequested = false;
-    const acceptChallenge = (token: string) => {
-      if (challengeRef.current !== token) setInputValue("");
-      challengeRef.current = token;
-    };
-    const finishProgress = () => {
-      loginAttemptRef.current += 1;
-      challengeRef.current = null;
+  const handleLogin = useCallback(
+    async (mutation: CredentialMutationOptions = {}) => {
+      const attempt = loginAttemptRef.current + 1;
+      loginAttemptRef.current = attempt;
       closeProgress();
-    };
-    try {
-      const unsubscribe = await subscribeAuthLogin(provider.id, (data: LoginProgressEvent) => {
-        if (loginAttemptRef.current !== attempt || !startRequested) return;
-        if (data.type === "auth") {
-          acceptChallenge(data.token);
-          setLoginState({ phase: "auth", url: data.url, instructions: data.instructions ?? null, token: data.token });
-          // Single open path (ISSUE-008): prefer desktop openExternal
-          if (data.url) {
-            void (
-              window.piBridge?.openExternal(data.url) ??
-              Promise.resolve(window.open(data.url, "_blank", "noopener,noreferrer"))
-            );
-          }
-        } else if (data.type === "device_code") {
-          setLoginState({
-            phase: "device_code",
-            userCode: data.userCode,
-            verificationUri: data.verificationUri,
-            intervalSeconds: data.intervalSeconds ?? null,
-            expiresInSeconds: data.expiresInSeconds ?? null,
-          });
-          if (data.verificationUri) {
-            void (
-              window.piBridge?.openExternal(data.verificationUri) ??
-              Promise.resolve(window.open(data.verificationUri, "_blank", "noopener,noreferrer"))
-            );
-          }
-        } else if (data.type === "prompt_request") {
-          acceptChallenge(data.token);
-          setLoginState({
-            phase: "prompt",
-            message: data.message,
-            placeholder: data.placeholder ?? null,
-            token: data.token,
-          });
-        } else if (data.type === "select_request") {
-          acceptChallenge(data.token);
-          setLoginState({ phase: "select", message: data.message, options: data.options ?? [], token: data.token });
-        } else if (data.type === "progress") {
-          setLoginState({ phase: "progress", message: data.message });
-        } else if (data.type === "success") {
-          finishProgress();
-          setInputValue("");
-          setLoginState({
-            phase: "success",
-            ...(data.warning ? { message: data.warning.message, warning: true } : {}),
-          });
-          onRefresh();
-        } else if (data.type === "error") {
-          finishProgress();
-          setLoginState({ phase: "error", message: data.message });
-        } else if (data.type === "cancelled") {
-          finishProgress();
-          setLoginState({ phase: "idle" });
-        }
-      });
-      if (loginAttemptRef.current !== attempt) {
-        unsubscribe();
+      challengeRef.current = null;
+      setLoginState({ phase: "connecting" });
+      setInputValue("");
+
+      try {
+        // Do not race cancellation with startup: a late cancel would abort the
+        // brand-new OAuth flow and make the Login button appear unresponsive.
+        await call("auth.loginCancel", { provider: provider.id });
+      } catch (error) {
+        if (loginAttemptRef.current !== attempt) return;
+        setLoginState({
+          phase: "error",
+          message: error instanceof Error ? error.message : t("modelUnableResetLogin", "Unable to reset login"),
+        });
         return;
       }
-      progressUnsubRef.current = unsubscribe;
-      startRequested = true;
-      const result = await call("auth.loginStart", { provider: provider.id });
       if (loginAttemptRef.current !== attempt) return;
-      if (!result.started) throw new Error("An OAuth login is already active. Cancel it and try again.");
-    } catch (error) {
-      if (loginAttemptRef.current !== attempt) return;
-      finishProgress();
-      setLoginState({
-        phase: "error",
-        message: error instanceof Error ? error.message : t("modelConnectionLost", "Connection lost"),
-      });
+
+      let startRequested = false;
+      const acceptChallenge = (token: string) => {
+        if (challengeRef.current !== token) setInputValue("");
+        challengeRef.current = token;
+      };
+      const finishProgress = () => {
+        loginAttemptRef.current += 1;
+        challengeRef.current = null;
+        closeProgress();
+      };
+      try {
+        const unsubscribe = await subscribeAuthLogin(provider.id, (data: LoginProgressEvent) => {
+          if (loginAttemptRef.current !== attempt || !startRequested) return;
+          if (data.type === "auth") {
+            acceptChallenge(data.token);
+            setLoginState({ phase: "auth", url: data.url, instructions: data.instructions ?? null, token: data.token });
+            // Single open path (ISSUE-008): prefer desktop openExternal
+            if (data.url) {
+              void (
+                window.piBridge?.openExternal(data.url) ??
+                Promise.resolve(window.open(data.url, "_blank", "noopener,noreferrer"))
+              );
+            }
+          } else if (data.type === "device_code") {
+            setLoginState({
+              phase: "device_code",
+              userCode: data.userCode,
+              verificationUri: data.verificationUri,
+              intervalSeconds: data.intervalSeconds ?? null,
+              expiresInSeconds: data.expiresInSeconds ?? null,
+            });
+            if (data.verificationUri) {
+              void (
+                window.piBridge?.openExternal(data.verificationUri) ??
+                Promise.resolve(window.open(data.verificationUri, "_blank", "noopener,noreferrer"))
+              );
+            }
+          } else if (data.type === "prompt_request") {
+            acceptChallenge(data.token);
+            setLoginState({
+              phase: "prompt",
+              message: data.message,
+              placeholder: data.placeholder ?? null,
+              token: data.token,
+            });
+          } else if (data.type === "select_request") {
+            acceptChallenge(data.token);
+            setLoginState({ phase: "select", message: data.message, options: data.options ?? [], token: data.token });
+          } else if (data.type === "progress") {
+            setLoginState({ phase: "progress", message: data.message });
+          } else if (data.type === "success") {
+            finishProgress();
+            setInputValue("");
+            setLoginState({
+              phase: "success",
+              ...(data.warning ? { message: data.warning.message, warning: true } : {}),
+            });
+            onRefresh();
+          } else if (data.type === "error") {
+            finishProgress();
+            setLoginState({ phase: "error", message: data.message });
+            onReloadCredentials?.();
+          } else if (data.type === "cancelled") {
+            finishProgress();
+            setLoginState({ phase: "idle" });
+            onReloadCredentials?.();
+          }
+        });
+        if (loginAttemptRef.current !== attempt) {
+          unsubscribe();
+          return;
+        }
+        progressUnsubRef.current = unsubscribe;
+        startRequested = true;
+        const result = await call("auth.loginStart", { provider: provider.id, ...mutation });
+        if (loginAttemptRef.current !== attempt) return;
+        if (!result.started) throw new Error("An OAuth login is already active. Cancel it and try again.");
+      } catch (error) {
+        if (loginAttemptRef.current !== attempt) return;
+        finishProgress();
+        setLoginState({
+          phase: "error",
+          message: error instanceof Error ? error.message : t("modelConnectionLost", "Connection lost"),
+        });
+      }
+    },
+    [closeProgress, provider.id, onRefresh, onReloadCredentials, t],
+  );
+
+  const requestLogin = useCallback(() => {
+    if (provider.storedAuthType === "api_key") {
+      setReplacement({ version: provider.credentialVersion });
+      return;
     }
-  }, [closeProgress, provider.id, onRefresh, t]);
+    void handleLogin(provider.credentialVersion ? { expectedVersion: provider.credentialVersion } : {});
+  }, [provider.storedAuthType, provider.credentialVersion, handleLogin]);
 
   const handleCancelLogin = useCallback(() => {
     loginAttemptRef.current += 1;
@@ -183,11 +203,15 @@ export function OAuthDetail({
     setLoginState({ phase: "idle" });
     setInputValue("");
     void call("auth.loginCancel", { provider: provider.id }).catch(() => {});
-  }, [closeProgress, provider.id]);
+    onReloadCredentials?.();
+  }, [closeProgress, provider.id, onReloadCredentials]);
 
   const handleLogout = useCallback(async () => {
     try {
-      const result = await call("auth.logout", { provider: provider.id });
+      const result = await call("auth.logout", {
+        provider: provider.id,
+        ...(provider.credentialVersion ? { expectedVersion: provider.credentialVersion } : {}),
+      });
       setLoginState(
         result.warning
           ? { phase: "success", message: result.warning.message, warning: true }
@@ -196,8 +220,9 @@ export function OAuthDetail({
       onRefresh();
     } catch (error) {
       setLoginState({ phase: "error", message: error instanceof Error ? error.message : String(error) });
+      onReloadCredentials?.();
     }
-  }, [provider.id, onRefresh, t]);
+  }, [provider.id, provider.credentialVersion, onRefresh, onReloadCredentials, t]);
 
   const submitChallenge = useCallback(
     async (token: string, code: string, message: string, clearInput: boolean) => {
@@ -276,7 +301,10 @@ export function OAuthDetail({
           <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
             {provider.loggedIn
               ? t("modelAlreadyConnected", "Already connected. You can re-login or disconnect.")
-              : t("modelConnectAccount", "Connect your {provider} account.").replace("{provider}", provider.name)}
+              : t("modelConnectAccount", "Connect your {provider} account.").replace(
+                  "{provider}",
+                  oauthProviderName(provider.id, provider.name, t),
+                )}
           </p>
         )}
         {loginState.phase === "connecting" && (
@@ -430,6 +458,20 @@ export function OAuthDetail({
         )}
       </div>
 
+      {replacement && (
+        <AuthReplacementNotice
+          onCancel={() => setReplacement(null)}
+          onConfirm={() => {
+            const mutation = {
+              replaceExisting: true,
+              ...(replacement.version ? { expectedVersion: replacement.version } : {}),
+            };
+            setReplacement(null);
+            void handleLogin(mutation);
+          }}
+        />
+      )}
+
       {/* Actions */}
       <div style={{ display: "flex", gap: 8 }}>
         {isWorking ? (
@@ -450,7 +492,7 @@ export function OAuthDetail({
         ) : (
           <>
             <button
-              onClick={handleLogin}
+              onClick={requestLogin}
               style={{
                 padding: "5px 14px",
                 background: "var(--accent)",

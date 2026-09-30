@@ -291,6 +291,81 @@ test("failed credential mutations do not publish a model catalog change", async 
   assert.equal(testApi.state.catalogReads, 1);
 });
 
+test("switching account login to an API key requires confirmation of the original credential version", async (t) => {
+  const fixture = await mount(t);
+  await fixture.select("API fixture");
+  const detail = fixture.detail("ApiKeyDetail"),
+    Component = detail.type;
+  let reloaded = 0;
+  const props = {
+    ...detail.props,
+    onRefresh() {},
+    onReloadCredentials() {
+      reloaded++;
+    },
+    provider: {
+      ...detail.props.provider,
+      configured: false,
+      storedAuthType: "oauth",
+      credentialVersion: "confirmed-version",
+    },
+  };
+  await act(async () => fixture.renderer.update(createElement(Component, props)));
+  assert.match(text(fixture.renderer.root), /Account login active/);
+  assert.equal(
+    fixture.renderer.root.findAll((node) => node.type === "button" && text(node) === "Disconnect").length,
+    0,
+  );
+  const input = fixture.renderer.root.find((node) => node.type === "input" && node.props.type === "password");
+  await act(async () => input.props.onChange({ target: { value: "sk-ui-fixture" } }));
+  await fixture.click("Save");
+  assert.equal(fixture.requests.length, 0);
+  await act(async () =>
+    fixture.renderer.update(
+      createElement(Component, { ...props, provider: { ...props.provider, credentialVersion: "external-version" } }),
+    ),
+  );
+  await fixture.click("Switch authentication");
+  assert.deepEqual(fixture.requests[0].params, {
+    provider: "api-fixture",
+    key: "sk-ui-fixture",
+    replaceExisting: true,
+    expectedVersion: "confirmed-version",
+  });
+  await fixture.fail(0, "CONFLICT", "Credentials changed");
+  assert.equal(reloaded, 1);
+  assert.equal(fixture.changed, 0);
+});
+
+test("switching an API key to account login waits for confirmation before starting OAuth", async (t) => {
+  const fixture = await mount(t);
+  await fixture.select("OAuth fixture");
+  const detail = fixture.detail("OAuthDetail");
+  const props = {
+    ...detail.props,
+    onRefresh() {},
+    provider: {
+      ...detail.props.provider,
+      loggedIn: false,
+      storedAuthType: "api_key",
+      credentialVersion: "saved-key-version",
+    },
+  };
+  await act(async () => fixture.renderer.update(createElement(detail.type, props)));
+  await fixture.click("Login");
+  assert.equal(testApi.state.calls.filter((call) => call.method === "auth.loginStart").length, 0);
+  await fixture.click("Cancel");
+  assert.equal(testApi.state.calls.filter((call) => call.method === "auth.loginStart").length, 0);
+  await fixture.click("Login");
+  await fixture.click("Switch authentication");
+  const request = testApi.state.calls.find((call) => call.method === "auth.loginStart");
+  assert.deepEqual(request.params, {
+    provider: "oauth-fixture",
+    replaceExisting: true,
+    expectedVersion: "saved-key-version",
+  });
+});
+
 test("OAuth completion and logout notify after commit while progress and duplicate completion stay silent", async (t) => {
   const fixture = await mount(t);
   await fixture.select("OAuth fixture");

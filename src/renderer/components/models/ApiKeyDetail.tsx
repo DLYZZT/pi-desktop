@@ -4,18 +4,22 @@ import { useI18n } from "@/i18n";
 import { call } from "@/lib/api-client";
 import type { ApiKeyProviderStatus as ApiKeyProvider } from "@contract/types";
 import { type ModelSelectionControl, ManagedModelsControl } from "./ManagedModelsControl";
+import { AuthReplacementNotice } from "./AuthReplacementNotice";
+import type { CredentialMutationOptions } from "@contract/auth";
 
 export function ApiKeyDetail({
   provider,
   baseUrl,
   onBaseUrlChange,
   onRefresh,
+  onReloadCredentials,
   modelSelection,
 }: {
   provider: ApiKeyProvider;
   baseUrl: string;
   onBaseUrlChange: (baseUrl: string) => void;
   onRefresh: () => void;
+  onReloadCredentials?: () => void;
   modelSelection: ModelSelectionControl;
 }) {
   const { t } = useI18n();
@@ -25,6 +29,7 @@ export function ApiKeyDetail({
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [savedOk, setSavedOk] = useState(false);
+  const [replacement, setReplacement] = useState<{ version?: string } | null>(null);
 
   // Reset state when provider changes
   useEffect(() => {
@@ -32,42 +37,59 @@ export function ApiKeyDetail({
     setError(null);
     setWarning(null);
     setSavedOk(false);
+    setReplacement(null);
   }, [provider.id]);
 
-  const handleSave = useCallback(async () => {
-    if (!apiKey.trim()) return;
-    setSaving(true);
-    setError(null);
-    setWarning(null);
-    setSavedOk(false);
-    try {
-      const result = await call("auth.setApiKey", { provider: provider.id, key: apiKey.trim() });
-      setApiKey("");
-      setSavedOk(true);
-      setWarning(result.warning?.message ?? null);
-      setTimeout(() => setSavedOk(false), 2000);
-      onRefresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
+  const saveKey = useCallback(
+    async (mutation: CredentialMutationOptions = {}) => {
+      if (!apiKey.trim()) return;
+      setSaving(true);
+      setError(null);
+      setWarning(null);
+      setSavedOk(false);
+      try {
+        const result = await call("auth.setApiKey", { provider: provider.id, key: apiKey.trim(), ...mutation });
+        setApiKey("");
+        setSavedOk(true);
+        setWarning(result.warning?.message ?? null);
+        setTimeout(() => setSavedOk(false), 2000);
+        onRefresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        onReloadCredentials?.();
+      } finally {
+        setSaving(false);
+      }
+    },
+    [apiKey, provider.id, onRefresh, onReloadCredentials],
+  );
+
+  const handleSave = useCallback(() => {
+    if (provider.storedAuthType === "oauth") {
+      setReplacement({ version: provider.credentialVersion });
+      return;
     }
-  }, [apiKey, provider.id, onRefresh]);
+    void saveKey(provider.credentialVersion ? { expectedVersion: provider.credentialVersion } : {});
+  }, [provider.storedAuthType, provider.credentialVersion, saveKey]);
 
   const handleRemove = useCallback(async () => {
     setRemoving(true);
     setError(null);
     setWarning(null);
     try {
-      const result = await call("auth.deleteApiKey", { provider: provider.id });
+      const result = await call("auth.deleteApiKey", {
+        provider: provider.id,
+        ...(provider.credentialVersion ? { expectedVersion: provider.credentialVersion } : {}),
+      });
       setWarning(result.warning?.message ?? null);
       onRefresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      onReloadCredentials?.();
     } finally {
       setRemoving(false);
     }
-  }, [provider.id, onRefresh]);
+  }, [provider.id, provider.credentialVersion, onRefresh, onReloadCredentials]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -84,21 +106,43 @@ export function ApiKeyDetail({
             }}
           />
           <span style={{ fontSize: 11, color: provider.configured ? "#4ade80" : "var(--text-dim)" }}>
-            {provider.configured ? t("configured", "configured") : t("notConfigured", "not configured")}
+            {provider.storedAuthType === "oauth"
+              ? t("modelOAuthActive", "Account login active")
+              : provider.configured
+                ? t("configured", "configured")
+                : t("notConfigured", "not configured")}
           </span>
         </div>
       </div>
 
       <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-        {provider.configured
+        {provider.storedAuthType === "oauth"
           ? t(
-              "modelApiKeyStored",
-              "API key is stored. Enter a new key below to replace it, or disconnect to remove it.",
+              "modelOAuthInsteadOfKey",
+              "This provider uses account login. Saving an API key switches its authentication method.",
             )
-          : t("modelEnterApiKey", "Enter your {provider} API key to enable {count} models.")
-              .replace("{provider}", provider.displayName)
-              .replace("{count}", String(provider.modelCount))}
+          : provider.configured
+            ? t(
+                "modelApiKeyStored",
+                "API key is stored. Enter a new key below to replace it, or disconnect to remove it.",
+              )
+            : t("modelEnterApiKey", "Enter your {provider} API key to enable {count} models.")
+                .replace("{provider}", provider.displayName)
+                .replace("{count}", String(provider.modelCount))}
       </p>
+      {replacement && (
+        <AuthReplacementNotice
+          onCancel={() => setReplacement(null)}
+          onConfirm={() => {
+            const mutation = {
+              replaceExisting: true,
+              ...(replacement.version ? { expectedVersion: replacement.version } : {}),
+            };
+            setReplacement(null);
+            void saveKey(mutation);
+          }}
+        />
+      )}
 
       <Field label={t("modelBaseUrl", "Base URL")}>
         <TextInput
@@ -171,7 +215,7 @@ export function ApiKeyDetail({
 
       {provider.configured && <ManagedModelsControl providerId={provider.id} {...modelSelection} />}
 
-      {provider.configured && (
+      {provider.configured && (provider.storedAuthType === undefined || provider.storedAuthType === "api_key") && (
         <button
           onClick={handleRemove}
           disabled={removing}
