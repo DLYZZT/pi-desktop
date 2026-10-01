@@ -221,6 +221,152 @@ test("MCP catalog removal withdraws the missing tool and hides its old generatio
   assert.equal(f.executed, 0);
 });
 
+test("MCP first-use approval coalesces concurrent requests and grants only the selected server", async (t) => {
+  const f = await fixture(t, { entryTools: true }),
+    grants = new Set();
+  f.hooks.isAllowed = (name) => grants.has(name);
+  f.hooks.setGrants = (names) => {
+    grants.clear();
+    names.forEach((name) => grants.add(name));
+  };
+  let finish,
+    prompts = 0,
+    copy;
+  const ctx = {
+    hasUI: true,
+    ui: {
+      confirmLocalized: async (_title, _message, localization) => {
+        prompts++;
+        copy = localization;
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      },
+    },
+  };
+  const first = f.service.requestAuthorization("session", "mcp__fixture__echo", {}, ctx);
+  const second = f.service.requestAuthorization("session", "mcp__fixture__echo", {}, ctx);
+  await waitFor(() => prompts === 1);
+  assert.equal(copy.id, "mcp.authorize");
+  assert.equal(copy.servers, "fixture");
+  assert.match(copy.tools, /echo/);
+  finish(true);
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.ok(grants.has("mcp__fixture__echo"));
+  assert.ok(grants.has("codemode"));
+  assert.equal(await f.service.requestAuthorization("session", "mcp__fixture__echo", {}, ctx), true);
+  assert.equal(prompts, 1);
+});
+
+test("MCP denied requests stay blocked for a run and stale reconnect approval never grants access", async (t) => {
+  const f = await fixture(t),
+    grants = new Set();
+  f.hooks.isAllowed = (name) => grants.has(name);
+  f.hooks.setGrants = (names) => names.forEach((name) => grants.add(name));
+  let prompts = 0;
+  const denied = {
+    hasUI: true,
+    ui: {
+      confirm: async () => {
+        prompts++;
+        return false;
+      },
+    },
+  };
+  assert.equal(await f.service.requestAuthorization("session", "mcp__fixture__echo", {}, denied), false);
+  assert.equal(await f.service.requestAuthorization("session", "mcp__fixture__echo", {}, denied), false);
+  assert.equal(prompts, 1);
+  f.service.resetPermissionRequests("session");
+  let finish;
+  const pending = f.service.requestAuthorization(
+    "session",
+    "mcp__fixture__echo",
+    {},
+    {
+      hasUI: true,
+      ui: {
+        confirm: () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      },
+    },
+  );
+  await waitFor(() => Boolean(finish));
+  await f.service.reconnect("session", "fixture");
+  await waitFor(() => f.service.snapshot("session")[0]?.state === "connected");
+  finish(true);
+  assert.equal(await pending, false);
+  assert.equal(grants.size, 0);
+});
+
+test("MCP pending approval cannot cross source changes, revocation or a cancelled run", async (t) => {
+  const f = await fixture(t),
+    grants = new Set();
+  f.hooks.setGrants = (names) => names.forEach((name) => grants.add(name));
+  let finish,
+    valid = true;
+  const pending = f.service.requestAuthorization(
+    "session",
+    "mcp__fixture__echo",
+    {},
+    {
+      hasUI: true,
+      ui: {
+        confirm: () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      },
+    },
+    () => valid,
+  );
+  await waitFor(() => Boolean(finish));
+  valid = false;
+  finish(true);
+  assert.equal(await pending, false);
+  assert.equal(grants.size, 0);
+  f.service.resetPermissionRequests("session");
+  const revoked = f.service.requestAuthorization(
+    "session",
+    "mcp__fixture__echo",
+    {},
+    {
+      hasUI: true,
+      ui: {
+        confirm: () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      },
+    },
+  );
+  await waitFor(() => Boolean(finish));
+  f.service.grant("session", []);
+  finish(true);
+  assert.equal(await revoked, false);
+  assert.equal(grants.size, 0);
+  f.service.resetPermissionRequests("session");
+  const controller = new globalThis.AbortController();
+  const cancelled = f.service.requestAuthorization(
+    "session",
+    "mcp__fixture__echo",
+    {},
+    {
+      hasUI: true,
+      signal: controller.signal,
+      ui: {
+        confirm: (_title, _message, { signal }) =>
+          new Promise((resolve) => signal.addEventListener("abort", () => resolve(false), { once: true })),
+      },
+    },
+  );
+  controller.abort();
+  assert.equal(await cancelled, false);
+  assert.equal(grants.size, 0);
+  assert.equal(await f.service.requestAuthorization("session", "mcp__fixture__echo", {}, { hasUI: false }), false);
+});
+
 test("disabling a server revokes its generation immediately even while a prompt is running", async (t) => {
   const f = await fixture(t),
     name = f.service.tools("session")[0].name,

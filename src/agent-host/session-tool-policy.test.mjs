@@ -65,6 +65,31 @@ test("MCP scoped authorization does not persist or revoke other Desktop tool cap
   assert.equal(policy.isAllowed("herdr_list"), false);
 });
 
+test("local MCP orchestration can reach first-use approval while headless and empty sessions stay blocked", () => {
+  const manager = {},
+    tools = [
+      { name: "codemode", exposure: "model-only" },
+      { name: "tool_search", exposure: "model-only" },
+      { name: "mcp__server__echo", exposure: "codemode" },
+    ];
+  const policy = new SessionToolPolicy(manager);
+  policy.bind({
+    getActiveToolNames: () => ["codemode", "tool_search"],
+    getAllTools: () => tools,
+    getToolDefinition: (name) => tools.find((tool) => tool.name === name),
+  });
+  setAgentSessionSource(manager, "local");
+  assert.equal(policy.isAllowed("codemode"), true);
+  assert.equal(policy.isAllowed("tool_search"), true);
+  assert.equal(policy.isAllowed("mcp__server__echo"), false);
+  setAgentSessionSource(manager, "channel");
+  assert.equal(policy.isAllowed("codemode"), false);
+  assert.equal(policy.isAllowed("tool_search"), false);
+  setAgentSessionSource(manager, "local");
+  policy.setRequested([]);
+  assert.equal(policy.isAllowed("codemode"), false);
+});
+
 test("actual SDK nested calls respect grants, source changes, no-tools and immediate revocation", async (t) => {
   const cwd = mkdtempSync(path.join(tmpdir(), "pi-tool-policy-")),
     manager = SessionManager.inMemory(cwd);

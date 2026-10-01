@@ -17,6 +17,9 @@ import {
 export function desktopMcpExtensions(policy: SessionToolPolicy, isRunning: () => boolean): InlineExtension[] {
   const service = peekMcpService();
   if (!service) return [];
+  policy.setMcpAuthorizer((name, input, ctx, valid) =>
+    service.requestAuthorization(ctx.sessionManager.getSessionId(), name, input, ctx, valid),
+  );
   return [
     {
       name: "pi-desktop-mcp-status",
@@ -144,6 +147,7 @@ export function desktopMcpExtensions(policy: SessionToolPolicy, isRunning: () =>
           await service.detach(ctx.sessionManager.getSessionId());
         });
         pi.on("before_agent_start", async (_event, ctx) => {
+          service.resetPermissionRequests(ctx.sessionManager.getSessionId());
           const deadline = Date.now() + 10000;
           while (
             !policy.isEmpty() &&

@@ -1154,11 +1154,11 @@ function ExtensionDialog({
               fontFamily: "var(--font-mono)",
             }}
           >
-            {t("extensionRequest", "Extension request")}
+            {confirmCopy?.subtitle ?? t("extensionRequest", "Extension request")}
           </div>
         </div>
 
-        <div style={{ padding: 14 }}>
+        <div style={{ padding: 14, maxHeight: "55vh", overflowY: "auto" }}>
           {request.method === "confirm" && (
             <div
               style={{
@@ -1278,7 +1278,7 @@ function ExtensionDialog({
                 cursor: "pointer",
               }}
             >
-              {t("confirm", "Confirm")}
+              {confirmCopy?.confirmLabel ?? t("confirm", "Confirm")}
             </button>
           ) : request.method !== "select" ? (
             <button

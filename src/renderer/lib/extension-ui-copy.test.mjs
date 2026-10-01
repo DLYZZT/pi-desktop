@@ -46,3 +46,21 @@ test("generic extension confirmations preserve extension-provided copy", () => {
     { title: "Custom title", message: "Custom message" },
   );
 });
+
+test("MCP permission confirmation uses the existing modal with localized server scope and allow label", () => {
+  const copy = localizedExtensionConfirmCopy(
+    {
+      ...base,
+      title: "fallback",
+      message: "fallback",
+      localization: { id: "mcp.authorize", servers: "context7", tools: "resolve-library-id\nquery-docs", toolCount: 2 },
+    },
+    translate(zhCN),
+  );
+  assert.equal(copy.title, "允许使用 context7？");
+  assert.equal(copy.confirmLabel, "允许当前会话使用");
+  assert.equal(copy.subtitle, "MCP 工具授权");
+  assert.match(copy.message, /2 个工具/);
+  assert.match(copy.message, /本会话不再重复询问/);
+  assert.match(copy.message, /query-docs/);
+});

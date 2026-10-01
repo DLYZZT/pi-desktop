@@ -1,4 +1,12 @@
 export const enUS: Record<string, string> = {
+  mcpMoreActions: "More actions",
+  mcpNoServers: "No MCP servers configured.",
+  mcpAdvancedSettings: "Advanced settings",
+  mcpAuthorizeTitle: "Allow {servers}?",
+  mcpAuthorizeMessage:
+    "This session wants to use {toolCount} tool(s) from {servers}:\n\n{tools}\n\nAccess is remembered for this session. You can revoke it in MCP settings.",
+  mcpAuthorizeAllow: "Allow for this session",
+  mcpAuthorizeSubtitle: "MCP tool permission",
   mcpDisabledBySettings: "builtin:mcp is disabled in shared settings.",
   mcpReplacedByExtension: "Another extension manages MCP in this session. Desktop connection controls are inactive.",
   mcpDiagnostics: "Connection diagnostics",
@@ -59,7 +67,7 @@ export const enUS: Record<string, string> = {
   mcpOverridden: "Overridden by another scope",
   mcpPendingApply: "Waiting for the session to become idle",
   mcpPermissionHelp:
-    "Declaration, nested lookup and execution permission are separate. Turning a tool off blocks future direct and nested calls.",
+    "MCP tools ask for permission on first use. Access applies to this session. Turn a tool off below to revoke it.",
   mcpPreviewImport: "Preview import",
   mcpProbeOnly: "This test used a temporary connection. Session status is shown separately.",
   mcpProbeResult: "Last connection test",
@@ -72,7 +80,8 @@ export const enUS: Record<string, string> = {
   mcpSave: "Save configuration",
   mcpSaved: "Configuration saved.",
   mcpScope: "Scope",
-  mcpScopeHelp: "Project entries override global entries with the same name. Saving does not grant tool execution.",
+  mcpScopeHelp:
+    "Project entries override global entries with the same name. A permission dialog appears when tools are first used.",
   mcpSecretHelp:
     "Saved secrets appear as placeholders. Keep the placeholder to preserve a secret, or enter a new value to replace it.",
   mcpServerJson: "Server configuration JSON",
@@ -93,6 +102,14 @@ export const enUS: Record<string, string> = {
   mcpWorkingDirectory: "Working directory",
 };
 export const zhCN: Record<string, string> = {
+  mcpMoreActions: "更多操作",
+  mcpNoServers: "尚未配置 MCP 服务器。",
+  mcpAdvancedSettings: "高级设置",
+  mcpAuthorizeTitle: "允许使用 {servers}？",
+  mcpAuthorizeMessage:
+    "当前会话请求使用 {servers} 的 {toolCount} 个工具：\n\n{tools}\n\n确认后本会话不再重复询问。可在 MCP 设置中撤销授权。",
+  mcpAuthorizeAllow: "允许当前会话使用",
+  mcpAuthorizeSubtitle: "MCP 工具授权",
   mcpDisabledBySettings: "共享设置已禁用 builtin:mcp。",
   mcpReplacedByExtension: "当前会话由另一个扩展管理 MCP，Desktop 连接控制未启用。",
   mcpDiagnostics: "连接诊断",
@@ -152,7 +169,7 @@ export const zhCN: Record<string, string> = {
   mcpOAuthOptions: "OAuth 选项（JSON）",
   mcpOverridden: "已被其他范围的配置覆盖",
   mcpPendingApply: "等待会话空闲后应用",
-  mcpPermissionHelp: "模型声明、嵌套查找与执行授权是不同状态。关闭工具后，后续直接和嵌套调用都会被阻止。",
+  mcpPermissionHelp: "首次调用会弹出授权申请，确认后仅对当前会话有效。关闭下方工具可撤销授权。",
   mcpPreviewImport: "预览导入",
   mcpProbeOnly: "此次测试使用临时连接，会话连接状态单独显示。",
   mcpProbeResult: "最近一次连接测试",
@@ -165,7 +182,7 @@ export const zhCN: Record<string, string> = {
   mcpSave: "保存配置",
   mcpSaved: "配置已保存。",
   mcpScope: "范围",
-  mcpScopeHelp: "项目中的同名条目会覆盖全局配置，保存配置不会自动授予工具执行权限。",
+  mcpScopeHelp: "项目配置会覆盖同名的全局配置。首次使用工具时，将弹窗请求授权。",
   mcpSecretHelp: "已保存的秘密值显示为占位符。保留占位符可保持原值，输入新值可替换原值。",
   mcpServerJson: "服务器配置 JSON",
   mcpSessionStatus: "当前会话连接状态",
@@ -185,6 +202,14 @@ export const zhCN: Record<string, string> = {
   mcpWorkingDirectory: "工作目录",
 };
 export const zhTW: Record<string, string> = {
+  mcpMoreActions: "更多操作",
+  mcpNoServers: "尚未設定 MCP 伺服器。",
+  mcpAdvancedSettings: "進階設定",
+  mcpAuthorizeTitle: "允許使用 {servers}？",
+  mcpAuthorizeMessage:
+    "目前會話要求使用 {servers} 的 {toolCount} 個工具：\n\n{tools}\n\n確認後此會話不再重複詢問。可在 MCP 設定中撤銷授權。",
+  mcpAuthorizeAllow: "允許目前會話使用",
+  mcpAuthorizeSubtitle: "MCP 工具授權",
   mcpDisabledBySettings: "共用設定已停用 builtin:mcp。",
   mcpReplacedByExtension: "目前會話由另一個擴充套件管理 MCP，Desktop 連線控制未啟用。",
   mcpDiagnostics: "連線診斷",
@@ -244,7 +269,7 @@ export const zhTW: Record<string, string> = {
   mcpOAuthOptions: "OAuth 選項（JSON）",
   mcpOverridden: "已被其他範圍的設定覆寫",
   mcpPendingApply: "等待會話閒置後套用",
-  mcpPermissionHelp: "模型宣告、巢狀查找與執行授權是不同狀態。關閉工具後，後續直接與巢狀呼叫都會被阻止。",
+  mcpPermissionHelp: "首次呼叫會顯示授權申請，確認後僅對目前會話有效。關閉下方工具可撤銷授權。",
   mcpPreviewImport: "預覽匯入",
   mcpProbeOnly: "此次測試使用暫時連線，會話連線狀態分別顯示。",
   mcpProbeResult: "最近一次連線測試",
@@ -257,7 +282,7 @@ export const zhTW: Record<string, string> = {
   mcpSave: "儲存設定",
   mcpSaved: "設定已儲存。",
   mcpScope: "範圍",
-  mcpScopeHelp: "專案中的同名項目會覆寫全域設定，儲存設定不會自動授予工具執行權限。",
+  mcpScopeHelp: "專案設定會覆寫同名的全域設定。首次使用工具時，將顯示授權申請。",
   mcpSecretHelp: "已儲存的秘密值顯示為佔位符。保留佔位符可保留原值，輸入新值可取代原值。",
   mcpServerJson: "伺服器設定 JSON",
   mcpSessionStatus: "目前會話連線狀態",

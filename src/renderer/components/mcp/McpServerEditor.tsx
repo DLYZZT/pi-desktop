@@ -72,7 +72,7 @@ export function McpServerEditor({
             onDirty();
           }}
         />
-        <label>
+        <label className="mcp-json-mode">
           {t("mcpAdvanced", "Advanced JSON")}{" "}
           <input
             type="checkbox"
@@ -139,8 +139,6 @@ export function McpServerEditor({
                   {t("mcpUrl", "MCP URL")}
                   <input value={config.url} onChange={(event) => change({ url: event.target.value })} />
                 </label>
-                {field("headers", t("mcpHeaders", "HTTP headers (JSON)"))}
-                {field("oauth", t("mcpOAuthOptions", "OAuth options (JSON)"))}
               </>
             ) : (
               <>
@@ -156,47 +154,57 @@ export function McpServerEditor({
                     onChange={(event) => change({ cwd: event.target.value || undefined })}
                   />
                 </label>
-                {field("env", t("mcpEnvironment", "Environment (JSON)"))}
               </>
             )}
-            <label>
-              {t("mcpExposure", "Tool exposure")}{" "}
-              <select
-                value={config.exposure ?? "codemode"}
-                onChange={(event) => change({ exposure: event.target.value as McpExposure })}
-              >
-                {(["direct", "deferred", "codemode", "codemode-deferred", "hidden"] as const).map((mode) => (
-                  <option key={mode} value={mode}>
-                    {mode}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {field("toolExposure", t("mcpToolOverrides", "Per-tool exposure (JSON)"))}
-            <label>
-              {t("mcpTimeout", "Request timeout (seconds)")}
-              <input
-                type="number"
-                min="1"
-                max="3600"
-                value={config.timeout ?? 60}
-                onChange={(event) => change({ timeout: Number(event.target.value) })}
-              />
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={config.enabled !== false}
-                onChange={(event) => change({ enabled: event.target.checked })}
-              />
-              {t("mcpEnabled", "Enabled")}
-            </label>
-            <p>
-              {t(
-                "mcpSecretHelp",
-                "Saved secrets appear as placeholders. Keep the placeholder to preserve a secret, or enter a new value to replace it.",
+            <details className="mcp-advanced-settings">
+              <summary>{t("mcpAdvancedSettings", "Advanced settings")}</summary>
+              {config.url !== undefined ? (
+                <>
+                  {field("headers", t("mcpHeaders", "HTTP headers (JSON)"))}
+                  {field("oauth", t("mcpOAuthOptions", "OAuth options (JSON)"))}
+                </>
+              ) : (
+                field("env", t("mcpEnvironment", "Environment (JSON)"))
               )}
-            </p>
+              <label>
+                {t("mcpExposure", "Tool exposure")}{" "}
+                <select
+                  value={config.exposure ?? "codemode"}
+                  onChange={(event) => change({ exposure: event.target.value as McpExposure })}
+                >
+                  {(["direct", "deferred", "codemode", "codemode-deferred", "hidden"] as const).map((mode) => (
+                    <option key={mode} value={mode}>
+                      {mode}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {field("toolExposure", t("mcpToolOverrides", "Per-tool exposure (JSON)"))}
+              <label>
+                {t("mcpTimeout", "Request timeout (seconds)")}
+                <input
+                  type="number"
+                  min="1"
+                  max="3600"
+                  value={config.timeout ?? 60}
+                  onChange={(event) => change({ timeout: Number(event.target.value) })}
+                />
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={config.enabled !== false}
+                  onChange={(event) => change({ enabled: event.target.checked })}
+                />
+                {t("mcpEnabled", "Enabled")}
+              </label>
+              <p>
+                {t(
+                  "mcpSecretHelp",
+                  "Saved secrets appear as placeholders. Keep the placeholder to preserve a secret, or enter a new value to replace it.",
+                )}
+              </p>
+            </details>
           </>
         )}
       </fieldset>
@@ -205,8 +213,8 @@ export function McpServerEditor({
           {error}
         </p>
       )}
-      <div className="mcp-actions">
-        <button disabled={busy} onClick={submit}>
+      <div className="mcp-actions mcp-editor-footer">
+        <button className="mcp-primary" disabled={busy} onClick={submit}>
           {t("mcpSave", "Save configuration")}
         </button>
         <button disabled={busy} onClick={onCancel}>

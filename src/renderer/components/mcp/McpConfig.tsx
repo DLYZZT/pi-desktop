@@ -14,6 +14,7 @@ import { useI18n } from "@/i18n";
 import { LatestRequestGate } from "@/lib/latest-request-gate";
 import { McpServerEditor } from "./McpServerEditor";
 import { McpToolsPanel } from "./McpToolsPanel";
+import { McpServerSidebar } from "./McpServerSidebar";
 
 export interface McpConfigHandle {
   requestLeave(action: () => void): void;
@@ -24,6 +25,7 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
     const [scope, setScope] = useState<McpScope>("global"),
       [snapshot, setSnapshot] = useState<McpConfigurationSnapshot>(),
       [panel, setPanel] = useState<McpPanelSnapshot>(),
+      [selected, setSelected] = useState<string>(),
       [editing, setEditing] = useState<{
         name: string;
         config: McpServerConfig;
@@ -218,439 +220,497 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
     const currentLabel = panel?.adapterActive
       ? t("mcpSessionStatus", "Current session connections")
       : t("mcpAdapterInactive", "The Desktop MCP adapter is inactive or no session is open.");
+    const entries = [...(snapshot?.entries ?? []), ...(panel?.extensions ?? [])];
+    const selectedName = selected ?? snapshot?.entries[0]?.name ?? panel?.extensions?.[0]?.name;
     return (
-      <div className="mcp-config" data-mcp-config>
-        <h3>{t("mcpSettings", "MCP servers")}</h3>
-        <p>
-          {t(
-            "mcpScopeHelp",
-            "Project entries override global entries with the same name. Saving does not grant tool execution.",
-          )}
-        </p>
-        <div className="mcp-actions">
-          <label>
-            {t("mcpScope", "Scope")}{" "}
-            <select
-              value={scope}
-              disabled={busy}
-              onChange={(event) => {
-                const nextScope = event.target.value as McpScope;
-                leave(() => {
-                  setScope(nextScope);
-                  setEditing(undefined);
-                  setDirty(false);
-                  setImportText(undefined);
-                });
-              }}
-            >
-              <option value="global">{t("mcpGlobal", "Global")}</option>
-              <option value="project" disabled={!cwd}>
-                {t("mcpProject", "Current project")}
-              </option>
-            </select>
-          </label>
-          <button
-            disabled={busy}
-            onClick={() =>
+      <div className="mcp-config mcp-workbench" data-mcp-config>
+        <aside className="mcp-sidebar">
+          <h3>{t("mcpSettings", "MCP servers")}</h3>
+          <div className="mcp-scope-picker">
+            <label>
+              {t("mcpScope", "Scope")}{" "}
+              <select
+                value={scope}
+                disabled={busy}
+                onChange={(event) => {
+                  const nextScope = event.target.value as McpScope;
+                  leave(() => {
+                    setScope(nextScope);
+                    setSelected(undefined);
+                    setEditing(undefined);
+                    setDirty(false);
+                    setImportText(undefined);
+                  });
+                }}
+              >
+                <option value="global">{t("mcpGlobal", "Global")}</option>
+                <option value="project" disabled={!cwd}>
+                  {t("mcpProject", "Current project")}
+                </option>
+              </select>
+            </label>
+          </div>
+          <McpServerSidebar
+            entries={entries}
+            panel={panel}
+            selected={selectedName}
+            onSelect={(entry) =>
               leave(() => {
+                setSelected(entry.name);
+                setImportText(undefined);
                 setEditing({
-                  name: "",
-                  config: { command: "", args: [], exposure: "codemode" },
-                  revision: snapshot?.revision ?? "missing",
+                  name: entry.name,
+                  config: entry.config,
+                  extension: entry.scope === "extension",
+                  revision: entry.scope === "extension" ? entry.revision : snapshot?.revision,
                 });
                 setDirty(false);
-              })
-            }
-          >
-            {t("mcpAdd", "Add server")}
-          </button>
-          <button
-            disabled={busy}
-            onClick={() =>
-              leave(() => {
-                setImportText('{\n  "mcpServers": {}\n}');
-                setImportRevision(snapshot?.revision ?? "missing");
-                setImportPreview(undefined);
-                setEditing(undefined);
-              })
-            }
-          >
-            {t("mcpImport", "Import JSON")}
-          </button>
-        </div>
-        {scope === "project" && panel?.projectTrusted === false && (
-          <p role="status">
-            {t("mcpProjectUntrusted", "This project's MCP configuration is not applied until the project is trusted.")}
-          </p>
-        )}
-        {error && (
-          <p role="alert" className="mcp-error">
-            {error}
-          </p>
-        )}
-        {notice && <p role="status">{notice}</p>}
-        <p>{currentLabel}</p>
-        {panel?.inactiveReason === "disabled" && (
-          <p>{t("mcpDisabledBySettings", "builtin:mcp is disabled in shared settings.")}</p>
-        )}
-        {panel?.inactiveReason === "replaced" && (
-          <p>
-            {t(
-              "mcpReplacedByExtension",
-              "Another extension manages MCP in this session. Desktop connection controls are inactive.",
-            )}
-          </p>
-        )}
-        {sessionId && !panel?.adapterActive && (
-          <button
-            disabled={busy}
-            onClick={() => void run(() => invoke("agent.command", { sessionId, command: { type: "get_tools" } }))}
-          >
-            {t("mcpApplySession", "Apply MCP to this session")}
-          </button>
-        )}
-        {snapshot?.entries.map((entry) => {
-          const live = panel?.instances.find((instance) => instance.name === entry.name),
-            ownLive = live?.scope === scope;
-          return (
-            <section key={entry.name} className="mcp-server-row">
-              <div>
-                <strong>{entry.name}</strong> · {entry.config.url ? "HTTP" : "stdio"} ·{" "}
-                {entry.config.exposure ?? "codemode"}
-                {live && (
-                  <span>
-                    {" "}
-                    · {mcpStateLabel(live.state, t)} · {live.toolCount}
-                  </span>
-                )}
-                {live?.pendingApply && <span> · {t("mcpPendingApply", "Waiting for the session to become idle")}</span>}
-                {live && !ownLive && <span> · {t("mcpOverridden", "Overridden by another scope")}</span>}
-              </div>
-              <div className="mcp-actions">
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    leave(() => {
-                      setEditing({ name: entry.name, config: entry.config, revision: snapshot?.revision });
-                      setDirty(false);
-                    })
-                  }
-                >
-                  {t("mcpEdit", "Edit")}
-                </button>
-                <button disabled={busy || entry.config.enabled === false} onClick={() => void probeServer(entry.name)}>
-                  {t("mcpTest", "Test connection")}
-                </button>
-                {sessionId && ownLive && (
-                  <button
-                    disabled={busy || entry.config.enabled === false}
-                    onClick={() => void run(() => invoke("mcp.reconnect", { sessionId, name: entry.name }))}
-                  >
-                    {t("mcpReconnect", "Reconnect session")}
-                  </button>
-                )}
-                <button
-                  disabled={busy || !snapshot || snapshot.revision === "invalid"}
-                  onClick={() =>
-                    void run(async () => {
-                      await invoke("mcp.config.upsert", {
-                        scope,
-                        cwd: cwd ?? undefined,
-                        name: entry.name,
-                        config: { ...entry.config, enabled: entry.config.enabled === false },
-                        expectedRevision: snapshot!.revision,
-                      });
-                      setNotice(t("mcpSaved", "Configuration saved."));
-                    })
-                  }
-                >
-                  {entry.config.enabled === false ? t("mcpEnable", "Enable") : t("mcpDisable", "Disable")}
-                </button>
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    leave(() => {
-                      void run(() =>
-                        invoke("mcp.config.remove", {
-                          scope,
-                          cwd: cwd ?? undefined,
-                          name: entry.name,
-                          expectedRevision: snapshot!.revision,
-                        }),
-                      );
-                    })
-                  }
-                >
-                  {t("mcpRemove", "Remove")}
-                </button>
-                {entry.config.url && (
-                  <>
-                    <button disabled={busy} onClick={() => void startLogin(entry.name)}>
-                      {t("mcpSignIn", "Sign in")}
-                    </button>
-                    <button
-                      disabled={busy}
-                      onClick={() => void run(() => invoke("mcp.oauth.logout", target(entry.name)))}
-                    >
-                      {t("mcpSignOut", "Sign out for this URL")}
-                    </button>
-                  </>
-                )}
-                <button
-                  disabled={busy || entry.config.enabled === false}
-                  onClick={() =>
-                    void run(async () => {
-                      const value = target(entry.name);
-                      setResources({ target: value, page: await invoke("mcp.resources", value) });
-                    })
-                  }
-                >
-                  {t("mcpResources", "Resources")}
-                </button>
-              </div>
-              {live?.error && <p className="mcp-error">{live.error}</p>}
-              {!!live?.diagnostics?.length && (
-                <details>
-                  <summary>{t("mcpDiagnostics", "Connection diagnostics")}</summary>
-                  <pre>{live.diagnostics.join("\n")}</pre>
-                </details>
-              )}
-            </section>
-          );
-        })}
-        {!!panel?.extensions?.length && (
-          <section>
-            <h4>{t("mcpExtensionServers", "Extension-registered servers")}</h4>
-            {panel.extensions.map((entry) => (
-              <div key={entry.name} className="mcp-server-row">
-                <strong>{entry.name}</strong>
-                <p>{entry.source}</p>
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    leave(() => {
-                      setEditing({ name: entry.name, config: entry.config, extension: true, revision: entry.revision });
-                      setDirty(false);
-                    })
-                  }
-                >
-                  {t("mcpEdit", "Edit")}
-                </button>
-                {sessionId && (
-                  <button
-                    disabled={busy}
-                    onClick={() => void run(() => invoke("mcp.reconnect", { sessionId, name: entry.name }))}
-                  >
-                    {t("mcpReconnect", "Reconnect session")}
-                  </button>
-                )}
-                <p>{t("mcpExtensionTemporary", "Changes to extension servers apply only to this session.")}</p>
-              </div>
-            ))}
-          </section>
-        )}
-        {probeId && (
-          <button onClick={() => void invoke("mcp.probe.cancel", { requestId: probeId })}>
-            {t("mcpCancelProbe", "Cancel connection test")}
-          </button>
-        )}
-        {probe && (
-          <details>
-            <summary>{t("mcpProbeResult", "Last connection test")}</summary>
-            <pre>{JSON.stringify(probe, null, 2)}</pre>
-          </details>
-        )}
-        {editing && (
-          <McpServerEditor
-            initial={editing}
-            busy={busy}
-            onDirty={() => setDirty(true)}
-            onCancel={() =>
-              leave(() => {
-                setEditing(undefined);
-                setDirty(false);
-              })
-            }
-            onSave={(name, config) =>
-              void run(async () => {
-                if (editing.extension && sessionId)
-                  await invoke("mcp.extension.update", {
-                    sessionId,
-                    name,
-                    config,
-                    expectedRevision: editing.revision!,
-                  });
-                else
-                  await invoke("mcp.config.upsert", {
-                    scope,
-                    cwd: cwd ?? undefined,
-                    name,
-                    config,
-                    expectedRevision: editing.revision!,
-                  });
-                setEditing(undefined);
-                setDirty(false);
-                setNotice(t("mcpSaved", "Configuration saved."));
               })
             }
           />
-        )}
-        {importText !== undefined && (
-          <section>
-            <label>
-              {t("mcpImportJson", "Standard mcpServers JSON")}
-              <textarea
-                value={importText}
-                onChange={(event) => {
-                  setImportText(event.target.value);
-                  setImportPreview(undefined);
-                }}
-              />
-            </label>
+          <div className="mcp-sidebar-actions">
             <button
               disabled={busy}
               onClick={() =>
-                void run(async () =>
-                  setImportPreview(
-                    await invoke("mcp.import.preview", { scope, cwd: cwd ?? undefined, json: importText }),
-                  ),
-                )
+                leave(() => {
+                  setEditing({
+                    name: "",
+                    config: { command: "", args: [], exposure: "codemode" },
+                    revision: snapshot?.revision ?? "missing",
+                  });
+                  setSelected("");
+                  setImportText(undefined);
+                  setDirty(false);
+                })
               }
             >
-              {t("mcpPreviewImport", "Preview import")}
+              {t("mcpAdd", "Add server")}
             </button>
-            {importPreview && (
-              <>
-                <pre>{JSON.stringify(importPreview, null, 2)}</pre>
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    void run(async () => {
-                      await invoke("mcp.import.apply", {
-                        scope,
-                        cwd: cwd ?? undefined,
-                        json: importText,
-                        expectedRevision: importRevision!,
-                      });
-                      setImportText(undefined);
-                      setImportPreview(undefined);
-                      setNotice(t("mcpSaved", "Configuration saved."));
-                    })
-                  }
-                >
-                  {t("mcpApplyImport", "Apply import")}
-                </button>
-              </>
+            <button
+              disabled={busy}
+              onClick={() =>
+                leave(() => {
+                  setImportText('{\n  "mcpServers": {}\n}');
+                  setImportRevision(snapshot?.revision ?? "missing");
+                  setImportPreview(undefined);
+                  setEditing(undefined);
+                })
+              }
+            >
+              {t("mcpImport", "Import JSON")}
+            </button>
+          </div>
+        </aside>
+        <main className="mcp-detail-pane">
+          <p className="mcp-scope-description">
+            {t(
+              "mcpScopeHelp",
+              "Project entries override global entries with the same name. A permission dialog appears when tools are first used.",
             )}
-            <button onClick={() => leave(() => setImportText(undefined))}>{t("mcpCancel", "Cancel")}</button>
-          </section>
-        )}
-        {login && (
-          <section role="status">
-            <strong>{t("mcpAuthorization", "MCP authorization")}</strong> · {mcpLoginLabel(login.state, t)}
-            {login.error && <p>{login.error}</p>}
-            {login.state === "waiting" && (
-              <>
-                <label>
-                  {t("mcpCallbackUrl", "Paste callback URL")}
-                  <input value={callbackUrl} onChange={(event) => setCallbackUrl(event.target.value)} />
-                </label>
-                <button
-                  disabled={busy || !callbackUrl}
-                  onClick={() =>
-                    void run(async () => {
-                      setLogin(await invoke("mcp.oauth.submit", { requestId: login.requestId, callbackUrl }));
-                      setCallbackUrl("");
-                    })
-                  }
-                >
-                  {t("mcpSubmitCallback", "Submit callback")}
-                </button>
-                <button
-                  onClick={() =>
-                    void run(async () => {
-                      setLogin(await invoke("mcp.oauth.cancel", { requestId: login.requestId }));
-                      setCallbackUrl("");
-                    })
-                  }
-                >
-                  {t("mcpCancelLogin", "Cancel sign-in")}
-                </button>
-              </>
-            )}
-          </section>
-        )}
-        {resources && (
-          <section>
-            <h4>{t("mcpResources", "Resources")}</h4>
-            {[...resources.page.resources, ...resources.page.templates].map((resource) => (
-              <div key={resource.uri}>
-                <code>{resource.uri}</code>
-                <button
-                  disabled={busy || Boolean(resource.uriTemplate)}
-                  onClick={() => void previewResource(resources.target, resource.uri)}
-                >
-                  {t("mcpReadResource", "Read resource")}
-                </button>
-              </div>
-            ))}
-            {(resources.page.nextCursor || resources.page.nextTemplateCursor) && (
+          </p>
+          {scope === "project" && panel?.projectTrusted === false && (
+            <p role="status">
+              {t(
+                "mcpProjectUntrusted",
+                "This project's MCP configuration is not applied until the project is trusted.",
+              )}
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="mcp-error">
+              {error}
+            </p>
+          )}
+          {notice && <p role="status">{notice}</p>}
+          <p>{currentLabel}</p>
+          {panel?.inactiveReason === "disabled" && (
+            <p>{t("mcpDisabledBySettings", "builtin:mcp is disabled in shared settings.")}</p>
+          )}
+          {panel?.inactiveReason === "replaced" && (
+            <p>
+              {t(
+                "mcpReplacedByExtension",
+                "Another extension manages MCP in this session. Desktop connection controls are inactive.",
+              )}
+            </p>
+          )}
+          {sessionId && !panel?.adapterActive && (
+            <button
+              disabled={busy}
+              onClick={() => void run(() => invoke("agent.command", { sessionId, command: { type: "get_tools" } }))}
+            >
+              {t("mcpApplySession", "Apply MCP to this session")}
+            </button>
+          )}
+          {snapshot?.entries
+            .filter((entry) => entry.name === selectedName && editing?.name !== "" && importText === undefined)
+            .map((entry) => {
+              const live = panel?.instances.find((instance) => instance.name === entry.name),
+                ownLive = live?.scope === scope;
+              return (
+                <section key={entry.name} className="mcp-server-row">
+                  <div>
+                    <strong>{entry.name}</strong>
+                    <span className="mcp-transport-tag">{entry.config.url ? "HTTP" : "stdio"}</span>
+                    {live && (
+                      <span>
+                        {" "}
+                        · {mcpStateLabel(live.state, t)} · {live.toolCount}
+                      </span>
+                    )}
+                    {live?.pendingApply && (
+                      <span> · {t("mcpPendingApply", "Waiting for the session to become idle")}</span>
+                    )}
+                    {live && !ownLive && <span> · {t("mcpOverridden", "Overridden by another scope")}</span>}
+                  </div>
+                  <div className="mcp-actions">
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        leave(() => {
+                          setEditing({ name: entry.name, config: entry.config, revision: snapshot?.revision });
+                          setDirty(false);
+                        })
+                      }
+                    >
+                      {t("mcpEdit", "Edit")}
+                    </button>
+                    <button
+                      disabled={busy || entry.config.enabled === false}
+                      onClick={() => void probeServer(entry.name)}
+                    >
+                      {t("mcpTest", "Test connection")}
+                    </button>
+                    {sessionId && ownLive && (
+                      <button
+                        disabled={busy || entry.config.enabled === false}
+                        onClick={() => void run(() => invoke("mcp.reconnect", { sessionId, name: entry.name }))}
+                      >
+                        {t("mcpReconnect", "Reconnect session")}
+                      </button>
+                    )}
+                    {entry.config.url && (
+                      <button disabled={busy} onClick={() => void startLogin(entry.name)}>
+                        {t("mcpSignIn", "Sign in")}
+                      </button>
+                    )}
+                    <details className="mcp-more-actions">
+                      <summary>{t("mcpMoreActions", "More actions")}</summary>
+                      <div>
+                        <button
+                          disabled={busy || !snapshot || snapshot.revision === "invalid"}
+                          onClick={() =>
+                            void run(async () => {
+                              await invoke("mcp.config.upsert", {
+                                scope,
+                                cwd: cwd ?? undefined,
+                                name: entry.name,
+                                config: { ...entry.config, enabled: entry.config.enabled === false },
+                                expectedRevision: snapshot!.revision,
+                              });
+                              setNotice(t("mcpSaved", "Configuration saved."));
+                            })
+                          }
+                        >
+                          {entry.config.enabled === false ? t("mcpEnable", "Enable") : t("mcpDisable", "Disable")}
+                        </button>
+                        <button
+                          disabled={busy}
+                          onClick={() =>
+                            leave(() => {
+                              void run(() =>
+                                invoke("mcp.config.remove", {
+                                  scope,
+                                  cwd: cwd ?? undefined,
+                                  name: entry.name,
+                                  expectedRevision: snapshot!.revision,
+                                }),
+                              );
+                            })
+                          }
+                        >
+                          {t("mcpRemove", "Remove")}
+                        </button>
+                        {entry.config.url && (
+                          <>
+                            <button
+                              disabled={busy}
+                              onClick={() => void run(() => invoke("mcp.oauth.logout", target(entry.name)))}
+                            >
+                              {t("mcpSignOut", "Sign out for this URL")}
+                            </button>
+                          </>
+                        )}
+                        <button
+                          disabled={busy || entry.config.enabled === false}
+                          onClick={() =>
+                            void run(async () => {
+                              const value = target(entry.name);
+                              setResources({ target: value, page: await invoke("mcp.resources", value) });
+                            })
+                          }
+                        >
+                          {t("mcpResources", "Resources")}
+                        </button>
+                      </div>
+                    </details>
+                  </div>
+                  {live?.error && <p className="mcp-error">{live.error}</p>}
+                  {!!live?.diagnostics?.length && (
+                    <details>
+                      <summary>{t("mcpDiagnostics", "Connection diagnostics")}</summary>
+                      <pre>{live.diagnostics.join("\n")}</pre>
+                    </details>
+                  )}
+                </section>
+              );
+            })}
+          {!!panel?.extensions?.length && (
+            <section>
+              <h4>{t("mcpExtensionServers", "Extension-registered servers")}</h4>
+              {panel.extensions
+                .filter((entry) => entry.name === selectedName)
+                .map((entry) => (
+                  <div key={entry.name} className="mcp-server-row">
+                    <strong>{entry.name}</strong>
+                    <p>{entry.source}</p>
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        leave(() => {
+                          setEditing({
+                            name: entry.name,
+                            config: entry.config,
+                            extension: true,
+                            revision: entry.revision,
+                          });
+                          setDirty(false);
+                        })
+                      }
+                    >
+                      {t("mcpEdit", "Edit")}
+                    </button>
+                    {sessionId && (
+                      <button
+                        disabled={busy}
+                        onClick={() => void run(() => invoke("mcp.reconnect", { sessionId, name: entry.name }))}
+                      >
+                        {t("mcpReconnect", "Reconnect session")}
+                      </button>
+                    )}
+                    <p>{t("mcpExtensionTemporary", "Changes to extension servers apply only to this session.")}</p>
+                  </div>
+                ))}
+            </section>
+          )}
+          {probeId && (
+            <button onClick={() => void invoke("mcp.probe.cancel", { requestId: probeId })}>
+              {t("mcpCancelProbe", "Cancel connection test")}
+            </button>
+          )}
+          {probe && (
+            <details>
+              <summary>{t("mcpProbeResult", "Last connection test")}</summary>
+              <pre>{JSON.stringify(probe, null, 2)}</pre>
+            </details>
+          )}
+          {editing && (
+            <McpServerEditor
+              initial={editing}
+              busy={busy}
+              onDirty={() => setDirty(true)}
+              onCancel={() =>
+                leave(() => {
+                  setEditing(undefined);
+                  setDirty(false);
+                })
+              }
+              onSave={(name, config) =>
+                void run(async () => {
+                  if (editing.extension && sessionId)
+                    await invoke("mcp.extension.update", {
+                      sessionId,
+                      name,
+                      config,
+                      expectedRevision: editing.revision!,
+                    });
+                  else
+                    await invoke("mcp.config.upsert", {
+                      scope,
+                      cwd: cwd ?? undefined,
+                      name,
+                      config,
+                      expectedRevision: editing.revision!,
+                    });
+                  setEditing(undefined);
+                  setSelected(name);
+                  setDirty(false);
+                  setNotice(t("mcpSaved", "Configuration saved."));
+                })
+              }
+            />
+          )}
+          {importText !== undefined && (
+            <section>
+              <label>
+                {t("mcpImportJson", "Standard mcpServers JSON")}
+                <textarea
+                  value={importText}
+                  onChange={(event) => {
+                    setImportText(event.target.value);
+                    setImportPreview(undefined);
+                  }}
+                />
+              </label>
               <button
                 disabled={busy}
                 onClick={() =>
                   void run(async () =>
-                    setResources({
-                      ...resources,
-                      page: await invoke("mcp.resources", {
-                        ...resources.target,
-                        cursor: resources.page.nextCursor,
-                        templateCursor: resources.page.nextTemplateCursor,
-                      }),
-                    }),
+                    setImportPreview(
+                      await invoke("mcp.import.preview", { scope, cwd: cwd ?? undefined, json: importText }),
+                    ),
                   )
                 }
               >
-                {t("mcpMoreResources", "Next resource page")}
+                {t("mcpPreviewImport", "Preview import")}
               </button>
-            )}
-            {resourceText && <pre>{resourceText}</pre>}
-            {resourceRef && (
+              {importPreview && (
+                <>
+                  <pre>{JSON.stringify(importPreview, null, 2)}</pre>
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        await invoke("mcp.import.apply", {
+                          scope,
+                          cwd: cwd ?? undefined,
+                          json: importText,
+                          expectedRevision: importRevision!,
+                        });
+                        setImportText(undefined);
+                        setImportPreview(undefined);
+                        setNotice(t("mcpSaved", "Configuration saved."));
+                      })
+                    }
+                  >
+                    {t("mcpApplyImport", "Apply import")}
+                  </button>
+                </>
+              )}
+              <button onClick={() => leave(() => setImportText(undefined))}>{t("mcpCancel", "Cancel")}</button>
+            </section>
+          )}
+          {login && (
+            <section role="status">
+              <strong>{t("mcpAuthorization", "MCP authorization")}</strong> · {mcpLoginLabel(login.state, t)}
+              {login.error && <p>{login.error}</p>}
+              {login.state === "waiting" && (
+                <>
+                  <label>
+                    {t("mcpCallbackUrl", "Paste callback URL")}
+                    <input value={callbackUrl} onChange={(event) => setCallbackUrl(event.target.value)} />
+                  </label>
+                  <button
+                    disabled={busy || !callbackUrl}
+                    onClick={() =>
+                      void run(async () => {
+                        setLogin(await invoke("mcp.oauth.submit", { requestId: login.requestId, callbackUrl }));
+                        setCallbackUrl("");
+                      })
+                    }
+                  >
+                    {t("mcpSubmitCallback", "Submit callback")}
+                  </button>
+                  <button
+                    onClick={() =>
+                      void run(async () => {
+                        setLogin(await invoke("mcp.oauth.cancel", { requestId: login.requestId }));
+                        setCallbackUrl("");
+                      })
+                    }
+                  >
+                    {t("mcpCancelLogin", "Cancel sign-in")}
+                  </button>
+                </>
+              )}
+            </section>
+          )}
+          {resources && (
+            <section>
+              <h4>{t("mcpResources", "Resources")}</h4>
+              {[...resources.page.resources, ...resources.page.templates].map((resource) => (
+                <div key={resource.uri}>
+                  <code>{resource.uri}</code>
+                  <button
+                    disabled={busy || Boolean(resource.uriTemplate)}
+                    onClick={() => void previewResource(resources.target, resource.uri)}
+                  >
+                    {t("mcpReadResource", "Read resource")}
+                  </button>
+                </div>
+              ))}
+              {(resources.page.nextCursor || resources.page.nextTemplateCursor) && (
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    void run(async () =>
+                      setResources({
+                        ...resources,
+                        page: await invoke("mcp.resources", {
+                          ...resources.target,
+                          cursor: resources.page.nextCursor,
+                          templateCursor: resources.page.nextTemplateCursor,
+                        }),
+                      }),
+                    )
+                  }
+                >
+                  {t("mcpMoreResources", "Next resource page")}
+                </button>
+              )}
+              {resourceText && <pre>{resourceText}</pre>}
+              {resourceRef && (
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    void run(async () => {
+                      const chunk = await invoke("mcp.resource.content", resourceRef);
+                      setResourceText(chunk.text);
+                      setResourceRef(
+                        chunk.nextOffset !== undefined
+                          ? { hash: resourceRef.hash, offset: chunk.nextOffset }
+                          : undefined,
+                      );
+                    })
+                  }
+                >
+                  {t("mcpMoreContent", "Read content page")}
+                </button>
+              )}
+            </section>
+          )}
+          {sessionId && importText === undefined && editing?.name !== "" && (
+            <McpToolsPanel key={sessionId} sessionId={sessionId} panel={panel} server={selectedName} onChanged={load} />
+          )}
+          {pendingLeave && (
+            <div role="alertdialog" aria-label={t("mcpUnsaved", "Unsaved MCP changes")}>
+              <p>{t("mcpDiscardQuestion", "Discard the unsaved MCP edit?")}</p>
               <button
-                disabled={busy}
-                onClick={() =>
-                  void run(async () => {
-                    const chunk = await invoke("mcp.resource.content", resourceRef);
-                    setResourceText(chunk.text);
-                    setResourceRef(
-                      chunk.nextOffset !== undefined ? { hash: resourceRef.hash, offset: chunk.nextOffset } : undefined,
-                    );
-                  })
-                }
+                onClick={() => {
+                  const action = pendingLeave;
+                  setPendingLeave(undefined);
+                  setDirty(false);
+                  setImportText(undefined);
+                  setEditing(undefined);
+                  action();
+                }}
               >
-                {t("mcpMoreContent", "Read content page")}
+                {t("mcpDiscard", "Discard changes")}
               </button>
-            )}
-          </section>
-        )}
-        {sessionId && <McpToolsPanel key={sessionId} sessionId={sessionId} panel={panel} onChanged={load} />}
-        {pendingLeave && (
-          <div role="alertdialog" aria-label={t("mcpUnsaved", "Unsaved MCP changes")}>
-            <p>{t("mcpDiscardQuestion", "Discard the unsaved MCP edit?")}</p>
-            <button
-              onClick={() => {
-                const action = pendingLeave;
-                setPendingLeave(undefined);
-                setDirty(false);
-                setImportText(undefined);
-                setEditing(undefined);
-                action();
-              }}
-            >
-              {t("mcpDiscard", "Discard changes")}
-            </button>
-            <button onClick={() => setPendingLeave(undefined)}>{t("mcpKeepEditing", "Keep editing")}</button>
-          </div>
-        )}
+              <button onClick={() => setPendingLeave(undefined)}>{t("mcpKeepEditing", "Keep editing")}</button>
+            </div>
+          )}
+        </main>
       </div>
     );
   },

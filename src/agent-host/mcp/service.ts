@@ -24,6 +24,7 @@ import { McpOAuthStore } from "./oauth-store";
 import { McpOAuthLoginManager } from "./oauth-login";
 import { McpConnection, type McpConnectionOptions } from "./connection";
 import { mcpModelContent } from "./model-content";
+import { McpAuthorizationRequests } from "./authorization";
 
 export interface McpSessionHooks {
   pi: ExtensionAPI;
@@ -56,6 +57,7 @@ interface SessionBinding {
   queue: Promise<void>;
   closed: boolean;
   declarations?: Set<string>;
+  grantRevision: number;
 }
 interface McpExecutionDetails {
   mcp: { server: string; tool: string; generation: number; outcomeUnknown?: boolean };
@@ -80,6 +82,7 @@ export class McpService {
   readonly credentials: McpOAuthStore;
   readonly login: McpOAuthLoginManager;
   private readonly sessions = new Map<string, SessionBinding>();
+  private readonly authorization = new McpAuthorizationRequests();
   private readonly inactive = new Map<string, McpPanelSnapshot["inactiveReason"]>();
   private readonly previews = new Set<McpConnection>();
   private readonly cleanups = new Set<() => Promise<void>>();
@@ -127,6 +130,7 @@ export class McpService {
       pending: false,
       queue: Promise.resolve(),
       closed: false,
+      grantRevision: 0,
       declarations: hooks.declarations?.() ? new Set(hooks.declarations()) : undefined,
     });
     await this.reconcile(id);
@@ -213,9 +217,76 @@ export class McpService {
     if (!binding.hooks.setGrants)
       throw new RpcError({ code: "UNSUPPORTED", message: "This session does not support MCP grants" });
     binding.hooks.setGrants([...new Set(names)]);
+    binding.grantRevision++;
     this.activateCallers(binding);
     this.publish(binding);
     return this.panel(sessionId);
+  }
+  resetPermissionRequests(sessionId: string): void {
+    this.authorization.reset(sessionId);
+  }
+  async requestAuthorization(
+    sessionId: string,
+    name: string,
+    input: unknown,
+    ctx: ExtensionContext,
+    valid = () => true,
+  ): Promise<boolean> {
+    const binding = this.sessions.get(sessionId);
+    if (!binding || binding.closed || binding.hooks.isEmpty() || !ctx.hasUI) return false;
+    if (binding.hooks.isAllowed(name)) return true;
+    const entry = binding.registrations.get(name);
+    const server = input && typeof input === "object" ? (input as { server?: unknown }).server : undefined;
+    const connections = entry
+      ? [entry.connection]
+      : [...binding.connections.values()].filter(
+          (connection) =>
+            connection.snapshot.state === "connected" &&
+            (typeof server !== "string" || connection.snapshot.name === server),
+        );
+    if (!connections.length || connections.some((connection) => connection.snapshot.state !== "connected"))
+      return false;
+    const identities = connections.map(
+      (connection) => `${connection.snapshot.name}:${connection.snapshot.generation}:${connection.snapshot.revision}`,
+    );
+    const grantRevision = binding.grantRevision;
+    const requested = [...binding.registrations.values()].filter(
+      (registration) => connections.includes(registration.connection) && registration.exposure !== "hidden",
+    );
+    const target = {
+      servers: connections.map((connection) => connection.snapshot.name),
+      tools: requested.map((registration) => registration.tool.name),
+      identity: identities.join("\0"),
+    };
+    return this.authorization.request(sessionId, target, ctx, () => {
+      if (
+        !valid() ||
+        binding.grantRevision !== grantRevision ||
+        this.sessions.get(sessionId) !== binding ||
+        binding.closed ||
+        binding.hooks.isEmpty() ||
+        connections.some(
+          (connection, index) =>
+            binding.connections.get(connection.snapshot.name) !== connection ||
+            connection.snapshot.state !== "connected" ||
+            `${connection.snapshot.name}:${connection.snapshot.generation}:${connection.snapshot.revision}` !==
+              identities[index],
+        )
+      )
+        return false;
+      const retained = binding.hooks.pi
+        .getAllTools()
+        .filter((tool) => isMcpManagedTool(tool.name) && binding.hooks.isAllowed(tool.name))
+        .map((tool) => tool.name);
+      this.grant(sessionId, [
+        ...new Set([
+          ...retained,
+          ...requested.map((registration) => registration.name),
+          ...(this.panel(sessionId).entryTools ?? []),
+        ]),
+      ]);
+      return true;
+    });
   }
   async target(target: McpTarget): Promise<{
     config: McpServerConfig;
@@ -438,6 +509,7 @@ export class McpService {
     await this.reconcile(sessionId);
   }
   async detach(sessionId: string): Promise<void> {
+    this.authorization.cancel(sessionId);
     this.inactive.delete(sessionId);
     const binding = this.sessions.get(sessionId);
     if (!binding) return;

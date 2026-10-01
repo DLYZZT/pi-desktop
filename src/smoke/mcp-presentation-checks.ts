@@ -46,7 +46,7 @@ export async function runMcpPresentationChecks(window: BrowserWindow): Promise<v
     await new Promise(resolve=>requestAnimationFrame(resolve));
     const rect=save.getBoundingClientRect();
     if(rect.top<0 || rect.bottom>window.innerHeight || document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)!==save) throw new Error('MCP save button cannot be reached by scrolling');
-    container.scrollTop=0;
+    (container.querySelector('.mcp-detail-pane') ?? container).scrollTop=0;
     await new Promise(resolve=>requestAnimationFrame(resolve));
     return {previous,title:container.querySelector('h3').textContent,width:container.clientWidth};
   }`;

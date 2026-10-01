@@ -7,10 +7,12 @@ export function McpToolsPanel({
   sessionId,
   panel,
   onChanged,
+  server,
 }: {
   sessionId: string;
   panel?: McpPanelSnapshot;
   onChanged(): void | Promise<void>;
+  server?: string;
 }) {
   const { t } = useI18n(),
     [busy, setBusy] = useState(false),
@@ -31,14 +33,16 @@ export function McpToolsPanel({
       setBusy(false);
     }
   };
-  const servers = [...new Set(panel?.tools.map((tool) => tool.server) ?? [])];
+  const servers = [
+    ...new Set(panel?.tools.filter((tool) => !server || tool.server === server).map((tool) => tool.server) ?? []),
+  ];
   return (
     <section className="mcp-tools">
       <h4>{t("mcpSessionTools", "Session MCP tool permissions")}</h4>
       <p>
         {t(
           "mcpPermissionHelp",
-          "Declaration, nested lookup and execution permission are separate. Turning a tool off blocks future direct and nested calls.",
+          "MCP tools ask for permission on first use. Access applies to this session. Turn a tool off below to revoke it.",
         )}
       </p>
       <details>

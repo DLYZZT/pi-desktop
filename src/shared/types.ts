@@ -143,7 +143,8 @@ export interface Usage {
 export type ExtensionUiConfirmLocalization =
   | { id: "herdr.closeWorkspace"; target: string; paneCount: number }
   | { id: "herdr.closePane"; target: string }
-  | { id: "herdr.closeAgentPane"; paneId: string; agentKind: string };
+  | { id: "herdr.closeAgentPane"; paneId: string; agentKind: string }
+  | { id: "mcp.authorize"; servers: string; tools: string; toolCount: number };
 
 export type ExtensionUiRequest =
   | {

@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import type { BrowserWindow } from "electron";
 import type { McpPanelSnapshot } from "../contract/mcp";
 import { runMcpPresentationChecks } from "./mcp-presentation-checks";
+import { captureSettingsReferences } from "./settings-reference-capture";
 type Call = <T = unknown>(method: string, params?: unknown) => Promise<T>;
 
 export async function runMcpUiChecks(window: BrowserWindow, call: Call): Promise<void> {
@@ -149,14 +150,39 @@ export async function runMcpUiChecks(window: BrowserWindow, call: Call): Promise
     );
     await call("sessions.rename", { id: sessionId, name: "MCP smoke session" });
     const configureCode =
-      'async (url) => {\n    const until = async (read) => {\n        const deadline = Date.now() + 12000;\n        while (Date.now() < deadline) {\n            const value = read();\n            if (value)\n                return value;\n            await new Promise((resolve) => setTimeout(resolve, 25));\n        }\n        throw new Error("MCP UI element did not appear: " + document.body.innerText.slice(-3000)+" ROWS:"+Array.from(document.querySelectorAll(".mcp-tool-row")).map(row=>row.textContent+":"+row.querySelector("input")?.checked+":"+row.querySelector("input")?.disabled).join(";"));\n    };\n    const find = (text) => Array.from(document.querySelectorAll("button")).find((button) => [text, ({"Add server":"新增服务器","Save configuration":"保存配置","Test connection":"测试连接"})[text]].includes(button.textContent?.trim()));\n    const set = (element, value) => {\n        if (!element)\n            throw new Error("Missing MCP input");\n        const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;\n        Object.getOwnPropertyDescriptor(prototype, "value").set.call(element, value);\n        element.dispatchEvent(new Event("input", { bubbles: true }));\n    };\n    (await until(() => Array.from(document.querySelectorAll("button[aria-label]")).find((button) => button.getAttribute("aria-label")?.includes("MCP smoke session")))).click();\n    (await until(() => document.querySelector(\'button[title="Settings"],button[title="设置"]\'))).click();\n    (await until(() => find("MCP"))).click();\n    (await until(() => find("Add server"))).click();\n    const editor = (await until(() => document.querySelector(".mcp-editor")));\n    set(editor.querySelector(\'input[id$="-name"]\'), "smoke");\n    editor.querySelector(\'input[type="checkbox"]\').click();\n    const textarea = (await until(() => editor.querySelector("textarea")));\n    set(textarea, JSON.stringify({ url, exposure: "codemode" }));\n    (await until(() => find("Save configuration"))).click();\n    await until(() => !document.querySelector(".mcp-editor"));\n    (await until(() => find("Test connection"))).click();\n    await until(() => document.querySelector("[data-mcp-config]")?.textContent?.includes("临时连接") || document.querySelector("[data-mcp-config]")?.textContent?.includes("temporary connection"));\n    const echo = (await until(() => Array.from(document.querySelectorAll(".mcp-tool-row label"))\n        .find((label) => label.textContent?.trim() === "echo")\n        ?.querySelector("input")));\n    echo.closest("details").open = true; echo.click();\n    await until(() => echo.checked);\n    return true;\n}';
+      'async (url) => {\n    const until = async (read) => {\n        const deadline = Date.now() + 12000;\n        while (Date.now() < deadline) {\n            const value = read();\n            if (value)\n                return value;\n            await new Promise((resolve) => setTimeout(resolve, 25));\n        }\n        throw new Error("MCP UI element did not appear: " + document.body.innerText.slice(-3000)+" ROWS:"+Array.from(document.querySelectorAll(".mcp-tool-row")).map(row=>row.textContent+":"+row.querySelector("input")?.checked+":"+row.querySelector("input")?.disabled).join(";"));\n    };\n    const find = (text) => Array.from(document.querySelectorAll("button")).find((button) => [text, ({"Add server":"新增服务器","Save configuration":"保存配置","Test connection":"测试连接"})[text]].includes(button.textContent?.trim()));\n    const set = (element, value) => {\n        if (!element)\n            throw new Error("Missing MCP input");\n        const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;\n        Object.getOwnPropertyDescriptor(prototype, "value").set.call(element, value);\n        element.dispatchEvent(new Event("input", { bubbles: true }));\n    };\n    (await until(() => Array.from(document.querySelectorAll("button[aria-label]")).find((button) => button.getAttribute("aria-label")?.includes("MCP smoke session")))).click();\n    (await until(() => document.querySelector(\'button[title="Settings"],button[title="设置"]\'))).click();\n    (await until(() => find("MCP"))).click();\n    (await until(() => find("Add server"))).click();\n    const editor = (await until(() => document.querySelector(".mcp-editor")));\n    set(editor.querySelector(\'input[id$="-name"]\'), "smoke");\n    editor.querySelector(\'input[type="checkbox"]\').click();\n    const textarea = (await until(() => editor.querySelector("textarea")));\n    set(textarea, JSON.stringify({ url, exposure: "codemode" }));\n    (await until(() => find("Save configuration"))).click();\n    await until(() => !document.querySelector(".mcp-editor"));\n    (await until(() => find("Test connection"))).click();\n    await until(() => document.querySelector("[data-mcp-config]")?.textContent?.includes("临时连接") || document.querySelector("[data-mcp-config]")?.textContent?.includes("temporary connection"));\n    return true;\n}';
     await window.webContents.executeJavaScript("(" + configureCode + ")(" + JSON.stringify(base + "/mcp") + ")");
+    await captureSettingsReferences(window);
     await runMcpPresentationChecks(window);
     await until(
       () => call<McpPanelSnapshot>("mcp.snapshot", { sessionId }),
-      (value) => value.tools.some((tool) => tool.name === "mcp__smoke__echo" && tool.executionAllowed),
+      (value) => value.tools.some((tool) => tool.name === "mcp__smoke__echo" && tool.callable),
+    );
+    await window.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('[role="dialog"] button[aria-label]')).find(button=>['Close','关闭','關閉'].includes(button.getAttribute('aria-label')))?.click()`,
     );
     await call("agent.command", { sessionId, command: { type: "prompt", message: "MCP_EXECUTE", clientRunId: 902 } });
+    await window.webContents.executeJavaScript(`(async()=>{
+      const deadline=Date.now()+10000;
+      while(Date.now()<deadline){
+        const dialog=Array.from(document.querySelectorAll('[role="dialog"]')).find(dialog=>dialog.textContent.includes('smoke') && dialog.textContent.includes('echo'));
+        if(dialog) return true;
+        await new Promise(resolve=>setTimeout(resolve,25));
+      }
+      throw new Error('First-use MCP authorization dialog did not appear');
+    })()`);
+    if (process.env.PI_DESKTOP_MCP_PRESENTATION_DIR) {
+      const { writeFile } = await import("node:fs/promises");
+      const { default: path } = await import("node:path");
+      await writeFile(
+        path.join(process.env.PI_DESKTOP_MCP_PRESENTATION_DIR, "permission.png"),
+        (await window.webContents.capturePage()).toPNG(),
+      );
+    }
+    await window.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('[role="dialog"] button')).find(button=>['Allow for this session','允许当前会话使用','允許目前會話使用','Confirm','确认','確認'].includes(button.textContent.trim())).click()`,
+    );
+
     await until(
       () => call<{ state?: { isPromptRunning?: boolean; isStreaming?: boolean } }>("agent.state", { sessionId }),
       (state) => !state.state?.isPromptRunning && !state.state?.isStreaming,

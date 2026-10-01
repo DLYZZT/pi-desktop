@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ToolInfo } from "../shared/pi-types";
 import { EXCLUDED_PI_TOOLS, filterDesktopToolNames } from "../shared/pi-tool-policy";
 import { getAgentSessionSource } from "./session-source";
@@ -11,6 +11,15 @@ import { isMcpManagedTool } from "../shared/mcp-tool-policy";
 export class SessionToolPolicy {
   private session?: AgentSessionLike;
   private initialActive = new Set<string>();
+  private mcpAuthorizer?: (
+    name: string,
+    input: unknown,
+    ctx: ExtensionContext,
+    valid: () => boolean,
+  ) => Promise<boolean>;
+  setMcpAuthorizer(authorizer: typeof this.mcpAuthorizer): void {
+    this.mcpAuthorizer = authorizer;
+  }
   constructor(
     private readonly manager: object,
     private requested?: string[],
@@ -53,6 +62,8 @@ export class SessionToolPolicy {
     const tool =
       this.session.getToolDefinition?.(name) ?? this.session.getAllTools().find((entry) => entry.name === name);
     if (!tool || tool.exposure === "hidden") return false;
+    if (source === "local" && ["codemode", "tool_search"].includes(name))
+      return this.session.getActiveToolNames().includes(name);
     if (isMcpManagedTool(name)) {
       if (this.mcpExecution !== undefined) return this.mcpExecution.includes(name);
       if (this.execution !== undefined) return this.execution.includes(name);
@@ -90,14 +101,30 @@ export class SessionToolPolicy {
       name: "pi-desktop-tool-execution-policy",
       hidden: true,
       factory: (pi: ExtensionAPI) => {
-        pi.on("tool_call", (event) =>
-          this.isAllowed(event.toolName)
-            ? undefined
-            : {
-                block: true,
-                reason: `TOOL_PERMISSION_DENIED: ${event.toolName} is not authorized for this session/source`,
-              },
-        );
+        pi.on("tool_call", async (event, ctx) => {
+          if (this.isAllowed(event.toolName)) return;
+          const tool = this.session?.getAllTools().find((entry) => entry.name === event.toolName);
+          if (
+            !this.isEmpty() &&
+            getAgentSessionSource(this.manager) === "local" &&
+            ctx.hasUI &&
+            tool &&
+            tool.exposure !== "hidden" &&
+            isMcpManagedTool(event.toolName)
+          ) {
+            const approved = await this.mcpAuthorizer?.(
+              event.toolName,
+              event.input,
+              ctx,
+              () => !this.isEmpty() && getAgentSessionSource(this.manager) === "local",
+            );
+            if (approved && getAgentSessionSource(this.manager) === "local" && this.isAllowed(event.toolName)) return;
+          }
+          return {
+            block: true,
+            reason: `TOOL_PERMISSION_DENIED: ${event.toolName} is not authorized for this session/source`,
+          };
+        });
       },
     };
   }
