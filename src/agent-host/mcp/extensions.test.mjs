@@ -10,18 +10,16 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { importTestBundle } from "#test-bundle";
-const { desktopMcpExtensions, initializeMcpService, SessionToolPolicy } = await importTestBundle(
-  "mcp-builtin-loading",
-  {
+const { desktopMcpExtensions, sessionOrchestrationExtensions, initializeMcpService, SessionToolPolicy } =
+  await importTestBundle("mcp-builtin-loading", {
     packages: "external",
     stdin: {
       contents:
-        'export {desktopMcpExtensions} from "./extensions.ts"; export {initializeMcpService} from "./runtime.ts"; export {SessionToolPolicy} from "../session-tool-policy.ts";',
+        'export {desktopMcpExtensions} from "./extensions.ts"; export {sessionOrchestrationExtensions} from "../session-orchestration.ts"; export {initializeMcpService} from "./runtime.ts"; export {SessionToolPolicy} from "../session-tool-policy.ts";',
       resolveDir: import.meta.dirname,
       loader: "ts",
     },
-  },
-);
+  });
 
 for (const replacement of [false, true])
   test(`Desktop MCP factories respect ${replacement ? "third-party replacement" : "shared builtin disable selectors"}`, async (t) => {
@@ -31,7 +29,10 @@ for (const replacement of [false, true])
       await mcp.shutdown();
       rmSync(root, { recursive: true, force: true });
     });
-    const factories = desktopMcpExtensions(new SessionToolPolicy({}, []), () => false);
+    const factories = [
+      ...sessionOrchestrationExtensions(),
+      ...desktopMcpExtensions(new SessionToolPolicy({}, []), () => false),
+    ];
     if (replacement)
       factories.push({
         name: "other-mcp",

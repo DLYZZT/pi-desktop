@@ -7,6 +7,8 @@ import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { agentState, newAgent } from "@/lib/api-client";
 import { getToolNamesForPreset, getPresetFromTools } from "@/lib/tool-presets";
+import type { ToolPreset } from "@shared/tool-presets";
+import { useSessionToolChanges } from "./useSessionToolChanges";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { useSessionEvents } from "./useSessionEvents";
 import { requestAutoSessionTitle, shouldAutoTitleMessage } from "../lib/auto-session-title";
@@ -69,7 +71,7 @@ export interface UseAgentSessionOptions {
   onSystemPromptChange?: (prompt: string | null) => void;
   presentationStore?: SessionPresentationStore;
   onSessionStatsPanelOpen?: () => void;
-  setToolPreset?: (preset: "none" | "default" | "full") => void;
+  setToolPreset?: (preset: ToolPreset) => void;
 }
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -210,7 +212,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     queuedMessages,
   } = turnState;
   const dispatch = useCallback((action: StreamAction) => dispatchTurn({ type: "stream", action }), []);
-  const [toolPreset, setToolPreset] = useState<"none" | "default" | "full">("default");
+  const [toolPreset, setToolPreset] = useState<ToolPreset>("default");
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevelOption>("auto");
   const [contextUsage, setContextUsage] = useState<{
     percent: number | null;
@@ -408,6 +410,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     },
     [isActive, isNew, newSessionCwd, onSessionCreated],
   );
+
+  useSessionToolChanges(sessionIdRef, loadTools);
 
   const ensureNewSession = useCallback(async () => {
     if (sessionIdRef.current) return sessionIdRef.current;

@@ -37,10 +37,13 @@ import {
   setDesktopSessionToolNames,
   getDesktopSessionExecutionTools,
   setDesktopSessionExecutionTools,
+  getDefaultStore,
 } from "./session-tool-store";
 import { withExtensionTools } from "./tool-activation";
 export { withExtensionTools } from "./tool-activation";
 import { SessionToolPolicy } from "./session-tool-policy";
+import { applySessionToolCommand } from "./session-tool-settings";
+import { withSessionOrchestration } from "./session-orchestration";
 import { getLegacySessionToolNames } from "./legacy-session-tools";
 export { getLegacySessionToolNames } from "./legacy-session-tools";
 import { peekManagedProcessService } from "./managed-process/runtime";
@@ -208,9 +211,11 @@ export class AgentSessionWrapper {
       this.inner.setActiveToolsByName([]);
       return;
     }
-    const current = this.inner
-      .getActiveToolNames()
-      .filter((name) => !isBrowserToolName(name) && !isHerdrToolName(name));
+    const current = withSessionOrchestration(
+      this.inner,
+      this.inner.getActiveToolNames(),
+      getDefaultStore().getOrchestration(this.sessionId),
+    ).filter((name) => !isBrowserToolName(name) && !isHerdrToolName(name));
     const browserTools = browserToolNamesForSnapshot(browserCapabilityRuntime.getSnapshot());
     const herdrTools = herdrToolNamesForRuntime(peekHerdrBridge());
     this.inner.setActiveToolsByName(filterDesktopToolNames([...current, ...browserTools, ...herdrTools]));
@@ -745,23 +750,20 @@ export class AgentSessionWrapper {
         return { commands };
       }
 
-      case "set_execution_tools": {
-        validateDesktopToolNames(command.toolNames);
-        if (!this.toolPolicy) throw new Error("Session execution policy is unavailable");
-        if (getDesktopSessionToolNames(this.sessionId) === undefined)
-          this.persistToolNames(this.sessionId, this.requestedToolNames ?? this.inner.getActiveToolNames());
-        setDesktopSessionExecutionTools(this.sessionId, command.toolNames);
-        this.toolPolicy.setExecution(command.toolNames);
-        return this.toolPolicy.describe();
-      }
-
-      case "set_tools": {
-        validateDesktopToolNames(command.toolNames);
-        const toolNames = filterDesktopToolNames(command.toolNames);
-        this.applyRequestedTools(toolNames);
-        this.persistToolNames(this.sessionId, toolNames);
-        return null;
-      }
+      case "set_execution_tools":
+      case "set_orchestration_tools":
+      case "set_tools":
+        return applySessionToolCommand(
+          {
+            sessionId: this.sessionId,
+            session: this.inner,
+            policy: this.toolPolicy,
+            requested: this.requestedToolNames,
+            apply: (names) => this.applyRequestedTools(names),
+            persist: (id, names) => this.persistToolNames(id, names),
+          },
+          command,
+        );
 
       case "reload": {
         await this.enqueueTurn(() => this.reloadSessionResources());

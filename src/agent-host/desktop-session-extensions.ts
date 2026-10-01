@@ -5,6 +5,7 @@ import type { SessionToolPolicy } from "./session-tool-policy";
 import type { SessionExecutionHistory } from "./session-execution-history";
 import { createLegacyChannelContextExtension } from "./legacy-channel-context";
 import { desktopMcpExtensions } from "./mcp/extensions";
+import { sessionOrchestrationExtensions } from "./session-orchestration";
 
 export function desktopSessionExtensions(
   policy: SessionToolPolicy,
@@ -15,6 +16,7 @@ export function desktopSessionExtensions(
   return [
     policy.extension(),
     history.extension(),
+    ...sessionOrchestrationExtensions(),
     ...desktopMcpExtensions(policy, running),
     createLegacyChannelContextExtension(),
     createDesktopPromptExtension(prompt),

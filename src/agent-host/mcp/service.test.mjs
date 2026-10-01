@@ -97,6 +97,7 @@ async function fixture(t, options = {}) {
     },
   };
   if (options.declarations) hooks.declarations = () => options.declarations;
+  hooks.orchestration = () => options.orchestration;
   hooks.setDeclarations = (names) => {
     options.declarations = names;
   };
@@ -165,16 +166,18 @@ for (const exposure of ["direct", "deferred", "codemode", "codemode-deferred", "
     );
   });
 
-test("MCP caller activation respects shared negative defaults and persisted manual declarations", async (t) => {
+test("MCP caller activation respects shared defaults and independent session orchestration choices", async (t) => {
   const f = await fixture(t, {
     config: { command: "fixture", exposure: "codemode" },
     entryTools: true,
     settings: { defaultTools: ["-codemode", "-tool_search"] },
   });
   assert.equal(f.active.has("codemode"), false);
-  f.service.declare("session", ["codemode"]);
+  let selection = ["codemode"];
+  f.hooks.orchestration = () => selection;
+  await f.service.reconcile("session");
   assert.equal(f.active.has("codemode"), true);
-  f.service.declare("session", []);
+  selection = [];
   await f.service.reconnect("session", "fixture");
   await waitFor(() => f.service.snapshot("session")[0]?.state === "connected");
   assert.equal(f.active.has("codemode"), false);
@@ -253,7 +256,8 @@ test("MCP first-use approval coalesces concurrent requests and grants only the s
   finish(true);
   assert.deepEqual(await Promise.all([first, second]), [true, true]);
   assert.ok(grants.has("mcp__fixture__echo"));
-  assert.ok(grants.has("codemode"));
+  assert.equal(grants.has("codemode"), false);
+  assert.equal(grants.has("tool_search"), false);
   assert.equal(await f.service.requestAuthorization("session", "mcp__fixture__echo", {}, ctx), true);
   assert.equal(prompts, 1);
 });

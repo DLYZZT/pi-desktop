@@ -1,8 +1,4 @@
-import {
-  createCodemodeExtension,
-  createToolSearchExtension,
-  type InlineExtension,
-} from "@earendil-works/pi-coding-agent";
+import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { SessionToolPolicy } from "../session-tool-policy";
 import { peekMcpService } from "./runtime";
@@ -12,6 +8,7 @@ import {
   setDesktopSessionMcpExecutionTools,
   getDesktopSessionMcpDeclarations,
   setDesktopSessionMcpDeclarations,
+  getDefaultStore,
 } from "../session-tool-store";
 
 export function desktopMcpExtensions(policy: SessionToolPolicy, isRunning: () => boolean): InlineExtension[] {
@@ -41,8 +38,6 @@ export function desktopMcpExtensions(policy: SessionToolPolicy, isRunning: () =>
         });
       },
     },
-    { name: "codemode", builtin: true, replaceable: true, factory: createCodemodeExtension({ models: false }) },
-    { name: "tool-search", builtin: true, replaceable: true, factory: createToolSearchExtension() },
     {
       name: "mcp",
       builtin: true,
@@ -120,6 +115,7 @@ export function desktopMcpExtensions(policy: SessionToolPolicy, isRunning: () =>
             isRunning,
             isAllowed: (name) => policy.isAllowed(name),
             declarations: () => getDesktopSessionMcpDeclarations(ctx.sessionManager.getSessionId()),
+            orchestration: () => getDefaultStore().getOrchestration(ctx.sessionManager.getSessionId()),
             setDeclarations: (names) => {
               const id = ctx.sessionManager.getSessionId();
               if (getDesktopSessionToolNames(id) === undefined) setDesktopSessionToolNames(id, pi.getActiveTools());

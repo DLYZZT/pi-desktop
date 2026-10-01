@@ -1,0 +1,47 @@
+export const enUS: Record<string, string> = {
+  sessionToolsSettings: "Session tools",
+  sessionToolsScopeHelp: "These settings apply to the current session and are saved for reopening it.",
+  sessionToolsOpenSession: "Open a conversation to configure its tools.",
+  sessionToolsAccess: "Tool access",
+  sessionToolsCustomHelp: "This session uses a custom tool selection.",
+  sessionToolsOrchestration: "Tool orchestration",
+  sessionToolsPermissionHelp:
+    "Code orchestration and tool search work with all eligible tools. Each actual tool call keeps its own permissions and confirmation requirements.",
+  sessionToolsCodemodeHelp: "Compose tool calls with JavaScript, including chains, batches and result filtering.",
+  sessionToolsSearchHelp: "Find tools when needed and load their definitions for the model.",
+  sessionToolsUnavailable: "This tool is not loaded. Check whether its extension is disabled.",
+  sessionToolsDisabledHelp: "Choose Standard or Full access before enabling orchestration tools.",
+  sessionToolsRunning: "Wait for the current response to finish before changing tools.",
+  sessionToolsLoading: "Loading session tools…",
+};
+export const zhCN: Record<string, string> = {
+  sessionToolsSettings: "会话工具",
+  sessionToolsScopeHelp: "设置仅作用于当前会话，重开会话后保留。",
+  sessionToolsOpenSession: "先打开一个会话，再配置它的工具。",
+  sessionToolsAccess: "工具访问",
+  sessionToolsCustomHelp: "当前会话使用自定义工具选择。",
+  sessionToolsOrchestration: "工具编排",
+  sessionToolsPermissionHelp: "代码编排和工具搜索可用于所有符合条件的工具。每次实际调用仍遵循该工具的权限与确认规则。",
+  sessionToolsCodemodeHelp: "用 JavaScript 组合工具调用，支持串联、批量执行和结果筛选。",
+  sessionToolsSearchHelp: "按需查找工具，将工具定义加载给模型。",
+  sessionToolsUnavailable: "此工具尚未加载，请检查对应扩展是否关闭。",
+  sessionToolsDisabledHelp: "选择标准或完全访问后，可启用工具编排入口。",
+  sessionToolsRunning: "当前回复完成后，可修改工具设置。",
+  sessionToolsLoading: "正在加载会话工具…",
+};
+export const zhTW: Record<string, string> = {
+  sessionToolsSettings: "會話工具",
+  sessionToolsScopeHelp: "設定僅作用於目前會話，重新開啟會話後保留。",
+  sessionToolsOpenSession: "先開啟一個會話，再設定它的工具。",
+  sessionToolsAccess: "工具存取",
+  sessionToolsCustomHelp: "目前會話使用自訂工具選擇。",
+  sessionToolsOrchestration: "工具編排",
+  sessionToolsPermissionHelp:
+    "程式碼編排和工具搜尋可用於所有符合條件的工具。每次實際呼叫仍遵循該工具的權限與確認規則。",
+  sessionToolsCodemodeHelp: "用 JavaScript 組合工具呼叫，支援串聯、批次執行和結果篩選。",
+  sessionToolsSearchHelp: "按需尋找工具，將工具定義載入給模型。",
+  sessionToolsUnavailable: "此工具尚未載入，請檢查對應擴充功能是否關閉。",
+  sessionToolsDisabledHelp: "選擇標準或完整存取後，可啟用工具編排入口。",
+  sessionToolsRunning: "目前回覆完成後，可修改工具設定。",
+  sessionToolsLoading: "正在載入會話工具…",
+};

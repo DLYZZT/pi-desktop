@@ -6,6 +6,7 @@ import { isHerdrToolName } from "./herdr/tool-names";
 import { isManagedProcessToolName } from "./managed-process/tool-names";
 import { CODING_TOOL_NAMES } from "./tool-activation";
 import { isMcpManagedTool } from "../shared/mcp-tool-policy";
+import { isOrchestrationTool } from "../shared/orchestration-tools";
 
 /** A Desktop grant is independent from SDK declaration/callable membership. */
 export class SessionToolPolicy {
@@ -62,8 +63,12 @@ export class SessionToolPolicy {
     const tool =
       this.session.getToolDefinition?.(name) ?? this.session.getAllTools().find((entry) => entry.name === name);
     if (!tool || tool.exposure === "hidden") return false;
-    if (source === "local" && ["codemode", "tool_search"].includes(name))
-      return this.session.getActiveToolNames().includes(name);
+    if (source === "local" && isOrchestrationTool(name)) return this.session.getActiveToolNames().includes(name);
+    if (isOrchestrationTool(name))
+      return (
+        (this.mcpExecution ?? this.execution ?? this.requested)?.includes(name) === true &&
+        this.session.getActiveToolNames().includes(name)
+      );
     if (isMcpManagedTool(name)) {
       if (this.mcpExecution !== undefined) return this.mcpExecution.includes(name);
       if (this.execution !== undefined) return this.execution.includes(name);

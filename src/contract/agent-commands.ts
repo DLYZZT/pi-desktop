@@ -40,6 +40,7 @@ export interface BuiltinAgentCommands {
   get_tools: Command<Empty, ToolEntry[]>;
   get_commands: Command<Empty, { commands: SlashCommandInfo[] }>;
   set_tools: Command<{ toolNames: string[] }, null>;
+  set_orchestration_tools: Command<{ toolNames: string[] }, ToolEntry[]>;
   reload: Command<Empty, { success: boolean }>;
   abort_compaction: Command<Empty, null>;
   extension_ui_response: Command<ExtensionUiResponse, null>;

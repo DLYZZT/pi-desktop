@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { ModelCatalogStatus } from "@contract/types";
 import { useI18n } from "@/i18n";
 import { scaledChatFont } from "@/lib/chat-appearance";
+import type { ToolPreset, SelectableToolPreset } from "@shared/tool-presets";
 
 interface ModelOption {
   provider: string;
@@ -26,8 +27,8 @@ export interface ComposerToolbarOptions {
   onAbortCompaction?: () => void;
   isCompacting?: boolean;
   compactError?: string | null;
-  toolPreset?: "none" | "default" | "full";
-  onToolPresetChange?: (preset: "none" | "default" | "full") => void;
+  toolPreset?: ToolPreset;
+  onToolPresetChange?: (preset: SelectableToolPreset) => void;
   thinkingLevel?: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   onThinkingLevelChange?: (level: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh") => void;
   availableThinkingLevels?: string[] | null;
@@ -160,12 +161,15 @@ function ComposerToolbarView({
     return translateThinkingValue(thinkingLevelMap[lvl] ?? lvl);
   })();
   const toolPresetKey =
-    (Object.entries(TOOL_PRESET_MAP).find(([, value]) => value === (toolPreset ?? "default"))?.[0] as
-      "off" | "default" | "full" | undefined) ?? "default";
-  const toolPresetLabels: Record<"off" | "default" | "full", string> = {
+    toolPreset === "custom"
+      ? "custom"
+      : ((Object.entries(TOOL_PRESET_MAP).find(([, value]) => value === (toolPreset ?? "default"))?.[0] as
+          "off" | "default" | "full" | undefined) ?? "default");
+  const toolPresetLabels: Record<"off" | "default" | "full" | "custom", string> = {
     off: t("permissionReadOnly", "Read only"),
     default: t("permissionStandard", "Standard"),
     full: t("permissionFull", "Full access"),
+    custom: t("permissionCustom", "Custom"),
   };
   const toolPresetLabel = toolPresetLabels[toolPresetKey];
   const closeControlDropdowns = useCallback(() => {
@@ -852,7 +856,7 @@ function ComposerToolbarView({
                         ? t("permissionReadOnlyDescription", "No tools, read-only")
                         : lvl === "default"
                           ? t("permissionStandardDescription", "4 built-in tools")
-                          : t("permissionFullDescription", "All built-in tools");
+                          : t("permissionFullDescription", "All built-in tools, code orchestration and tool search");
                     return (
                       <button
                         key={lvl}

@@ -211,7 +211,7 @@ for (const mode of ["nested", "codemode", "search"])
     assert.equal(mcpCalls, 0);
     const denied = await history.query();
     assert.equal(denied.records.find((record) => record.toolName === "mcp__fixture__echo").status, "blocked");
-    mcp.grant(manager.getSessionId(), ["mcp__fixture__echo", "codemode", "tool_search"]);
+    mcp.grant(manager.getSessionId(), ["mcp__fixture__echo"]);
     calls = 0;
     await session.prompt("Call the granted MCP fixture", { source: "rpc" });
     assert.equal(mcpCalls, 1);
@@ -243,7 +243,7 @@ for (const mode of ["nested", "codemode", "search"])
       const exported = await history.store.exportBundle();
       assert.equal(exported.content[parent.output.ref.hash], parent.output.value);
     }
-    mcp.grant(manager.getSessionId(), ["codemode", "tool_search"]);
+    mcp.grant(manager.getSessionId(), []);
     calls = 0;
     await session.prompt("Attempt MCP after revocation", { source: "rpc" });
     assert.equal(mcpCalls, 1);

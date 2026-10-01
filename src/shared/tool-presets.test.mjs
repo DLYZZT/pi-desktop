@@ -10,7 +10,10 @@ test("tool preset detection distinguishes none, default, full, and custom built-
   assert.equal(getPresetFromTools(tools([])), "none");
   assert.equal(getPresetFromTools(tools(PRESET_DEFAULT)), "default");
   assert.equal(getPresetFromTools(tools(PRESET_FULL)), "full");
-  assert.equal(getPresetFromTools(tools(["read"])), "default");
+  assert.equal(getPresetFromTools(tools(["read"])), "custom");
+  assert.equal(getPresetFromTools(tools(PRESET_FULL.filter((name) => name !== "codemode"))), "custom");
+  assert.ok(getToolNamesForPreset("full").includes("codemode"));
+  assert.ok(getToolNamesForPreset("full").includes("tool_search"));
 });
 
 test("preset tool arrays are defensive copies", () => {

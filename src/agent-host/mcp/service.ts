@@ -20,6 +20,7 @@ import type {
 import { RpcError } from "../../contract/types";
 import { McpConfigStore, mcpToolExposure, validateMcpConfig, projectConfig, restoreSecrets } from "./config-store";
 import { isMcpManagedTool } from "../../shared/mcp-tool-policy";
+import { isOrchestrationTool } from "../../shared/orchestration-tools";
 import { McpOAuthStore } from "./oauth-store";
 import { McpOAuthLoginManager } from "./oauth-login";
 import { McpConnection, type McpConnectionOptions } from "./connection";
@@ -34,6 +35,7 @@ export interface McpSessionHooks {
   isAllowed(name: string): boolean;
   setGrants?(names: string[]): void;
   declarations?(): string[] | undefined;
+  orchestration?(): string[] | undefined;
   setDeclarations?(names: string[]): void;
 }
 interface Registration {
@@ -131,7 +133,9 @@ export class McpService {
       queue: Promise.resolve(),
       closed: false,
       grantRevision: 0,
-      declarations: hooks.declarations?.() ? new Set(hooks.declarations()) : undefined,
+      declarations: hooks.declarations?.()
+        ? new Set(hooks.declarations()!.filter((name) => !isOrchestrationTool(name)))
+        : undefined,
     });
     await this.reconcile(id);
   }
@@ -744,23 +748,30 @@ export class McpService {
       all = new Set(binding.hooks.pi.getAllTools().map((tool) => tool.name)),
       defaults = binding.hooks.pi.getSettings().defaultTools ?? [];
     if (binding.declarations) {
-      binding.hooks.pi.setActiveTools(
-        [...active]
-          .filter((name) => !isMcpManagedTool(name) || name.startsWith("mcp__"))
-          .concat([...binding.declarations].filter((name) => all.has(name))),
-      );
-      return;
+      for (const name of active) if (isMcpManagedTool(name) && !name.startsWith("mcp__")) active.delete(name);
+      for (const name of binding.declarations) if (all.has(name)) active.add(name);
     }
+    const orchestration = binding.hooks.orchestration?.();
     const exposures = [...binding.registrations.values()].map((entry) => entry.exposure);
     if (
       binding.autoEnableCodemode &&
+      orchestration === undefined &&
       exposures.some((value) => value === "codemode" || value === "codemode-deferred") &&
       all.has("codemode") &&
       !defaults.includes("-codemode")
     )
       active.add("codemode");
-    if (exposures.includes("deferred") && all.has("tool_search") && !defaults.includes("-tool_search"))
+    if (
+      orchestration === undefined &&
+      exposures.includes("deferred") &&
+      all.has("tool_search") &&
+      !defaults.includes("-tool_search")
+    )
       active.add("tool_search");
+    if (orchestration !== undefined) {
+      for (const name of active) if (isOrchestrationTool(name)) active.delete(name);
+      for (const name of orchestration) if (all.has(name)) active.add(name);
+    }
     binding.hooks.pi.setActiveTools([...active]);
   }
   private hide(binding: SessionBinding, name: string): void {

@@ -26,9 +26,20 @@ import { isAutoSessionTitleEnabled, setAutoSessionTitleEnabled } from "../lib/au
 import { getCacheWarmingStatus, setCacheWarmingMode } from "../lib/api-client";
 import { HerdrSettings } from "./herdr/HerdrSettings";
 import { McpConfig, type McpConfigHandle } from "./mcp/McpConfig";
+import { SessionToolsConfig } from "./SessionToolsConfig";
 
 export type SettingsTab =
-  "general" | "herdr" | "browser" | "channels" | "models" | "tools" | "skills" | "plugins" | "mcp" | "about";
+  | "general"
+  | "herdr"
+  | "browser"
+  | "channels"
+  | "models"
+  | "tools"
+  | "skills"
+  | "plugins"
+  | "mcp"
+  | "session-tools"
+  | "about";
 
 interface SettingsConfigProps {
   cwd: string | null;
@@ -106,6 +117,7 @@ export function SettingsConfig({
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: "general", label: t("general", "General") },
     { id: "models", label: t("models", "Models") },
+    { id: "session-tools", label: t("sessionToolsSettings", "Session tools") },
     { id: "skills", label: t("skills", "Skills") },
     { id: "plugins", label: t("plugins", "Plugins") },
     { id: "mcp", label: t("mcpTab", "MCP") },
@@ -317,6 +329,7 @@ export function SettingsConfig({
             )}
             {activeTab === "browser" && <BrowserSettings sessionId={sessionId} />}
             {activeTab === "mcp" && <McpConfig ref={mcpConfigRef} cwd={cwd} sessionId={sessionId} />}
+            {activeTab === "session-tools" && <SessionToolsConfig key={sessionId} sessionId={sessionId} />}
             {activeTab === "herdr" && <HerdrSettings />}
             {activeTab === "models" && (
               <ModelsConfig embedded cwd={cwd} onClose={() => undefined} onChanged={onModelsChanged} />

@@ -154,7 +154,7 @@ for await (const line of createInterface({input:process.stdin})) {
         () => api<McpPanelSnapshot>("mcp.snapshot", { sessionId }),
         (panel) => panel.tools.some((tool) => tool.name === "mcp__crash__effect"),
       );
-      await api("mcp.grants", { sessionId, toolNames: ["codemode", "mcp__crash__effect"] });
+      await api("mcp.grants", { sessionId, toolNames: ["mcp__crash__effect"] });
       await api("agent.command", {
         sessionId,
         command: { type: "prompt", message: "CRASH_" + stage, clientRunId: 9900 + index },

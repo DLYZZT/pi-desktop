@@ -5,6 +5,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { CODING_FULL_TOOLS, PRESET_FULL } from "../shared/tool-presets.ts";
 
 const { DesktopSessionToolStore } = await importTestBundle("src/agent-host/session-tool-store", {
   packages: "external",
@@ -14,6 +15,68 @@ const { DesktopSessionToolStore } = await importTestBundle("src/agent-host/sessi
     sourcefile: "session-tool-store-test-entry.ts",
     loader: "ts",
   },
+});
+
+test("general orchestration preferences preserve child grants and survive reopen and no-tools transitions", async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-orchestration-store-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "session-tools.json"),
+    store = new DesktopSessionToolStore(file);
+  store.set("fixture", PRESET_FULL);
+  store.setExecution("fixture", ["protected_step"]);
+  store.setMcpExecution("fixture", ["mcp__fixture__echo"]);
+  store.setOrchestration("fixture", ["tool_search"]);
+  const reopened = new DesktopSessionToolStore(file);
+  assert.deepEqual(reopened.getOrchestration("fixture"), ["tool_search"]);
+  assert.equal(reopened.get("fixture").includes("codemode"), false);
+  assert.deepEqual(reopened.getExecution("fixture"), ["protected_step"]);
+  assert.deepEqual(reopened.getMcpExecution("fixture"), ["mcp__fixture__echo"]);
+  store.set("fixture", []);
+  assert.deepEqual(store.getOrchestration("fixture"), []);
+  store.set("fixture", PRESET_FULL);
+  assert.deepEqual(store.getOrchestration("fixture"), ["codemode", "tool_search"]);
+  assert.equal(store.getMcpExecution("fixture"), undefined);
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).version, 1);
+});
+
+test("legacy full access includes orchestration unless old MCP declarations explicitly selected otherwise", async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-orchestration-legacy-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "session-tools.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      sessions: {
+        full: { toolNames: CODING_FULL_TOOLS },
+        disabled: { toolNames: CODING_FULL_TOOLS, mcpDeclarationToolNames: [] },
+        chosen: { toolNames: ["read"], mcpDeclarationToolNames: ["codemode", "read_mcp_resource"] },
+      },
+    }),
+  );
+  const store = new DesktopSessionToolStore(file);
+  assert.deepEqual(store.get("full"), PRESET_FULL);
+  assert.deepEqual(store.getOrchestration("disabled"), []);
+  assert.deepEqual(store.getOrchestration("chosen"), ["codemode"]);
+  store.setOrchestration("chosen", ["tool_search"]);
+  assert.deepEqual(new DesktopSessionToolStore(file).getOrchestration("chosen"), ["tool_search"]);
+  assert.deepEqual(store.getMcpDeclaration("chosen"), ["codemode", "read_mcp_resource"]);
+});
+
+test("MCP resource declarations preserve automatic and explicit general orchestration across reopen", async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-resource-declarations-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "session-tools.json"),
+    store = new DesktopSessionToolStore(file);
+  store.set("automatic", ["read", "bash", "edit", "write"]);
+  store.setMcpDeclaration("automatic", ["read_mcp_resource"]);
+  assert.equal(store.getOrchestration("automatic"), undefined);
+  store.set("automatic", ["read", "bash", "edit", "write"]);
+  assert.equal(new DesktopSessionToolStore(file).getOrchestration("automatic"), undefined);
+  store.set("manual", PRESET_FULL);
+  store.setOrchestration("manual", ["tool_search"]);
+  store.setMcpDeclaration("manual", []);
+  assert.deepEqual(new DesktopSessionToolStore(file).getOrchestration("manual"), ["tool_search"]);
 });
 
 test("Desktop session tools persist outside Pi session JSONL with normalized defensive copies", async () => {
