@@ -1,6 +1,27 @@
 import { useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { SettingsTab } from "../components/SettingsConfig";
+import { subscribe } from "@/lib/api-client";
+
+export function useMcpSettingsCommand(sessionId: string | null): void {
+  useEffect(() => {
+    if (!sessionId) return;
+    let disposed = false;
+    let off: (() => void) | undefined;
+    void subscribe("mcp.settings", sessionId, () => {
+      if (!disposed) window.dispatchEvent(new CustomEvent("pi-desktop:open-mcp-settings", { detail: { sessionId } }));
+    })
+      .then((value) => {
+        if (disposed) value();
+        else off = value;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      off?.();
+    };
+  }, [sessionId]);
+}
 
 export function useMcpSettingsRequests(
   open: Dispatch<SetStateAction<boolean>>,

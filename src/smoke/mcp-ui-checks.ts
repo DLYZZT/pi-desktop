@@ -201,9 +201,48 @@ export async function runMcpUiChecks(window: BrowserWindow, call: Call): Promise
       });
       window.webContents.reload();
     });
-    const showHistoryCode =
-      'async (executionId) => {\n    const sidebar = Array.from(document.querySelectorAll("button[aria-label]")).find(button => button.getAttribute("aria-label")?.includes("MCP smoke session")); sidebar?.click();\n    const close = Array.from(document.querySelectorAll(\'[role="dialog"] button[aria-label]\')).find((button) => ["Close", "关闭"].includes(button.getAttribute("aria-label") ?? ""));\n    close?.click();\n    const deadline = Date.now() + 7000;\n    while (Date.now() < deadline) {\n        const history = document.querySelector("[data-execution-history]");\n        if (history)\n            history.open = true;\n        if (document.querySelector(\'[data-execution-id="\' + executionId + \'"]\'))\n            return true;\n        await new Promise((resolve) => setTimeout(resolve, 25));\n    }\n    throw new Error("MCP execution did not appear in reloaded history");\n}';
-    await window.webContents.executeJavaScript("(" + showHistoryCode + ")(" + JSON.stringify(child.executionId) + ")");
+    await window.webContents.executeJavaScript(`(async () => {
+      const deadline = Date.now() + 10000;
+      let selected = false;
+      while (Date.now() < deadline) {
+        const sidebar = Array.from(document.querySelectorAll('button[aria-label]')).find(button => button.getAttribute('aria-label')?.includes('MCP smoke session'));
+        if (sidebar && !selected) { sidebar.click(); selected = true; }
+        const details = Array.from(document.querySelectorAll('button[title]')).find(button => ['Expand process details', '展开过程详情', '展開過程詳情'].includes(button.title));
+        details?.click();
+        const text = document.body.innerText;
+        if (selected && text.includes('MCP_E2E_DONE') && text.includes('codemode') && text.includes('MCP_ORIGINAL')) {
+          if (document.querySelector('[data-execution-history], .mcp-session-menu'))
+            throw new Error('Duplicate MCP controls or execution history appeared below the conversation');
+          return true;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      throw new Error('MCP tool call and result did not appear in the reloaded conversation');
+    })()`);
+    const restored = await call<typeof history>("sessions.executions", { id: sessionId, includeContent: true });
+    const restoredChild = restored.records.find((record) => record.executionId === child.executionId);
+    if (restoredChild?.status !== "succeeded" || !JSON.stringify(restoredChild.result).includes("MCP_ORIGINAL"))
+      throw new Error("Removing the history panel affected persisted MCP execution content");
+    if (process.env.PI_DESKTOP_MCP_PRESENTATION_DIR) {
+      await window.webContents.executeJavaScript(
+        "Promise.all(Array.from(document.querySelectorAll('.chat-conversation-enter')).flatMap(element => element.getAnimations()).map(animation => animation.finished.catch(() => undefined)))",
+      );
+      const { writeFile } = await import("node:fs/promises");
+      const { default: path } = await import("node:path");
+      await writeFile(
+        path.join(process.env.PI_DESKTOP_MCP_PRESENTATION_DIR, "conversation.png"),
+        (await window.webContents.capturePage()).toPNG(),
+      );
+    }
+    await call("agent.command", { sessionId, command: { type: "prompt", message: "/mcp", clientRunId: 903 } });
+    await window.webContents.executeJavaScript(`(async () => {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        if (document.querySelector('[role="dialog"] [data-mcp-config] .mcp-tool-row')) return true;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      throw new Error('/mcp did not open the unified settings page with session tool permissions');
+    })()`);
   } finally {
     if (sessionId) await call("sessions.delete", { id: sessionId, force: true }).catch(() => undefined);
     const mcp = await call<{ revision: string; entries: Array<{ name: string }> }>("mcp.config.get", {

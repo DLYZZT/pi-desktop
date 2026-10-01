@@ -26,7 +26,6 @@ export const enUS: Record<string, string> = {
   mcpLoginFailed: "Sign-in failed",
 
   mcpApplySession: "Apply MCP to this session",
-  mcpOpenSettings: "Open MCP settings",
   mcpAdapterInactive: "The Desktop MCP adapter is inactive or no session is open.",
   mcpAdd: "Add server",
   mcpAddServer: "Add MCP server",
@@ -129,7 +128,6 @@ export const zhCN: Record<string, string> = {
   mcpLoginFailed: "登录失败",
 
   mcpApplySession: "将 MCP 应用到当前会话",
-  mcpOpenSettings: "打开 MCP 设置",
   mcpAdapterInactive: "当前未打开会话，或 Desktop MCP 适配器已停用。",
   mcpAdd: "新增服务器",
   mcpAddServer: "新增 MCP 服务器",
@@ -229,7 +227,6 @@ export const zhTW: Record<string, string> = {
   mcpLoginFailed: "登入失敗",
 
   mcpApplySession: "將 MCP 套用到目前會話",
-  mcpOpenSettings: "開啟 MCP 設定",
   mcpAdapterInactive: "目前未開啟會話，或 Desktop MCP 適配器已停用。",
   mcpAdd: "新增伺服器",
   mcpAddServer: "新增 MCP 伺服器",

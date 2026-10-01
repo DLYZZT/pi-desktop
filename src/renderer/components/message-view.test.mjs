@@ -46,7 +46,7 @@ test("a historical tool without a canonical result is not displayed as still run
       runningToolCallIds: new Set(),
     }),
   );
-  assert.match(html, /check execution history/);
+  assert.match(html, /Result was not recorded in the conversation/);
   assert.doesNotMatch(html, /stream-caret/);
 });
 

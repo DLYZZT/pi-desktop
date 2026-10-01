@@ -17,12 +17,12 @@ import {
   splitFinalAssistantBlocks,
 } from "@/lib/message-display";
 import { MessageView } from "./MessageView";
-import { ExecutionHistory } from "./ExecutionHistory";
 import { ProcessDetailsGroup } from "./ProcessDetailsGroup";
 import { SessionProfiler } from "./SessionProfiler";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs, type ChatMinimapMessage } from "./ChatMinimap";
 import { useAgentSession, type NoticeItem } from "@/hooks/useAgentSession";
+import { useMcpSettingsCommand } from "@/hooks/useMcpSettingsRequests";
 import { useAudio } from "@/hooks/useAudio";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -199,9 +199,7 @@ export function ChatWindow({
   }, [onAgentEnd]);
 
   const {
-    sessionId: executionSessionId,
-    activeLeafId: executionLeafId,
-    historyRevision: executionRevision,
+    sessionId: currentSessionId,
     loading,
     error,
     messages,
@@ -275,6 +273,7 @@ export function ChatWindow({
     presentationStore,
     onSessionStatsPanelOpen,
   });
+  useMcpSettingsCommand(currentSessionId);
   const runningToolCallIds = useMemo(
     () => new Set(agentPhase?.kind === "running_tools" ? agentPhase.tools.map((tool) => tool.id) : []),
     [agentPhase],
@@ -829,11 +828,6 @@ export function ChatWindow({
                     </div>
                   )}
 
-                  <ExecutionHistory
-                    sessionId={executionSessionId}
-                    leafId={agentRunning ? undefined : executionLeafId}
-                    revision={executionRevision ?? undefined}
-                  />
                   <div ref={liveContentEndRef} />
 
                   {agentRunning && <div data-run-spacer style={{ height: chatViewportHeight }} />}

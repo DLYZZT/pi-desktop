@@ -1258,7 +1258,7 @@ function ToolCallBlock({
       )}
       {!result && running === false && (
         <p style={{ padding: "8px 12px", color: "var(--text-dim)", margin: 0 }}>
-          {t("executionResultMissing", "Result was not recorded in the conversation; check execution history.")}
+          {t("executionResultMissing", "Result was not recorded in the conversation.")}
         </p>
       )}
 
