@@ -8,7 +8,6 @@ import { sendAgentCommand } from "@/lib/agent-client";
 import { agentState, newAgent } from "@/lib/api-client";
 import { getToolNamesForPreset, getPresetFromTools } from "@/lib/tool-presets";
 import type { ToolPreset } from "@shared/tool-presets";
-import { useSessionToolChanges } from "./useSessionToolChanges";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { useSessionEvents } from "./useSessionEvents";
 import { requestAutoSessionTitle, shouldAutoTitleMessage } from "../lib/auto-session-title";
@@ -410,8 +409,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     },
     [isActive, isNew, newSessionCwd, onSessionCreated],
   );
-
-  useSessionToolChanges(sessionIdRef, loadTools);
 
   const ensureNewSession = useCallback(async () => {
     if (sessionIdRef.current) return sessionIdRef.current;
