@@ -127,6 +127,115 @@ function renderedText(node) {
   return node.children.map((child) => (typeof child === "string" ? child : renderedText(child))).join("");
 }
 
+test("slash arguments preserve caret keys and provider fuzzy results", async () => {
+  const sent = [];
+  const node = { value: "", style: {}, focus() {}, scrollHeight: 24, setSelectionRange() {} };
+  let renderer;
+  await act(async () => {
+    renderer = create(
+      createElement(ChatInput, {
+        cwd: "/workspace",
+        isStreaming: false,
+        onAbort() {},
+        onSend(text) {
+          sent.push(text);
+        },
+        onLoadSlashCommands: async (input) =>
+          input === "/bro cfg" ? [{ name: "bro config", description: "Settings", source: "extension" }] : [],
+      }),
+      { createNodeMock: (element) => (element.type === "textarea" ? node : null) },
+    );
+  });
+  async function type(value) {
+    node.value = value;
+    node.selectionStart = node.selectionEnd = value.length;
+    await act(async () => {
+      renderer.root.findByType("textarea").props.onChange({ target: node });
+    });
+  }
+  await type("/compact focus on tests");
+  let prevented = false;
+  await act(async () =>
+    renderer.root.findByType("textarea").props.onKeyDown({
+      ...keyboardEvent("ArrowLeft"),
+      preventDefault() {
+        prevented = true;
+      },
+    }),
+  );
+  assert.equal(prevented, false, "empty menu must not capture caret");
+  await type("/bro cfg");
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 150)));
+  assert.ok(renderedText(renderer.root).includes("/bro config"), "provider fuzzy match remains visible");
+  prevented = false;
+  await act(async () =>
+    renderer.root.findByType("textarea").props.onKeyDown({
+      ...keyboardEvent("ArrowDown"),
+      nativeEvent: { isComposing: true },
+      preventDefault() {
+        prevented = true;
+      },
+    }),
+  );
+  assert.equal(prevented, false, "IME owns candidate navigation");
+  await type("/bro config");
+  await act(async () => renderer.root.findByType("textarea").props.onKeyDown(keyboardEvent("Enter")));
+  assert.deepEqual(sent, ["/bro config"], "stale completion must not consume Enter");
+  await act(async () => renderer.unmount());
+});
+
+test("strict insertion checks the live draft atomically without focusing or submitting", async () => {
+  const ref = createRef();
+  let focused = 0;
+  const sent = [];
+  const node = {
+    value: "",
+    style: {},
+    focus() {
+      focused++;
+    },
+    scrollHeight: 24,
+    setSelectionRange() {},
+  };
+  let renderer;
+  await act(async () => {
+    renderer = create(
+      createElement(ChatInput, {
+        ref,
+        cwd: "/workspace",
+        isStreaming: false,
+        onAbort() {},
+        onSend(text) {
+          sent.push(text);
+        },
+      }),
+      { createNodeMock: (element) => (element.type === "textarea" ? node : null) },
+    );
+  });
+  focused = 0;
+  node.value = "my draft";
+  assert.equal(ref.current.insertIfEmpty("answer", true), false);
+  assert.equal(node.value, "my draft");
+  node.value = "";
+  await act(async () => {
+    assert.equal(ref.current.insertIfEmpty("answer", true), true);
+    assert.equal(ref.current.insertIfEmpty("duplicate", true), false);
+  });
+  assert.equal(node.value, "answer");
+  assert.equal(focused, 0);
+  assert.deepEqual(sent, []);
+  node.value = "";
+  await act(async () => renderer.root.findByType("textarea").props.onCompositionStart());
+  assert.equal(ref.current.insertIfEmpty("answer", true), false);
+  await act(async () => renderer.root.findByType("textarea").props.onCompositionEnd({ currentTarget: node }));
+  await act(async () => {
+    ref.current.addFiles([{ name: "draft.txt", testPath: "/tmp/draft.txt", type: "text/plain" }]);
+  });
+  node.value = "";
+  assert.equal(ref.current.insertIfEmpty("answer", true), false, "attachments count as a draft");
+  await act(async () => renderer.unmount());
+});
+
 function deferred() {
   let resolve, reject;
   const promise = new Promise((nextResolve, nextReject) => {

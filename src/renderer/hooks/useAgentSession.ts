@@ -129,7 +129,7 @@ function userMessageKey(message: Partial<AgentMessage>): string {
 
 export interface ChatInputHandle {
   insertText: (text: string) => void;
-  insertIfEmpty: (content: string) => void;
+  insertIfEmpty: (content: string, strict?: boolean) => boolean;
   prependText: (text: string) => void;
   addFiles: (files: File[]) => void;
 }
@@ -465,6 +465,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (isCurrent()) setSlashCommandsLoading(false);
     }
   }, [captureCommandView, commandsRequestGate, ensureNewSession]);
+
+  // With input ("/command args"), fetch argument completions without replacing the shared
+  // command list or its loading state; without input, load the command list as before.
+  const loadCommandSuggestions = useCallback(
+    async (input?: string) => {
+      if (input === undefined) return loadSlashCommands();
+      const ownsView = captureCommandView();
+      const sid = sessionIdRef.current;
+      if (!sid) return [] as SlashCommandInfo[];
+      const data = await sendAgentCommand(sid, { type: "get_commands", input });
+      return ownsView() ? (data?.commands ?? []) : [];
+    },
+    [captureCommandView, loadSlashCommands],
+  );
 
   const finishPromptWithoutStream = useCallback(
     async (sid: string | null = sessionIdRef.current, runId?: number) => {
@@ -1387,7 +1401,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleToolPresetChange,
     handleThinkingLevelChange,
     loadTools,
-    loadSlashCommands,
+    loadSlashCommands: loadCommandSuggestions,
     loadOlder,
     loadDeferredContent,
     setActiveLeafId,

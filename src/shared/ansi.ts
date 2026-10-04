@@ -1,7 +1,8 @@
 import type { CSSProperties } from "react";
 
-const ANSI_ESCAPE_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
-const ANSI_ESCAPE_AT_START_RE = /^\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/;
+const ANSI_ESCAPE_RE = /\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])/g;
+const ANSI_ESCAPE_AT_START_RE = /^\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])/;
+const APC_RE = /\x1b_[^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const ANSI_SGR_RE = /\x1B\[([0-9;]*)m/g;
 
 const ANSI_8_COLORS = ["#1f2937", "#dc2626", "#16a34a", "#d97706", "#2563eb", "#9333ea", "#0891b2", "#6b7280"];
@@ -14,7 +15,7 @@ export interface AnsiSegment {
 }
 
 export function stripAnsi(text: string): string {
-  return text.replace(ANSI_ESCAPE_RE, "");
+  return text.replace(APC_RE, "").replace(ANSI_ESCAPE_RE, "");
 }
 
 function visibleCharPositions(text: string): Array<{ start: number; end: number; char: string }> {
@@ -57,6 +58,8 @@ function lastNonSpaceVisibleCharIndex(text: string): number {
 }
 
 function trimEndVisibleSpaces(text: string): string {
+  // A focused TUI input draws its caret as an inverted trailing space.
+  if (text.includes("\x1b[7m")) return text;
   let next = text;
   while (true) {
     const positions = visibleCharPositions(next);
@@ -74,7 +77,7 @@ export function normalizeCustomPanelLines(lines: string[]): string[] {
     const plain = stripAnsi(rawLine).trimEnd();
     if (horizontalFrameLine.test(plain)) continue;
 
-    let line = rawLine;
+    let line = rawLine.replace(APC_RE, "");
     const first = firstVisibleChar(line);
     if (first === "│" || first === "┃") {
       line = removeVisibleCharAt(line, 0);
@@ -113,12 +116,17 @@ export function ansi256Color(index: number): string | undefined {
   return undefined;
 }
 
-function applyAnsiCodes(style: CSSProperties, codes: number[]): CSSProperties {
-  const next: CSSProperties = { ...style };
+type AnsiStyle = CSSProperties & { inverse?: boolean };
+function applyAnsiCodes(style: AnsiStyle, codes: number[]): AnsiStyle {
+  const next: AnsiStyle = { ...style };
   for (let i = 0; i < codes.length; i++) {
     const code = codes[i];
     if (code === 0) {
       for (const key of Object.keys(next) as Array<keyof CSSProperties>) delete next[key];
+    } else if (code === 7) {
+      next.inverse = true;
+    } else if (code === 27) {
+      delete next.inverse;
     } else if (code === 1) {
       next.fontWeight = 700;
     } else if (code === 2) {
@@ -166,15 +174,22 @@ function applyAnsiCodes(style: CSSProperties, codes: number[]): CSSProperties {
 }
 
 export function parseAnsiLine(line: string): AnsiSegment[] {
+  line = line.replace(APC_RE, "");
   const segments: AnsiSegment[] = [];
-  let style: CSSProperties = {};
+  let style: AnsiStyle = {};
+  const displayStyle = () => {
+    const { inverse, ...css } = style;
+    return inverse
+      ? { ...css, color: css.backgroundColor ?? "var(--bg-panel)", backgroundColor: css.color ?? "var(--text)" }
+      : css;
+  };
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   ANSI_SGR_RE.lastIndex = 0;
 
   while ((match = ANSI_SGR_RE.exec(line)) !== null) {
     if (match.index > lastIndex) {
-      segments.push({ text: line.slice(lastIndex, match.index), style });
+      segments.push({ text: stripAnsi(line.slice(lastIndex, match.index)), style: displayStyle() });
     }
     const codes = match[1] ? match[1].split(";").map((part) => Number(part || "0")) : [0];
     style = applyAnsiCodes(style, codes);
@@ -182,7 +197,7 @@ export function parseAnsiLine(line: string): AnsiSegment[] {
   }
 
   if (lastIndex < line.length) {
-    segments.push({ text: line.slice(lastIndex), style });
+    segments.push({ text: stripAnsi(line.slice(lastIndex)), style: displayStyle() });
   }
 
   return segments;
