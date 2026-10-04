@@ -438,35 +438,46 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [isNew, newSessionCwd, newSessionModel, newSessionDefaultModel, toolPreset, thinkingLevel]);
 
-  const loadSlashCommands = useCallback(
+  const loadSlashCommands = useCallback(async () => {
+    const ownsView = captureCommandView(),
+      request = commandsRequestGate.begin();
+    const isCurrent = () => ownsView() && commandsRequestGate.isCurrent(request);
+    if (!isCurrent()) return [] as SlashCommandInfo[];
+    const sid = sessionIdRef.current ?? (await ensureNewSession());
+    if (!isCurrent()) return [] as SlashCommandInfo[];
+    if (!sid) {
+      setSlashCommands([]);
+      return [] as SlashCommandInfo[];
+    }
+    setSlashCommandsLoading(true);
+    try {
+      const data = await sendAgentCommand(sid, { type: "get_commands" });
+      if (!isCurrent()) return [] as SlashCommandInfo[];
+      const commands = data?.commands ?? [];
+      setSlashCommands(commands);
+      return commands;
+    } catch (e) {
+      if (!isCurrent()) return [] as SlashCommandInfo[];
+      console.error("Failed to load slash commands:", e);
+      setSlashCommands([]);
+      return [] as SlashCommandInfo[];
+    } finally {
+      if (isCurrent()) setSlashCommandsLoading(false);
+    }
+  }, [captureCommandView, commandsRequestGate, ensureNewSession]);
+
+  // With input ("/command args"), fetch argument completions without replacing the shared
+  // command list or its loading state; without input, load the command list as before.
+  const loadCommandSuggestions = useCallback(
     async (input?: string) => {
-      const ownsView = captureCommandView(),
-        request = commandsRequestGate.begin();
-      const isCurrent = () => ownsView() && commandsRequestGate.isCurrent(request);
-      if (!isCurrent()) return [] as SlashCommandInfo[];
-      const sid = sessionIdRef.current ?? (await ensureNewSession());
-      if (!isCurrent()) return [] as SlashCommandInfo[];
-      if (!sid) {
-        setSlashCommands([]);
-        return [] as SlashCommandInfo[];
-      }
-      setSlashCommandsLoading(true);
-      try {
-        const data = await sendAgentCommand(sid, { type: "get_commands", input });
-        if (!isCurrent()) return [] as SlashCommandInfo[];
-        const commands = data?.commands ?? [];
-        if (input === undefined) setSlashCommands(commands);
-        return commands;
-      } catch (e) {
-        if (!isCurrent()) return [] as SlashCommandInfo[];
-        console.error("Failed to load slash commands:", e);
-        if (input === undefined) setSlashCommands([]);
-        return [] as SlashCommandInfo[];
-      } finally {
-        if (isCurrent()) setSlashCommandsLoading(false);
-      }
+      if (input === undefined) return loadSlashCommands();
+      const ownsView = captureCommandView();
+      const sid = sessionIdRef.current;
+      if (!sid) return [] as SlashCommandInfo[];
+      const data = await sendAgentCommand(sid, { type: "get_commands", input });
+      return ownsView() ? (data?.commands ?? []) : [];
     },
-    [captureCommandView, commandsRequestGate, ensureNewSession],
+    [captureCommandView, loadSlashCommands],
   );
 
   const finishPromptWithoutStream = useCallback(
@@ -1390,7 +1401,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleToolPresetChange,
     handleThinkingLevelChange,
     loadTools,
-    loadSlashCommands,
+    loadSlashCommands: loadCommandSuggestions,
     loadOlder,
     loadDeferredContent,
     setActiveLeafId,

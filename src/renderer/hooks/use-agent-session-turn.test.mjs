@@ -610,6 +610,25 @@ test("an older command-directory failure cannot clear the newer loading owner", 
   assert.equal(fixture.current.slashCommandsLoading, false);
 });
 
+test("argument completions do not replace the shared command directory", async (t) => {
+  const fixture = await mountRuntime(t, runtimeDetail({ running: false }));
+  const directory = [{ name: "bro", source: "extension" }];
+  await act(async () => {
+    testApi.queueCommand("get_commands", { commands: directory });
+    await fixture.current.loadSlashCommands();
+  });
+  const completions = [{ name: "bro config", source: "extension" }];
+  let result;
+  await act(async () => {
+    testApi.queueCommand("get_commands", { commands: completions });
+    result = await fixture.current.loadSlashCommands("/bro c");
+  });
+  assert.deepEqual(result, completions);
+  assert.deepEqual(testApi.commands.at(-1).command, { type: "get_commands", input: "/bro c" });
+  assert.deepEqual(fixture.current.slashCommands, directory);
+  assert.equal(fixture.current.slashCommandsLoading, false);
+});
+
 test("an older model-selection response cannot overwrite the newer displayed choice", async (t) => {
   const fixture = await mountRuntime(t, runtimeDetail({ running: false }));
   const old = createDeferred(),
