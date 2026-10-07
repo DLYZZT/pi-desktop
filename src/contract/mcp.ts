@@ -16,8 +16,13 @@ export interface McpServerConfig {
     callbackPort?: number;
     callbackUrl?: string;
     scope?: string;
+    clientName?: string;
+    clientRegistration?: "dcr" | "cimd";
+    authServerMetadataUrl?: string;
     [key: string]: unknown;
   };
+  auth?: { provider: string };
+  description?: string;
   enabled?: boolean;
   timeout?: number;
   exposure?: McpExposure;

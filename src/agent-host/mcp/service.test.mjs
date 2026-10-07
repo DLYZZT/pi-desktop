@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -129,6 +129,71 @@ async function fixture(t, options = {}) {
     },
   };
 }
+
+test("sign-out reconnects only the named account even when another server uses the same URL", async (t) => {
+  const url = "http://127.0.0.1:12345/mcp",
+    f = await fixture(t, { config: { url, exposure: "direct" } });
+  const snapshot = await f.service.config.snapshot("global");
+  await f.service.config.upsert("global", undefined, "another", { url, exposure: "direct" }, snapshot.revision);
+  await f.service.changed("global");
+  await waitFor(
+    () =>
+      f.service.snapshot("session").length === 2 &&
+      f.service.snapshot("session").every((entry) => entry.state === "connected"),
+  );
+  const original = f.service.getConnection("session", "fixture"),
+    other = f.service.getConnection("session", "another");
+  await f.service.credentials
+    .forServer("fixture", url)
+    .save({ serverUrl: url, tokens: { access_token: "FIRST", token_type: "Bearer" } });
+  await f.service.credentials
+    .forServer("another", url)
+    .save({ serverUrl: url, tokens: { access_token: "SECOND", token_type: "Bearer" } });
+  await f.service.logout("fixture", url);
+  await waitFor(() => f.service.getConnection("session", "fixture").snapshot.state === "connected");
+  assert.notEqual(f.service.getConnection("session", "fixture"), original);
+  assert.equal(f.service.getConnection("session", "another"), other);
+  assert.equal(await f.service.credentials.forServer("fixture", url).load(), undefined);
+  assert.equal((await f.service.credentials.forServer("another", url).load()).tokens.access_token, "SECOND");
+});
+
+test("OAuth sign-out leaves a header-authenticated project connection at the same name and URL running", async (t) => {
+  const url = "http://127.0.0.1:12345/mcp",
+    f = await fixture(t, { config: { url, exposure: "direct" } });
+  const cwd = path.join(f.root, "project");
+  mkdirSync(cwd);
+  await f.service.config.upsert(
+    "project",
+    cwd,
+    "fixture",
+    { url, headers: { aUtHoRiZaTiOn: "PRIVATE_FIXTURE" }, exposure: "direct" },
+    "missing",
+  );
+  const definitions = new Map(),
+    active = new Set();
+  await f.service.attach({
+    ...f.hooks,
+    ctx: { ...f.hooks.ctx, cwd, sessionManager: { getSessionId: () => "project-session" } },
+    pi: {
+      ...f.hooks.pi,
+      getAllTools: () => [...definitions.values()],
+      getActiveTools: () => [...active],
+      setActiveTools: (names) => {
+        active.clear();
+        names.forEach((name) => active.add(name));
+      },
+      registerTool: (tool) => {
+        definitions.set(tool.name, tool);
+        if (tool.defaultActive) active.add(tool.name);
+      },
+    },
+  });
+  await waitFor(() => f.service.snapshot("project-session")[0]?.state === "connected");
+  const projectConnection = f.service.getConnection("project-session", "fixture");
+  await f.service.logout("fixture", url);
+  assert.equal(f.service.getConnection("project-session", "fixture"), projectConnection);
+  assert.equal(projectConnection.snapshot.state, "connected");
+});
 
 test("Desktop MCP registrations expose real state and keep stable names across queued reconnects", async (t) => {
   const f = await fixture(t),

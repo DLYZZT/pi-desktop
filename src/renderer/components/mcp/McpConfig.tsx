@@ -1,3 +1,4 @@
+import { mcpAuthenticationMode } from "@shared/mcp-auth-mode";
 import { mcpStateLabel, mcpLoginLabel } from "@/lib/mcp-state-label";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type {
@@ -363,6 +364,21 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
                     )}
                     {live && !ownLive && <span> · {t("mcpOverridden", "Overridden by another scope")}</span>}
                   </div>
+                  {mcpAuthenticationMode(entry.config) === "header" && (
+                    <p>
+                      {t(
+                        "mcpHeaderAuthHelp",
+                        "Authentication uses the configured Authorization header. Edit the server to change it.",
+                      )}
+                    </p>
+                  )}
+                  {entry.config.auth && (
+                    <p data-mcp-provider-auth>
+                      <strong>{entry.config.auth.provider}</strong>
+                      {" — "}
+                      {t("mcpProviderAuthHelp", "Sign in through Models settings, then reconnect this server.")}
+                    </p>
+                  )}
                   <div className="mcp-actions">
                     <button
                       disabled={busy}
@@ -389,7 +405,7 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
                         {t("mcpReconnect", "Reconnect session")}
                       </button>
                     )}
-                    {entry.config.url && (
+                    {mcpAuthenticationMode(entry.config) === "oauth" && (
                       <button disabled={busy} onClick={() => void startLogin(entry.name)}>
                         {t("mcpSignIn", "Sign in")}
                       </button>
@@ -431,13 +447,13 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
                         >
                           {t("mcpRemove", "Remove")}
                         </button>
-                        {entry.config.url && (
+                        {mcpAuthenticationMode(entry.config) === "oauth" && (
                           <>
                             <button
                               disabled={busy}
                               onClick={() => void run(() => invoke("mcp.oauth.logout", target(entry.name)))}
                             >
-                              {t("mcpSignOut", "Sign out for this URL")}
+                              {t("mcpSignOut", "Sign out of this server")}
                             </button>
                           </>
                         )}

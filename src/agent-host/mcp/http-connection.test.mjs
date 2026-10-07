@@ -62,7 +62,7 @@ test("real Streamable HTTP MCP initializes, reads resources and shares one rotat
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${server.address().port}`;
   const url = base + "/mcp";
-  await credentials.forServer(url).save({
+  await credentials.forServer("fixture", url).save({
     serverUrl: url,
     clientInformation: { client_id: "fixture", redirect_uris: ["http://127.0.0.1/callback"] },
     tokens: { access_token: "OLD_TOKEN", refresh_token: "OLD_REFRESH", token_type: "Bearer" },
@@ -106,5 +106,5 @@ test("real Streamable HTTP MCP initializes, reads resources and shares one rotat
   assert.equal(results[0].content[0].text, "HTTP_ORIGINAL_one");
   assert.equal((await first.client.listResourcesPage()).resources[0].uri, "fixture://ordinary");
   assert.equal((await second.client.readResource("fixture://ordinary")).contents[0].text, "RAW_RESOURCE_原始");
-  assert.equal((await credentials.forServer(url).load()).tokens.refresh_token, "ROTATED");
+  assert.equal((await credentials.forServer("fixture", url).load()).tokens.refresh_token, "ROTATED");
 });

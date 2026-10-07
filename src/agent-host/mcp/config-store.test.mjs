@@ -4,9 +4,72 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { importTestBundle } from "#test-bundle";
-const { McpConfigStore, SAVED_MCP_SECRET, mcpToolExposure } = await importTestBundle("mcp-config-store", {
-  packages: "external",
-  entryPoints: [path.join(import.meta.dirname, "config-store.ts")],
+const { McpConfigStore, SAVED_MCP_SECRET, mcpToolExposure, validateMcpConfig } = await importTestBundle(
+  "mcp-config-store",
+  {
+    packages: "external",
+    entryPoints: [path.join(import.meta.dirname, "config-store.ts")],
+  },
+);
+
+test("MCP OAuth and provider authentication reject unsafe or contradictory configuration", () => {
+  const url = "https://mcp.example.invalid";
+  for (const oauth of [
+    { clientName: " " },
+    { authServerMetadataUrl: "http://external.invalid/metadata" },
+    { authServerMetadataUrl: "https://user:secret@example.invalid/metadata" },
+    { authServerMetadataUrl: 42 },
+    { clientRegistration: "unknown" },
+    { clientRegistration: "cimd", clientId: "conflict" },
+    { clientRegistration: "cimd", clientName: "conflict" },
+    { clientRegistration: "cimd", callbackUrl: "http://localhost/other" },
+    { clientRegistration: "cimd", callbackUrl: "http://[::1]/callback" },
+  ])
+    assert.throws(
+      () => validateMcpConfig("fixture", { url, oauth }),
+      (error) => error.code === "BAD_REQUEST",
+    );
+  assert.throws(
+    () => validateMcpConfig("fixture", { url, auth: { provider: "radius" } }, "project"),
+    /only allowed in global/,
+  );
+  assert.throws(
+    () => validateMcpConfig("fixture", { url: "http://remote.invalid", auth: { provider: "radius" } }, "global"),
+    /HTTPS/,
+  );
+  assert.doesNotThrow(() =>
+    validateMcpConfig(
+      "fixture",
+      { url, oauth: { clientRegistration: "cimd", authServerMetadataUrl: "https://auth.example.invalid/metadata" } },
+      "global",
+    ),
+  );
+  assert.doesNotThrow(() =>
+    validateMcpConfig("fixture", { url: "http://127.0.0.1:1234", auth: { provider: "radius" } }, "extension"),
+  );
+});
+
+test("normalization collisions cannot be written or used to share one credential identity", async (t) => {
+  const { store, project } = fixture(t);
+  const initial = await store.upsert(
+    "global",
+    undefined,
+    "my-server",
+    { url: "https://mcp.example.invalid" },
+    "missing",
+  );
+  await assert.rejects(
+    store.upsert("global", undefined, "my_server", { url: "https://mcp.example.invalid" }, initial.revision),
+    /names conflict/,
+  );
+  assert.equal((await store.snapshot("global")).revision, initial.revision);
+  await store.upsert("project", project, "my_server", { url: "https://mcp.example.invalid" }, "missing");
+  const loaded = await store.effective(project, true);
+  assert.deepEqual(
+    loaded.servers.map((entry) => entry.name),
+    ["my-server"],
+  );
+  assert.match(loaded.errors[0], /names conflict/);
 });
 function fixture(t) {
   const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-config-")),

@@ -15,6 +15,9 @@ import { readPiRuntimeVersion } from "../runtime-version";
 import { safeChannelError } from "../channels/redaction";
 import { ContainedMcpStdioTransport } from "./stdio-transport";
 import { McpOAuthStore } from "./oauth-store";
+import { validateMcpConfig } from "./config-store";
+import { mcpAuthConfiguration } from "./oauth-identity";
+import { mcpAuthenticationMode } from "../../shared/mcp-auth-mode";
 
 export async function resolveMcpValue(
   value: string,
@@ -58,6 +61,7 @@ export interface McpConnectionOptions {
   credentials?: McpOAuthStore;
   runtime?: ToolchainRuntime;
   fetch?: McpFetch;
+  providerToken?: (provider: string) => Promise<string | undefined>;
   createTransport?: (config: McpServerConfig, cwd: string) => McpTransport | Promise<McpTransport>;
   changed: (connection: McpConnection) => void;
 }
@@ -75,6 +79,7 @@ export class McpConnection {
   private auth?: ReturnType<McpOAuthStore["authProvider"]>;
   private readonly controller = new AbortController();
   constructor(private readonly options: McpConnectionOptions) {
+    validateMcpConfig(options.snapshot.name, options.config, options.snapshot.scope);
     this.config = structuredClone(options.config);
     this.snapshot = { ...options.snapshot };
     this.client = new McpClient({
@@ -114,12 +119,56 @@ export class McpConnection {
             this.options.trusted,
             this.options.runtime,
           );
-        if (!Object.keys(headers).some((key) => key.toLowerCase() === "authorization"))
+        if (this.config.auth) {
+          const provider = this.config.auth.provider;
+          this.auth = {
+            token: async () => {
+              const token = await this.options.providerToken?.(provider);
+              if (!token) {
+                const error = new McpOAuthAuthorizationRequiredError();
+                error.message = "Sign in to " + provider + " through model settings";
+                throw error;
+              }
+              return token;
+            },
+            settled: async () => {},
+          };
+        } else if (mcpAuthenticationMode(this.config) === "oauth") {
           this.auth = (this.options.credentials ?? new McpOAuthStore()).authProvider(
+            this.snapshot.name,
             this.config.url,
             oauth,
             this.options.fetch,
+            mcpAuthConfiguration(this.config),
+            () => !this.closed && !this.snapshot.pendingApply,
+            this.controller.signal,
           );
+        }
+        const auth = this.auth;
+        if (auth) {
+          this.auth = {
+            ...auth,
+            token: async () => {
+              try {
+                return await auth.token();
+              } catch (error) {
+                this.authenticationRequired(error);
+                throw error;
+              }
+            },
+            onUnauthorized: async (context) => {
+              try {
+                if (auth.onUnauthorized) return await auth.onUnauthorized(context);
+                const token = await auth.token();
+                if (token && token !== context.token) return;
+                throw new McpOAuthAuthorizationRequiredError();
+              } catch (error) {
+                this.authenticationRequired(error);
+                throw error;
+              }
+            },
+          };
+        }
         this.transport = new StreamableHttpTransport({
           url: this.config.url,
           headers,
@@ -156,6 +205,10 @@ export class McpConnection {
       await this.transport?.close().catch(() => undefined);
       if (!this.closed) throw error;
     }
+  }
+  authenticationRequired(error: unknown): void {
+    if (!this.closed && (error instanceof McpOAuthAuthorizationRequiredError || error instanceof McpAuthRequiredError))
+      this.state("needs-auth", error);
   }
   async refreshTools(): Promise<void> {
     if (this.closed) return;

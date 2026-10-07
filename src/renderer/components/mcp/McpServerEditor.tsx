@@ -121,6 +121,7 @@ export function McpServerEditor({
                     delete next.url;
                     delete next.headers;
                     delete next.oauth;
+                    delete next.auth;
                     next.command = "";
                     next.type = "stdio";
                   }

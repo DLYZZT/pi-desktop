@@ -4,6 +4,7 @@ import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { McpConfigurationSnapshot, McpExposure, McpScope, McpServerConfig } from "../../contract/mcp";
 import { RpcError } from "../../contract/types";
+import { mcpNamespace } from "./oauth-identity";
 import { parseJsonRecord, withLockedJsonFile, type JsonRecord } from "../../shared/node/locked-json-file";
 
 export const SAVED_MCP_SECRET = "<pi-desktop:saved-secret>";
@@ -13,7 +14,22 @@ const object = (value: unknown): value is JsonRecord =>
 const revision = (value: JsonRecord | undefined) =>
   value === undefined ? "missing" : "sha256:" + createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-export function validateMcpConfig(name: unknown, value: unknown): asserts value is McpServerConfig {
+export function assertMcpServerNames(names: readonly string[]): void {
+  const used = new Map<string, string>();
+  for (const name of names) {
+    const namespace = mcpNamespace(name),
+      previous = used.get(namespace);
+    if (previous !== undefined && previous !== name)
+      throw new RpcError({ code: "BAD_REQUEST", message: "MCP server names conflict: " + previous + " and " + name });
+    used.set(namespace, name);
+  }
+}
+
+export function validateMcpConfig(
+  name: unknown,
+  value: unknown,
+  scope?: McpScope | "extension",
+): asserts value is McpServerConfig {
   const fail = (message: string): never => {
     throw new RpcError({ code: "BAD_REQUEST", message });
   };
@@ -76,11 +92,43 @@ export function validateMcpConfig(name: unknown, value: unknown): asserts value 
     (!object(config.toolExposure) || Object.values(config.toolExposure).some((v) => !EXPOSURES.has(String(v))))
   )
     fail("Invalid MCP tool exposure override");
+  if (config.description !== undefined && typeof config.description !== "string") fail("Invalid MCP description");
+  if (config.auth !== undefined) {
+    if (!http || !object(config.auth) || typeof config.auth.provider !== "string" || !config.auth.provider.trim())
+      fail("MCP auth.provider requires an HTTP server and a provider name");
+    if (scope === "project") fail("MCP auth.provider is only allowed in global configuration or extensions");
+    const url = new URL(config.url as string);
+    if (url.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
+      fail("MCP provider authentication requires HTTPS or a loopback URL");
+  }
   if (config.oauth !== undefined) {
     if (!http || !object(config.oauth)) fail("OAuth requires HTTP MCP configuration");
     const oauth = config.oauth as JsonRecord;
-    for (const key of ["clientId", "clientSecret", "callbackUrl", "scope"])
+    for (const key of ["clientId", "clientSecret", "callbackUrl", "scope", "clientName", "authServerMetadataUrl"])
       if (oauth[key] !== undefined && typeof oauth[key] !== "string") fail(`Invalid MCP OAuth ${key}`);
+    if (oauth.clientName !== undefined && !(oauth.clientName as string).trim())
+      fail("MCP OAuth clientName cannot be empty");
+    if (oauth.authServerMetadataUrl !== undefined) {
+      try {
+        const url = new URL(oauth.authServerMetadataUrl as string);
+        if (
+          url.username ||
+          url.password ||
+          url.hash ||
+          !(
+            url.protocol === "https:" ||
+            (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
+          )
+        )
+          fail("MCP OAuth metadata URL requires HTTPS or a loopback HTTP URL");
+      } catch {
+        fail("Invalid MCP OAuth metadata URL");
+      }
+    }
+    if (oauth.clientRegistration !== undefined && !["dcr", "cimd"].includes(String(oauth.clientRegistration)))
+      fail("MCP OAuth clientRegistration must be dcr or cimd");
+    if (oauth.clientRegistration === "cimd" && (oauth.clientId !== undefined || oauth.clientName !== undefined))
+      fail("MCP CIMD cannot be combined with clientId or clientName");
     if (
       oauth.callbackPort !== undefined &&
       (!Number.isSafeInteger(oauth.callbackPort) ||
@@ -100,6 +148,8 @@ export function validateMcpConfig(name: unknown, value: unknown): asserts value 
           url.search
         )
           fail("MCP OAuth callback must be an HTTP loopback URL");
+        if (oauth.clientRegistration === "cimd" && (url.hostname === "[::1]" || url.pathname !== "/callback"))
+          fail("MCP CIMD requires localhost or 127.0.0.1 with callback path /callback");
       } catch {
         fail("Invalid MCP OAuth callback URL");
       }
@@ -175,6 +225,7 @@ export class McpConfigStore {
       if (Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error("MCP configuration exceeds the read budget");
       const doc = parseJsonRecord(text);
       if (doc.mcpServers !== undefined && !object(doc.mcpServers)) throw new Error("mcpServers must be an object");
+      assertMcpServerNames(Object.keys((doc.mcpServers ?? {}) as JsonRecord));
       if (doc.autoEnableCodemode !== undefined && typeof doc.autoEnableCodemode !== "boolean")
         throw new Error("Invalid autoEnableCodemode flag");
       return doc;
@@ -188,7 +239,7 @@ export class McpConfigStore {
       const doc = await this.read(scope, cwd),
         entries: McpConfigurationSnapshot["entries"] = [];
       for (const [name, config] of Object.entries((doc?.mcpServers ?? {}) as JsonRecord)) {
-        validateMcpConfig(name, config);
+        validateMcpConfig(name, config, scope);
         entries.push({ name, scope, source: this.filename(scope, cwd), ...projectConfig(config) });
       }
       return {
@@ -227,7 +278,8 @@ export class McpConfigStore {
         const doc = await this.read(scope, cwd);
         if (typeof doc?.autoEnableCodemode === "boolean") autoEnableCodemode = doc.autoEnableCodemode;
         for (const [name, config] of Object.entries((doc?.mcpServers ?? {}) as JsonRecord)) {
-          validateMcpConfig(name, config);
+          validateMcpConfig(name, config, scope);
+          assertMcpServerNames([...servers.keys(), name]);
           servers.set(name, { name, config, scope, source: this.filename(scope, cwd), revision: revision(doc) });
         }
       } catch (error) {
@@ -243,7 +295,7 @@ export class McpConfigStore {
     config: McpServerConfig,
     expectedRevision: string,
   ): Promise<McpConfigurationSnapshot> {
-    validateMcpConfig(name, config);
+    validateMcpConfig(name, config, scope);
     await this.mutate(scope, cwd, expectedRevision, (doc) => {
       const servers = { ...((doc.mcpServers as JsonRecord) ?? {}) },
         previous = servers[name] as McpServerConfig | undefined;
@@ -276,8 +328,9 @@ export class McpConfigStore {
     const input = parseJsonRecord(json);
     if (!object(input.mcpServers))
       throw new RpcError({ code: "BAD_REQUEST", message: "MCP import requires mcpServers" });
-    for (const [name, config] of Object.entries(input.mcpServers)) validateMcpConfig(name, config);
+    for (const [name, config] of Object.entries(input.mcpServers)) validateMcpConfig(name, config, scope);
     const current = await this.read(scope, cwd);
+    assertMcpServerNames([...Object.keys((current?.mcpServers ?? {}) as JsonRecord), ...Object.keys(input.mcpServers)]);
     return {
       entries: Object.keys(input.mcpServers),
       conflicts: Object.keys(input.mcpServers).filter((name) =>
@@ -322,6 +375,7 @@ export class McpConfigStore {
       if (doc.mcpServers !== undefined && !object(doc.mcpServers))
         throw new RpcError({ code: "BAD_REQUEST", message: "mcpServers must be an object" });
       change(doc);
+      assertMcpServerNames(Object.keys((doc.mcpServers ?? {}) as JsonRecord));
       await save(doc);
     });
   }

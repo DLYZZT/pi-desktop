@@ -1,6 +1,7 @@
 import type { ApiHandler } from "../../contract/rpc";
 import type { McpTarget } from "../../contract/mcp";
 import { RpcError } from "../../contract/types";
+import { mcpAuthenticationMode } from "../../shared/mcp-auth-mode";
 import { assertPathAllowed } from "../path-authorization";
 import { validateExistingDirectory } from "../directory-validation";
 import type { McpService } from "../mcp/service";
@@ -120,6 +121,7 @@ export function createMcpHandlers(service: McpService) {
         cwd: entry.cwd,
         trusted: entry.trusted,
         config: entry.config,
+        target: { ...params },
       });
     },
     "mcp.oauth.get": async ({ requestId }) => service.login.get(requestId),
@@ -129,8 +131,14 @@ export function createMcpHandlers(service: McpService) {
       await target(params);
       const entry = await service.target(params);
       if (!entry.config.url) throw new RpcError({ code: "BAD_REQUEST", message: "OAuth requires HTTP MCP" });
-      await service.credentials.remove(entry.config.url);
-      if (params.sessionId) await service.reconnect(params.sessionId, params.name);
+      if (entry.config.auth)
+        throw new RpcError({ code: "BAD_REQUEST", message: "Sign out of this provider through model settings" });
+      if (mcpAuthenticationMode(entry.config) !== "oauth")
+        throw new RpcError({
+          code: "BAD_REQUEST",
+          message: "Edit this server's Authorization header in server settings",
+        });
+      await service.logout(params.name, entry.config.url);
       return { ok: true as const };
     },
   } satisfies Pick<ApiHandler, `mcp.${string}` & keyof ApiHandler>;

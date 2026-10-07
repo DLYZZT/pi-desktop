@@ -73,6 +73,7 @@ const browserAgentRuntime = read("src/agent-host/browser-agent-runtime.ts");
 const toolchainBash = read("src/agent-host/toolchain-bash.ts");
 const toolchainRuntime = read("src/agent-host/toolchain-runtime.ts");
 const mcpOAuthLogin = read("src/agent-host/mcp/oauth-login.ts");
+const mcpOAuthCallback = read("src/agent-host/mcp/oauth-callback.ts");
 const mcpConfig = read("src/agent-host/mcp/config-store.ts");
 const mcpService = read("src/agent-host/mcp/service.ts");
 const toolEnvironment = read("src/agent-host/tool-environment.ts");
@@ -129,7 +130,10 @@ const windowsHelperUnsafeCount = windowsHelperWin32.match(windowsHelperUnsafePat
 
 const checks = [
   [
-    mcpOAuthLogin.includes("OAuthCallbackServer.listen") &&
+    mcpOAuthCallback.includes("OAuthCallbackServer.listen") &&
+      mcpOAuthCallback.includes('validateMcpConfig("callback"') &&
+      mcpOAuthCallback.includes("timeoutMs: 300000") &&
+      mcpOAuthLogin.includes("listenMcpCallback(") &&
       mcpOAuthLogin.includes("pending.callback?.close()") &&
       mcpOAuthLogin.includes("300000"),
     "MCP OAuth loopback exception must be explicit, time-bounded and close on completion",

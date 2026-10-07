@@ -18,11 +18,20 @@ import type {
   McpResourcePage,
 } from "../../contract/mcp";
 import { RpcError } from "../../contract/types";
-import { McpConfigStore, mcpToolExposure, validateMcpConfig, projectConfig, restoreSecrets } from "./config-store";
+import {
+  McpConfigStore,
+  mcpToolExposure,
+  validateMcpConfig,
+  assertMcpServerNames,
+  projectConfig,
+  restoreSecrets,
+} from "./config-store";
 import { isMcpManagedTool } from "../../shared/mcp-tool-policy";
+import { mcpAuthenticationMode } from "../../shared/mcp-auth-mode";
 import { isOrchestrationTool } from "../../shared/orchestration-tools";
 import { McpOAuthStore } from "./oauth-store";
-import { McpOAuthLoginManager } from "./oauth-login";
+import { McpOAuthLoginManager, type McpLoginInput } from "./oauth-login";
+import { mcpAuthConfiguration, mcpCredentialKey } from "./oauth-identity";
 import { McpConnection, type McpConnectionOptions } from "./connection";
 import { mcpModelContent } from "./model-content";
 import { McpAuthorizationRequests } from "./authorization";
@@ -67,7 +76,7 @@ interface McpExecutionDetails {
 export interface McpServiceOptions {
   changed(sessionId: string, instances: McpInstanceSnapshot[]): void;
   oauth: ConstructorParameters<typeof McpOAuthLoginManager>[1];
-  connection?: Pick<McpConnectionOptions, "createTransport" | "fetch" | "runtime">;
+  connection?: Pick<McpConnectionOptions, "createTransport" | "fetch" | "runtime" | "providerToken">;
   settings?(sessionId: string): void;
 }
 
@@ -92,19 +101,28 @@ export class McpService {
   private readonly probes = new Map<string, { cancelled: boolean; connection?: McpConnection }>();
   constructor(
     private readonly options: McpServiceOptions,
-    agentDir?: string,
+    private readonly agentDir?: string,
   ) {
     this.config = new McpConfigStore(agentDir);
     this.credentials = new McpOAuthStore(agentDir);
     this.login = new McpOAuthLoginManager(this.credentials, {
       ...options.oauth,
+      validate: async (input) => {
+        await this.validateLogin(input);
+        await options.oauth.validate?.(input);
+      },
       updated: (snapshot) => {
         options.oauth.updated(snapshot);
         if (snapshot.state === "succeeded") {
-          const url = this.login.serverUrl(snapshot.requestId);
+          const identity = this.login.identity(snapshot.requestId);
           for (const binding of this.sessions.values())
             for (const connection of binding.connections.values())
-              if (connection.config.url === url && connection.snapshot.state === "needs-auth")
+              if (
+                connection.config.url &&
+                mcpAuthenticationMode(connection.config) === "oauth" &&
+                mcpCredentialKey(connection.snapshot.name, connection.config.url) === identity &&
+                connection.snapshot.state === "needs-auth"
+              )
                 void this.reconnect(binding.id, connection.snapshot.name).catch(() => undefined);
         }
       },
@@ -114,6 +132,49 @@ export class McpService {
         if (!binding.closed && !binding.hooks.isRunning()) void this.reconcile(binding.id).catch(() => undefined);
     }, 2000);
     this.timer.unref();
+  }
+  private async validateLogin(input: McpLoginInput): Promise<void> {
+    if (!input.target) return;
+    const selected = await this.target(input.target);
+    let config: McpServerConfig | undefined;
+    if (selected.scope === "extension" && input.target.sessionId) {
+      const binding = this.requireBinding(input.target.sessionId);
+      const candidate =
+        binding.temporary.get(input.name) ??
+        binding.hooks.pi.getMcpServers().find((entry) => entry.name === input.name)?.config;
+      if (candidate) {
+        validateMcpConfig(input.name, candidate, "extension");
+        config = candidate;
+      }
+    } else {
+      const loaded = await this.config.effective(
+        selected.cwd,
+        Boolean(input.target.sessionId || input.target.scope === "project") && selected.trusted,
+      );
+      if (loaded.errors.length)
+        throw new RpcError({ code: "CONFLICT", message: "Resolve MCP configuration errors before signing in" });
+      const current = loaded.servers.find((entry) => entry.name === input.name);
+      if (current?.scope === selected.scope && current.source === selected.source) config = current.config;
+    }
+    if (!config || config.enabled === false || mcpAuthConfiguration(config) !== mcpAuthConfiguration(input.config))
+      throw new RpcError({ code: "CONFLICT", message: "MCP configuration changed; start sign-in again" });
+  }
+  async logout(name: string, url: string): Promise<void> {
+    await this.login.cancelIdentity(name, url);
+    await this.credentials.remove(name, url);
+    const identity = mcpCredentialKey(name, url);
+    await Promise.all(
+      [...this.sessions.values()].flatMap((binding) =>
+        [...binding.connections.values()]
+          .filter(
+            (connection) =>
+              connection.config.url &&
+              mcpAuthenticationMode(connection.config) === "oauth" &&
+              mcpCredentialKey(connection.snapshot.name, connection.config.url) === identity,
+          )
+          .map((connection) => this.reconnect(binding.id, connection.snapshot.name)),
+      ),
+    );
   }
   async attach(hooks: McpSessionHooks): Promise<void> {
     const id = hooks.ctx.sessionManager.getSessionId();
@@ -310,7 +371,7 @@ export class McpService {
       };
     }
     const cwd = target.cwd ?? homedir(),
-      trusted = SettingsManager.create(cwd).isProjectTrusted();
+      trusted = SettingsManager.create(cwd, this.agentDir).isProjectTrusted();
     if (target.scope === "project" && !trusted)
       throw new RpcError({ code: "FORBIDDEN", message: "Project MCP configuration is not trusted" });
     const loaded = await this.config.effective(cwd, target.scope === "project" && trusted);
@@ -464,6 +525,7 @@ export class McpService {
     return connection;
   }
   async changed(scope: McpScope, cwd?: string): Promise<void> {
+    await this.login.cancelInvalid();
     await Promise.all(
       [...this.sessions.values()]
         .filter((binding) => scope === "global" || binding.hooks.ctx.cwd === cwd)
@@ -510,6 +572,7 @@ export class McpService {
       throw new RpcError({ code: "CONFLICT", message: "MCP extension configuration changed; reload before saving" });
     validateMcpConfig(name, config);
     binding.temporary.set(name, restoreSecrets(config, connection.config));
+    await this.login.cancelInvalid();
     await this.reconcile(sessionId);
   }
   async detach(sessionId: string): Promise<void> {
@@ -550,6 +613,7 @@ export class McpService {
     );
     for (const registered of binding.hooks.pi.getMcpServers()) {
       if (desired.has(registered.name)) continue;
+      assertMcpServerNames([...desired.keys(), registered.name]);
       const config = binding.temporary.get(registered.name) ?? registered.config;
       validateMcpConfig(registered.name, config);
       desired.set(registered.name, {
@@ -593,6 +657,7 @@ export class McpService {
       const connection = new McpConnection({
         ...this.options.connection,
         credentials: this.credentials,
+        providerToken: (provider) => binding.hooks.ctx.modelRegistry.getApiKeyForProvider(provider),
         config: entry.config,
         trusted: binding.hooks.ctx.isProjectTrusted(),
         snapshot: {
@@ -680,6 +745,7 @@ export class McpService {
               isError: result.isError,
             };
           } catch (error) {
+            connection.authenticationRequired(error);
             const outcomeUnknown =
               error instanceof McpTimeoutError || error instanceof McpConnectionClosedError || signal?.aborted === true;
             return {

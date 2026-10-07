@@ -3,10 +3,151 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import path from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { importTestBundle } from "#test-bundle";
 const { McpOAuthStore } = await importTestBundle("mcp-oauth-store", {
   packages: "external",
   entryPoints: [path.join(import.meta.dirname, "oauth-store.ts")],
+});
+
+test("Pi 1.0.4 CLI and Desktop isolate accounts at the same URL and adopt a legacy grant only once", async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-identity-")),
+    store = new McpOAuthStore(root);
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sdk = path.resolve(import.meta.dirname, "../../../node_modules/@earendil-works/pi-coding-agent/dist");
+  const { FileAuthStorageBackend } = await import(pathToFileURL(path.join(sdk, "core/auth-storage.js")));
+  const { McpOAuthCredentialStore } = await import(pathToFileURL(path.join(sdk, "extensions/mcp/oauth.js")));
+  const cli = new McpOAuthCredentialStore(new FileAuthStorageBackend(store.filename), root);
+  const url = "https://shared.example.invalid/mcp";
+  writeFileSync(
+    store.filename,
+    JSON.stringify({
+      [url]: { serverUrl: url, tokens: { access_token: "LEGACY", token_type: "Bearer" }, future: "keep" },
+    }),
+  );
+  assert.equal((await store.forServer("first-account", url).load()).tokens.access_token, "LEGACY");
+  assert.equal((await cli.forServer("first-account", url).load()).future, "keep");
+  assert.equal(await cli.forServer("second", url).load(), undefined);
+  await cli.forServer("second", url).save({ serverUrl: url, tokens: { access_token: "SECOND", token_type: "Bearer" } });
+  assert.equal(await store.authProvider("second", url).token(), "SECOND");
+  assert.equal(await store.authProvider("first-account", url).token(), "LEGACY");
+  const order = [];
+  await Promise.all([
+    store.withRefreshLock("first-account", url, async () => {
+      order.push("desktop");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      order.push("desktop-end");
+    }),
+    cli.forServer("first-account", url).withRefreshLock(async () => {
+      order.push("cli");
+      order.push("cli-end");
+    }),
+  ]);
+  assert.equal(order.indexOf("desktop-end"), order.indexOf("desktop") + 1);
+  assert.equal(order.indexOf("cli-end"), order.indexOf("cli") + 1);
+  await store.remove("first-account", url);
+  assert.equal(await cli.forServer("first-account", url).load(), undefined);
+  assert.equal((await cli.forServer("second", url).load()).tokens.access_token, "SECOND");
+});
+
+test("refresh-lock cancellation does not enter the credential mutation", async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-refresh-cancel-")),
+    store = new McpOAuthStore(root);
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const url = "https://example.invalid/mcp",
+    controller = new globalThis.AbortController();
+  let entered, release;
+  const ready = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const first = store.withRefreshLock("fixture", url, async () => {
+    entered();
+    await gate;
+  });
+  await ready;
+  let mutated = false;
+  const second = store.withRefreshLock(
+    "fixture",
+    url,
+    async () => {
+      mutated = true;
+    },
+    controller.signal,
+  );
+  controller.abort();
+  try {
+    await assert.rejects(second, /abort/i);
+    assert.equal(mutated, false);
+  } finally {
+    release();
+    await first;
+  }
+});
+
+test("a stale provider state cannot overwrite another CLI flow or resurrect a signed-out slot", async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-stale-state-")),
+    store = new McpOAuthStore(root),
+    url = "https://example.invalid/mcp";
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const first = store.forServer("fixture", url);
+  await first.save({ serverUrl: url, oauthState: "first" });
+  const snapshot = await first.load();
+  await store.forServer("fixture", url).save({ serverUrl: url, oauthState: "replacement" });
+  await assert.rejects(
+    first.save({ ...snapshot, discovery: { authorizationServerUrl: "https://auth.invalid" } }),
+    /state changed/,
+  );
+  await assert.rejects(
+    store.commitAuthorization(
+      "fixture",
+      url,
+      { access_token: "STALE", token_type: "Bearer" },
+      "first",
+      new globalThis.AbortController().signal,
+    ),
+    /replaced or signed out/,
+  );
+  await store.remove("fixture", url);
+  await assert.rejects(
+    first.save({ ...snapshot, tokens: { access_token: "STALE", token_type: "Bearer" } }),
+    /state changed/,
+  );
+  assert.equal(await store.forServer("fixture", url).load(), undefined);
+});
+
+test("late challenges cannot cross logout or retired connections and concurrent scopes are retained", async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-late-challenge-")),
+    store = new McpOAuthStore(root),
+    url = "https://example.invalid/mcp";
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const config = { url, oauth: { clientId: "fixture" } };
+  const { createHash } = await import("node:crypto");
+  const configuration = createHash("sha256").update(JSON.stringify(config)).digest("hex");
+  let current = true;
+  const auth = store.authProvider("fixture", url, config.oauth, undefined, configuration, () => current);
+  const challenge = (scope) =>
+    auth.onUnauthorized({
+      serverUrl: url,
+      token: undefined,
+      fetch: globalThis.fetch,
+      response: new globalThis.Response("", {
+        status: 403,
+        headers: { "www-authenticate": 'Bearer error="insufficient_scope", scope="' + scope + '"' },
+      }),
+    });
+  await assert.rejects(challenge("read"));
+  await assert.rejects(challenge("write"));
+  assert.equal(store.challenge("fixture", config).scope, "read write");
+  current = false;
+  await assert.rejects(challenge("retired"));
+  assert.equal(store.challenge("fixture", config).scope, "read write");
+  current = true;
+  await store.remove("fixture", url);
+  await assert.rejects(challenge("after-logout"));
+  assert.equal(store.challenge("fixture", config), undefined);
 });
 
 test("MCP OAuth storage reads CLI states, preserves other URLs, and refuses cross-server saves", async (t) => {
@@ -22,19 +163,20 @@ test("MCP OAuth storage reads CLI states, preserves other URLs, and refuses cros
       [other]: { serverUrl: other, tokens: { access_token: "OTHER_TOKEN", token_type: "Bearer" } },
     }),
   );
-  const scoped = store.forServer(first),
+  const firstKey = "mcp__first|" + first;
+  const scoped = store.forServer("first", first),
     state = await scoped.load();
   assert.equal(state.tokens.access_token, "CLI_TOKEN");
-  assert.equal(await store.authProvider(first).token(), "CLI_TOKEN");
-  const provider = store.provider(first);
+  assert.equal(await store.authProvider("first", first).token(), "CLI_TOKEN");
+  const provider = store.provider("first", first);
   await provider.saveTokens({ access_token: "UPDATED", token_type: "Bearer", expires_in: 3600 });
   const updated = JSON.parse(readFileSync(store.filename, "utf8"));
-  assert.equal(updated[first].future, true);
-  assert.ok(updated[first].tokensExpireAt > Date.now());
+  assert.equal(updated[firstKey].future, true);
+  assert.ok(updated[firstKey].tokensExpireAt > Date.now());
   assert.equal(updated[other].tokens.access_token, "OTHER_TOKEN");
   await assert.rejects(scoped.save({ serverUrl: other }), /another server/);
-  await store.remove(first);
-  assert.equal(JSON.parse(readFileSync(store.filename, "utf8"))[first], undefined);
+  await store.remove("first", first);
+  assert.equal(JSON.parse(readFileSync(store.filename, "utf8"))[firstKey], undefined);
   assert.equal(JSON.parse(readFileSync(store.filename, "utf8"))[other].tokens.access_token, "OTHER_TOKEN");
 });
 
@@ -48,17 +190,17 @@ test("MCP OAuth saves are serialized with CLI-compatible refresh lock names and 
   controller.abort();
   await assert.rejects(
     store
-      .forServer(serverUrl, controller.signal)
+      .forServer("fixture", serverUrl, controller.signal)
       .save({ serverUrl, tokens: { access_token: "CANCELLED", token_type: "Bearer" } }),
   );
   const order = [];
   await Promise.all([
-    store.withRefreshLock(serverUrl, async () => {
+    store.withRefreshLock("fixture", serverUrl, async () => {
       order.push("first");
-      await store.forServer(serverUrl).save({ serverUrl });
+      await store.forServer("fixture", serverUrl).save({ serverUrl });
       order.push("first-end");
     }),
-    store.withRefreshLock(serverUrl, async () => {
+    store.withRefreshLock("fixture", serverUrl, async () => {
       order.push("second");
       order.push("second-end");
     }),
