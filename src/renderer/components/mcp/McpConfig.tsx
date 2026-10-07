@@ -14,6 +14,7 @@ import { call, subscribe } from "@/lib/api-client";
 import { useI18n } from "@/i18n";
 import { LatestRequestGate } from "@/lib/latest-request-gate";
 import { McpServerEditor } from "./McpServerEditor";
+import { McpProjectOverrideEditor } from "./McpProjectOverrideEditor";
 import { McpToolsPanel } from "./McpToolsPanel";
 import { McpServerSidebar } from "./McpServerSidebar";
 
@@ -31,6 +32,7 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
         name: string;
         config: McpServerConfig;
         extension?: boolean;
+        override?: boolean;
         revision?: string;
       }>(),
       [dirty, setDirty] = useState(false),
@@ -74,7 +76,7 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
         if (!gate.isCurrent(ticket) || !mounted.current) return;
         setSnapshot(config);
         setPanel(live);
-        setError(config.error);
+        setError(config.error ?? live?.error);
       } catch (e) {
         if (gate.isCurrent(ticket) && mounted.current) setError(e instanceof Error ? e.message : String(e));
       }
@@ -223,6 +225,7 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
       : t("mcpAdapterInactive", "The Desktop MCP adapter is inactive or no session is open.");
     const entries = [...(snapshot?.entries ?? []), ...(panel?.extensions ?? [])];
     const selectedName = selected ?? snapshot?.entries[0]?.name ?? panel?.extensions?.[0]?.name;
+    const Editor = editing?.override ? McpProjectOverrideEditor : McpServerEditor;
     return (
       <div className="mcp-config mcp-workbench" data-mcp-config>
         <aside className="mcp-sidebar">
@@ -261,7 +264,8 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
                 setImportText(undefined);
                 setEditing({
                   name: entry.name,
-                  config: entry.config,
+                  config: entry.projectOverride?.config ?? entry.config,
+                  override: Boolean(entry.projectOverride),
                   extension: entry.scope === "extension",
                   revision: entry.scope === "extension" ? entry.revision : snapshot?.revision,
                 });
@@ -347,7 +351,10 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
             .filter((entry) => entry.name === selectedName && editing?.name !== "" && importText === undefined)
             .map((entry) => {
               const live = panel?.instances.find((instance) => instance.name === entry.name),
-                ownLive = live?.scope === scope;
+                ownLive =
+                  live?.scope === entry.scope &&
+                  live?.source === entry.source &&
+                  (scope === "project" || !live?.overrideSource);
               return (
                 <section key={entry.name} className="mcp-server-row">
                   <div>
@@ -364,6 +371,13 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
                     )}
                     {live && !ownLive && <span> · {t("mcpOverridden", "Overridden by another scope")}</span>}
                   </div>
+                  {entry.projectOverride && (
+                    <p>
+                      {entry.projectOverride.exists
+                        ? t("mcpProjectOverride", "Project override")
+                        : t("mcpInheritedGlobal", "Inherited from Global")}
+                    </p>
+                  )}
                   {mcpAuthenticationMode(entry.config) === "header" && (
                     <p>
                       {t(
@@ -384,7 +398,12 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
                       disabled={busy}
                       onClick={() =>
                         leave(() => {
-                          setEditing({ name: entry.name, config: entry.config, revision: snapshot?.revision });
+                          setEditing({
+                            name: entry.name,
+                            config: entry.projectOverride?.config ?? entry.config,
+                            override: Boolean(entry.projectOverride),
+                            revision: snapshot?.revision,
+                          });
                           setDirty(false);
                         })
                       }
@@ -421,7 +440,10 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
                                 scope,
                                 cwd: cwd ?? undefined,
                                 name: entry.name,
-                                config: { ...entry.config, enabled: entry.config.enabled === false },
+                                config: {
+                                  ...(entry.projectOverride?.config ?? entry.config),
+                                  enabled: entry.config.enabled === false,
+                                },
                                 expectedRevision: snapshot!.revision,
                               });
                               setNotice(t("mcpSaved", "Configuration saved."));
@@ -431,21 +453,25 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
                           {entry.config.enabled === false ? t("mcpEnable", "Enable") : t("mcpDisable", "Disable")}
                         </button>
                         <button
-                          disabled={busy}
+                          disabled={busy || (entry.projectOverride !== undefined && !entry.projectOverride.exists)}
                           onClick={() =>
                             leave(() => {
-                              void run(() =>
-                                invoke("mcp.config.remove", {
+                              void run(async () => {
+                                await invoke("mcp.config.remove", {
                                   scope,
                                   cwd: cwd ?? undefined,
                                   name: entry.name,
                                   expectedRevision: snapshot!.revision,
-                                }),
-                              );
+                                });
+                                setEditing(undefined);
+                                setDirty(false);
+                              });
                             })
                           }
                         >
-                          {t("mcpRemove", "Remove")}
+                          {entry.projectOverride
+                            ? t("mcpRestoreGlobal", "Restore global settings")
+                            : t("mcpRemove", "Remove")}
                         </button>
                         {mcpAuthenticationMode(entry.config) === "oauth" && (
                           <>
@@ -531,7 +557,7 @@ export const McpConfig = forwardRef<McpConfigHandle, { cwd: string | null; sessi
             </details>
           )}
           {editing && (
-            <McpServerEditor
+            <Editor
               initial={editing}
               busy={busy}
               onDirty={() => setDirty(true)}

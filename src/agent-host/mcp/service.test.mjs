@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -167,7 +167,7 @@ test("OAuth sign-out leaves a header-authenticated project connection at the sam
     cwd,
     "fixture",
     { url, headers: { aUtHoRiZaTiOn: "PRIVATE_FIXTURE" }, exposure: "direct" },
-    "missing",
+    (await f.service.config.snapshot("project", cwd)).revision,
   );
   const definitions = new Map(),
     active = new Set();
@@ -216,6 +216,61 @@ test("Desktop MCP registrations expose real state and keep stable names across q
   assert.equal(f.service.tools("session")[0].name, tool.name);
   await assert.rejects(original.execute("stale", { text: "DO_NOT_EXECUTE" }), /generation/);
   assert.equal(f.executed, 1);
+});
+
+test("trusted project policy disables a live global server immediately and removal restores its origin", async (t) => {
+  const f = await fixture(t, {
+    config: { url: "https://mcp.example.invalid", auth: { provider: "radius" }, exposure: "direct" },
+  });
+  const name = f.service.tools("session")[0].name;
+  const original = f.service.getConnection("session", "fixture");
+  const initial = await f.service.config.snapshot("project", f.root);
+  f.setRunning(true);
+  const saved = await f.service.config.upsert("project", f.root, "fixture", { enabled: false }, initial.revision);
+  await f.service.changed("project", f.root);
+  const disabled = f.service.snapshot("session")[0];
+  assert.equal(disabled.state, "disabled");
+  assert.equal(disabled.scope, "global");
+  assert.equal(disabled.overrideSource, f.service.config.filename("project", f.root));
+  assert.equal(original.snapshot.state, "disconnected");
+  assert.equal(f.active.has(name), false);
+  assert.equal(f.service.tools("session").length, 0);
+  const target = await f.service.target({ name: "fixture", scope: "project", cwd: f.root });
+  assert.equal(target.scope, "global");
+  assert.equal(target.config.auth.provider, "radius");
+  await f.service.config.remove("project", f.root, "fixture", saved.revision);
+  f.setRunning(false);
+  await f.service.changed("project", f.root);
+  await waitFor(() => f.service.snapshot("session")[0]?.state === "connected");
+  const restored = f.service.snapshot("session")[0];
+  assert.equal(restored.scope, "global");
+  assert.equal(restored.overrideSource, undefined);
+  assert.equal(f.service.tools("session")[0].name, name);
+  assert.equal(f.service.tools("session")[0].executionAllowed, false);
+});
+
+test("malformed project policy withdraws existing tools and does not revive a same-name extension", async (t) => {
+  const f = await fixture(t, {
+    registered: [{ name: "fixture", config: { command: "extension" }, extensionPath: "fixture-extension" }],
+  });
+  mkdirSync(path.join(f.root, ".pi"), { recursive: true });
+  writeFileSync(
+    f.service.config.filename("project", f.root),
+    JSON.stringify({ mcpServers: { fixture: { enabled: "invalid" } } }),
+  );
+  f.setRunning(true);
+  await f.service.changed("project", f.root);
+  assert.equal(f.service.snapshot("session").length, 0);
+  assert.equal(f.service.tools("session").length, 0);
+  assert.match(f.service.panel("session").error, /enabled/);
+  f.hooks.ctx.isProjectTrusted = () => false;
+  await assert.rejects(f.service.target({ name: "fixture", scope: "project", cwd: f.root }), /not trusted/);
+  assert.equal((await f.service.target({ name: "fixture", scope: "global", cwd: f.root })).trusted, false);
+  f.setRunning(false);
+  await f.service.reconcile("session");
+  await waitFor(() => f.service.snapshot("session")[0]?.state === "connected");
+  assert.equal(f.service.snapshot("session")[0].scope, "global");
+  assert.equal(f.service.panel("session").error, undefined);
 });
 
 for (const exposure of ["direct", "deferred", "codemode", "codemode-deferred", "hidden"])

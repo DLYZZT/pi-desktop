@@ -1,4 +1,12 @@
 export const enUS: Record<string, string> = {
+  mcpProjectOverride: "Project override",
+  mcpInheritedGlobal: "Inherited from Global",
+  mcpRestoreGlobal: "Restore global settings",
+  mcpInheritGlobal: "Inherit global setting",
+  mcpProjectOverrideHelp:
+    "Inherit connection details from Global. Only these project settings are saved; unset fields follow future global changes.",
+  mcpOverrideToolsHelp:
+    "Leave empty to inherit global per-tool settings. An object replaces the entire global per-tool map; {} clears it.",
   mcpMoreActions: "More actions",
   mcpNoServers: "No MCP servers configured.",
   mcpAdvancedSettings: "Advanced settings",
@@ -103,6 +111,12 @@ export const enUS: Record<string, string> = {
   mcpWorkingDirectory: "Working directory",
 };
 export const zhCN: Record<string, string> = {
+  mcpProjectOverride: "项目覆盖",
+  mcpInheritedGlobal: "继承自全局",
+  mcpRestoreGlobal: "恢复全局设置",
+  mcpInheritGlobal: "继承全局设置",
+  mcpProjectOverrideHelp: "连接信息继承自全局。仅保存这些项目设置；未设置的字段会跟随全局配置的后续变化。",
+  mcpOverrideToolsHelp: "留空以继承全局的逐工具设置。填写对象将替换整个全局逐工具配置；{} 表示清空。",
   mcpMoreActions: "更多操作",
   mcpNoServers: "尚未配置 MCP 服务器。",
   mcpAdvancedSettings: "高级设置",
@@ -204,6 +218,12 @@ export const zhCN: Record<string, string> = {
   mcpWorkingDirectory: "工作目录",
 };
 export const zhTW: Record<string, string> = {
+  mcpProjectOverride: "專案覆寫",
+  mcpInheritedGlobal: "繼承自全域",
+  mcpRestoreGlobal: "恢復全域設定",
+  mcpInheritGlobal: "繼承全域設定",
+  mcpProjectOverrideHelp: "連線資訊繼承自全域。僅儲存這些專案設定；未設定的欄位會跟隨全域設定的後續變更。",
+  mcpOverrideToolsHelp: "留空以繼承全域的逐工具設定。填寫物件將取代整個全域逐工具設定；{} 表示清空。",
   mcpMoreActions: "更多操作",
   mcpNoServers: "尚未設定 MCP 伺服器。",
   mcpAdvancedSettings: "進階設定",

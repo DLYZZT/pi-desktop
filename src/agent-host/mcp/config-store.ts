@@ -14,6 +14,35 @@ const object = (value: unknown): value is JsonRecord =>
 const revision = (value: JsonRecord | undefined) =>
   value === undefined ? "missing" : "sha256:" + createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
+export interface ResolvedMcpServer {
+  name: string;
+  config: McpServerConfig;
+  scope: McpScope;
+  source: string;
+  revision: string;
+  overrideSource?: string;
+}
+
+function isProjectOverride(value: unknown): value is McpServerConfig {
+  return object(value) && value.command === undefined && value.url === undefined && value.type === undefined;
+}
+
+function validateProjectOverride(name: string, config: McpServerConfig, base: unknown): McpServerConfig {
+  if (Object.keys(config).some((key) => !["enabled", "exposure", "toolExposure"].includes(key)))
+    throw new RpcError({
+      code: "BAD_REQUEST",
+      message: "MCP project overrides may only set enabled, exposure and toolExposure",
+    });
+  if (!base)
+    throw new RpcError({ code: "BAD_REQUEST", message: "MCP project override requires a global server: " + name });
+  validateMcpConfig(name, base, "global");
+  // Pi uses a shallow merge: an explicit toolExposure object replaces the global map.
+  // Authentication still belongs to the global definition; projects cannot redirect it.
+  const merged = { ...base, ...config };
+  validateMcpConfig(name, merged, "global");
+  return merged;
+}
+
 export function assertMcpServerNames(names: readonly string[]): void {
   const used = new Map<string, string>();
   for (const name of names) {
@@ -234,18 +263,60 @@ export class McpConfigStore {
       throw error;
     }
   }
+  private documentsRevision(scope: McpScope, doc?: JsonRecord, global?: JsonRecord): string {
+    return scope === "global" ? revision(doc) : revision({ global: global ?? null, project: doc ?? null });
+  }
+  private resolve(global: JsonRecord | undefined, project: JsonRecord | undefined, cwd?: string): ResolvedMcpServer[] {
+    const servers = new Map<string, ResolvedMcpServer>();
+    for (const [name, config] of Object.entries((global?.mcpServers ?? {}) as JsonRecord)) {
+      validateMcpConfig(name, config, "global");
+      servers.set(name, { name, config, scope: "global", source: this.filename("global"), revision: revision(global) });
+    }
+    for (const [name, config] of Object.entries((project?.mcpServers ?? {}) as JsonRecord)) {
+      const base = servers.get(name);
+      if (isProjectOverride(config)) {
+        const merged = validateProjectOverride(name, config, base?.config);
+        servers.set(name, {
+          ...base!,
+          config: merged,
+          overrideSource: this.filename("project", cwd),
+          revision: this.documentsRevision("project", project, global),
+        });
+      } else {
+        validateMcpConfig(name, config, "project");
+        servers.set(name, {
+          name,
+          config,
+          scope: "project",
+          source: this.filename("project", cwd),
+          revision: revision(project),
+        });
+      }
+    }
+    assertMcpServerNames([...servers.keys()]);
+    return [...servers.values()];
+  }
   async snapshot(scope: McpScope, cwd?: string): Promise<McpConfigurationSnapshot> {
     try {
       const doc = await this.read(scope, cwd),
-        entries: McpConfigurationSnapshot["entries"] = [];
-      for (const [name, config] of Object.entries((doc?.mcpServers ?? {}) as JsonRecord)) {
-        validateMcpConfig(name, config, scope);
-        entries.push({ name, scope, source: this.filename(scope, cwd), ...projectConfig(config) });
-      }
+        global = scope === "global" ? doc : await this.read("global"),
+        entries = this.resolve(global, scope === "project" ? doc : undefined, cwd).map((entry) => ({
+          ...entry,
+          ...projectConfig(entry.config),
+          ...(scope === "project" && entry.scope === "global"
+            ? {
+                projectOverride: {
+                  source: this.filename("project", cwd),
+                  exists: Boolean(entry.overrideSource),
+                  config: structuredClone(((doc?.mcpServers as JsonRecord)?.[entry.name] ?? {}) as McpServerConfig),
+                },
+              }
+            : {}),
+        }));
       return {
         scope,
         cwd,
-        revision: revision(doc),
+        revision: this.documentsRevision(scope, doc, global),
         entries,
         autoEnableCodemode: doc?.autoEnableCodemode as boolean | undefined,
       };
@@ -263,30 +334,26 @@ export class McpConfigStore {
     cwd: string,
     trusted: boolean,
   ): Promise<{
-    servers: Array<{ name: string; config: McpServerConfig; scope: McpScope; source: string; revision: string }>;
+    servers: ResolvedMcpServer[];
     autoEnableCodemode: boolean;
     errors: string[];
   }> {
-    const servers = new Map<
-      string,
-      { name: string; config: McpServerConfig; scope: McpScope; source: string; revision: string }
-    >();
-    let autoEnableCodemode = true;
-    const errors: string[] = [];
-    for (const scope of trusted ? (["global", "project"] as const) : (["global"] as const)) {
-      try {
-        const doc = await this.read(scope, cwd);
-        if (typeof doc?.autoEnableCodemode === "boolean") autoEnableCodemode = doc.autoEnableCodemode;
-        for (const [name, config] of Object.entries((doc?.mcpServers ?? {}) as JsonRecord)) {
-          validateMcpConfig(name, config, scope);
-          assertMcpServerNames([...servers.keys(), name]);
-          servers.set(name, { name, config, scope, source: this.filename(scope, cwd), revision: revision(doc) });
-        }
-      } catch (error) {
-        errors.push(error instanceof Error ? error.message : "Invalid MCP configuration");
-      }
+    try {
+      const global = await this.read("global"),
+        project = trusted ? await this.read("project", cwd) : undefined;
+      return {
+        servers: this.resolve(global, project, cwd),
+        autoEnableCodemode: (project?.autoEnableCodemode ?? global?.autoEnableCodemode ?? true) as boolean,
+        errors: [],
+      };
+    } catch (error) {
+      // An invalid policy must not silently restore global tools that a project tried to disable.
+      return {
+        servers: [],
+        autoEnableCodemode: false,
+        errors: [error instanceof Error ? error.message : "Invalid MCP configuration"],
+      };
     }
-    return { servers: [...servers.values()], autoEnableCodemode, errors };
   }
   async upsert(
     scope: McpScope,
@@ -295,7 +362,9 @@ export class McpConfigStore {
     config: McpServerConfig,
     expectedRevision: string,
   ): Promise<McpConfigurationSnapshot> {
-    validateMcpConfig(name, config, scope);
+    if (scope === "project" && isProjectOverride(config))
+      validateProjectOverride(name, config, ((await this.read("global"))?.mcpServers as JsonRecord)?.[name]);
+    else validateMcpConfig(name, config, scope);
     await this.mutate(scope, cwd, expectedRevision, (doc) => {
       const servers = { ...((doc.mcpServers as JsonRecord) ?? {}) },
         previous = servers[name] as McpServerConfig | undefined;
@@ -328,9 +397,19 @@ export class McpConfigStore {
     const input = parseJsonRecord(json);
     if (!object(input.mcpServers))
       throw new RpcError({ code: "BAD_REQUEST", message: "MCP import requires mcpServers" });
-    for (const [name, config] of Object.entries(input.mcpServers)) validateMcpConfig(name, config, scope);
     const current = await this.read(scope, cwd);
-    assertMcpServerNames([...Object.keys((current?.mcpServers ?? {}) as JsonRecord), ...Object.keys(input.mcpServers)]);
+    const merged = {
+      ...current,
+      ...input,
+      mcpServers: { ...((current?.mcpServers ?? {}) as JsonRecord), ...input.mcpServers },
+    };
+    if (input.autoEnableCodemode !== undefined && typeof input.autoEnableCodemode !== "boolean")
+      throw new RpcError({ code: "BAD_REQUEST", message: "Invalid autoEnableCodemode flag" });
+    this.resolve(
+      scope === "global" ? merged : await this.read("global"),
+      scope === "project" ? merged : undefined,
+      cwd,
+    );
     return {
       entries: Object.keys(input.mcpServers),
       conflicts: Object.keys(input.mcpServers).filter((name) =>
@@ -369,13 +448,14 @@ export class McpConfigStore {
       throw new RpcError({ code: "BAD_REQUEST", message: "A valid MCP configuration revision is required" });
     const filename = this.filename(scope, cwd);
     await withLockedJsonFile(filename, async (doc, save) => {
-      const current = revision(await this.read(scope, cwd));
+      const global = scope === "project" ? await this.read("global") : undefined;
+      const current = this.documentsRevision(scope, await this.read(scope, cwd), global);
       if (current !== expected)
         throw new RpcError({ code: "CONFLICT", message: "MCP configuration changed; reload before saving" });
       if (doc.mcpServers !== undefined && !object(doc.mcpServers))
         throw new RpcError({ code: "BAD_REQUEST", message: "mcpServers must be an object" });
       change(doc);
-      assertMcpServerNames(Object.keys((doc.mcpServers ?? {}) as JsonRecord));
+      this.resolve(scope === "global" ? doc : global, scope === "project" ? doc : undefined, cwd);
       await save(doc);
     });
   }

@@ -4,10 +4,10 @@ import test from "node:test";
 import { createElement } from "react";
 import { act, create } from "react-test-renderer";
 import { importTestBundle } from "#test-bundle";
-const { McpServerEditor, McpConfig, McpToolsPanel, api } = await importTestBundle("mcp-ui", {
+const { McpServerEditor, McpProjectOverrideEditor, McpConfig, McpToolsPanel, api } = await importTestBundle("mcp-ui", {
   stdin: {
     contents:
-      'export {McpServerEditor} from "./McpServerEditor.tsx"; export {McpConfig} from "./McpConfig.tsx"; export {McpToolsPanel} from "./McpToolsPanel.tsx"; export * as api from "@/lib/api-client";',
+      'export {McpServerEditor} from "./McpServerEditor.tsx"; export {McpProjectOverrideEditor} from "./McpProjectOverrideEditor.tsx"; export {McpConfig} from "./McpConfig.tsx"; export {McpToolsPanel} from "./McpToolsPanel.tsx"; export * as api from "@/lib/api-client";',
     resolveDir: import.meta.dirname,
     loader: "tsx",
   },
@@ -180,4 +180,76 @@ test("an old MCP probe cannot update a different project view", async (t) => {
     false,
   );
   assert.ok(api.calls.some((entry) => entry.method === "mcp.probe.cancel"));
+});
+
+test("project view edits policy only, and disable and reset never copy inherited transport or secrets", async (t) => {
+  let policy;
+  const mutations = [];
+  const entry = () => ({
+    name: "shared",
+    scope: "global",
+    source: "/agent/mcp.json",
+    secretFields: ["headers.Private"],
+    config: {
+      url: "https://mcp.example.invalid",
+      headers: { Private: "<pi-desktop:saved-secret>" },
+      auth: { provider: "radius" },
+      ...policy,
+    },
+    projectOverride: { source: "/project/.pi/mcp.json", exists: policy !== undefined, config: policy ?? {} },
+  });
+  api.respond(async (method, params) => {
+    if (method === "mcp.config.get")
+      return { scope: params.scope, revision: "both-files", entries: params.scope === "project" ? [entry()] : [] };
+    if (method === "mcp.config.upsert") {
+      policy = params.config;
+      mutations.push(params);
+    } else if (method === "mcp.config.remove") {
+      policy = undefined;
+      mutations.push(params);
+    } else throw new Error("Unexpected mutation " + method);
+  });
+  const renderer = await render(t, createElement(McpConfig, { cwd: "/project", sessionId: null }));
+  await act(async () => renderer.root.findByType("select").props.onChange({ target: { value: "project" } }));
+  assert.equal(button(renderer, "Restore global settings").props.disabled, true);
+  await act(async () => button(renderer, "Disable").props.onClick());
+  assert.deepEqual(mutations[0].config, { enabled: false });
+  assert.equal(mutations[0].scope, "project");
+  assert.equal(mutations[0].expectedRevision, "both-files");
+  await act(async () => button(renderer, "Edit").props.onClick());
+  const editor = renderer.root.findByType(McpProjectOverrideEditor);
+  assert.deepEqual(editor.props.initial.config, { enabled: false });
+  assert.equal(renderer.root.findAllByType(McpServerEditor).length, 0);
+  await act(async () => button(renderer, "Save configuration").props.onClick());
+  assert.deepEqual(mutations[1].config, { enabled: false });
+  await act(async () => button(renderer, "Restore global settings").props.onClick());
+  assert.equal(mutations[2].scope, "project");
+  assert.equal(mutations[2].name, "shared");
+  assert.equal(button(renderer, "Restore global settings").props.disabled, true);
+});
+
+test("project editor preserves inherit versus empty map and rejects malformed JSON", async (t) => {
+  const saved = [];
+  const renderer = await render(
+    t,
+    createElement(McpProjectOverrideEditor, {
+      initial: { name: "fixture", config: { enabled: false, exposure: "hidden", toolExposure: { read: "direct" } } },
+      busy: false,
+      onDirty() {},
+      onCancel() {},
+      onSave: (_name, config) => saved.push(config),
+    }),
+  );
+  await act(async () => renderer.root.findAllByType("select")[0].props.onChange({ target: { value: "" } }));
+  await act(async () => renderer.root.findAllByType("select")[1].props.onChange({ target: { value: "" } }));
+  const textarea = renderer.root.findByType("textarea");
+  await act(async () => textarea.props.onChange({ target: { value: "{broken" } }));
+  await act(async () => button(renderer, "Save configuration").props.onClick());
+  assert.equal(saved.length, 0);
+  await act(async () => textarea.props.onChange({ target: { value: "{}" } }));
+  await act(async () => button(renderer, "Save configuration").props.onClick());
+  assert.deepEqual(saved[0], { toolExposure: {} });
+  await act(async () => textarea.props.onChange({ target: { value: "" } }));
+  await act(async () => button(renderer, "Save configuration").props.onClick());
+  assert.deepEqual(saved[1], {});
 });

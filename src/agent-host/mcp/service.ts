@@ -69,6 +69,7 @@ interface SessionBinding {
   closed: boolean;
   declarations?: Set<string>;
   grantRevision: number;
+  error?: string;
 }
 interface McpExecutionDetails {
   mcp: { server: string; tool: string; generation: number; outcomeUnknown?: boolean };
@@ -214,6 +215,7 @@ export class McpService {
       inactiveReason: binding ? undefined : this.inactive.get(sessionId),
       extensions: binding ? this.extensionEntries(sessionId) : [],
       projectTrusted: binding?.hooks.ctx.isProjectTrusted(),
+      error: binding?.error,
       emptyTools: binding?.hooks.isEmpty(),
       declaredEntries: binding?.hooks.pi
         .getActiveTools()
@@ -360,6 +362,7 @@ export class McpService {
     source: string;
     scope: McpScope | "extension";
     revision: string;
+    overrideSource?: string;
   }> {
     if (target.sessionId) {
       const binding = this.requireBinding(target.sessionId),
@@ -371,13 +374,14 @@ export class McpService {
       };
     }
     const cwd = target.cwd ?? homedir(),
-      trusted = SettingsManager.create(cwd, this.agentDir).isProjectTrusted();
+      sessions = [...this.sessions.values()].filter((binding) => binding.hooks.ctx.cwd === cwd),
+      trusted = sessions.length
+        ? sessions.every((binding) => binding.hooks.ctx.isProjectTrusted())
+        : SettingsManager.create(cwd, this.agentDir).isProjectTrusted();
     if (target.scope === "project" && !trusted)
       throw new RpcError({ code: "FORBIDDEN", message: "Project MCP configuration is not trusted" });
     const loaded = await this.config.effective(cwd, target.scope === "project" && trusted);
-    const entry = loaded.servers.find(
-      (server) => server.name === target.name && (target.scope === undefined || server.scope === target.scope),
-    );
+    const entry = loaded.servers.find((server) => server.name === target.name);
     if (!entry) throw new RpcError({ code: "NOT_FOUND", message: loaded.errors[0] ?? "MCP configuration not found" });
     return { ...entry, cwd, trusted };
   }
@@ -400,6 +404,7 @@ export class McpService {
           cwd: entry.cwd,
           source: entry.source,
           scope: entry.scope,
+          overrideSource: entry.overrideSource,
           revision: entry.revision,
           generation: 1,
           state: "not-started",
@@ -452,6 +457,7 @@ export class McpService {
           cwd: entry.cwd,
           source: entry.source,
           scope: entry.scope,
+          overrideSource: entry.overrideSource,
           revision: entry.revision,
           generation: 1,
           state: "not-started",
@@ -599,6 +605,7 @@ export class McpService {
   private async apply(binding: SessionBinding): Promise<void> {
     if (binding.closed) return;
     const loaded = await this.config.effective(binding.hooks.ctx.cwd, binding.hooks.ctx.isProjectTrusted());
+    binding.error = loaded.errors.length ? loaded.errors.join("\n") : undefined;
     const desired = new Map(
       loaded.servers.map((entry) => [
         entry.name,
@@ -608,10 +615,11 @@ export class McpService {
           scope: McpScope | "extension";
           source: string;
           revision: string;
+          overrideSource?: string;
         },
       ]),
     );
-    for (const registered of binding.hooks.pi.getMcpServers()) {
+    for (const registered of loaded.errors.length ? [] : binding.hooks.pi.getMcpServers()) {
       if (desired.has(registered.name)) continue;
       assertMcpServerNames([...desired.keys(), registered.name]);
       const config = binding.temporary.get(registered.name) ?? registered.config;
@@ -632,6 +640,7 @@ export class McpService {
           !next ||
           next.scope !== connection.snapshot.scope ||
           next.source !== connection.snapshot.source ||
+          next.overrideSource !== connection.snapshot.overrideSource ||
           JSON.stringify(next.config) !== JSON.stringify(connection.config);
       if (!modified) {
         connection.snapshot.revision = next!.revision;
@@ -664,6 +673,7 @@ export class McpService {
           name,
           source: entry.source,
           scope: entry.scope,
+          overrideSource: entry.overrideSource,
           revision: entry.revision,
           sessionId: binding.id,
           cwd: binding.hooks.ctx.cwd,

@@ -63,12 +63,24 @@ test("normalization collisions cannot be written or used to share one credential
     /names conflict/,
   );
   assert.equal((await store.snapshot("global")).revision, initial.revision);
-  await store.upsert("project", project, "my_server", { url: "https://mcp.example.invalid" }, "missing");
-  const loaded = await store.effective(project, true);
-  assert.deepEqual(
-    loaded.servers.map((entry) => entry.name),
-    ["my-server"],
+  await assert.rejects(
+    store.upsert(
+      "project",
+      project,
+      "my_server",
+      { url: "https://mcp.example.invalid" },
+      (await store.snapshot("project", project)).revision,
+    ),
+    /names conflict/,
   );
+  // External CLI writes are also validated before any connections can be launched.
+  mkdirSync(path.dirname(store.filename("project", project)), { recursive: true });
+  writeFileSync(
+    store.filename("project", project),
+    JSON.stringify({ mcpServers: { my_server: { command: "fixture" } } }),
+  );
+  const loaded = await store.effective(project, true);
+  assert.deepEqual(loaded.servers, []);
   assert.match(loaded.errors[0], /names conflict/);
 });
 function fixture(t) {
@@ -118,7 +130,13 @@ test("project overrides apply only after trust and viewing or preflighting never
     { command: "global", headers: { Authorization: `!touch ${marker}` } },
     "missing",
   );
-  await store.upsert("project", project, "same", { command: "project" }, "missing");
+  await store.upsert(
+    "project",
+    project,
+    "same",
+    { command: "project" },
+    (await store.snapshot("project", project)).revision,
+  );
   assert.equal((await store.effective(project, false)).servers[0].config.command, "global");
   assert.equal((await store.effective(project, true)).servers[0].config.command, "project");
   const snapshot = await store.snapshot("global");
@@ -221,4 +239,114 @@ test("a missing revision cannot overwrite a file concurrently created as an empt
     store.upsert("global", undefined, "new", { command: "node" }, "missing"),
     (error) => error.code === "CONFLICT",
   );
+});
+
+test("project-only policy overrides inherit global transport and credentials without copying them", async (t) => {
+  const { store, project } = fixture(t);
+  const global = await store.upsert(
+    "global",
+    undefined,
+    "remote",
+    {
+      url: "https://mcp.example.invalid",
+      headers: { Private: "GLOBAL_SECRET" },
+      auth: { provider: "radius" },
+      exposure: "direct",
+      toolExposure: { read: "direct", write: "hidden" },
+    },
+    "missing",
+  );
+  const inherited = await store.snapshot("project", project);
+  assert.equal(inherited.entries[0].scope, "global");
+  assert.deepEqual(inherited.entries[0].projectOverride.config, {});
+  assert.equal(inherited.entries[0].projectOverride.exists, false);
+  assert.doesNotMatch(JSON.stringify(inherited), /GLOBAL_SECRET/);
+  const saved = await store.upsert(
+    "project",
+    project,
+    "remote",
+    {
+      enabled: false,
+      exposure: "codemode",
+      toolExposure: { read: "deferred" },
+    },
+    inherited.revision,
+  );
+  const raw = JSON.parse(readFileSync(store.filename("project", project), "utf8"));
+  assert.deepEqual(raw.mcpServers.remote, { enabled: false, exposure: "codemode", toolExposure: { read: "deferred" } });
+  const effective = (await store.effective(project, true)).servers[0];
+  assert.equal(effective.scope, "global");
+  assert.equal(effective.source, store.filename("global"));
+  assert.equal(effective.overrideSource, store.filename("project", project));
+  assert.equal(effective.config.headers.Private, "GLOBAL_SECRET");
+  assert.equal(effective.config.auth.provider, "radius");
+  assert.equal(effective.config.enabled, false);
+  assert.deepEqual(effective.config.toolExposure, { read: "deferred" });
+  assert.equal((await store.effective(project, false)).servers[0].config.enabled, undefined);
+  assert.equal((await store.snapshot("global")).revision, global.revision);
+  assert.equal(saved.entries[0].projectOverride.exists, true);
+  await store.remove("project", project, "remote", saved.revision);
+  assert.deepEqual((await store.effective(project, true)).servers[0].config, {
+    url: "https://mcp.example.invalid",
+    headers: { Private: "GLOBAL_SECRET" },
+    auth: { provider: "radius" },
+    exposure: "direct",
+    toolExposure: { read: "direct", write: "hidden" },
+  });
+});
+
+test("project import shares shallow override rules and rejects absent bases or credential edits", async (t) => {
+  const { store, project } = fixture(t);
+  await store.upsert(
+    "global",
+    undefined,
+    "fixture",
+    { command: "global", toolExposure: { read: "direct" } },
+    "missing",
+  );
+  const revision = (await store.snapshot("project", project)).revision;
+  for (const config of [
+    { headers: { Authorization: "no" } },
+    { auth: { provider: "radius" } },
+    { timeout: 30 },
+    { description: "changed" },
+    { enabled: "false" },
+    { toolExposure: { read: "bad" } },
+  ]) {
+    await assert.rejects(
+      store.upsert("project", project, "fixture", config, revision),
+      (error) => error.code === "BAD_REQUEST",
+    );
+    await assert.rejects(store.preflight("project", project, JSON.stringify({ mcpServers: { fixture: config } })));
+  }
+  await assert.rejects(
+    store.upsert("project", project, "missing", { enabled: false }, revision),
+    /requires a global server/,
+  );
+  const json = JSON.stringify({ mcpServers: { fixture: { toolExposure: {} } } });
+  assert.deepEqual(await store.preflight("project", project, json), { entries: ["fixture"], conflicts: [] });
+  await store.import("project", project, json, revision);
+  assert.deepEqual((await store.effective(project, true)).servers[0].config.toolExposure, {});
+});
+
+test("editing inherited policy detects global changes and invalid policies cannot reenable global servers", async (t) => {
+  const { store, project } = fixture(t);
+  const global = await store.upsert("global", undefined, "fixture", { command: "one" }, "missing");
+  const initial = await store.snapshot("project", project);
+  await store.upsert("global", undefined, "fixture", { command: "two" }, global.revision);
+  await assert.rejects(store.upsert("project", project, "fixture", { enabled: false }, initial.revision), /changed/);
+  const saved = await store.upsert(
+    "project",
+    project,
+    "fixture",
+    { enabled: false },
+    (await store.snapshot("project", project)).revision,
+  );
+  assert.equal(saved.entries[0].config.command, "two");
+  writeFileSync(store.filename("project", project), JSON.stringify({ mcpServers: { fixture: { enabled: "false" } } }));
+  const invalid = await store.effective(project, true);
+  assert.deepEqual(invalid.servers, []);
+  assert.match(invalid.errors[0], /enabled/);
+  assert.equal((await store.effective(project, false)).servers[0].config.command, "two");
+  assert.equal((await store.snapshot("project", project)).revision, "invalid");
 });

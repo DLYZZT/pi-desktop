@@ -34,6 +34,8 @@ export interface McpConfigEntry {
   scope: McpScope | "extension";
   source: string;
   config: McpServerConfig;
+  /** Global connection with project-only policy edits; never save config into the project. */
+  projectOverride?: { source: string; exists: boolean; config: McpServerConfig };
   overridden?: boolean;
   secretFields: string[];
   revision?: string;
@@ -52,6 +54,7 @@ export interface McpInstanceSnapshot {
   cwd: string;
   source: string;
   scope: McpScope | "extension";
+  overrideSource?: string;
   generation: number;
   revision: string;
   state: McpConnectionState;
