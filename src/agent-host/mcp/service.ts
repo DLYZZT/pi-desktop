@@ -31,10 +31,19 @@ import { mcpAuthenticationMode } from "../../shared/mcp-auth-mode";
 import { isOrchestrationTool } from "../../shared/orchestration-tools";
 import { McpOAuthStore } from "./oauth-store";
 import { McpOAuthLoginManager, type McpLoginInput } from "./oauth-login";
-import { mcpAuthConfiguration, mcpCredentialKey } from "./oauth-identity";
+import { mcpAuthConfiguration, mcpCredentialKey, mcpNamespace } from "./oauth-identity";
 import { McpConnection, type McpConnectionOptions } from "./connection";
 import { mcpModelContent } from "./model-content";
 import { McpAuthorizationRequests } from "./authorization";
+import { McpToolNames } from "./tool-names";
+import { mcpToolIdentity, type NamedMcpTool } from "../../shared/mcp-tool-identity";
+import {
+  mcpAvailabilityNotice,
+  mcpExposures,
+  mcpServersSection,
+  neededMcpServers,
+  waitForMcpConnections,
+} from "./discovery";
 
 export interface McpSessionHooks {
   pi: ExtensionAPI;
@@ -46,6 +55,7 @@ export interface McpSessionHooks {
   declarations?(): string[] | undefined;
   orchestration?(): string[] | undefined;
   setDeclarations?(names: string[]): void;
+  catalog?(tools: readonly NamedMcpTool[]): void;
 }
 interface Registration {
   connection: McpConnection;
@@ -60,6 +70,7 @@ interface SessionBinding {
   connections: Map<string, McpConnection>;
   registrations: Map<string, Registration>;
   names: Map<string, string>;
+  toolNames: McpToolNames;
   reconnect: Set<string>;
   temporary: Map<string, McpServerConfig>;
   generation: number;
@@ -70,6 +81,8 @@ interface SessionBinding {
   declarations?: Set<string>;
   grantRevision: number;
   error?: string;
+  waitedForDirect?: boolean;
+  discoveryNotices: Map<string, string>;
 }
 interface McpExecutionDetails {
   mcp: { server: string; tool: string; generation: number; outcomeUnknown?: boolean };
@@ -79,13 +92,6 @@ export interface McpServiceOptions {
   oauth: ConstructorParameters<typeof McpOAuthLoginManager>[1];
   connection?: Pick<McpConnectionOptions, "createTransport" | "fetch" | "runtime" | "providerToken">;
   settings?(sessionId: string): void;
-}
-
-export function mcpToolName(server: string, tool: string, taken: (name: string) => boolean): string {
-  const name = `mcp__${server}__${tool}`.replace(/[^A-Za-z0-9_-]/gu, "_");
-  if (name.length <= 64 && !taken(name)) return name;
-  const hash = createHash("sha256").update(`${server}\0${tool}`).digest("hex").slice(0, 8);
-  return `${name.slice(0, 55)}_${hash}`;
 }
 
 /** Sole owner of Desktop MCP clients; built-in SDK factories register the tools but do not own a second connection. */
@@ -187,6 +193,7 @@ export class McpService {
       connections: new Map(),
       registrations: new Map(),
       names: new Map(),
+      toolNames: new McpToolNames(),
       reconnect: new Set(),
       temporary: new Map(),
       generation: 0,
@@ -195,6 +202,7 @@ export class McpService {
       queue: Promise.resolve(),
       closed: false,
       grantRevision: 0,
+      discoveryNotices: new Map(),
       declarations: hooks.declarations?.()
         ? new Set(hooks.declarations()!.filter((name) => !isOrchestrationTool(name)))
         : undefined,
@@ -291,6 +299,46 @@ export class McpService {
   }
   resetPermissionRequests(sessionId: string): void {
     this.authorization.reset(sessionId);
+    this.sessions.get(sessionId)?.discoveryNotices.clear();
+  }
+  async preparePrompt(sessionId: string, signal?: AbortSignal): Promise<string | undefined> {
+    const binding = this.sessions.get(sessionId);
+    if (!binding || binding.closed || binding.hooks.isEmpty()) return;
+    if (!binding.waitedForDirect) {
+      binding.waitedForDirect = true;
+      await waitForMcpConnections(
+        [...binding.connections.values()].filter(
+          (connection) => connection.config.enabled !== false && mcpExposures(connection.config).has("direct"),
+        ),
+        10000,
+        signal,
+      );
+    }
+    return mcpServersSection([...binding.connections.values()], new Set(binding.hooks.pi.getActiveTools()));
+  }
+  async prepareToolCall(
+    sessionId: string,
+    name: string,
+    input: unknown,
+    callId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const binding = this.sessions.get(sessionId);
+    if (!binding || binding.closed || binding.hooks.isEmpty()) return;
+    const needed = neededMcpServers([...binding.connections.values()], name, input);
+    await waitForMcpConnections(needed, 30000, signal);
+    const notice = mcpAvailabilityNotice(needed);
+    if (notice) {
+      if (binding.discoveryNotices.size >= 512)
+        binding.discoveryNotices.delete(binding.discoveryNotices.keys().next().value!);
+      binding.discoveryNotices.set(callId, notice);
+    }
+  }
+  takeDiscoveryNotice(sessionId: string, callId: string): string | undefined {
+    const notices = this.sessions.get(sessionId)?.discoveryNotices;
+    const notice = notices?.get(callId);
+    notices?.delete(callId);
+    return notice;
   }
   async requestAuthorization(
     sessionId: string,
@@ -415,11 +463,14 @@ export class McpService {
       probe.connection = connection;
       await connection.start();
       if (probe.cancelled) throw new RpcError({ code: "CANCELLED", message: "MCP probe cancelled" });
+      const names = new McpToolNames();
+      names.add(connection.tools.map((tool) => ({ server: target.name, tool: tool.name })));
+      const resolved = names.resolve();
       return {
         adapterActive: false,
         instances: [{ ...connection.snapshot }],
         tools: connection.tools.map((tool) => ({
-          name: mcpToolName(target.name, tool.name, () => false),
+          name: resolved.get(mcpToolIdentity({ server: target.name, tool: tool.name }))!.name,
           originalName: tool.name,
           server: target.name,
           description: tool.description,
@@ -516,6 +567,7 @@ export class McpService {
         name: entry.name,
         server: entry.connection.snapshot.name,
         originalName: entry.tool.name,
+        resource: entry.resource,
         description: entry.tool.description,
         inputSchema: entry.tool.inputSchema,
         annotations: entry.tool.annotations ? { ...entry.tool.annotations } : undefined,
@@ -619,18 +671,23 @@ export class McpService {
         },
       ]),
     );
-    for (const registered of loaded.errors.length ? [] : binding.hooks.pi.getMcpServers()) {
-      if (desired.has(registered.name)) continue;
-      assertMcpServerNames([...desired.keys(), registered.name]);
-      const config = binding.temporary.get(registered.name) ?? registered.config;
-      validateMcpConfig(registered.name, config);
-      desired.set(registered.name, {
-        name: registered.name,
-        config,
-        scope: "extension",
-        source: registered.extensionPath,
-        revision: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
-      });
+    try {
+      for (const registered of loaded.errors.length ? [] : binding.hooks.pi.getMcpServers()) {
+        if (desired.has(registered.name)) continue;
+        assertMcpServerNames([...desired.keys(), registered.name]);
+        const config = binding.temporary.get(registered.name) ?? registered.config;
+        validateMcpConfig(registered.name, config);
+        desired.set(registered.name, {
+          name: registered.name,
+          config,
+          scope: "extension",
+          source: registered.extensionPath,
+          revision: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+        });
+      }
+    } catch (error) {
+      desired.clear();
+      binding.error = error instanceof Error ? error.message : "Invalid MCP extension configuration";
     }
     binding.autoEnableCodemode = loaded.autoEnableCodemode;
     for (const [name, connection] of binding.connections) {
@@ -684,7 +741,7 @@ export class McpService {
         },
         changed: (current) => {
           if (binding.closed || binding.connections.get(name) !== current) return;
-          if (current.snapshot.state === "connected") this.install(binding, current);
+          if (current.snapshot.state === "connected") this.install(binding);
           else if (current.snapshot.state !== "connecting") this.withdraw(binding, current);
           this.publish(binding);
         },
@@ -700,24 +757,47 @@ export class McpService {
     this.activateCallers(binding);
     this.publish(binding);
   }
-  private install(binding: SessionBinding, connection: McpConnection): void {
+  private install(binding: SessionBinding): void {
+    const connections = [...binding.connections.values()].filter((current) => current.snapshot.state === "connected");
+    for (const current of connections) {
+      binding.toolNames.add(current.tools.map((tool) => ({ server: current.snapshot.name, tool: tool.name })));
+      if (current.client.serverCapabilities?.resources)
+        binding.toolNames.add([{ server: current.snapshot.name, tool: "__read_resource", resource: true }]);
+    }
+    const names = binding.toolNames.resolve(
+      new Set(
+        binding.hooks.pi
+          .getAllTools()
+          .map((tool) => tool.name)
+          .filter((name) => !binding.names.has(name)),
+      ),
+    );
+    for (const registration of [...binding.registrations.values()]) {
+      const identity = mcpToolIdentity({
+        server: registration.connection.snapshot.name,
+        tool: registration.tool.name,
+        resource: registration.resource,
+      });
+      if (names.get(identity)?.name !== registration.name) this.hide(binding, registration.name);
+    }
+    for (const current of connections) this.registerConnection(binding, current, names);
+    this.publishCatalog(binding);
+    this.activateCallers(binding);
+  }
+  private registerConnection(
+    binding: SessionBinding,
+    connection: McpConnection,
+    names: ReadonlyMap<string, NamedMcpTool>,
+  ): void {
     const originalNames = new Set(connection.tools.map((tool) => tool.name));
     for (const entry of [...binding.registrations.values()])
       if (entry.connection === connection && !entry.resource && !originalNames.has(entry.tool.name))
         this.hide(binding, entry.name);
     for (const tool of connection.tools) {
-      const owner = `${connection.snapshot.name}\0${tool.name}`;
-      const existing = [...binding.names.entries()].find(([, value]) => value === owner)?.[0];
-      const name =
-        existing ??
-        mcpToolName(
-          connection.snapshot.name,
-          tool.name,
-          (candidate) =>
-            binding.names.has(candidate) || binding.hooks.pi.getAllTools().some((entry) => entry.name === candidate),
-        );
-      if (!existing && binding.names.size >= 10000)
-        throw new Error("MCP catalog history exceeds the registry budget; reload this session");
+      const owner = mcpToolIdentity({ server: connection.snapshot.name, tool: tool.name });
+      const name = names.get(owner)!.name;
+      const keepActive =
+        binding.registrations.get(name)?.connection === connection && binding.hooks.pi.getActiveTools().includes(name);
       binding.names.set(name, owner);
       const exposure = mcpToolExposure(connection.config, tool.name),
         entry = { connection, tool, name, exposure };
@@ -728,16 +808,21 @@ export class McpService {
         description: tool.description ?? tool.name,
         parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema),
         outputSchema: Type.Any(),
-        exposure: exposure === "codemode-deferred" ? "deferred" : exposure,
-        namespace: { name: `mcp__${connection.snapshot.name.replace(/[^A-Za-z0-9_-]/gu, "_")}` },
+        exposure: exposure === "codemode" ? "deferred" : exposure,
+        namespace: {
+          name: mcpNamespace(connection.snapshot.name),
+          description: connection.config.description,
+          instructions: connection.client.instructions,
+        },
         annotations: tool.annotations,
-        defaultActive: exposure === "direct" && !binding.hooks.isEmpty(),
+        defaultActive: exposure !== "hidden" && (exposure === "direct" || keepActive) && !binding.hooks.isEmpty(),
         execute: async (_id, args: Record<string, unknown>, signal): Promise<AgentToolResult<McpExecutionDetails>> => {
           if (
             binding.closed ||
             binding.connections.get(connection.snapshot.name) !== connection ||
             connection.snapshot.state !== "connected" ||
-            !binding.registrations.has(name)
+            binding.registrations.get(name)?.connection !== connection ||
+            binding.names.get(name) !== owner
           )
             throw new Error("MCP_CONNECTION_UNAVAILABLE: tool generation is no longer connected");
           try {
@@ -779,14 +864,15 @@ export class McpService {
         },
       });
     }
-    if (connection.client.serverCapabilities?.resources) this.installResource(binding, connection);
-    this.activateCallers(binding);
+    if (connection.client.serverCapabilities?.resources)
+      this.installResource(
+        binding,
+        connection,
+        names.get(mcpToolIdentity({ server: connection.snapshot.name, tool: "__read_resource", resource: true }))!.name,
+      );
   }
-  private installResource(binding: SessionBinding, connection: McpConnection): void {
-    const owner = `${connection.snapshot.name}\0__read_resource`,
-      name =
-        [...binding.names].find(([, value]) => value === owner)?.[0] ??
-        mcpToolName(connection.snapshot.name, "read_resource", (candidate) => binding.names.has(candidate));
+  private installResource(binding: SessionBinding, connection: McpConnection, name: string): void {
+    const owner = mcpToolIdentity({ server: connection.snapshot.name, tool: "__read_resource", resource: true });
     binding.names.set(name, owner);
     const tool = {
       name: "__read_resource",
@@ -799,10 +885,20 @@ export class McpService {
       label: `${connection.snapshot.name}: resource`,
       description: "Read one ordinary resource from this MCP server",
       exposure: "deferred",
+      namespace: {
+        name: mcpNamespace(connection.snapshot.name),
+        description: connection.config.description,
+        instructions: connection.client.instructions,
+      },
       defaultActive: false,
       parameters: Type.Object({ uri: Type.String({ maxLength: 8192 }) }),
       execute: async (_id, params, signal) => {
-        if (binding.connections.get(connection.snapshot.name) !== connection || binding.closed)
+        if (
+          binding.connections.get(connection.snapshot.name) !== connection ||
+          binding.closed ||
+          binding.registrations.get(name)?.connection !== connection ||
+          binding.names.get(name) !== owner
+        )
           throw new Error("MCP_CONNECTION_UNAVAILABLE");
         const response = await this.readResource(binding.id, connection.snapshot.name, params.uri, signal);
         return {
@@ -810,7 +906,14 @@ export class McpService {
             content: response.contents.map((resource) => ({ type: "resource" as const, resource })),
           }),
           structuredContent: JSON.parse(JSON.stringify(response)),
-          details: { mcp: { server: connection.snapshot.name, generation: connection.snapshot.generation } },
+          details: {
+            mcp: {
+              server: connection.snapshot.name,
+              tool: "__read_resource",
+              resource: true,
+              generation: connection.snapshot.generation,
+            },
+          },
         };
       },
     });
@@ -828,7 +931,12 @@ export class McpService {
       for (const name of binding.declarations) if (all.has(name)) active.add(name);
     }
     const orchestration = binding.hooks.orchestration?.();
-    const exposures = [...binding.registrations.values()].map((entry) => entry.exposure);
+    const exposures = [
+      ...[...binding.registrations.values()].map((entry) => entry.exposure),
+      ...[...binding.connections.values()]
+        .filter((connection) => connection.config.enabled !== false)
+        .flatMap((connection) => [...mcpExposures(connection.config)]),
+    ];
     if (
       binding.autoEnableCodemode &&
       orchestration === undefined &&
@@ -867,6 +975,17 @@ export class McpService {
   private withdraw(binding: SessionBinding, connection: McpConnection): void {
     for (const entry of [...binding.registrations.values()])
       if (entry.connection === connection) this.hide(binding, entry.name);
+    this.publishCatalog(binding);
+  }
+  private publishCatalog(binding: SessionBinding): void {
+    binding.hooks.catalog?.(
+      [...binding.registrations.values()].map((entry) => ({
+        name: entry.name,
+        server: entry.connection.snapshot.name,
+        tool: entry.tool.name,
+        resource: entry.resource,
+      })),
+    );
   }
   private publish(binding: SessionBinding): void {
     this.options.changed(binding.id, this.snapshot(binding.id));

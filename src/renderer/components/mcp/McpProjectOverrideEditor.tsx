@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import type { McpExposure, McpServerConfig } from "@contract/mcp";
 import { useI18n } from "@/i18n";
+import { canonicalMcpExposure } from "@shared/mcp-exposure";
 
 /** Saves only project policy. Connection details and credentials remain in the global file. */
 export function McpProjectOverrideEditor({
@@ -71,11 +72,11 @@ export function McpProjectOverrideEditor({
         <label htmlFor={`${id}-exposure`}>{t("mcpExposure", "Tool exposure")}</label>
         <select
           id={`${id}-exposure`}
-          value={config.exposure ?? ""}
+          value={config.exposure === undefined ? "" : canonicalMcpExposure(config.exposure)}
           onChange={(event) => change("exposure", (event.target.value || undefined) as McpExposure | undefined)}
         >
           <option value="">{t("mcpInheritGlobal", "Inherit global setting")}</option>
-          {(["direct", "deferred", "codemode", "codemode-deferred", "hidden"] as const).map((mode) => (
+          {(["direct", "deferred", "codemode", "hidden"] as const).map((mode) => (
             <option key={mode} value={mode}>
               {mode}
             </option>

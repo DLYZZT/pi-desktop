@@ -21,7 +21,8 @@ async function fixture(t, options = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-session-")),
     definitions = new Map(),
     active = new Set(),
-    servers = [];
+    servers = [],
+    calledNames = [];
   if (options.entryTools)
     for (const name of ["codemode", "tool_search"])
       definitions.set(name, { name, exposure: "direct", defaultActive: false });
@@ -42,8 +43,9 @@ async function fixture(t, options = {}) {
             if (request.method === "initialize")
               result = {
                 protocolVersion: request.params.protocolVersion,
-                capabilities: { tools: {} },
+                capabilities: { tools: {}, ...(options.resources ? { resources: {} } : {}) },
                 serverInfo: { name: "fixture", version: "1" },
+                instructions: options.instructions,
               };
             else if (request.method === "tools/list")
               result = {
@@ -57,6 +59,7 @@ async function fixture(t, options = {}) {
               };
             else {
               executed++;
+              calledNames.push(request.params.name);
               result = {
                 content: [{ type: "text", text: request.params.arguments.text }],
                 structuredContent: { original: request.params.arguments.text },
@@ -118,6 +121,7 @@ async function fixture(t, options = {}) {
     active,
     hooks,
     servers,
+    calledNames,
     setRunning: (value) => {
       running = value;
     },
@@ -282,7 +286,7 @@ for (const exposure of ["direct", "deferred", "codemode", "codemode-deferred", "
     assert.equal(f.service.tools("session").length, exposure === "hidden" ? 0 : 1);
     assert.equal(
       f.definitions.get("mcp__fixture__echo").exposure,
-      exposure === "codemode-deferred" ? "deferred" : exposure,
+      exposure === "codemode-deferred" || exposure === "codemode" ? "deferred" : exposure,
     );
   });
 
@@ -342,6 +346,74 @@ test("MCP catalog removal withdraws the missing tool and hides its old generatio
   assert.equal(f.definitions.get("mcp__fixture__old").exposure, "hidden");
   await assert.rejects(original.execute("stale", {}), /generation/);
   assert.equal(f.executed, 0);
+});
+
+test("Desktop registers distinct callable names for colliding tools and resources and preserves raw calls", async (t) => {
+  const f = await fixture(t, {
+    resources: true,
+    instructions: "Use the fixture carefully.",
+    config: { command: "fixture", description: "Fixture summary", exposure: "codemode" },
+    catalog: [
+      { name: "read-file", inputSchema: { type: "object" } },
+      { name: "read_file", inputSchema: { type: "object" } },
+      { name: "read_resource", inputSchema: { type: "object" } },
+      { name: "__read_resource", inputSchema: { type: "object" } },
+    ],
+  });
+  const tools = f.service.tools("session");
+  assert.equal(new Set(tools.map((tool) => tool.name)).size, 5);
+  for (const tool of tools) {
+    assert.match(tool.name, /^[A-Za-z0-9_]{1,64}$/);
+    const definition = f.definitions.get(tool.name);
+    assert.equal(definition.namespace.name, "mcp__fixture");
+    assert.equal(definition.namespace.description, "Fixture summary");
+    assert.equal(definition.namespace.instructions, "Use the fixture carefully.");
+    assert.equal(definition.exposure, "deferred");
+    if (!tool.resource) await definition.execute("raw", { text: "fixture" });
+  }
+  assert.deepEqual(f.calledNames, ["read-file", "read_file", "read_resource", "__read_resource"]);
+});
+
+test("adding a collision retires the previous alias; reordering and removal preserve the new owner names", async (t) => {
+  const options = { catalog: [{ name: "a-b", inputSchema: { type: "object" } }] };
+  const f = await fixture(t, options),
+    old = f.service.tools("session")[0].name;
+  const stale = f.definitions.get(old);
+  options.catalog.push({ name: "a_b", inputSchema: { type: "object" } });
+  await f.servers[0].send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+  await waitFor(() => f.service.tools("session").length === 2);
+  const before = Object.fromEntries(f.service.tools("session").map((tool) => [tool.originalName, tool.name]));
+  assert.notEqual(before["a-b"], old);
+  assert.notEqual(before.a_b, old);
+  await assert.rejects(stale.execute("stale", { text: "not sent" }), /generation/);
+  options.catalog.reverse();
+  await f.servers[0].send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+  await f.service.getConnection("session", "fixture").refreshTools();
+  assert.deepEqual(
+    Object.fromEntries(f.service.tools("session").map((tool) => [tool.originalName, tool.name])),
+    before,
+  );
+  options.catalog = options.catalog.filter((tool) => tool.name === "a_b");
+  await f.service.getConnection("session", "fixture").refreshTools();
+  assert.equal(f.service.tools("session")[0].name, before.a_b);
+  assert.equal(f.executed, 0);
+});
+
+test("an extension namespace collision is reported and withdraws live tools instead of retaining a conflicting registry", async (t) => {
+  const options = { registered: [] },
+    f = await fixture(t, options);
+  const snapshot = await f.service.config.snapshot("global");
+  await f.service.config.upsert("global", undefined, "dev-server", { command: "fixture" }, snapshot.revision);
+  await f.service.changed("global");
+  await waitFor(
+    () =>
+      f.service.snapshot("session").length === 2 &&
+      f.service.snapshot("session").every((item) => item.state === "connected"),
+  );
+  options.registered.push({ name: "dev_server", config: { command: "extension" }, extensionPath: "fixture-extension" });
+  await f.service.reconcile("session");
+  assert.equal(f.service.tools("session").length, 0);
+  assert.match(f.service.panel("session").error, /names conflict/);
 });
 
 test("MCP first-use approval coalesces concurrent requests and grants only the selected server", async (t) => {

@@ -12,6 +12,14 @@ import { isOrchestrationTool } from "../shared/orchestration-tools";
 export class SessionToolPolicy {
   private session?: AgentSessionLike;
   private initialActive = new Set<string>();
+  private mcpIdentityGuard?: (name: string) => boolean;
+  private mcpPreparation?: (name: string, input: unknown, ctx: ExtensionContext, callId: string) => Promise<void>;
+  setMcpPreparation(prepare: NonNullable<SessionToolPolicy["mcpPreparation"]>): void {
+    this.mcpPreparation = prepare;
+  }
+  setMcpIdentityGuard(guard: (name: string) => boolean): void {
+    this.mcpIdentityGuard = guard;
+  }
   private mcpAuthorizer?: (
     name: string,
     input: unknown,
@@ -70,6 +78,7 @@ export class SessionToolPolicy {
         this.session.getActiveToolNames().includes(name)
       );
     if (isMcpManagedTool(name)) {
+      if (name.startsWith("mcp__") && this.mcpIdentityGuard && !this.mcpIdentityGuard(name)) return false;
       if (this.mcpExecution !== undefined) return this.mcpExecution.includes(name);
       if (this.execution !== undefined) return this.execution.includes(name);
       return this.requested?.includes(name) === true && this.session.getActiveToolNames().includes(name);
@@ -107,6 +116,7 @@ export class SessionToolPolicy {
       hidden: true,
       factory: (pi: ExtensionAPI) => {
         pi.on("tool_call", async (event, ctx) => {
+          if (!this.isEmpty()) await this.mcpPreparation?.(event.toolName, event.input, ctx, event.toolCallId);
           if (this.isAllowed(event.toolName)) return;
           const tool = this.session?.getAllTools().find((entry) => entry.name === event.toolName);
           if (

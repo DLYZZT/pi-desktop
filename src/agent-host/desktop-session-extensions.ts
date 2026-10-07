@@ -17,7 +17,7 @@ export function desktopSessionExtensions(
     policy.extension(),
     history.extension(),
     ...sessionOrchestrationExtensions(),
-    ...desktopMcpExtensions(policy, running),
+    ...desktopMcpExtensions(policy, running, history),
     createLegacyChannelContextExtension(),
     createDesktopPromptExtension(prompt),
   ];

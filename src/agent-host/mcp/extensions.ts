@@ -2,6 +2,8 @@ import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { SessionToolPolicy } from "../session-tool-policy";
 import { peekMcpService } from "./runtime";
+import { readLegacyMcpEvidence } from "./legacy-permissions";
+import type { SessionExecutionHistory } from "../session-execution-history";
 import {
   getDesktopSessionToolNames,
   setDesktopSessionToolNames,
@@ -11,11 +13,18 @@ import {
   getDefaultStore,
 } from "../session-tool-store";
 
-export function desktopMcpExtensions(policy: SessionToolPolicy, isRunning: () => boolean): InlineExtension[] {
+export function desktopMcpExtensions(
+  policy: SessionToolPolicy,
+  isRunning: () => boolean,
+  history?: SessionExecutionHistory,
+): InlineExtension[] {
   const service = peekMcpService();
   if (!service) return [];
   policy.setMcpAuthorizer((name, input, ctx, valid) =>
     service.requestAuthorization(ctx.sessionManager.getSessionId(), name, input, ctx, valid),
+  );
+  policy.setMcpPreparation((name, input, ctx, callId) =>
+    service.prepareToolCall(ctx.sessionManager.getSessionId(), name, input, callId, ctx.signal),
   );
   return [
     {
@@ -102,18 +111,34 @@ export function desktopMcpExtensions(policy: SessionToolPolicy, isRunning: () =>
           execute: async (_id, params, _signal, _update, ctx) => {
             const tool = service
               .tools(ctx.sessionManager.getSessionId())
-              .find((entry) => entry.server === params.server && entry.originalName === "__read_resource");
+              .find((entry) => entry.server === params.server && entry.resource);
             if (!tool) throw new Error("MCP_RESOURCE_UNAVAILABLE");
             return (await ctx.executeTool(tool.name, { uri: params.uri })).result;
           },
         });
-        pi.on("session_start", async (_event, ctx) =>
-          service.attach({
+        pi.on("session_start", async (_event, ctx) => {
+          const id = ctx.sessionManager.getSessionId(),
+            store = getDefaultStore();
+          policy.setMcpIdentityGuard((name) => store.mcpIdentityMatches(id, name));
+          const evidence = await readLegacyMcpEvidence(
+            ctx.sessionManager.getEntries(),
+            store.unverifiedMcpTools(id),
+            store.mcpUpdatedAt(id),
+            history,
+          );
+          await service.attach({
             pi,
             ctx,
             isEmpty: () => policy.isEmpty(),
             isRunning,
             isAllowed: (name) => policy.isAllowed(name),
+            catalog: (tools) => {
+              store.observeMcpTools(id, tools, evidence);
+              const explicit = store.getMcpExecution(id) ?? store.getExecution(id);
+              policy.setMcpExecution(
+                explicit ?? (store.get(id) ?? []).filter((name) => pi.getActiveTools().includes(name)),
+              );
+            },
             declarations: () => getDesktopSessionMcpDeclarations(ctx.sessionManager.getSessionId()),
             orchestration: () => getDefaultStore().getOrchestration(ctx.sessionManager.getSessionId()),
             setDeclarations: (names) => {
@@ -134,23 +159,24 @@ export function desktopMcpExtensions(policy: SessionToolPolicy, isRunning: () =>
               setDesktopSessionMcpExecutionTools(id, names);
               policy.setMcpExecution(names);
             },
-          }),
-        );
+          });
+        });
         pi.on("mcp_servers_change", async (_event, ctx) => {
           await service.reconcile(ctx.sessionManager.getSessionId());
         });
         pi.on("session_shutdown", async (_event, ctx) => {
           await service.detach(ctx.sessionManager.getSessionId());
+          getDefaultStore().forgetMcpCatalog(ctx.sessionManager.getSessionId());
         });
-        pi.on("before_agent_start", async (_event, ctx) => {
+        pi.on("tool_result", (event, ctx) => {
+          const notice = service.takeDiscoveryNotice(ctx.sessionManager.getSessionId(), event.toolCallId);
+          if (notice) return { content: [...event.content, { type: "text" as const, text: notice }] };
+        });
+        pi.on("before_agent_start", async (event, ctx) => {
           service.resetPermissionRequests(ctx.sessionManager.getSessionId());
-          const deadline = Date.now() + 10000;
-          while (
-            !policy.isEmpty() &&
-            service.snapshot(ctx.sessionManager.getSessionId()).some((entry) => entry.state === "connecting") &&
-            Date.now() < deadline
-          )
-            await new Promise((resolve) => setTimeout(resolve, 25));
+          const section = await service.preparePrompt(ctx.sessionManager.getSessionId(), ctx.signal);
+          if (section) event.systemPromptOptions.sections.mcp_servers = section;
+          else delete event.systemPromptOptions.sections.mcp_servers;
         });
       },
     },

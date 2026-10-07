@@ -24,6 +24,7 @@ export function applySessionToolCommand(
   const persist = context.persist ?? ((id: string, names: string[]) => store.set(id, names));
   if (command.type === "set_tools") {
     persist(context.sessionId, names);
+    store.authorizeMcpSelection(context.sessionId, names);
     context.apply(names);
     return null;
   }

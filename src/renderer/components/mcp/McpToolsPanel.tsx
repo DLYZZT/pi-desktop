@@ -90,7 +90,7 @@ export function McpToolsPanel({
                     disabled={busy || !tool.callable || panel?.emptyTools}
                     onChange={(event) => void toggle(tool.name, event.target.checked)}
                   />
-                  {tool.originalName}
+                  {tool.resource ? t("mcpReadResource", "Read resource") : tool.originalName}
                 </label>
                 <span>
                   {tool.exposure} · {tool.active ? t("mcpDeclared", "Declared") : t("mcpNotDeclared", "Not declared")} ·{" "}

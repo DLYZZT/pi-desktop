@@ -45,7 +45,7 @@ export class ExecutionLogStore {
   async readLatest(
     query: ExecutionQuery = {},
     anchorIds?: ReadonlySet<string>,
-    filter?: { source?: string; excludeTool?: string; project?: boolean },
+    filter?: { source?: string; excludeTool?: string; toolNames?: ReadonlySet<string>; project?: boolean },
   ): Promise<ExecutionHistoryPage> {
     const latest = new Map<string, ToolExecutionRecord>();
     let complete = true,
@@ -85,6 +85,7 @@ export class ExecutionLogStore {
         if (anchorIds && (!entry.anchorEntryId || !anchorIds.has(entry.anchorEntryId))) continue;
         if (filter?.source && entry.source !== filter.source) continue;
         if (filter?.excludeTool && entry.toolName === filter.excludeTool) continue;
+        if (filter?.toolNames && !filter.toolNames.has(entry.toolName)) continue;
         if (query.executionId && entry.executionId !== query.executionId) continue;
         if (
           query.parentToolCallId &&

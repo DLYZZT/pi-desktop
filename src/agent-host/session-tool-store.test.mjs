@@ -157,3 +157,101 @@ test("MCP-specific grants preserve ordinary execution choices and are revoked by
   store.set("fixture", ["read"]);
   assert.equal(new DesktopSessionToolStore(file).getMcpExecution("fixture"), undefined);
 });
+
+test("MCP migration rewrites only proven identities across grants and declarations, never merely sanitized strings", async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-mcp-identities-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "session-tools.json"),
+    old = "mcp__dev-server__read-file",
+    next = "mcp__dev_server__read_file_aabbccdd";
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      sessions: {
+        fixture: {
+          toolNames: ["read", old],
+          executionToolNames: ["ordinary", old],
+          mcpExecutionToolNames: [old, "mcp__dev_server__read_file"],
+          mcpDeclarationToolNames: ["read_mcp_resource", old],
+          updatedAt: "2026-10-01T00:00:00Z",
+        },
+      },
+    }),
+  );
+  const store = new DesktopSessionToolStore(file);
+  const raw = readFileSync(file, "utf8");
+  store.get("fixture");
+  assert.equal(readFileSync(file, "utf8"), raw, "a sidecar read alone never performs migration");
+  const a = { name: next, server: "dev-server", tool: "read-file" },
+    b = { name: "mcp__dev_server__read_file", server: "dev-server", tool: "read_file" };
+  store.observeMcpTools("fixture", [a, b], { [old]: JSON.stringify([a.server, a.tool, false]) });
+  assert.deepEqual(store.get("fixture"), ["read", next]);
+  assert.deepEqual(store.getExecution("fixture"), ["ordinary", next]);
+  assert.deepEqual(store.getMcpDeclaration("fixture"), ["read_mcp_resource", next]);
+  assert.equal(store.mcpIdentityMatches("fixture", next), true);
+  assert.equal(
+    store.mcpIdentityMatches("fixture", b.name),
+    false,
+    "unproven grants require approval even if the name still exists",
+  );
+  const reopened = new DesktopSessionToolStore(file);
+  reopened.observeMcpTools("fixture", [a, b]);
+  assert.equal(reopened.mcpIdentityMatches("fixture", next), true);
+  assert.equal(reopened.mcpIdentityMatches("fixture", b.name), false);
+});
+
+test("MCP grants bind raw identity across catalog replacement, fork and reapproval; declarations never validate a grant", async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-mcp-grant-owners-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "session-tools.json"),
+    store = new DesktopSessionToolStore(file);
+  const a = { name: "mcp__fixture__a_b", server: "fixture", tool: "a.b" };
+  store.set("fixture", ["read"]);
+  store.setMcpExecution("fixture", [a.name]);
+  store.observeMcpTools("fixture", [a]);
+  assert.equal(store.mcpIdentityMatches("fixture", a.name), false);
+  store.setMcpDeclaration("fixture", [a.name]);
+  assert.equal(store.mcpIdentityMatches("fixture", a.name), false);
+  store.setMcpExecution("fixture", [a.name]);
+  assert.equal(store.mcpIdentityMatches("fixture", a.name), true);
+  const b = { ...a, tool: "a_b" },
+    newA = { ...a, name: "mcp__fixture__a_b_12345678" };
+  store.observeMcpTools("fixture", [b, newA]);
+  assert.equal(store.mcpIdentityMatches("fixture", b.name), false);
+  assert.deepEqual(store.getMcpExecution("fixture"), [newA.name]);
+  assert.equal(store.mcpIdentityMatches("fixture", newA.name), true);
+  store.set("fork", ["read"]);
+  store.setMcpExecution("fork", [newA.name]);
+  store.copyMcpIdentities("fixture", "fork");
+  store.observeMcpTools("fork", [newA]);
+  assert.equal(store.mcpIdentityMatches("fork", newA.name), true);
+  store.setMcpExecution("fixture", [b.name]);
+  assert.equal(store.mcpIdentityMatches("fixture", b.name), true);
+  assert.deepEqual(store.getMcpExecution("fixture"), [b.name]);
+  store.forgetMcpCatalog("fixture");
+  assert.equal(store.mcpIdentityMatches("fixture", b.name), false);
+});
+
+test("a proven declaration cannot validate an unrelated legacy execution alias at its new canonical name", async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-mcp-declaration-provenance-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "session-tools.json"),
+    old = "mcp__dev-server__a-b",
+    canonical = "mcp__dev_server__a_b";
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      sessions: {
+        fixture: { toolNames: ["read", old], mcpExecutionToolNames: [canonical], mcpDeclarationToolNames: [old] },
+      },
+    }),
+  );
+  const store = new DesktopSessionToolStore(file),
+    tool = { name: canonical, server: "dev-server", tool: "a-b" };
+  store.observeMcpTools("fixture", [tool], { [old]: JSON.stringify([tool.server, tool.tool, false]) });
+  assert.deepEqual(store.getMcpExecution("fixture"), []);
+  assert.equal(store.mcpIdentityMatches("fixture", canonical), false);
+  assert.deepEqual(store.getMcpDeclaration("fixture"), [canonical]);
+});

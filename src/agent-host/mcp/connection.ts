@@ -218,6 +218,7 @@ export class McpConnection {
     if (this.closed) return;
     if (
       tools.length > 5000 ||
+      new Set(tools.map((tool) => tool.name)).size !== tools.length ||
       tools.some((tool) => tool.name.length > 512 || JSON.stringify(tool.inputSchema).length > 65536)
     )
       throw new Error("MCP tool catalog exceeds the read budget");

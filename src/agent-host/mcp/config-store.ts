@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import type { McpConfigurationSnapshot, McpExposure, McpScope, McpServerConfig } from "../../contract/mcp";
+import type { McpConfigurationSnapshot, McpScope, McpServerConfig } from "../../contract/mcp";
 import { RpcError } from "../../contract/types";
 import { mcpNamespace } from "./oauth-identity";
+import { canonicalMcpExposure, type CanonicalMcpExposure } from "../../shared/mcp-exposure";
 import { parseJsonRecord, withLockedJsonFile, type JsonRecord } from "../../shared/node/locked-json-file";
 
 export const SAVED_MCP_SECRET = "<pi-desktop:saved-secret>";
@@ -188,9 +189,9 @@ export function validateMcpConfig(
     fail("MCP server configuration exceeds the storage budget");
 }
 
-export function mcpToolExposure(config: McpServerConfig, name: string): McpExposure {
+export function mcpToolExposure(config: McpServerConfig, name: string): CanonicalMcpExposure {
   const overrides = config.toolExposure ?? {};
-  if (Object.hasOwn(overrides, name)) return overrides[name]!;
+  if (Object.hasOwn(overrides, name)) return canonicalMcpExposure(overrides[name]!);
   for (const [pattern, exposure] of Object.entries(overrides)) {
     const regex = new RegExp(
       "^" +
@@ -200,9 +201,9 @@ export function mcpToolExposure(config: McpServerConfig, name: string): McpExpos
           .join(".*") +
         "$",
     );
-    if (regex.test(name)) return exposure;
+    if (regex.test(name)) return canonicalMcpExposure(exposure);
   }
-  return config.exposure ?? "codemode";
+  return canonicalMcpExposure(config.exposure ?? "codemode");
 }
 
 function secretReference(value: string): boolean {

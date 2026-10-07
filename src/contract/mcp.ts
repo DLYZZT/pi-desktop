@@ -69,6 +69,7 @@ export interface McpToolView {
   name: string;
   server: string;
   originalName: string;
+  resource?: boolean;
   description?: string;
   inputSchema: Record<string, unknown>;
   annotations?: Record<string, unknown>;

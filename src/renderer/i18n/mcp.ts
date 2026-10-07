@@ -1,4 +1,5 @@
 export const enUS: Record<string, string> = {
+  mcpDescription: "Server summary",
   mcpProjectOverride: "Project override",
   mcpInheritedGlobal: "Inherited from Global",
   mcpRestoreGlobal: "Restore global settings",
@@ -111,6 +112,7 @@ export const enUS: Record<string, string> = {
   mcpWorkingDirectory: "Working directory",
 };
 export const zhCN: Record<string, string> = {
+  mcpDescription: "服务器摘要",
   mcpProjectOverride: "项目覆盖",
   mcpInheritedGlobal: "继承自全局",
   mcpRestoreGlobal: "恢复全局设置",
@@ -218,6 +220,7 @@ export const zhCN: Record<string, string> = {
   mcpWorkingDirectory: "工作目录",
 };
 export const zhTW: Record<string, string> = {
+  mcpDescription: "伺服器摘要",
   mcpProjectOverride: "專案覆寫",
   mcpInheritedGlobal: "繼承自全域",
   mcpRestoreGlobal: "恢復全域設定",

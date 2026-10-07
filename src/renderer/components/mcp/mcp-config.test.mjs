@@ -77,6 +77,34 @@ test("MCP editor preserves unknown fields and validates malformed JSON before sa
   assert.ok(dirty > 0);
 });
 
+test("the MCP editor shows one codemode choice for legacy aliases and saves a server summary", async (t) => {
+  const saved = [];
+  const renderer = await render(
+    t,
+    createElement(McpServerEditor, {
+      initial: {
+        name: "fixture",
+        config: { command: "node", exposure: "codemode-deferred", description: "Old summary" },
+      },
+      busy: false,
+      onDirty() {},
+      onCancel() {},
+      onSave: (_name, config) => saved.push(config),
+    }),
+  );
+  const exposure = renderer.root.findAllByType("select").find((node) => node.props.value === "codemode");
+  assert.ok(exposure);
+  assert.equal(
+    exposure.findAllByType("option").some((node) => node.props.value === "codemode-deferred"),
+    false,
+  );
+  await act(async () =>
+    renderer.root.findByProps({ value: "Old summary" }).props.onChange({ target: { value: "New searchable summary" } }),
+  );
+  await act(async () => button(renderer, "Save configuration").props.onClick());
+  assert.equal(saved[0].description, "New searchable summary");
+});
+
 test("MCP settings reads and import previews do not connect servers and protect unsaved navigation", async (t) => {
   const ref = { current: null };
   let navigated = 0;

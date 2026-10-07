@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import type { McpServerConfig, McpExposure } from "@contract/mcp";
 import { useI18n } from "@/i18n";
+import { canonicalMcpExposure } from "@shared/mcp-exposure";
 
 export function McpServerEditor({
   initial,
@@ -106,6 +107,13 @@ export function McpServerEditor({
         ) : (
           <>
             <label>
+              {t("mcpDescription", "Server summary")}
+              <input
+                value={config.description ?? ""}
+                onChange={(event) => change({ description: event.target.value || undefined })}
+              />
+            </label>
+            <label>
               {t("mcpTransport", "Transport")}{" "}
               <select
                 value={config.url !== undefined ? "http" : "stdio"}
@@ -170,10 +178,10 @@ export function McpServerEditor({
               <label>
                 {t("mcpExposure", "Tool exposure")}{" "}
                 <select
-                  value={config.exposure ?? "codemode"}
+                  value={canonicalMcpExposure(config.exposure ?? "codemode")}
                   onChange={(event) => change({ exposure: event.target.value as McpExposure })}
                 >
-                  {(["direct", "deferred", "codemode", "codemode-deferred", "hidden"] as const).map((mode) => (
+                  {(["direct", "deferred", "codemode", "hidden"] as const).map((mode) => (
                     <option key={mode} value={mode}>
                       {mode}
                     </option>
