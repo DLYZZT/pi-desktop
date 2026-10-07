@@ -63,6 +63,7 @@ export function createAuthLoginService(
 ) {
   let closed = false;
   const ownedLogins = new Map<string, AbortController>();
+  const pendingLogins = new Set<Promise<void>>();
   function emit(provider: string, data: Record<string, unknown>) {
     if (closed) return;
     server.emit("auth.login", provider, data as never);
@@ -231,7 +232,7 @@ export function createAuthLoginService(
       };
 
       // Fire-and-forget; stream progress via auth.login
-      void (async () => {
+      const operation = (async () => {
         try {
           await modelRuntime.login(
             provider,
@@ -268,6 +269,11 @@ export function createAuthLoginService(
           abort.signal.removeEventListener("abort", cleanup);
         }
       })();
+      pendingLogins.add(operation);
+      void operation.then(
+        () => pendingLogins.delete(operation),
+        () => pendingLogins.delete(operation),
+      );
 
       return { started: true };
     },
@@ -275,14 +281,18 @@ export function createAuthLoginService(
     cancel(provider: string) {
       cancelLogin(provider);
     },
-    dispose() {
-      if (closed) return;
+    async dispose() {
+      if (closed) {
+        await Promise.allSettled([...pendingLogins]);
+        return;
+      }
       closed = true;
       for (const [provider, abort] of ownedLogins) {
         abort.abort();
         if (activeLogins.get(provider) === abort) activeLogins.delete(provider);
       }
       ownedLogins.clear();
+      await Promise.allSettled([...pendingLogins]);
     },
   };
 }

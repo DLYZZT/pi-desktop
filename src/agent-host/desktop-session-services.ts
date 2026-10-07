@@ -1,5 +1,7 @@
-import { createAgentSessionServices } from "@earendil-works/pi-coding-agent";
+import { createAgentSessionServices, getAgentDir } from "@earendil-works/pi-coding-agent";
+import path from "node:path";
 import { ensureAzureUpgrade } from "./azure-upgrade";
+import { createDesktopModelRuntime } from "./model-credentials";
 
 export async function createDesktopAgentSessionServices(
   options: NonNullable<Parameters<typeof createAgentSessionServices>[0]>,
@@ -10,6 +12,14 @@ export async function createDesktopAgentSessionServices(
     cwd: migration.project ? options.cwd : undefined,
     projectTrusted: options.settingsManager?.isProjectTrusted() ?? true,
   });
-  const services = await createAgentSessionServices(options);
+  const agentDir = options.agentDir ?? getAgentDir();
+  const modelRuntime =
+    options.modelRuntime ??
+    (await createDesktopModelRuntime({
+      authPath: path.join(agentDir, "auth.json"),
+      modelsPath: path.join(agentDir, "models.json"),
+      signal: options.modelRuntimeSignal,
+    }));
+  const services = await createAgentSessionServices({ ...options, modelRuntime });
   return { ...services, azureUpgrade };
 }

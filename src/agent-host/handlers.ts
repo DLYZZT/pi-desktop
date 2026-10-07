@@ -38,6 +38,7 @@ import { disposeAllRpcSessions, subscribeRunningSessions, syncDesktopToolsForAll
 import { createFileWatchService, stopAllFileWatches } from "./file-watch";
 import { createAuthLoginService } from "./auth-login";
 import { modelCatalogRefreshCoordinator } from "./model-runtime";
+import { beginModelCredentialShutdown, settleModelCredentials } from "./model-credentials";
 
 import { ChannelManager } from "./channels/channel-manager";
 
@@ -50,6 +51,7 @@ import { clearHerdrBridge, initializeHerdrBridge } from "./herdr/runtime";
 export function registerHandlers(server: RpcServer): () => Promise<void> {
   const bindings = createSessionEventBindings(server);
   let closing = false;
+  const pendingCalls = new Set<Promise<unknown>>();
   const fileWatch = createFileWatchService(server);
   const fileHandlers = createFileHandlers(fileWatch);
   const authLogin = createAuthLoginService(server);
@@ -114,7 +116,16 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     <P, R>(handler: (params: P, context: RpcRequestContext) => R) =>
     (params: P, context: RpcRequestContext): R => {
       if (closing) throw new RpcError({ code: "CLOSED", message: "Agent Host is shutting down" });
-      return handler(params, context);
+      const result = handler(params, context);
+      if (result && typeof result === "object" && "then" in result && typeof result.then === "function") {
+        const pending = Promise.resolve(result);
+        pendingCalls.add(pending);
+        void pending.then(
+          () => pendingCalls.delete(pending),
+          () => pendingCalls.delete(pending),
+        );
+      }
+      return result;
     };
 
   server.handle({
@@ -351,6 +362,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
   const shutdown = createHostShutdown([
     { name: "running subscription", stop: stopRunning },
     { name: "session event bindings", stop: bindings.close },
+    { name: "credential lock waits", stop: beginModelCredentialShutdown },
     { name: "authentication flows", stop: () => authLogin.dispose() },
     { name: "model refreshes", stop: () => modelCatalogRefreshCoordinator.cancelAll() },
     { name: "Herdr tool sync", stop: stopHerdrToolSync },
@@ -361,6 +373,14 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     { name: "file watches", stop: stopAllFileWatches },
     { name: "Agent sessions", stop: disposeAllRpcSessions },
     { name: "MCP", stop: () => mcp.shutdown() },
+    {
+      name: "pending requests",
+      stop: async () => {
+        while (pendingCalls.size) await Promise.allSettled([...pendingCalls]);
+      },
+    },
+    { name: "model refresh completion", stop: () => modelCatalogRefreshCoordinator.settled() },
+    { name: "credential persistence", stop: settleModelCredentials },
   ]);
   return () => {
     closing = true;

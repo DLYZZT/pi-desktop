@@ -20,7 +20,9 @@ const stubs = {
   "rpc-manager":
     "export const subscribeRunningSessions = listener => {state.running.add(listener); return () => {state.running.delete(listener); step('running-off');};}; export const disposeAllRpcSessions = () => step('sessions-stop'); export const syncDesktopToolsForAllSessions = () => {}; export const syncCacheWarmingForAllSessions = async () => 0; export const getRunningRpcSessionIds = () => []; export const getRpcSession = () => state.agent; export const startRpcSession = unexpected;",
   "model-runtime":
-    "export const modelCatalogRefreshCoordinator = {cancelAll: () => step('models-stop')}; export const getSharedModelRuntime = unexpected; export const reloadSharedModelRuntimeConfig = unexpected;",
+    "export const modelCatalogRefreshCoordinator = {cancelAll: () => step('models-stop'), settled: async () => step('models-settled')}; export const getSharedModelRuntime = unexpected; export const reloadSharedModelRuntimeConfig = unexpected;",
+  "model-credentials":
+    "export const beginModelCredentialShutdown = () => step('credentials-stop'); export const settleModelCredentials = async () => step('credentials-settled'); export const createDesktopModelRuntime = unexpected;",
 };
 const { registerHandlers, control } = await importTestBundle("host-lifecycle-composition", {
   packages: "external",
@@ -112,6 +114,7 @@ test("the actual registrar owns one service set and releases subscriptions and s
     "running-off",
     "events-off",
     "destroy-off",
+    "credentials-stop",
     "auth-stop",
     "models-stop",
     "herdr-unsubscribe",
@@ -121,6 +124,8 @@ test("the actual registrar owns one service set and releases subscriptions and s
     "channels-stop",
     "files-stop",
     "sessions-stop",
+    "models-settled",
+    "credentials-settled",
   ]);
 });
 

@@ -354,6 +354,8 @@ export class ManagedProcessReaper {
     if (!this.groupExists(record.pgid)) return "removed";
     const fingerprint = await this.fingerprint(record.pid);
     if (!fingerprint || fingerprint !== record.startFingerprint) {
+      // The group may have exited while the asynchronous identity query was running.
+      if (!this.groupExists(record.pgid)) return "removed";
       this.log(`managed process reap refused identity mismatch process=${this.safeId(record.processId)}`);
       return "identity-uncertain";
     }

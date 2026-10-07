@@ -4,6 +4,7 @@ import test from "node:test";
 import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import { McpOAuthAuthorizationRequiredError } from "@earendil-works/pi-mcp/oauth";
 import { importTestBundle } from "#test-bundle";
+import { createDeferred } from "#test-timing";
 const { McpConnection } = await importTestBundle("mcp-connection", {
   packages: "external",
   entryPoints: [path.join(import.meta.dirname, "connection.ts")],
@@ -76,4 +77,62 @@ test("authentication failures stay needs-auth rather than being overwritten by c
   await assert.rejects(current.start(), McpOAuthAuthorizationRequiredError);
   assert.equal(current.snapshot.state, "needs-auth");
   await current.close();
+});
+
+test("close cancels and awaits a delayed factory, closes its late transport and cannot restart", async () => {
+  const entered = createDeferred(),
+    release = createDeferred();
+  let signal,
+    closed = 0,
+    started = 0;
+  const { client, server } = createInMemoryTransportPair();
+  const transport = {
+    send: (...args) => client.send(...args),
+    onMessage: (...args) => client.onMessage(...args),
+    onError: (...args) => client.onError(...args),
+    onClose: (...args) => client.onClose(...args),
+    start: async () => {
+      started++;
+      await client.start();
+    },
+    close: async () => {
+      closed++;
+      await client.close();
+    },
+  };
+  const current = connection(async (_config, _cwd, inputSignal) => {
+    signal = inputSignal;
+    entered.resolve();
+    await release.promise;
+    return transport;
+  });
+  const opening = current.start();
+  await entered.promise;
+  let finished = false;
+  const closing = current.close();
+  assert.equal(current.close(), closing);
+  void closing.then(() => {
+    finished = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(signal.aborted, true);
+  assert.equal(finished, false);
+  release.resolve();
+  await Promise.all([opening, closing]);
+  await current.start();
+  assert.equal(started, 0);
+  assert.ok(closed >= 1);
+  assert.equal(current.snapshot.state, "disconnected");
+  await server.close();
+});
+
+test("closing before start never invokes a transport factory", async () => {
+  let factories = 0;
+  const current = connection(() => {
+    factories++;
+    throw new Error("must not create");
+  });
+  await current.close();
+  await current.start();
+  assert.equal(factories, 0);
 });

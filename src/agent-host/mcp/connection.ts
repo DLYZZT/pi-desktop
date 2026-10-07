@@ -24,7 +24,9 @@ export async function resolveMcpValue(
   cwd: string,
   trusted: boolean,
   runtime: ToolchainRuntime = toolchainRuntime,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   if (value.startsWith("!")) {
     const { stdout } = await runtime.exec("shell.bash", ["-c", value.slice(1)], {
       cwd,
@@ -32,6 +34,7 @@ export async function resolveMcpValue(
       intent: "managed-process",
       timeout: 15000,
       maxBuffer: 32768,
+      signal,
     });
     return stdout.trim();
   }
@@ -45,10 +48,11 @@ export async function resolveMcpMap(
   cwd: string,
   trusted: boolean,
   runtime?: ToolchainRuntime,
+  signal?: AbortSignal,
 ): Promise<Record<string, string>> {
   const entries = await Promise.all(
     Object.entries(values ?? {}).map(
-      async ([key, value]) => [key, await resolveMcpValue(value, cwd, trusted, runtime)] as const,
+      async ([key, value]) => [key, await resolveMcpValue(value, cwd, trusted, runtime, signal)] as const,
     ),
   );
   return Object.fromEntries(entries);
@@ -62,7 +66,7 @@ export interface McpConnectionOptions {
   runtime?: ToolchainRuntime;
   fetch?: McpFetch;
   providerToken?: (provider: string) => Promise<string | undefined>;
-  createTransport?: (config: McpServerConfig, cwd: string) => McpTransport | Promise<McpTransport>;
+  createTransport?: (config: McpServerConfig, cwd: string, signal: AbortSignal) => McpTransport | Promise<McpTransport>;
   changed: (connection: McpConnection) => void;
 }
 
@@ -98,6 +102,7 @@ export class McpConnection {
     });
   }
   start(): Promise<void> {
+    if (this.closed) return Promise.resolve();
     return (this.connecting ??= this.connect());
   }
   private async connect(): Promise<void> {
@@ -108,9 +113,17 @@ export class McpConnection {
     this.state("connecting");
     try {
       const cwd = this.snapshot.cwd;
-      if (this.options.createTransport) this.transport = await this.options.createTransport(this.config, cwd);
+      if (this.options.createTransport)
+        this.transport = await this.options.createTransport(this.config, cwd, this.controller.signal);
       else if (this.config.url) {
-        const headers = await resolveMcpMap(this.config.headers, cwd, this.options.trusted, this.options.runtime);
+        const headers = await resolveMcpMap(
+          this.config.headers,
+          cwd,
+          this.options.trusted,
+          this.options.runtime,
+          this.controller.signal,
+        );
+        this.controller.signal.throwIfAborted();
         const oauth = { ...this.config.oauth };
         if (oauth.clientSecret)
           oauth.clientSecret = await resolveMcpValue(
@@ -118,20 +131,39 @@ export class McpConnection {
             cwd,
             this.options.trusted,
             this.options.runtime,
+            this.controller.signal,
           );
+        this.controller.signal.throwIfAborted();
         if (this.config.auth) {
           const provider = this.config.auth.provider;
+          const pending = new Set<Promise<string | undefined>>();
+          let lastToken: string | undefined;
           this.auth = {
             token: async () => {
-              const token = await this.options.providerToken?.(provider);
+              // A DELETE during close can reuse the last token; it must not start a new refresh.
+              if (this.closed) return lastToken;
+              const operation = Promise.resolve().then(() => {
+                this.controller.signal.throwIfAborted();
+                return this.options.providerToken?.(provider);
+              });
+              pending.add(operation);
+              let token: string | undefined;
+              try {
+                token = await operation;
+              } finally {
+                pending.delete(operation);
+              }
               if (!token) {
                 const error = new McpOAuthAuthorizationRequiredError();
                 error.message = "Sign in to " + provider + " through model settings";
                 throw error;
               }
+              lastToken = token;
               return token;
             },
-            settled: async () => {},
+            settled: async () => {
+              while (pending.size) await Promise.allSettled([...pending]);
+            },
           };
         } else if (mcpAuthenticationMode(this.config) === "oauth") {
           this.auth = (this.options.credentials ?? new McpOAuthStore()).authProvider(
@@ -181,7 +213,13 @@ export class McpConnection {
           cwd: this.config.cwd ? path.resolve(cwd, this.config.cwd) : cwd,
           trusted: this.options.trusted,
           runtime: this.options.runtime,
-          env: await resolveMcpMap(this.config.env, cwd, this.options.trusted, this.options.runtime),
+          env: await resolveMcpMap(
+            this.config.env,
+            cwd,
+            this.options.trusted,
+            this.options.runtime,
+            this.controller.signal,
+          ),
           onStderr: (text) => {
             this.snapshot.diagnostics = [...(this.snapshot.diagnostics ?? []), text].slice(-8);
             this.options.changed(this);
@@ -230,11 +268,23 @@ export class McpConnection {
     return (this.closing ??= (async () => {
       this.closed = true;
       this.controller.abort();
-      await this.client.close();
-      await this.transport?.close();
-      await this.auth?.settled();
+      const errors: unknown[] = [];
+      const attempt = async (action: () => Promise<unknown> | undefined) => {
+        try {
+          await action();
+        } catch (error) {
+          errors.push(error);
+        }
+      };
+      await attempt(() => this.client.close());
+      await attempt(() => this.transport?.close());
+      // connect() owns cleanup of a transport returned after cancellation. Do not report closed before it settles.
+      await this.connecting?.catch(() => undefined);
+      await attempt(() => this.transport?.close());
+      await attempt(() => this.auth?.settled());
       this.tools = [];
       this.state("disconnected");
+      if (errors.length) throw new AggregateError(errors, "MCP connection cleanup failed");
     })());
   }
   private state(state: McpInstanceSnapshot["state"], error?: unknown): void {

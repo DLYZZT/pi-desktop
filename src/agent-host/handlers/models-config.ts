@@ -12,7 +12,8 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { ModelRuntime, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { createDesktopModelRuntime } from "../model-credentials";
 import type { ApiHandler } from "../../contract/rpc";
 import { RpcError } from "../../contract/types";
 import { reloadSharedModelRuntimeConfig } from "../model-runtime";
@@ -154,7 +155,7 @@ export const modelConfigHandlers = {
         "utf8",
       );
 
-      const modelRuntime = await ModelRuntime.create({ modelsPath, allowModelNetwork: false });
+      const modelRuntime = await createDesktopModelRuntime({ modelsPath, allowModelNetwork: false });
       const loadError = modelRuntime.getError();
       if (loadError) return { ok: false, error: loadError };
 

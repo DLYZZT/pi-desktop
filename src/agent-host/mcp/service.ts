@@ -36,6 +36,7 @@ import { McpConnection, type McpConnectionOptions } from "./connection";
 import { mcpModelContent } from "./model-content";
 import { McpAuthorizationRequests } from "./authorization";
 import { ensureAzureUpgrade } from "../azure-upgrade";
+import { createHostShutdown } from "../host-shutdown";
 import { McpToolNames } from "./tool-names";
 import { mcpToolIdentity, type NamedMcpTool } from "../../shared/mcp-tool-identity";
 import {
@@ -106,6 +107,14 @@ export class McpService {
   private readonly previews = new Set<McpConnection>();
   private readonly cleanups = new Set<() => Promise<void>>();
   private readonly timer: ReturnType<typeof setInterval>;
+  private stopping = false;
+  private stopPromise?: Promise<void>;
+  get isClosing(): boolean {
+    return this.stopping;
+  }
+  private assertOpen(): void {
+    if (this.stopping) throw new RpcError({ code: "CLOSED", message: "MCP service is shutting down" });
+  }
   private readonly probes = new Map<string, { cancelled: boolean; connection?: McpConnection }>();
   constructor(
     private readonly options: McpServiceOptions,
@@ -185,9 +194,11 @@ export class McpService {
     );
   }
   async attach(hooks: McpSessionHooks): Promise<void> {
+    this.assertOpen();
     const id = hooks.ctx.sessionManager.getSessionId();
     this.inactive.delete(id);
     if (this.sessions.has(id)) await this.detach(id);
+    this.assertOpen();
     this.sessions.set(id, {
       id,
       hooks,
@@ -413,7 +424,9 @@ export class McpService {
     revision: string;
     overrideSource?: string;
   }> {
+    this.assertOpen();
     await ensureAzureUpgrade({ agentDir: this.agentDir });
+    this.assertOpen();
     if (target.sessionId) {
       const binding = this.requireBinding(target.sessionId),
         connection = this.getConnection(target.sessionId, target.name);
@@ -431,6 +444,7 @@ export class McpService {
     if (target.scope === "project" && !trusted)
       throw new RpcError({ code: "FORBIDDEN", message: "Project MCP configuration is not trusted" });
     const loaded = await this.config.effective(cwd, target.scope === "project" && trusted);
+    this.assertOpen();
     const entry = loaded.servers.find((server) => server.name === target.name);
     if (!entry) throw new RpcError({ code: "NOT_FOUND", message: loaded.errors[0] ?? "MCP configuration not found" });
     return { ...entry, cwd, trusted };
@@ -496,6 +510,7 @@ export class McpService {
     await probe.connection?.close();
   }
   async preview<T>(target: McpTarget, action: (connection: McpConnection) => Promise<T>): Promise<T> {
+    this.assertOpen();
     if (target.sessionId) return action(this.getConnection(target.sessionId, target.name));
     const entry = await this.target(target),
       connection = new McpConnection({
@@ -521,6 +536,7 @@ export class McpService {
     this.previews.add(connection);
     try {
       await connection.start();
+      this.assertOpen();
       return await action(connection);
     } finally {
       await connection.close();
@@ -644,21 +660,35 @@ export class McpService {
     this.sessions.delete(sessionId);
     await this.login.cancelSession(sessionId);
     await binding.queue;
-    await Promise.allSettled([...binding.connections.values()].map((connection) => connection.close()));
+    const closed = await Promise.allSettled([...binding.connections.values()].map((connection) => connection.close()));
+    const errors = closed.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+    if (errors.length) throw new AggregateError(errors, "MCP session cleanup failed");
   }
-  async shutdown(): Promise<void> {
+  shutdown(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    this.stopping = true;
     clearInterval(this.timer);
-    await this.login.shutdown();
-    await Promise.allSettled([...this.previews].map((connection) => connection.close()));
-    await Promise.all([...this.probes.keys()].map((id) => this.cancelProbe(id)));
-    await Promise.all([...this.sessions.keys()].map((id) => this.detach(id)));
+    for (const probe of this.probes.values()) probe.cancelled = true;
     this.inactive.clear();
-    await Promise.all([...this.cleanups].map((cleanup) => cleanup()));
+    const settle = async (tasks: Promise<unknown>[]) => {
+      const results = await Promise.allSettled(tasks),
+        errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+      if (errors.length) throw new AggregateError(errors, "MCP cleanup failed");
+    };
+    this.stopPromise = createHostShutdown([
+      { name: "login", stop: () => this.login.shutdown() },
+      { name: "previews", stop: () => settle([...this.previews].map((connection) => connection.close())) },
+      { name: "probes", stop: () => settle([...this.probes.keys()].map((id) => this.cancelProbe(id))) },
+      { name: "sessions", stop: () => settle([...this.sessions.keys()].map((id) => this.detach(id))) },
+      { name: "resources", stop: () => settle([...this.cleanups].map((cleanup) => cleanup())) },
+    ])();
+    return this.stopPromise;
   }
 
   private async apply(binding: SessionBinding): Promise<void> {
     if (binding.closed) return;
     const loaded = await this.config.effective(binding.hooks.ctx.cwd, binding.hooks.ctx.isProjectTrusted());
+    if (binding.closed || this.stopping) return;
     binding.error = loaded.errors.length ? loaded.errors.join("\n") : undefined;
     const desired = new Map(
       loaded.servers.map((entry) => [
@@ -993,6 +1023,7 @@ export class McpService {
     this.options.changed(binding.id, this.snapshot(binding.id));
   }
   private requireBinding(sessionId: string): SessionBinding {
+    this.assertOpen();
     const binding = this.sessions.get(sessionId);
     if (!binding)
       throw new RpcError({ code: "NOT_FOUND", message: "Desktop MCP adapter is not active in this session" });

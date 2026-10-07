@@ -3,6 +3,7 @@ import { McpService } from "./service";
 import { getSharedModelRuntime } from "../model-runtime";
 let service: McpService | undefined;
 export function initializeMcpService(server: Pick<RpcServer, "emit">): McpService {
+  if (service?.isClosing) service = undefined;
   service ??= new McpService({
     connection: {
       providerToken: async (provider) => (await (await getSharedModelRuntime()).getAuth(provider))?.auth.apiKey,

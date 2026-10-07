@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import { importTestBundle } from "#test-bundle";
+import { createDeferred } from "#test-timing";
 const { McpService } = await importTestBundle("mcp-service", {
   packages: "external",
   entryPoints: [path.join(import.meta.dirname, "service.ts")],
@@ -220,6 +221,32 @@ test("Desktop MCP registrations expose real state and keep stable names across q
   assert.equal(f.service.tools("session")[0].name, tool.name);
   await assert.rejects(original.execute("stale", { text: "DO_NOT_EXECUTE" }), /generation/);
   assert.equal(f.executed, 1);
+});
+
+test("shutdown rejects a preview whose configuration lookup completes late and shares one close completion", async (t) => {
+  const f = await fixture(t),
+    entered = createDeferred(),
+    release = createDeferred();
+  const effective = f.service.config.effective.bind(f.service.config);
+  f.service.config.effective = async (cwd, trusted) => {
+    if (!trusted) {
+      entered.resolve();
+      await release.promise;
+    }
+    return effective(cwd, trusted);
+  };
+  const pending = f.service.preview({ name: "fixture", scope: "global", cwd: f.root }, async () => {
+    throw new Error("must not run");
+  });
+  const rejected = assert.rejects(pending, (error) => error.code === "CLOSED");
+  await entered.promise;
+  const closing = f.service.shutdown();
+  assert.equal(f.service.shutdown(), closing);
+  await closing;
+  release.resolve();
+  await rejected;
+  assert.equal(f.servers.length, 1);
+  await assert.rejects(f.service.attach(f.hooks), (error) => error.code === "CLOSED");
 });
 
 test("trusted project policy disables a live global server immediately and removal restores its origin", async (t) => {

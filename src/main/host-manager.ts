@@ -143,6 +143,8 @@ export class HostManager {
         }
       }
       const child = this.child;
+      // A started OAuth refresh has a 15-second SDK deadline and must persist before exit.
+      // Leave time for credential lock waits and owned-process cleanup as well.
       setTimeout(() => {
         if (this.child !== child) return;
         try {
@@ -150,7 +152,7 @@ export class HostManager {
         } catch {
           /* ignore */
         }
-      }, 10_000).unref();
+      }, 60_000).unref();
     }
     return exitPromise;
   }

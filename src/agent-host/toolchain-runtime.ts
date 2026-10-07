@@ -49,6 +49,7 @@ export interface SpawnResolvedOptions {
 }
 
 export interface ExecuteFromContextOptions {
+  signal?: AbortSignal;
   cwd: string;
   env?: NodeJS.ProcessEnv;
   timeout?: number;
@@ -294,8 +295,10 @@ export class ToolchainRuntime {
       maxBuffer?: number;
       encoding?: BufferEncoding;
       trusted?: boolean;
+      signal?: AbortSignal;
     },
   ): Promise<{ stdout: string; stderr: string; context: ToolExecutionContext }> {
+    options.signal?.throwIfAborted();
     const context = await this.createExecutionContext({
       cwd: options.cwd,
       intent: options.intent,
@@ -311,6 +314,7 @@ export class ToolchainRuntime {
     context: ToolExecutionContext,
     options: ExecuteFromContextOptions,
   ): Promise<{ stdout: string; stderr: string }> {
+    options.signal?.throwIfAborted();
     const descriptor = this.requireFromContext(capability, context);
     const execOptions: ExecFileOptions = {
       cwd: options.cwd,
@@ -319,6 +323,7 @@ export class ToolchainRuntime {
       maxBuffer: options.maxBuffer,
       encoding: options.encoding ?? "utf8",
       windowsHide: true,
+      signal: options.signal,
     };
     const result = await execFileAsync(descriptor.executable, [...descriptor.argvPrefix, ...args], execOptions);
     return {

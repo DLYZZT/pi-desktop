@@ -50,6 +50,30 @@ test("reaper fails closed when a live pid fingerprint does not match", async () 
   assert.equal(status.records, 1);
 });
 
+test("reaper removes a group that disappeared during identity lookup without signalling anything", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "pi-reaper-exited-"));
+  let exists = true,
+    signals = 0;
+  const reaper = new ManagedProcessReaper(path.join(directory, "journal.json"), {
+    platform: "darwin",
+    groupExists: () => exists,
+    fingerprint: async () => {
+      exists = false;
+      return undefined;
+    },
+    terminateGroup: async () => {
+      signals++;
+      return true;
+    },
+  });
+  await reaper.initialize();
+  reaper.register(record());
+  const status = await reaper.reapAll();
+  assert.equal(status.ready, true);
+  assert.equal(status.records, 0);
+  assert.equal(signals, 0);
+});
+
 test("reaper fails closed when a verified process group cannot be terminated", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "pi-reaper-failure-"));
   const reaper = new ManagedProcessReaper(path.join(directory, "journal.json"), {

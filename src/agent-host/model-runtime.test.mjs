@@ -43,6 +43,34 @@ test("offline catalog refresh creates cache services without requesting network"
   assert.deepEqual(result.catalog, { source: "offline", refreshed: false, aborted: false, warnings: [] });
 });
 
+test("cancelled refresh responses do not end ownership of the underlying work", async () => {
+  const { ModelCatalogRefreshCoordinator } = await loadModelRuntimeModule();
+  const coordinator = new ModelCatalogRefreshCoordinator(10000, () => false),
+    started = createDeferred(),
+    release = createDeferred();
+  const request = coordinator.refresh("/project", "pending", async () => ({
+    modelRuntime: {
+      refresh: async () => {
+        started.resolve();
+        await release.promise;
+        return { aborted: true, errors: new Map() };
+      },
+    },
+  }));
+  await started.promise;
+  coordinator.cancelAll();
+  assert.equal((await request).catalog.aborted, true);
+  let complete = false;
+  const settled = coordinator.settled().then(() => {
+    complete = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(complete, false);
+  release.resolve();
+  await settled;
+  assert.equal(complete, true);
+});
+
 test("provider failures are stable warnings while successful catalogs remain refreshed", async () => {
   const { ModelCatalogRefreshCoordinator } = await loadModelRuntimeModule();
   const coordinator = new ModelCatalogRefreshCoordinator(100, () => false);

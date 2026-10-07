@@ -144,7 +144,10 @@ const checks = [
     "MCP OAuth callbacks must be restricted to loopback hosts",
   ],
   [
-    mcpService.includes("await this.login.shutdown()") && mcpService.includes("this.previews"),
+    mcpService.includes("createHostShutdown([") &&
+      mcpService.includes("this.login.shutdown()") &&
+      mcpService.includes("this.stopping = true") &&
+      mcpService.includes("[...this.previews].map((connection) => connection.close())"),
     "MCP shutdown must retire settings-only OAuth and temporary preview connections",
   ],
   [
