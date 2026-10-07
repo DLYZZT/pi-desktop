@@ -35,6 +35,7 @@ import { mcpAuthConfiguration, mcpCredentialKey, mcpNamespace } from "./oauth-id
 import { McpConnection, type McpConnectionOptions } from "./connection";
 import { mcpModelContent } from "./model-content";
 import { McpAuthorizationRequests } from "./authorization";
+import { ensureAzureUpgrade } from "../azure-upgrade";
 import { McpToolNames } from "./tool-names";
 import { mcpToolIdentity, type NamedMcpTool } from "../../shared/mcp-tool-identity";
 import {
@@ -412,6 +413,7 @@ export class McpService {
     revision: string;
     overrideSource?: string;
   }> {
+    await ensureAzureUpgrade({ agentDir: this.agentDir });
     if (target.sessionId) {
       const binding = this.requireBinding(target.sessionId),
         connection = this.getConnection(target.sessionId, target.name);

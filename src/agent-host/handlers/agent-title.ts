@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { SessionManager, createAgentSessionServices, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { SessionManager, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { createDesktopAgentSessionServices as createAgentSessionServices } from "../desktop-session-services";
 import type { ApiHandler, RpcServer } from "../../contract/rpc";
 import { RpcError } from "../../contract/types";
 import {
@@ -30,7 +31,8 @@ const AUTO_TITLE_SYSTEM_PROMPT =
 
 type TitleSessionServices = Awaited<ReturnType<typeof createAgentSessionServices>>;
 
-type TitleModelServices = Pick<TitleSessionServices, "modelRuntime" | "settingsManager">;
+type TitleModelServices = Pick<TitleSessionServices, "modelRuntime" | "settingsManager"> &
+  Partial<Pick<TitleSessionServices, "azureUpgrade">>;
 
 function resolveTitleModel(
   services: TitleModelServices,
@@ -38,17 +40,18 @@ function resolveTitleModel(
   modelId?: string,
 ): AvailableModel | undefined {
   const runtime = services.modelRuntime;
-  if (provider && modelId) {
-    const byRef = runtime.getModel(provider, modelId);
-    if (byRef) return byRef as AvailableModel;
-  }
   const settings = services.settingsManager;
   const defaultProvider = settings.getDefaultProvider();
   const defaultModelId = settings.getDefaultModel();
-  if (defaultProvider && defaultModelId) {
-    const byDefault = runtime.getModel(defaultProvider, defaultModelId);
-    if (byDefault) return byDefault as AvailableModel;
-  }
+  const targetProvider = provider ?? defaultProvider;
+  if (services.azureUpgrade?.status === "review" && ["azure", "azure-openai-responses"].includes(targetProvider ?? ""))
+    return;
+  if (provider || modelId)
+    return provider && modelId ? (runtime.getModel(provider, modelId) as AvailableModel | undefined) : undefined;
+  if (defaultProvider || defaultModelId)
+    return defaultProvider && defaultModelId
+      ? (runtime.getModel(defaultProvider, defaultModelId) as AvailableModel | undefined)
+      : undefined;
   return runtime.getAvailableSnapshot()[0];
 }
 
@@ -164,6 +167,7 @@ async function resolveTitleSessionTarget(
 ): Promise<{ cwd: string; services?: TitleModelServices } | null> {
   const existing = getRpcSession(sessionId);
   if (existing?.isAlive()) {
+    if (existing.modelSelection.snapshot(existing.inner)?.requiresChoice) return null;
     const dir = validateExistingDirectory(existing.cwd);
     if (!dir.ok) return null;
     return {

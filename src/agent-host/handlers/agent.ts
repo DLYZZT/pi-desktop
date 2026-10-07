@@ -33,11 +33,14 @@ export function createAgentHandlers({
         message?: string;
         provider?: string;
         modelId?: string;
+        modelSelectionExplicit?: boolean;
         toolNames?: string[];
         thinkingLevel?: string;
         [key: string]: unknown;
       };
-      const { cwd, provider, modelId, toolNames, thinkingLevel, ...rest } = body;
+      const { cwd, provider, modelId, modelSelectionExplicit, toolNames, thinkingLevel, ...rest } = body;
+      if (modelSelectionExplicit !== undefined && typeof modelSelectionExplicit !== "boolean")
+        throw new RpcError({ code: "BAD_REQUEST", message: "modelSelectionExplicit must be a boolean" });
       if (!cwd || typeof cwd !== "string") {
         throw new RpcError({ code: "BAD_REQUEST", message: "cwd is required" });
       }
@@ -52,7 +55,11 @@ export function createAgentHandlers({
       // ISSUE-003: single event-binding entry only (ensureSessionEvents)
       bindEvents(session, realSessionId);
 
-      if (provider && modelId) {
+      if (
+        provider &&
+        modelId &&
+        (modelSelectionExplicit !== false || !session.modelSelection.snapshot(session.inner)?.requiresChoice)
+      ) {
         await session.send({ type: "set_model", provider, modelId });
       }
       if (thinkingLevel) {

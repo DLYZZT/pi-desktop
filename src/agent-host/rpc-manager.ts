@@ -1,10 +1,7 @@
 import {
   createAgentSessionFromServices,
-  createAgentSessionServices,
-  createBashToolDefinition,
   getAgentDir,
   SessionManager,
-  type CreateAgentSessionFromServicesOptions,
   type AgentSessionRuntimeDiagnostic,
 } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "crypto";
@@ -20,15 +17,7 @@ import type {
   ExtensionUiResponse,
   ExtensionWidgetItem,
 } from "../shared/types";
-import { toolchainRuntime } from "./toolchain-runtime";
-import { createToolchainBashOptions } from "./toolchain-bash";
-import { createDesktopSearchToolDefinitions } from "./toolchain-search";
-import {
-  browserToolNamesForSnapshot,
-  createBrowserToolDefinitions,
-  isBrowserToolName,
-  setBrowserSessionSource,
-} from "./browser-tools";
+import { browserToolNamesForSnapshot, isBrowserToolName, setBrowserSessionSource } from "./browser-tools";
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
 import { browserAgentRuntime } from "./browser-agent-runtime";
 import { projectExtensionDiagnostics } from "./extension-diagnostics";
@@ -46,15 +35,16 @@ import { applySessionToolCommand } from "./session-tool-settings";
 import { withSessionOrchestration } from "./session-orchestration";
 import { getLegacySessionToolNames } from "./legacy-session-tools";
 export { getLegacySessionToolNames } from "./legacy-session-tools";
-import { peekManagedProcessService } from "./managed-process/runtime";
-import { createManagedProcessToolDefinitions } from "./managed-process/tools";
 import { peekHerdrBridge } from "./herdr/runtime";
-import { createHerdrToolDefinitions, herdrToolNamesForRuntime, isHerdrToolName } from "./herdr/tools";
+import { herdrToolNamesForRuntime, isHerdrToolName } from "./herdr/tools";
 import { SessionPromptPolicy } from "./session-prompt-policy";
 import { desktopSessionExtensions } from "./desktop-session-extensions";
 import { peekMcpService } from "./mcp/runtime";
 import { getDesktopSessionMcpExecutionTools, copyDesktopMcpTools } from "./session-tool-store";
 import { SessionExecutionHistory } from "./session-execution-history";
+import { createDesktopAgentSessionServices as createAgentSessionServices } from "./desktop-session-services";
+import { createDesktopSessionTools } from "./desktop-session-tools";
+import { SessionModelSelection } from "./session-model-selection";
 
 // ============================================================================
 // Types
@@ -155,6 +145,7 @@ export class AgentSessionWrapper {
     private readonly executionHistory?: SessionExecutionHistory,
     private readonly toolPolicy?: SessionToolPolicy,
     private readonly disposeMcp?: () => Promise<void>,
+    readonly modelSelection = new SessionModelSelection(),
   ) {
     this.inner = inner;
     this.persistToolNames = persistToolNames;
@@ -398,6 +389,7 @@ export class AgentSessionWrapper {
     onProgress?: (event: AgentEvent) => void;
   }): Promise<{ runId: string; finalText: string }> {
     return this.enqueueTurn(async () => {
+      this.modelSelection.assertReady(this.inner);
       this.emit({ type: "channel_turn_start", runId: params.runId });
       this.externalTurnActive = true;
       this.externalTurnChannel = params.channel;
@@ -472,6 +464,7 @@ export class AgentSessionWrapper {
   async runExternalCommand(params: { command: ExternalSessionCommand; customInstructions?: string }): Promise<void> {
     await this.enqueueTurn(async () => {
       if (params.command === "compact") {
+        this.modelSelection.assertReady(this.inner);
         await this.inner.compact(params.customInstructions);
         return;
       }
@@ -517,6 +510,7 @@ export class AgentSessionWrapper {
     const type = command.type as string;
     if (this.shouldWaitForExtensions(type)) await this.waitForExtensionsBound();
     if (this.forceEmptySystemPrompt && this.shouldWaitForExtensions(type)) this.syncDesktopToolActivation();
+    if (["prompt", "steer", "follow_up", "compact"].includes(type)) this.modelSelection.assertReady(this.inner);
 
     switch (type) {
       case "prompt": {
@@ -529,6 +523,7 @@ export class AgentSessionWrapper {
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
         if (!streamingBehavior) browserAgentRuntime.beginTurn(this.sessionId, "local");
         const invokePrompt = () => {
+          this.modelSelection.assertReady(this.inner);
           return this.inner.prompt(command.message as string, {
             ...(promptImages?.length ? { images: promptImages } : {}),
             ...(streamingBehavior ? { streamingBehavior } : {}),
@@ -567,6 +562,7 @@ export class AgentSessionWrapper {
           autoCompactionEnabled: this.inner.autoCompactionEnabled,
           autoRetryEnabled: this.inner.autoRetryEnabled,
           model: model ? { id: model.id, provider: model.provider } : undefined,
+          modelSelectionNotice: this.modelSelection.snapshot(this.inner),
           messageCount: 0,
           pendingMessageCount: this.inner.pendingMessageCount,
           queuedMessages: {
@@ -587,9 +583,11 @@ export class AgentSessionWrapper {
 
       case "set_model": {
         const { provider, modelId } = command as { provider: string; modelId: string };
+        await this.inner.modelRuntime.refresh?.({ allowNetwork: false });
         const model = this.inner.modelRuntime.getModel(provider, modelId);
         if (!model) throw new Error(`Model not found: ${provider}/${modelId}`);
         await this.inner.setModel(model);
+        this.modelSelection.selected(model);
         return { id: model.id, provider: model.provider };
       }
 
@@ -662,7 +660,10 @@ export class AgentSessionWrapper {
 
       case "compact": {
         const result = await this.withFinalRunningNotification(() =>
-          this.enqueueTurn(() => this.inner.compact(command.customInstructions as string | undefined)),
+          this.enqueueTurn(() => {
+            this.modelSelection.assertReady(this.inner);
+            return this.inner.compact(command.customInstructions as string | undefined);
+          }),
         );
         return result;
       }
@@ -1458,49 +1459,40 @@ export async function startRpcSession(
     // Build services first so extension-registered providers are available
     // before the SDK restores the saved model from the session file.
     const promptPolicy = new SessionPromptPolicy(sessionToolNames?.length === 0);
-    const services = await createAgentSessionServices({
-      cwd,
-      agentDir,
-      resourceLoaderOptions: {
-        extensionFactories: desktopSessionExtensions(
-          toolPolicy,
-          executionHistory,
-          promptPolicy,
-          () => getRpcSession(managerSessionId)?.isRunning() ?? false,
-        ),
+    const modelSelection = new SessionModelSelection();
+    const services = await createAgentSessionServices(
+      {
+        cwd,
+        agentDir,
+        resourceLoaderOptions: {
+          extensionFactories: [
+            modelSelection.extension(),
+            ...desktopSessionExtensions(
+              toolPolicy,
+              executionHistory,
+              promptPolicy,
+              () => getRpcSession(managerSessionId)?.isRunning() ?? false,
+            ),
+          ],
+        },
       },
-    });
-    const executionContext = await toolchainRuntime.createExecutionContext({
-      cwd,
-      intent: "agent-shell",
-      trusted: services.settingsManager.isProjectTrusted(),
-    });
-    const bashOptions = createToolchainBashOptions(
-      executionContext,
-      toolchainRuntime,
-      services.settingsManager.getShellCommandPrefix(),
-      (command) => browserAgentRuntime.guardBash(sessionManager.getSessionId(), command),
+      { project: true },
     );
-    const customTools = [
-      executionHistory.tool(),
-      createBashToolDefinition(cwd, bashOptions),
-      ...createDesktopSearchToolDefinitions(cwd, executionContext, toolchainRuntime),
-      ...createBrowserToolDefinitions(),
-      ...(peekHerdrBridge() ? createHerdrToolDefinitions(cwd, peekHerdrBridge()!) : []),
-      ...(peekManagedProcessService()
-        ? createManagedProcessToolDefinitions(
-            cwd,
-            services.settingsManager.isProjectTrusted(),
-            peekManagedProcessService()!,
-          )
-        : []),
-    ] as unknown as NonNullable<CreateAgentSessionFromServicesOptions["customTools"]>;
-    const { session: inner } = await createAgentSessionFromServices({
+    const { executionContext, customTools } = await createDesktopSessionTools(
+      cwd,
+      sessionManager,
+      services.settingsManager,
+      executionHistory,
+    );
+    const model = modelSelection.prepare(services, sessionManager);
+    const { session: inner, modelFallbackMessage } = await createAgentSessionFromServices({
       services,
       sessionManager,
       customTools,
       excludeTools: [...EXCLUDED_PI_TOOLS],
+      ...(model ? { model } : {}),
     });
+    modelSelection.finish(inner, modelFallbackMessage);
     const realSessionId = inner.sessionId as string;
     toolPolicy.bind(inner);
 
@@ -1519,6 +1511,7 @@ export async function startRpcSession(
       executionHistory,
       toolPolicy,
       () => peekMcpService()?.detach(realSessionId) ?? Promise.resolve(),
+      modelSelection,
     );
     wrapper.setRuntimeDiagnostics(services.diagnostics);
     wrapper.setToolchainSummary(executionContext.inventoryRevision, executionContext.summary);

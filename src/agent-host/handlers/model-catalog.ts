@@ -1,10 +1,5 @@
 import { statSync } from "node:fs";
-import {
-  createAgentSessionServices,
-  getAgentDir,
-  type ModelRuntime,
-  type SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ModelRuntime, type SettingsManager } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { ApiHandler } from "../../contract/rpc";
 import {
@@ -16,6 +11,7 @@ import {
   type ModelsListResult,
 } from "../../contract/types";
 import { modelCatalogRefreshCoordinator } from "../model-runtime";
+import { createDesktopAgentSessionServices as createAgentSessionServices } from "../desktop-session-services";
 
 const THINKING_SUFFIXES = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
 
@@ -164,8 +160,8 @@ export async function projectModelsList(
   let defaultModel: { provider: string; modelId: string } | null = null;
   const provider = settings.getDefaultProvider();
   const modelId = settings.getDefaultModel();
-  if (provider && modelId && visible.some((model) => model.provider === provider && model.id === modelId)) {
-    defaultModel = { provider, modelId };
+  if (provider) {
+    defaultModel = { provider, modelId: modelId ?? "" };
   }
 
   return {

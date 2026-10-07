@@ -423,7 +423,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         cwd: newSessionCwd,
         type: "ensure_session",
         toolNames,
-        ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
+        ...(selectedModel
+          ? {
+              provider: selectedModel.provider,
+              modelId: selectedModel.modelId,
+              modelSelectionExplicit: newSessionModel !== null,
+            }
+          : {}),
         ...(thinkingLevel !== "auto" ? { thinkingLevel } : {}),
       });
       const realId = result.sessionId;

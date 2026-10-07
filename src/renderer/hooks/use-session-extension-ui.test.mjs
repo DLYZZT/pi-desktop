@@ -188,6 +188,34 @@ test("extension snapshots preserve newer status/widget events, including removal
   assert.deepEqual(fixture.current.extensionWidgets, []);
 });
 
+test("model restore notices show the requested and actual provider until an explicit selection clears them", async (t) => {
+  const fixture = await mount(t);
+  await act(async () =>
+    fixture.current.applyExtensionSnapshot(
+      {
+        extensionStatuses: [],
+        modelSelectionNotice: {
+          requiresChoice: true,
+          reason: "azure-review",
+          requested: { provider: "azure-openai-responses", modelId: "gpt" },
+          actual: { provider: "anthropic", modelId: "claude" },
+        },
+      },
+      fixture.runtimeGate.capture(),
+    ),
+  );
+  const notice = fixture.current.extensionStatuses.find((status) => status.key === "pi-model-selection");
+  assert.match(notice.text, /azure-openai-responses\/gpt/);
+  assert.match(notice.text, /anthropic\/claude/);
+  await act(async () =>
+    fixture.current.applyExtensionSnapshot(
+      { extensionStatuses: [], modelSelectionNotice: undefined },
+      fixture.runtimeGate.capture(),
+    ),
+  );
+  assert.deepEqual(fixture.current.extensionStatuses, []);
+});
+
 test("notice expiry keeps the exit animation and unmount clears presentation timers", async (t) => {
   const fixture = await mount(t);
   await act(async () => fixture.current.addNotice({ id: "notice", message: "message" }));

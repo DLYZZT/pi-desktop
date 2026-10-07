@@ -23,6 +23,7 @@ const channelMediaStore = read("src/agent-host/channels/media-store.ts");
 const channelOutboundFiles = read("src/agent-host/channels/outbound-files.ts");
 const channelPiBridge = read("src/agent-host/channels/pi-session-bridge.ts");
 const rpcManager = read("src/agent-host/rpc-manager.ts");
+const desktopSessionTools = read("src/agent-host/desktop-session-tools.ts");
 const sessionExtensions = read("src/agent-host/desktop-session-extensions.ts");
 const legacyChannelContext = read("src/agent-host/legacy-channel-context.ts");
 const weixinMedia = read("src/agent-host/channels/adapters/weixin/media.ts");
@@ -387,7 +388,8 @@ const checks = [
     "tag releases must verify managed runtime checksums and sizes against official upstream metadata",
   ],
   [
-    rpcManager.includes("createDesktopSearchToolDefinitions") &&
+    rpcManager.includes("createDesktopSessionTools(") &&
+      desktopSessionTools.includes("createDesktopSearchToolDefinitions") &&
       toolchainSearch.includes("allowUpstreamDownload: false") &&
       !toolchainSearch.includes("ensureTool") &&
       !toolchainSearch.includes("releases/latest") &&
@@ -772,7 +774,8 @@ const checks = [
       browserAgentRuntime.includes("BROWSER_CALL_BUDGET_EXCEEDED") &&
       browserAgentRuntime.includes("const REPLAN_CALLS = 30") &&
       browserAgentRuntime.includes("const MAX_CALLS = 60") &&
-      rpcManager.includes("browserAgentRuntime.guardBash") &&
+      rpcManager.includes("createDesktopSessionTools(") &&
+      desktopSessionTools.includes("browserAgentRuntime.guardBash") &&
       toolchainBash.includes("await beforeExec?.(command)"),
     "Browser attempt/workflow state must remain hashed, budgeted, and enforced before Bash execution",
   ],

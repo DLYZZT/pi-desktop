@@ -283,6 +283,8 @@ export interface Api {
       message?: string;
       provider?: string;
       modelId?: string;
+      /** False for an automatically displayed default; it must not dismiss a restore warning. */
+      modelSelectionExplicit?: boolean;
       toolNames?: string[];
       thinkingLevel?: string;
       [key: string]: unknown;

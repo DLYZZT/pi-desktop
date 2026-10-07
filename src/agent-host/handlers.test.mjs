@@ -460,6 +460,54 @@ test("model list projection isolates provider availability failures and keeps th
   assert.doesNotMatch(JSON.stringify(result), /secret provider failure detail/);
 });
 
+test("model projection retains an unavailable default reference instead of authorizing a replacement implicitly", async () => {
+  const { projectModelsList } = await loadHandlersModule();
+  const model = { id: "other", name: "Other", provider: "other", reasoning: false };
+  const result = await projectModelsList(
+    { getProviders: () => [{ id: "other" }], getAvailableSnapshot: () => [model], getAvailable: async () => [model] },
+    {
+      getEnabledModels: () => undefined,
+      getDefaultProvider: () => "azure-openai-responses",
+      getDefaultModel: () => "legacy",
+    },
+    { source: "cache", refreshed: false, aborted: false, warnings: [] },
+  );
+  assert.deepEqual(result.defaultModel, { provider: "azure-openai-responses", modelId: "legacy" });
+  assert.deepEqual(
+    result.models.map((model) => model.provider),
+    ["other"],
+  );
+});
+
+test("automatic titles stay local when the selected provider/model cannot be resolved", async () => {
+  const { generateSessionTitleWithFallback } = await loadHandlersModule();
+  let requests = 0,
+    fallthrough = 0;
+  const title = await generateSessionTitleWithFallback(
+    async () => ({
+      modelRuntime: {
+        getModel: () => undefined,
+        getAvailableSnapshot() {
+          fallthrough++;
+          return [{ provider: "other", id: "other" }];
+        },
+        hasConfiguredAuth: () => true,
+        completeSimple: async () => {
+          requests++;
+          return { content: [{ type: "text", text: "OTHER_PROVIDER_TITLE" }] };
+        },
+      },
+      settingsManager: { getDefaultProvider: () => "azure-openai-responses", getDefaultModel: () => "legacy" },
+    }),
+    "Keep this message local",
+    "azure-openai-responses",
+    "legacy",
+  );
+  assert.equal(requests, 0);
+  assert.equal(fallthrough, 0);
+  assert.notEqual(title, "OTHER_PROVIDER_TITLE");
+});
+
 test("file, git, worktree, skill, plugin, and system handlers return contract-shaped results", async (t) => {
   const base = mkdtempSync(path.join(tmpdir(), "pi-handler-test-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -823,10 +871,7 @@ test("session, model configuration, and auth handlers isolate state and preserve
 
   const modelsPath = path.join(isolatedAgentDirectory, "models.json");
   writeFileSync(modelsPath, "{broken json", "utf8");
-  assert.throws(
-    () => handlers["modelsConfig.get"](),
-    (error) => error.code === "PARSE_ERROR",
-  );
+  await assert.rejects(handlers["modelsConfig.get"](), (error) => error.code === "PARSE_ERROR");
   assert.equal(readFileSync(modelsPath, "utf8"), "{broken json");
 });
 

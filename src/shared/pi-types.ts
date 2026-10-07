@@ -141,7 +141,10 @@ export interface AgentSessionLike {
   readonly model: ModelLike | undefined;
   readonly sessionName: string | undefined;
   readonly systemPrompt?: string;
-  readonly modelRuntime: { getModel: (provider: string, modelId: string) => ModelLike | undefined };
+  readonly modelRuntime: {
+    getModel: (provider: string, modelId: string) => ModelLike | undefined;
+    refresh?: (options: { allowNetwork: boolean }) => Promise<unknown>;
+  };
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
   readonly agent: { state?: { readonly systemPrompt?: string; thinkingLevel?: string; messages?: unknown[] } };

@@ -54,7 +54,7 @@ export function useSessionModels({ isNew, cwd, refreshKey, addNotice }: SessionM
         const match = d.defaultModel
           ? nextList.find((m) => m.id === d.defaultModel?.modelId && m.provider === d.defaultModel?.provider)
           : undefined;
-        const displayModel = match ?? nextList[0];
+        const displayModel = match ?? (d.defaultModel ? undefined : nextList[0]);
         setNewSessionDefaultModel(displayModel ? { provider: displayModel.provider, modelId: displayModel.id } : null);
       }
     },

@@ -70,6 +70,7 @@ export interface EntryContentResult {
 }
 
 export interface SessionRuntimeState {
+  modelSelectionNotice?: ModelSelectionNotice;
   contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null } | null;
   systemPrompt?: string;
   thinkingLevel?: string;
@@ -162,6 +163,21 @@ export interface ModelsConfig {
 export interface ModelsConfigSnapshot {
   config: ModelsConfig;
   version: string;
+  azureUpgrade?: AzureUpgradeReport;
+}
+
+export interface AzureUpgradeReport {
+  status: "unchanged" | "migrated" | "review";
+  files: string[];
+  backups: string[];
+  issues: string[];
+}
+
+export interface ModelSelectionNotice {
+  requiresChoice: boolean;
+  reason: "azure-renamed" | "restore-fallback" | "azure-review";
+  requested?: { provider: string; modelId: string };
+  actual?: { provider: string; modelId: string };
 }
 
 export interface TestResult {

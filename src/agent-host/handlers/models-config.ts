@@ -1,5 +1,6 @@
 import {
   existsSync,
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -15,6 +16,8 @@ import { ModelRuntime, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ApiHandler } from "../../contract/rpc";
 import { RpcError } from "../../contract/types";
 import { reloadSharedModelRuntimeConfig } from "../model-runtime";
+import { ensureAzureUpgrade } from "../azure-upgrade";
+import { withLockedJsonFile } from "../../shared/node/locked-json-file";
 
 function getModelsPath(): string {
   return path.join(getAgentDir(), "models.json");
@@ -55,36 +58,39 @@ function modelsConfigConflict(expectedVersion: string, currentVersion: string): 
   });
 }
 
-function writeModelsJson(data: Record<string, unknown>, expectedVersion: string): string {
+async function writeModelsJson(data: Record<string, unknown>, expectedVersion: string): Promise<string> {
   const p = getModelsPath();
-  mkdirSync(path.dirname(p), { recursive: true });
-  const initial = readModelsFileSnapshot();
-  if (initial.version !== expectedVersion) throw modelsConfigConflict(expectedVersion, initial.version);
-  // ISSUE-009: atomic write via temp + rename; keep .bak of previous good file
-  const tmp = `${p}.${process.pid}.tmp`;
-  const bak = `${p}.bak`;
-  const serialized = JSON.stringify(data, null, 2);
-  writeFileSync(tmp, serialized, "utf8");
-  try {
-    const beforeCommit = readModelsFileSnapshot();
-    if (beforeCommit.version !== expectedVersion) throw modelsConfigConflict(expectedVersion, beforeCommit.version);
-    if (beforeCommit.raw !== null) {
-      try {
-        writeFileSync(bak, beforeCommit.raw, "utf8");
-      } catch {
-        /* ignore bak failure */
-      }
-    }
-    renameSync(tmp, p);
-  } catch (e) {
+  return withLockedJsonFile(p, async () => {
+    mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 });
+    const initial = readModelsFileSnapshot();
+    if (initial.version !== expectedVersion) throw modelsConfigConflict(expectedVersion, initial.version);
+    // ISSUE-009: atomic write via temp + rename; keep .bak of previous good file
+    const tmp = `${p}.${process.pid}.tmp`;
+    const bak = `${p}.bak`;
+    const serialized = JSON.stringify(data, null, 2);
+    writeFileSync(tmp, serialized, { encoding: "utf8", mode: 0o600 });
     try {
-      unlinkSync(tmp);
-    } catch {
-      /* ignore */
+      const beforeCommit = readModelsFileSnapshot();
+      if (beforeCommit.version !== expectedVersion) throw modelsConfigConflict(expectedVersion, beforeCommit.version);
+      if (beforeCommit.raw !== null) {
+        try {
+          writeFileSync(bak, beforeCommit.raw, { encoding: "utf8", mode: 0o600 });
+          if (process.platform !== "win32") chmodSync(bak, 0o600);
+        } catch {
+          /* ignore bak failure */
+        }
+      }
+      renameSync(tmp, p);
+    } catch (e) {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* ignore */
+      }
+      throw e;
     }
-    throw e;
-  }
-  return modelsContentVersion(serialized);
+    return modelsContentVersion(serialized);
+  });
 }
 
 type ModelConfigHandlers = {
@@ -94,7 +100,10 @@ type ModelConfigHandlers = {
 };
 
 export const modelConfigHandlers = {
-  get: () => readModelsJsonSnapshot(),
+  get: async () => {
+    const azureUpgrade = await ensureAzureUpgrade();
+    return { ...readModelsJsonSnapshot(), azureUpgrade };
+  },
 
   set: async (params) => {
     const body = params as { config?: unknown; expectedVersion?: unknown };
@@ -106,7 +115,7 @@ export const modelConfigHandlers = {
     if (typeof body.expectedVersion !== "string" || !body.expectedVersion) {
       throw new RpcError({ code: "BAD_REQUEST", message: "expectedVersion is required" });
     }
-    const version = writeModelsJson(config, body.expectedVersion);
+    const version = await writeModelsJson(config, body.expectedVersion);
     await reloadSharedModelRuntimeConfig();
     return { ok: true as const, version };
   },

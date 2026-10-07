@@ -21,12 +21,14 @@ import type {
   ModelPreferencesResult,
   ProviderStatus as OAuthProvider,
   ApiKeyProviderStatus as ApiKeyProvider,
+  AzureUpgradeReport,
 } from "@contract/types";
 import { ProviderDetail, ModelDetail } from "./models/ModelForms";
 import { ProviderIcon } from "./models/ProviderIcon";
 import { OAuthDetail } from "./models/OAuthDetail";
 import { ApiKeyDetail } from "./models/ApiKeyDetail";
 import { AddProviderPicker } from "./models/AddProviderPicker";
+import { AzureUpgradeNotice } from "./models/AzureUpgradeNotice";
 
 type Selection = ModelsConfigSelection;
 
@@ -53,6 +55,7 @@ export function ModelsConfig({
     [],
   );
   const [configVersion, setConfigVersion] = useState<string | null>(null);
+  const [azureUpgrade, setAzureUpgrade] = useState<AzureUpgradeReport>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -147,6 +150,7 @@ export function ModelsConfig({
         selection: keys.length > 0 ? { type: "provider", name: keys[0] } : null,
       });
       setConfigVersion(snapshot.version);
+      setAzureUpgrade(snapshot.azureUpgrade);
       setConfigLoaded(true);
       setSaveConflict(false);
       setSaveError(null);
@@ -436,6 +440,7 @@ export function ModelsConfig({
             </div>
           )}
 
+          <AzureUpgradeNotice report={azureUpgrade} />
           {/* Body */}
           <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: "hidden" }}>
             {/* Left: tree */}

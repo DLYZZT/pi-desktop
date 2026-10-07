@@ -62,6 +62,15 @@ const catalog = (id) => ({
   catalog: { source: "cache", refreshed: false, aborted: false, warnings: [] },
 });
 
+test("an unavailable saved default never silently selects another provider for a new session", async (t) => {
+  const input = catalog("available");
+  input.defaultModel = { provider: "azure-openai-responses", modelId: "legacy" };
+  const fixture = await mount(t, input);
+  assert.equal(fixture.current.newSessionDefaultModel, null);
+  await act(async () => fixture.current.setNewSessionModel({ provider: "fixture", modelId: "available" }));
+  assert.deepEqual(fixture.current.newSessionModel, { provider: "fixture", modelId: "available" });
+});
+
 async function mount(t, initial = catalog("cached")) {
   testApi.reset();
   testApi.queueList(initial);

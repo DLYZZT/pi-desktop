@@ -1,6 +1,7 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { ModelsRefreshResult } from "@earendil-works/pi-ai";
 import type { ModelCatalogStatus, ModelCatalogWarning } from "../contract/types";
+import { ensureAzureUpgrade, azureUpgradeRevision } from "./azure-upgrade";
 
 export const MODEL_CATALOG_REFRESH_TIMEOUT_MS = 12_000;
 
@@ -171,6 +172,8 @@ export class ModelCatalogRefreshCoordinator {
 export const modelCatalogRefreshCoordinator = new ModelCatalogRefreshCoordinator();
 
 let sharedRuntimePromise: Promise<ModelRuntime> | undefined;
+let sharedUpgradeRevision = 0;
+let sharedUpgradeRefresh: Promise<void> = Promise.resolve();
 
 /**
  * Shared runtime for host-level model and credential management.
@@ -178,14 +181,28 @@ let sharedRuntimePromise: Promise<ModelRuntime> | undefined;
  * Agent sessions keep their own cwd-bound runtimes so project extensions
  * cannot leak provider registrations into unrelated sessions.
  */
-export function getSharedModelRuntime(): Promise<ModelRuntime> {
+export async function getSharedModelRuntime(): Promise<ModelRuntime> {
+  await ensureAzureUpgrade();
   if (!sharedRuntimePromise) {
+    sharedUpgradeRevision = azureUpgradeRevision();
     sharedRuntimePromise = ModelRuntime.create().catch((error) => {
       sharedRuntimePromise = undefined;
       throw error;
     });
   }
-  return sharedRuntimePromise;
+  const runtime = await sharedRuntimePromise;
+  const revision = azureUpgradeRevision();
+  if (revision !== sharedUpgradeRevision) {
+    sharedUpgradeRefresh = sharedUpgradeRefresh
+      .catch(() => undefined)
+      .then(async () => {
+        if (revision === sharedUpgradeRevision) return;
+        await runtime.refresh({ allowNetwork: false });
+        sharedUpgradeRevision = revision;
+      });
+    await sharedUpgradeRefresh;
+  }
+  return runtime;
 }
 
 /** Refresh local model configuration/cache only when the shared runtime already exists. */

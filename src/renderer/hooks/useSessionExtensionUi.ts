@@ -4,6 +4,8 @@ import type { SessionRuntimeState } from "@contract/types";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { NOTICE_VISIBLE_MS, noticeExpiryDelay, noticeReducer, type NoticeType } from "@/lib/notice-queue";
 import type { RuntimeSnapshotTicket, SessionRuntimeGate } from "@/lib/session-runtime-gate";
+import { useI18n } from "@/i18n";
+import { modelSelectionNoticeText } from "@/lib/model-selection-notice";
 
 type DialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 type CustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
@@ -27,6 +29,7 @@ export function useSessionExtensionUi({
   runtimeGate: SessionRuntimeGate;
   chatInputRef?: RefObject<{ insertText: (text: string) => void } | null>;
 }) {
+  const { t } = useI18n();
   const [extensionDialog, setExtensionDialog] = useState<DialogRequest | null>(null);
   const [extensionCustomUi, setExtensionCustomUi] = useState<CustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
@@ -64,11 +67,16 @@ export function useSessionExtensionUi({
     (state: SessionRuntimeState, ticket: RuntimeSnapshotTicket) => {
       if (getViewSignal().aborted) return;
       if (state.extensionStatuses !== undefined && runtimeGate.accept(ticket, "statuses"))
-        setExtensionStatuses(state.extensionStatuses ?? []);
+        setExtensionStatuses([
+          ...(state.extensionStatuses ?? []),
+          ...(state.modelSelectionNotice
+            ? [{ key: "pi-model-selection", text: modelSelectionNoticeText(state.modelSelectionNotice, t) }]
+            : []),
+        ]);
       if (state.extensionWidgets !== undefined && runtimeGate.accept(ticket, "widgets"))
         setExtensionWidgets(state.extensionWidgets ?? []);
     },
-    [getViewSignal, runtimeGate],
+    [getViewSignal, runtimeGate, t],
   );
 
   const respondToExtensionUi = useCallback(

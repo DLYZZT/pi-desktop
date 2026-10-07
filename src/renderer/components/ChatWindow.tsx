@@ -1,3 +1,4 @@
+import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { phaseLabel } from "@/lib/agent-phase-label";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type {
@@ -918,38 +919,6 @@ export function ChatWindow({
       </div>
 
       <div className="chat-input-bottom-spacer" data-expanded={isEmptyNew ? "true" : "false"} aria-hidden="true" />
-    </div>
-  );
-}
-
-function ExtensionStatusBar({ statuses }: { statuses: Array<{ key: string; text: string }> }) {
-  if (statuses.length === 0) return null;
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-      {statuses.map((status) => (
-        <div
-          key={status.key}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            maxWidth: "100%",
-            padding: "4px 8px",
-            border: "1px solid color-mix(in srgb, var(--accent) 24%, var(--border))",
-            borderRadius: 6,
-            background: "color-mix(in srgb, var(--accent) 7%, var(--bg))",
-            color: "var(--text-muted)",
-            fontSize: scaledChatFont(12),
-          }}
-        >
-          <span style={{ color: "var(--accent)", fontFamily: "var(--font-mono)", fontSize: scaledChatFont(11) }}>
-            {status.key}
-          </span>
-          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {status.text}
-          </span>
-        </div>
-      ))}
     </div>
   );
 }
