@@ -1,6 +1,8 @@
 # Pi Agent Desktop v2 — pure Electron (no Next sidecar, no bundled Node)
 appId: app.dlyzzt.pi-agent-desktop
 productName: Pi Agent Desktop
+# Resolve Pi resources from the installed dependency graph, including hoisted or nested layouts.
+extends: ./scripts/pi-builder-config.mjs
 copyright: Copyright © DLYZZT
 
 directories:
@@ -28,58 +30,7 @@ files:
   # exclusions Linux asar packaging can hard-link JSON/images twice (EEXIST).
   - "!node_modules/@earendil-works/pi-coding-agent/docs/**/*"
   - "!node_modules/@earendil-works/pi-coding-agent/examples/**/*"
-  # Pi injects these package-relative paths into the agent system prompt when
-  # users ask it to author extensions, packages, SDK integrations, or TUI UI.
-  # Restore them after the broad Markdown/TypeScript production exclusions.
-  # Explicit FileSets bypass electron-builder's production-dependency cleanup,
-  # which otherwise drops package READMEs, examples, and declaration files.
-  - from: node_modules/@earendil-works/pi-coding-agent
-    to: node_modules/@earendil-works/pi-coding-agent
-    filter:
-      - README.md
-      - CHANGELOG.md
-      - "docs/**/*"
-      - "examples/**/*"
-      # Public declarations let the agent inspect exact APIs when the prose and
-      # examples do not cover a newly added or advanced extension capability.
-      - "dist/**/*.d.ts"
-  - from: node_modules/@earendil-works/pi-ai/dist
-    to: node_modules/@earendil-works/pi-ai/dist
-    filter:
-      - "**/*.d.ts"
-  # Keep telemetry as an exact root dependency so electron-builder has one
-  # runtime source. Restore only authoring files excluded from the default
-  # dependency walk; copying JS here would race the ASAR dependency copier.
-  - from: node_modules/@earendil-works/pi-telemetry
-    to: node_modules/@earendil-works/pi-telemetry
-    filter:
-      - README.md
-      - "dist/**/*.d.ts"
-  # electron-builder deduplicates these transitive packages to the app root.
-  # Re-adding declaration-only nested directories would shadow the healthy
-  # root package under Node's ESM resolver, so package metadata and runtime JS
-  # must travel with the authoring declarations.
-  - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai
-    to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai
-    filter:
-      - package.json
-      - "dist/**/*.js"
-      - "dist/**/*.json"
-      - "dist/**/*.d.ts"
-  - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui
-    to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui
-    filter:
-      - package.json
-      - "dist/**/*.js"
-      - "dist/**/*.d.ts"
-      - "native/**/*"
-  - from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-telemetry
-    to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-telemetry
-    filter:
-      - package.json
-      - README.md
-      - "dist/**/*.js"
-      - "dist/**/*.d.ts"
+  # The inherited Pi FileSets restore declarations, docs and examples after these exclusions.
 
 asar: true
 

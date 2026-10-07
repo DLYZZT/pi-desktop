@@ -8,7 +8,7 @@ const runtimePackages =
 
 export const PI_RUNTIME_ROOTS = Object.freeze(["pi-ai", "pi-coding-agent", "pi-mcp", "pi-telemetry"]);
 
-function resolvePackage(from, name, exists) {
+export function resolvePackage(from, name, exists) {
   let current = from;
   for (;;) {
     const candidate = `${current ? `${current}/` : ""}node_modules/${name}`;

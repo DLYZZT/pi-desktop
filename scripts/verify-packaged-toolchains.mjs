@@ -9,7 +9,13 @@ import { fileURLToPath } from "node:url";
 import { darwinCodeDigest } from "../src/main/toolchains/darwin-binary-integrity.ts";
 import { extractFile, listPackage } from "@electron/asar";
 import { verifyWindowsHelperPe } from "./windows-helper-pe.mjs";
-import { PI_RUNTIME_ROOTS, validatePiPackageGraph, validatePiRuntimeAssets } from "./pi-runtime-contract.mjs";
+import {
+  PI_RUNTIME_ROOTS,
+  resolvePackage,
+  validatePiPackageGraph,
+  validatePiRuntimeAssets,
+} from "./pi-runtime-contract.mjs";
+import { assertLockedPackage, validatePiAuthoringAssets } from "./pi-packaging.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const expectedPiVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).dependencies?.[
@@ -256,95 +262,24 @@ function verifyWindowsManagedProcessHelper(resources, toolTarget, executeHelper,
 function verifyPiRuntimeAssets(resources, platform, arch) {
   const asarPath = path.join(resources, "app.asar");
   const entries = new Set(listPackage(asarPath).map((entry) => entry.replace(/^[/\\]+/u, "").replaceAll("\\", "/")));
-  const codingAgentRoot = "node_modules/@earendil-works/pi-coding-agent";
-  const nested = `${codingAgentRoot}/node_modules`;
-  const agentCoreRoot =
-    [`${nested}/@earendil-works/pi-agent-core`, "node_modules/@earendil-works/pi-agent-core"].find((root) =>
-      entries.has(`${root}/package.json`),
-    ) ?? `${nested}/@earendil-works/pi-agent-core`;
-  const grokRoot =
-    [`${nested}/grok-mermaid`, "node_modules/grok-mermaid"].find((root) => entries.has(`${root}/package.json`)) ??
-    `${nested}/grok-mermaid`;
+  const readPackage = (entry) => JSON.parse(extractAsarFile(asarPath, entry).toString("utf8"));
+  const exists = (entry) => entries.has(entry);
   const graph = validatePiPackageGraph({
-    readPackage: (entry) => JSON.parse(extractAsarFile(asarPath, entry).toString("utf8")),
-    exists: (entry) => entries.has(entry),
+    readPackage,
+    exists,
     version: expectedPiVersion,
     rootPackages: PI_RUNTIME_ROOTS,
   });
-  validatePiRuntimeAssets({
-    graph,
-    readPackage: (entry) => JSON.parse(extractAsarFile(asarPath, entry).toString("utf8")),
-    exists: (entry) => entries.has(entry),
-  });
-  for (const [entry, version] of graph) {
-    // electron-builder can hoist a nested dependency; every artifact must correspond to a locked instance.
-    const candidates = [entry, `${codingAgentRoot}/${entry}`];
-    if (!candidates.some((candidate) => lockfile.packages?.[candidate]?.version === version)) {
-      throw new Error(`Packaged Pi runtime differs from lockfile: ${entry}`);
-    }
+  validatePiRuntimeAssets({ graph, readPackage, exists });
+  validatePiAuthoringAssets({ graph, readPackage, exists, platform, arch });
+  const codingAgentRoot = resolvePackage("", "@earendil-works/pi-coding-agent", exists);
+  const grokRoot = resolvePackage(codingAgentRoot, "grok-mermaid", exists);
+  const typeboxRoot = resolvePackage("", "typebox", exists);
+  for (const entry of [`${grokRoot}/dist/index.js`, `${typeboxRoot}/build/index.mjs`]) {
+    if (!exists(entry)) throw new Error(`Packaged runtime asset is missing: ${entry}`);
   }
-  const required = [
-    `${codingAgentRoot}/package.json`,
-    `${codingAgentRoot}/dist/index.js`,
-    `${codingAgentRoot}/dist/index.d.ts`,
-    "node_modules/@earendil-works/pi-ai/package.json",
-    "node_modules/@earendil-works/pi-ai/dist/index.js",
-    "node_modules/@earendil-works/pi-ai/dist/index.d.ts",
-    "node_modules/@earendil-works/pi-telemetry/package.json",
-    "node_modules/@earendil-works/pi-telemetry/dist/index.js",
-    "node_modules/@earendil-works/pi-telemetry/dist/index.d.ts",
-    `${agentCoreRoot}/package.json`,
-    `${agentCoreRoot}/dist/index.js`,
-    "node_modules/typebox/package.json",
-    "node_modules/typebox/build/index.mjs",
-    `${nested}/@earendil-works/pi-ai/package.json`,
-    `${nested}/@earendil-works/pi-ai/dist/index.js`,
-    `${nested}/@earendil-works/pi-ai/dist/index.d.ts`,
-    `${nested}/@earendil-works/pi-ai/dist/providers/data/amazon-bedrock.json`,
-    `${nested}/@earendil-works/pi-telemetry/package.json`,
-    `${nested}/@earendil-works/pi-telemetry/dist/index.js`,
-    `${nested}/@earendil-works/pi-telemetry/dist/index.d.ts`,
-    `${nested}/@earendil-works/pi-tui/package.json`,
-    `${nested}/@earendil-works/pi-tui/dist/index.js`,
-    `${nested}/@earendil-works/pi-tui/dist/index.d.ts`,
-    `${grokRoot}/package.json`,
-    `${grokRoot}/dist/index.js`,
-  ];
-  if (platform === "darwin") {
-    required.push(`${nested}/@earendil-works/pi-tui/native/darwin/prebuilds/darwin-${arch}/darwin-platform.node`);
-  } else if (platform === "win32") {
-    required.push(`${nested}/@earendil-works/pi-tui/native/win32/prebuilds/win32-${arch}/win32-platform.node`);
-  } else if (platform === "linux") {
-    required.push(`${nested}/@earendil-works/pi-tui/native/linux/prebuilds/linux-${arch}/linux-platform-x11.node`);
-  }
-  const missing = required.filter((entry) => !entries.has(entry));
-  if (missing.length > 0) throw new Error(`Packaged Pi runtime/authoring assets are missing: ${missing.join(", ")}`);
-
-  const codingAgentPackage = JSON.parse(extractAsarFile(asarPath, `${codingAgentRoot}/package.json`).toString("utf8"));
-  if (codingAgentPackage.version !== expectedPiVersion) {
-    throw new Error(
-      `Packaged Pi version ${codingAgentPackage.version ?? "unknown"} does not match ${expectedPiVersion}`,
-    );
-  }
-
-  for (const [packageRoot, lockRoot = packageRoot] of [
-    [codingAgentRoot],
-    ["node_modules/@earendil-works/pi-ai"],
-    ["node_modules/@earendil-works/pi-telemetry"],
-    [agentCoreRoot, lockfile.packages?.[agentCoreRoot] ? agentCoreRoot : `${nested}/@earendil-works/pi-agent-core`],
-    ["node_modules/typebox"],
-    [`${nested}/@earendil-works/pi-ai`],
-    [`${nested}/@earendil-works/pi-telemetry`],
-    [`${nested}/@earendil-works/pi-tui`],
-    [grokRoot, lockfile.packages?.[grokRoot] ? grokRoot : `${nested}/grok-mermaid`],
-  ]) {
-    const packaged = JSON.parse(extractAsarFile(asarPath, `${packageRoot}/package.json`).toString("utf8"));
-    const locked = lockfile.packages?.[lockRoot]?.version;
-    if (!locked || packaged.version !== locked) {
-      throw new Error(
-        `Packaged ${packaged.name ?? packageRoot} version ${packaged.version ?? "unknown"} does not match lockfile ${locked ?? "missing"}`,
-      );
-    }
+  for (const packageRoot of new Set([...graph.keys(), grokRoot, typeboxRoot])) {
+    assertLockedPackage(lockfile, packageRoot, readPackage(`${packageRoot}/package.json`));
   }
 }
 

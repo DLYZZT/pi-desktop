@@ -67,10 +67,10 @@
     "dist:mac:notarized": "node scripts/build-mac-release.mjs --notarize"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.99.1",
-    "@earendil-works/pi-coding-agent": "0.99.1",
-    "@earendil-works/pi-mcp": "0.99.1",
-    "@earendil-works/pi-telemetry": "0.99.1",
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/pi-coding-agent": "1.0.4",
+    "@earendil-works/pi-mcp": "1.0.4",
+    "@earendil-works/pi-telemetry": "1.0.4",
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "@lobehub/icons": "^5.6.0",
     "@rc-component/qrcode": "^2.0.0",
@@ -98,7 +98,7 @@
     "yauzl": "3.4.0"
   },
   "overrides": {
-    "@earendil-works/pi-telemetry": "0.99.1",
+    "@earendil-works/pi-telemetry": "1.0.4",
     "@xmldom/xmldom": "0.8.15"
   },
   "devDependencies": {

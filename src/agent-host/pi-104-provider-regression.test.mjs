@@ -6,10 +6,13 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { stream } from "@earendil-works/pi-ai/api/openai-responses";
 
-test("0.99.1 catalogs keep chat selection separate from images and classifiers", async () => {
-  for (const provider of ["openai", "azure-openai-responses", "openai-codex"]) {
+test("1.0.4 catalogs keep chat selection separate from images and classifiers", async () => {
+  for (const provider of ["openai", "azure", "openai-codex"]) {
     assert.equal(getModel(provider, "gpt-6.1-sol")?.contextWindow, 272_000);
   }
+  assert.equal(getModel("azure", "gpt-6.1-sol")?.api, "azure-openai-responses");
+  assert.equal(getModel("azure", "deepseek-v4-pro")?.api, "openai-completions");
+  assert.equal(getModel("azure-openai-responses", "gpt-6.1-sol"), undefined);
   const sonnet = getModel("anthropic", "claude-sonnet-5-5");
   assert.equal(sonnet?.contextWindow, 1_000_000);
   assert.equal(sonnet?.reasoning, true);
@@ -67,10 +70,10 @@ test("ChatGPT request trimming depends on both the credential and the exact Open
 
 test("runtime probe executes OpenAI OAuth and MCP lazy imports without user storage or login", async () => {
   const root = path.resolve(import.meta.dirname, "..", "..");
-  const { probePiRuntimeModules } = await importTestBundle("pi-0991-runtime-probe", {
+  const { probePiRuntimeModules } = await importTestBundle("pi-104-runtime-probe", {
     packages: "external",
     absWorkingDir: root,
     entryPoints: ["src/agent-host/pi-runtime-probe.ts"],
   });
-  assert.deepEqual(await probePiRuntimeModules(), { piVersion: "0.99.1", openaiOAuthLoaded: true, mcpLoaded: true });
+  assert.deepEqual(await probePiRuntimeModules(), { piVersion: "1.0.4", openaiOAuthLoaded: true, mcpLoaded: true });
 });

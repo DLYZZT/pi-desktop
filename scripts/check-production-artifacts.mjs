@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { PI_RUNTIME_ROOTS, validatePiPackageGraph, validatePiRuntimeAssets } from "./pi-runtime-contract.mjs";
+import { parse } from "yaml";
+import { assertFileSetSources, installedPiPackaging } from "./pi-packaging.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mainBundle = readFileSync(path.join(root, "out", "main", "main.js"), "utf8");
@@ -67,32 +69,11 @@ const requiredPackageExclusions = [
   '"!node_modules/@earendil-works/pi-coding-agent/examples/**/*"',
 ];
 const missingPackageExclusions = requiredPackageExclusions.filter((pattern) => !builderConfig.includes(pattern));
-const requiredPiAuthoringAssetMarkers = [
-  "from: node_modules/@earendil-works/pi-coding-agent",
-  "to: node_modules/@earendil-works/pi-coding-agent",
-  "- README.md",
-  '- "docs/**/*"',
-  '- "examples/**/*"',
-  '- "dist/**/*.d.ts"',
-  "from: node_modules/@earendil-works/pi-ai/dist",
-  "to: node_modules/@earendil-works/pi-ai/dist",
-  "from: node_modules/@earendil-works/pi-telemetry",
-  "to: node_modules/@earendil-works/pi-telemetry",
-  "from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai",
-  "to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai",
-  "from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui",
-  "to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui",
-  "from: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-telemetry",
-  "to: node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-telemetry",
-  "- CHANGELOG.md",
-  "- package.json",
-  '- "dist/**/*.js"',
-  '- "dist/**/*.json"',
-  '- "**/*.d.ts"',
-  '- "dist/**/*.d.ts"',
-  '- "native/**/*"',
-];
-const missingPiAuthoringAssets = requiredPiAuthoringAssetMarkers.filter((marker) => !builderConfig.includes(marker));
+const parsedBuilderConfig = parse(builderConfig);
+const piPackaging = installedPiPackaging(root);
+assertFileSetSources(root, [...(parsedBuilderConfig.files ?? []), ...piPackaging.files]);
+const missingPiAuthoringAssets =
+  parsedBuilderConfig.extends === "./scripts/pi-builder-config.mjs" ? [] : ["dynamic Pi packaging config"];
 const toolchainCatalogPackagingIsValid =
   builderConfig.includes("from: THIRD_PARTY_NOTICES.md") &&
   builderConfig.includes("to: THIRD_PARTY_NOTICES.md") &&
