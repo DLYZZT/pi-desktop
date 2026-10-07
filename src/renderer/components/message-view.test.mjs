@@ -197,6 +197,47 @@ function persistedHerdrResult(isError = false, output = "PRIVATE_FIXTURE_OUTPUT"
   };
 }
 
+test("tool images render from persisted content without depending on the temporary image file", () => {
+  const result = {
+    role: "toolResult",
+    toolCallId: "image-result",
+    toolName: "codemode",
+    content: [
+      { type: "text", text: "[Image saved to /tmp/already-removed.png]" },
+      { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+      { type: "image", source: { type: "base64", media_type: "image/webp", data: "d29ybGQ=" } },
+    ],
+    isError: false,
+  };
+  const before = JSON.stringify(result);
+  const html = renderToolResult(result);
+  assert.match(html, /<img[^>]+src="data:image\/png;base64,aGVsbG8="/);
+  assert.match(html, /<img[^>]+src="data:image\/webp;base64,d29ybGQ="/);
+  assert.match(html, /alt="Tool result image"/);
+  assert.doesNotMatch(html, /src="[^"]*already-removed/);
+  assert.equal(JSON.stringify(result), before);
+});
+
+test("tool images wait for deferred data and never fetch a remote image or an arbitrary MIME type", () => {
+  const html = renderToolResult({
+    role: "toolResult",
+    toolCallId: "deferred-image",
+    toolName: "codemode",
+    content: [
+      {
+        type: "image",
+        data: "aGVsbG8=",
+        mimeType: "image/png",
+        deferredContent: { entryId: "entry", originalBytes: 10 },
+      },
+      { type: "image", source: { type: "url", url: "https://example.invalid/image.png" } },
+      { type: "image", data: "aGVsbG8=", mimeType: "image/svg+xml" },
+    ],
+    isError: false,
+  });
+  assert.doesNotMatch(html, /<img|example\.invalid|data:image/);
+});
+
 test("persisted Herdr results show a neutral history notice without changing the stored message", () => {
   const result = persistedHerdrResult();
   const before = JSON.stringify(result);

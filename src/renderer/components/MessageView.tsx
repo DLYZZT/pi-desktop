@@ -1,6 +1,7 @@
 import { formatTime, formatByteSize } from "@/lib/message-metadata";
 import { memo, useState, useRef, useEffect, useMemo, useSyncExternalStore } from "react";
 import { MarkdownBody } from "./MarkdownBody";
+import { ToolResultImages } from "./ToolResultImages";
 import { scaledChatFont } from "@/lib/chat-appearance";
 import { getToolResultDisplayText } from "@/lib/tool-result-display";
 import { useCopyFeedback } from "@/hooks/useCopyFeedback";
@@ -1290,6 +1291,7 @@ function ToolCallBlock({
             collapsed={!expanded}
           />
         ))}
+      {result && <ToolResultImages content={result.content} />}
       {result && <DeferredContentActions content={result.content} onLoad={onLoadDeferredContent} />}
       {browserTabId && (
         <button
