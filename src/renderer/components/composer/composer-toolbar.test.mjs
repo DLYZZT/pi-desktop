@@ -217,3 +217,23 @@ test("equivalent toolbar options skip rendering without hiding real control chan
   await fixture.update({ thinkingLevel: "high" });
   assert.equal(toolbarRenders.count, before + 1);
 });
+
+test("max can be selected independently of xhigh and disappears for unsupported models", async (t) => {
+  const f = await mount(t);
+  await f.update({ availableThinkingLevels: ["off", "xhigh", "max"], thinkingLevel: "xhigh" });
+  await f.clickLabel("Change reasoning level:");
+  const choices = () => f.root.findAll((node) => node.props.role === "menuitemradio");
+  assert.equal(choices().filter((node) => text(node).startsWith("Extra high")).length, 1);
+  const maximum = choices().find((node) => text(node).startsWith("Maximum"));
+  assert.ok(maximum);
+  await act(async () => maximum.props.onClick());
+  assert.deepEqual(f.actions.at(-1), ["thinking", "max"]);
+  await f.update({ thinkingLevel: "max" });
+  assert.ok(f.root.find((node) => node.props["aria-label"] === "Change reasoning level: Maximum"));
+  await f.update({ availableThinkingLevels: ["off", "high"], thinkingLevel: "high" });
+  await f.clickLabel("Change reasoning level:");
+  assert.equal(
+    choices().some((node) => text(node).startsWith("Maximum")),
+    false,
+  );
+});

@@ -12,16 +12,7 @@ import {
 } from "../../contract/types";
 import { modelCatalogRefreshCoordinator } from "../model-runtime";
 import { createDesktopAgentSessionServices as createAgentSessionServices } from "../desktop-session-services";
-
-const THINKING_SUFFIXES = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
-
-function stripThinkingSuffix(modelRef: string): string {
-  const trimmed = modelRef.trim();
-  const colonIndex = trimmed.lastIndexOf(":");
-  if (colonIndex === -1) return trimmed;
-  const suffix = trimmed.substring(colonIndex + 1);
-  return THINKING_SUFFIXES.has(suffix) ? trimmed.substring(0, colonIndex) : trimmed;
-}
+import { stripThinkingSuffix } from "../../shared/thinking-levels";
 
 function filterByExactEnabledModels<T extends { id: string; provider: string }>(
   available: T[],

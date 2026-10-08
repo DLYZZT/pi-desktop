@@ -37,6 +37,7 @@ export const enUS: Record<string, string> = {
   thinkingMinimal: "Minimal",
   thinkingOff: "Off",
   thinkingXHigh: "Extra high",
+  thinkingMax: "Maximum",
   unknown: "unknown",
 };
 
@@ -78,6 +79,7 @@ export const zhCN: Record<string, string> = {
   thinkingMinimal: "极低",
   thinkingOff: "关闭",
   thinkingXHigh: "极高",
+  thinkingMax: "最高",
   unknown: "未知",
 };
 
@@ -119,5 +121,6 @@ export const zhTW: Record<string, string> = {
   thinkingMinimal: "極低",
   thinkingOff: "關閉",
   thinkingXHigh: "極高",
+  thinkingMax: "最高",
   unknown: "未知",
 };

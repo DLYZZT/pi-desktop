@@ -5,9 +5,10 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { MessageView } = await importTestBundle("src/renderer/components/message-view", {
+const { MessageView, withGeneratedImageReply } = await importTestBundle("src/renderer/components/message-view", {
   stdin: {
-    contents: 'export { MessageView } from "./MessageView.tsx";',
+    contents:
+      'export { MessageView } from "./MessageView.tsx"; export { withGeneratedImageReply } from "../lib/generated-image-reply.ts";',
     resolveDir: import.meta.dirname,
     sourcefile: "message-view-test-entry.tsx",
     loader: "tsx",
@@ -236,6 +237,74 @@ test("tool images wait for deferred data and never fetch a remote image or an ar
     isError: false,
   });
   assert.doesNotMatch(html, /<img|example\.invalid|data:image/);
+});
+
+test("generated images appear in the final reply without rendering tool details or changing the transcript", () => {
+  const image = { type: "image", data: "aGVsbG8=", mimeType: "image/png" };
+  const result = {
+    role: "toolResult",
+    toolCallId: "generated",
+    toolName: "codemode",
+    content: [{ type: "text", text: "PRIVATE_PROCESS_DETAILS" }, image],
+    details: { calls: [{ name: "models.generateImages", status: "ok" }] },
+  };
+  const answer = assistant({ content: [{ type: "text", text: "Your picture is ready." }] });
+  const messages = [{ role: "user", content: "Make a picture" }, result, answer];
+  const before = JSON.stringify(messages);
+  const reply = withGeneratedImageReply(answer, answer, messages, 1, 3);
+  const html = renderToStaticMarkup(createElement(MessageView, { message: reply }));
+  assert.match(html, /Your picture is ready/);
+  assert.match(html, /<img[^>]+src="data:image\/png;base64,aGVsbG8="/);
+  assert.match(html, /alt="Image in reply"/);
+  assert.doesNotMatch(html, /PRIVATE_PROCESS_DETAILS|codemode|Load full content/);
+  assert.equal(JSON.stringify(messages), before);
+  assert.equal(reply.content.at(-1), image);
+});
+
+test("reply projection stays within its turn, excludes read images and retains successful output after a later failure", () => {
+  const image = { type: "image", data: "aGVsbG8=", mimeType: "image/png" };
+  const generated = {
+    role: "toolResult",
+    toolCallId: "gen",
+    toolName: "codemode",
+    content: [image, image],
+    details: { calls: [{ name: "models.generateImages", status: "ok" }] },
+    isError: true,
+  };
+  const read = { ...generated, toolCallId: "read", details: { calls: [{ name: "read", status: "ok" }] } };
+  const failed = {
+    ...generated,
+    toolCallId: "failed",
+    details: { calls: [{ name: "models.generateImages", status: "error" }] },
+  };
+  const answer = assistant({ content: [{ type: "text", text: "Done" }] });
+  assert.equal(withGeneratedImageReply(answer, answer, [generated, read, failed], 1, 3), answer);
+  const reply = withGeneratedImageReply(null, answer, [generated, read, failed], 0, 3);
+  assert.equal(reply.content.length, 1);
+  assert.equal(reply.content[0], image);
+});
+
+test("deferred generated images keep the tool entry reference for automatic history loading", () => {
+  const image = {
+    type: "image",
+    source: { type: "url", url: "" },
+    deferredContent: { entryId: "tool-entry", blockIndex: 2, originalBytes: 700000, contentType: "image" },
+  };
+  const result = {
+    role: "toolResult",
+    toolCallId: "gen",
+    toolName: "codemode",
+    content: [image],
+    details: { calls: [{ name: "models.generateImages", status: "ok" }] },
+  };
+  const answer = assistant({ content: [{ type: "text", text: "Done" }] });
+  const reply = withGeneratedImageReply(answer, answer, [result], 0, 1);
+  assert.equal(reply.content.at(-1), image);
+  const html = renderToStaticMarkup(
+    createElement(MessageView, { message: reply, onLoadDeferredContent: async () => {} }),
+  );
+  assert.match(html, /Loading image/);
+  assert.doesNotMatch(html, /Load full content/);
 });
 
 test("persisted Herdr results show a neutral history notice without changing the stored message", () => {

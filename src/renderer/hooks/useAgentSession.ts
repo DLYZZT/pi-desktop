@@ -1,3 +1,4 @@
+import type { ThinkingLevelOption } from "@shared/thinking-levels";
 import { useState, useCallback, useRef, useEffect, useReducer } from "react";
 import type { AgentMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { AgentEvent, SessionDetail, SessionRuntimeState } from "@contract/types";
@@ -73,7 +74,7 @@ export interface UseAgentSessionOptions {
   setToolPreset?: (preset: ToolPreset) => void;
 }
 
-export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type { ThinkingLevelOption } from "@shared/thinking-levels";
 
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;

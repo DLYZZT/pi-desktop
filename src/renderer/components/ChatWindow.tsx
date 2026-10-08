@@ -31,6 +31,7 @@ import { useObservedElementHeight } from "@/hooks/useObservedElementHeight";
 import type { SessionPresentationStore } from "@/lib/session-presentation-store";
 import { MessageRenderKeyRegistry, type MessageRenderRole } from "@/lib/message-render-key";
 import { ToolMessageIndex } from "@/lib/tool-message-index";
+import { withGeneratedImageReply } from "@/lib/generated-image-reply";
 import { useI18n } from "@/i18n";
 import type { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
@@ -737,7 +738,13 @@ export function ChatWindow({
                       const finalAssistant = messages[finalAssistantIdx] as AssistantMessage;
                       const finalParts = getAssistantRenderParts(assistantRenderParts, finalAssistant);
                       const finalProcessMessage = finalParts.processMessage;
-                      const finalAnswerMessage = finalParts.answerMessage;
+                      const finalAnswerMessage = withGeneratedImageReply(
+                        finalParts.answerMessage,
+                        finalAssistant,
+                        messages,
+                        userIdx + 1,
+                        endIdx,
+                      );
 
                       const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
                       if (processCount > 0) {

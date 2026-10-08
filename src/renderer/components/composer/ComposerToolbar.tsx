@@ -4,6 +4,11 @@ import type { ModelCatalogStatus } from "@contract/types";
 import { useI18n } from "@/i18n";
 import { scaledChatFont } from "@/lib/chat-appearance";
 import type { ToolPreset, SelectableToolPreset } from "@shared/tool-presets";
+import {
+  THINKING_LEVELS as REASONING_LEVELS,
+  thinkingMenuLevels,
+  type ThinkingLevelOption,
+} from "@shared/thinking-levels";
 
 interface ModelOption {
   provider: string;
@@ -29,8 +34,8 @@ export interface ComposerToolbarOptions {
   compactError?: string | null;
   toolPreset?: ToolPreset;
   onToolPresetChange?: (preset: SelectableToolPreset) => void;
-  thinkingLevel?: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  onThinkingLevelChange?: (level: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh") => void;
+  thinkingLevel?: ThinkingLevelOption;
+  onThinkingLevelChange?: (level: ThinkingLevelOption) => void;
   availableThinkingLevels?: string[] | null;
   thinkingLevelMap?: Record<string, string | null> | null;
   soundEnabled?: boolean;
@@ -53,7 +58,7 @@ function compareModelOptions(a: ModelOption, b: ModelOption): number {
   );
 }
 
-const THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhigh"] as const;
+const THINKING_LEVELS = ["auto", ...REASONING_LEVELS] as const;
 
 /** Local menu placement, dismissal and focus ownership for the composer controls. */
 function ComposerToolbarView({
@@ -140,6 +145,7 @@ function ComposerToolbarView({
     medium: t("thinkingMedium", "Medium"),
     high: t("thinkingHigh", "High"),
     xhigh: t("thinkingXHigh", "Extra high"),
+    max: t("thinkingMax", "Maximum"),
   };
   const thinkingDescriptions: Record<(typeof THINKING_LEVELS)[number], string> = {
     auto: t("thinkingDefaultDescription", "Use Pi default"),
@@ -148,7 +154,8 @@ function ComposerToolbarView({
     low: t("thinkingLowDescription", "Low reasoning"),
     medium: t("thinkingMediumDescription", "Medium reasoning"),
     high: t("thinkingHighDescription", "High reasoning"),
-    xhigh: t("thinkingXHighDescription", "Max reasoning"),
+    xhigh: t("thinkingXHighDescription", "Extra-high reasoning"),
+    max: t("thinkingMaxDescription", "Maximum reasoning"),
   };
   const translateThinkingValue = (value: string): string => {
     return (THINKING_LEVELS as readonly string[]).includes(value)
@@ -687,11 +694,7 @@ function ComposerToolbarView({
                     minWidth: 180,
                   }}
                 >
-                  {THINKING_LEVELS.filter((lvl) => {
-                    if (!availableThinkingLevels) return true;
-                    if (lvl === "auto") return true;
-                    return availableThinkingLevels.includes(lvl);
-                  }).map((lvl) => {
+                  {thinkingMenuLevels(availableThinkingLevels).map((lvl) => {
                     const isActive = (thinkingLevel ?? "auto") === lvl;
                     const desc = thinkingDescriptions[lvl];
                     const mappedVal = lvl !== "auto" && thinkingLevelMap ? thinkingLevelMap[lvl] : undefined;
@@ -856,7 +859,10 @@ function ComposerToolbarView({
                         ? t("permissionReadOnlyDescription", "No tools, read-only")
                         : lvl === "default"
                           ? t("permissionStandardDescription", "4 built-in tools")
-                          : t("permissionFullDescription", "All built-in tools, code orchestration and tool search");
+                          : t(
+                              "permissionFullDescription",
+                              "All tools, code orchestration, image generation and search",
+                            );
                     return (
                       <button
                         key={lvl}

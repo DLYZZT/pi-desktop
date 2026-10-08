@@ -50,7 +50,7 @@ export const enUS: Record<string, string> = {
   messagePlaceholder: "Message… Type / for commands, @ for files",
   modelsOfflineCache: "Offline: using the cached model directory.",
   permissionFull: "Full access",
-  permissionFullDescription: "All built-in tools, code orchestration and tool search",
+  permissionFullDescription: "All tools, code orchestration, image generation and search",
   permissionCustom: "Custom",
   permissionReadOnly: "Read only",
   permissionReadOnlyDescription: "No tools, read-only",
@@ -74,7 +74,8 @@ export const enUS: Record<string, string> = {
   thinkingMediumDescription: "Medium reasoning",
   thinkingMinimalDescription: "Minimal reasoning",
   thinkingOffDescription: "Reasoning off",
-  thinkingXHighDescription: "Max reasoning",
+  thinkingXHighDescription: "Extra-high reasoning",
+  thinkingMaxDescription: "Maximum reasoning",
 };
 
 export const zhCN: Record<string, string> = {
@@ -126,7 +127,7 @@ export const zhCN: Record<string, string> = {
   messagePlaceholder: "输入消息… 输入 / 查看命令，输入 @ 引用文件",
   modelsOfflineCache: "离线：正在使用缓存的模型目录。",
   permissionFull: "完全访问",
-  permissionFullDescription: "全部内置工具、代码编排与工具搜索",
+  permissionFullDescription: "全部工具、代码编排、生图与搜索",
   permissionCustom: "自定义",
   permissionReadOnly: "只读",
   permissionReadOnlyDescription: "禁用工具，仅可对话",
@@ -150,7 +151,8 @@ export const zhCN: Record<string, string> = {
   thinkingMediumDescription: "中等推理强度",
   thinkingMinimalDescription: "最低推理强度",
   thinkingOffDescription: "关闭推理",
-  thinkingXHighDescription: "最高推理强度",
+  thinkingXHighDescription: "极高推理强度",
+  thinkingMaxDescription: "最高推理强度",
 };
 
 export const zhTW: Record<string, string> = {
@@ -202,7 +204,7 @@ export const zhTW: Record<string, string> = {
   messagePlaceholder: "輸入訊息… 輸入 / 檢視命令，輸入 @ 參考檔案",
   modelsOfflineCache: "離線：正在使用快取的模型目錄。",
   permissionFull: "完整存取",
-  permissionFullDescription: "全部內建工具、程式碼編排與工具搜尋",
+  permissionFullDescription: "全部工具、程式碼編排、生圖與搜尋",
   permissionCustom: "自訂",
   permissionReadOnly: "唯讀",
   permissionReadOnlyDescription: "停用工具，僅能對話",
@@ -226,5 +228,6 @@ export const zhTW: Record<string, string> = {
   thinkingMediumDescription: "中等推理強度",
   thinkingMinimalDescription: "最低推理強度",
   thinkingOffDescription: "關閉推理",
-  thinkingXHighDescription: "最高推理強度",
+  thinkingXHighDescription: "極高推理強度",
+  thinkingMaxDescription: "最高推理強度",
 };

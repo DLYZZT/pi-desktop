@@ -1,14 +1,6 @@
 import type { ModelInfo } from "@contract/types";
 
-const THINKING_SUFFIXES = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
-
-function stripThinkingSuffix(modelRef: string): string {
-  const trimmed = modelRef.trim();
-  const colonIndex = trimmed.lastIndexOf(":");
-  if (colonIndex === -1) return trimmed;
-  const suffix = trimmed.slice(colonIndex + 1);
-  return THINKING_SUFFIXES.has(suffix) ? trimmed.slice(0, colonIndex) : trimmed;
-}
+import { stripThinkingSuffix } from "@shared/thinking-levels";
 
 export function modelRef(model: Pick<ModelInfo, "provider" | "id">): string {
   return `${model.provider}/${model.id}`;

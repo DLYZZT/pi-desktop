@@ -1,3 +1,4 @@
+import { THINKING_LEVELS, type ThinkingLevel } from "@shared/thinking-levels";
 import { useState, useEffect, useCallback } from "react";
 import { Check, Field, NumInput, SecretTextInput, Select, SectionTitle, TextInput } from "../form-controls";
 import { applyStrictOptionalPositiveInteger } from "@/lib/strict-integer";
@@ -115,10 +116,6 @@ export function ProviderDetail({
   );
 }
 
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
-
-type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-
 function thinkingLevelLabel(level: ThinkingLevel, t: (key: string, fallback: string) => string): string {
   switch (level) {
     case "off":
@@ -133,6 +130,8 @@ function thinkingLevelLabel(level: ThinkingLevel, t: (key: string, fallback: str
       return t("thinkingHigh", "High");
     case "xhigh":
       return t("thinkingXHigh", "Extra high");
+    case "max":
+      return t("thinkingMax", "Maximum");
   }
 }
 
@@ -159,6 +158,7 @@ const LEVEL_COLORS: Record<ThinkingLevel, string> = {
   medium: "#ea580c",
   high: "#c2410c",
   xhigh: "#9a3412",
+  max: "#7c2d12",
 };
 
 function ThinkingLevelMapEditor({

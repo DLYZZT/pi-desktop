@@ -1,15 +1,13 @@
 import { useI18n } from "@/i18n";
 import type { ToolResultMessage } from "@/lib/types";
+import { persistedImageSource } from "@/lib/persisted-image";
 
 export function ToolResultImages({ content }: { content: ToolResultMessage["content"] }) {
   const { t } = useI18n();
   // Only display persisted raster data. A tool's path or URL is not an attachment.
   const images = content.flatMap((block) => {
-    if (block.type !== "image" || block.deferredContent) return [];
-    const flat = block as unknown as { data?: string; mimeType?: string };
-    const data = block.source ? (block.source.type === "base64" ? block.source.data : undefined) : flat.data;
-    const mimeType = block.source ? block.source.media_type : flat.mimeType;
-    return data && /^image\/(?:png|jpeg|gif|webp)$/.test(mimeType ?? "") ? [`data:${mimeType};base64,${data}`] : [];
+    const src = block.type === "image" ? persistedImageSource(block) : undefined;
+    return src ? [src] : [];
   });
   if (images.length === 0) return null;
   return (

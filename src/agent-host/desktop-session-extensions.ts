@@ -16,7 +16,7 @@ export function desktopSessionExtensions(
   return [
     policy.extension(),
     history.extension(),
-    ...sessionOrchestrationExtensions(),
+    ...sessionOrchestrationExtensions(undefined, { isAllowed: () => policy.isAllowed("codemode"), history }),
     ...desktopMcpExtensions(policy, running, history),
     createLegacyChannelContextExtension(),
     createDesktopPromptExtension(prompt),

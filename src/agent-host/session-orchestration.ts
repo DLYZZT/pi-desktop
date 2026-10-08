@@ -6,6 +6,7 @@ import {
 import { isOrchestrationTool } from "../shared/orchestration-tools";
 import type { AgentSessionLike } from "../shared/pi-types";
 import { getDefaultStore } from "./session-tool-store";
+import { createDesktopCodemodeExtension, type CodemodeImageAccess } from "./codemode-images";
 
 export function withSessionOrchestration(
   session: Pick<AgentSessionLike, "getAllTools">,
@@ -24,9 +25,15 @@ export function withSessionOrchestration(
 
 export function sessionOrchestrationExtensions(
   selection = (id: string) => getDefaultStore().getOrchestration(id),
+  images?: CodemodeImageAccess,
 ): InlineExtension[] {
   return [
-    { name: "codemode", builtin: true, replaceable: true, factory: createCodemodeExtension({ models: false }) },
+    {
+      name: "codemode",
+      builtin: true,
+      replaceable: true,
+      factory: images ? createDesktopCodemodeExtension(images) : createCodemodeExtension({ models: false }),
+    },
     { name: "tool-search", builtin: true, replaceable: true, factory: createToolSearchExtension() },
     {
       name: "pi-desktop-session-orchestration",

@@ -240,7 +240,16 @@ test(
     script = tools.map((tool) => `text(await tools.${tool.name}({text:"ORIGINAL_ARGS"}));`).join("\n");
     turn = 0;
     await session.prompt("Call both granted tools", { source: "rpc" });
-    assert.deepEqual(rawCalls.sort(), ["read-file", "read_file"]);
+    assert.deepEqual(
+      rawCalls.sort(),
+      ["read-file", "read_file"],
+      JSON.stringify(
+        manager
+          .getEntries()
+          .filter((entry) => entry.message?.role === "toolResult")
+          .at(-1)?.message,
+      ),
+    );
     reverse = true;
     await mcp.getConnection(id, "dev-server").refreshTools();
     assert.deepEqual(
