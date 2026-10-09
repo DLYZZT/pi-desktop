@@ -166,6 +166,10 @@ function uninstall(directory) {
 
 function validateStartup(executable, isolatedRoot, expectedVersion, phase) {
   const userData = path.join(isolatedRoot, "user-data");
+  // Every phase must report its own startup result, not reuse an earlier install's report.
+  const startupReports = () =>
+    walkFiles(isolatedRoot).filter((file) => path.basename(file) === "packaged-startup-check.json");
+  for (const file of startupReports()) fs.unlinkSync(file);
   const result = spawnSync(
     executable,
     [`--user-data-dir=${userData}`, "--validate-packaged-startup", "--disable-gpu"],
@@ -180,21 +184,22 @@ function validateStartup(executable, isolatedRoot, expectedVersion, phase) {
         TMP: isolatedRoot,
         TEMP: isolatedRoot,
         ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
+        PI_DESKTOP_RUNTIME_PROBE_NODE: process.execPath,
       },
       encoding: "utf8",
       timeout: 60_000,
       windowsHide: true,
     },
   );
+  const reportFiles = startupReports();
+  const report = reportFiles.length === 1 ? JSON.parse(fs.readFileSync(reportFiles[0], "utf8")) : undefined;
   if (result.error || result.signal || result.status !== 0) {
     throw new Error(
-      `${phase} packaged startup failed: ${result.error?.message ?? result.signal ?? result.status}\n${result.stderr ?? ""}`,
+      `${phase} packaged startup failed: ${result.error?.message ?? result.signal ?? result.status}\n${report?.error ?? "No startup error report"}\n${[result.stdout, result.stderr].filter(Boolean).join("\n").slice(-4000)}`,
       { cause: result.error },
     );
   }
-  const reportFiles = walkFiles(isolatedRoot).filter((file) => path.basename(file) === "packaged-startup-check.json");
   assert.equal(reportFiles.length, 1, `${phase} startup must write exactly one report`);
-  const report = JSON.parse(fs.readFileSync(reportFiles[0], "utf8"));
   assert.equal(report.ok, true);
   assert.equal(report.appVersion, expectedVersion);
   assert.equal(report.platformArch, "win32-x64");
