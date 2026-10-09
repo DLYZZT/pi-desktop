@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import semver from "semver";
+import { removeDirectoryWithRetry } from "../../shared/node/remove-directory.ts";
 import type { PublicManagedComponentState } from "../../shared/toolchains/types.ts";
 import { ToolchainError } from "../../shared/toolchains/errors.ts";
 import type { InstallerProgress } from "../toolchains/installer.ts";
@@ -462,7 +463,7 @@ export class HerdrInstaller {
     const trash = path.join(stagingRoot, `remove-${randomUUID()}`);
     try {
       await renameActivatedRuntime(runtimesRoot, trash);
-      fs.rmSync(trash, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+      await removeDirectoryWithRetry(trash);
     } catch (error) {
       if (!fs.existsSync(runtimesRoot) && fs.existsSync(trash)) fs.renameSync(trash, runtimesRoot);
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;

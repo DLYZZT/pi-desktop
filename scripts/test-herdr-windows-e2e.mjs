@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { importTestBundle } from "./test-bundle.mjs";
+import { removeDirectoryWithRetry } from "../src/shared/node/remove-directory.ts";
 
 if (process.platform !== "win32" || process.arch !== "x64") {
   throw new Error("The Herdr Windows E2E requires native Windows x64");
@@ -26,6 +27,8 @@ if (
 const appData = path.join(directory, "Roaming");
 const localAppData = path.join(directory, "Local");
 const userDataDir = path.join(directory, "Desktop");
+const sessionName = "pi-desktop-windows-e2e";
+const sessionFile = path.join(appData, "herdr", "sessions", sessionName, "session.json");
 fs.mkdirSync(appData, { recursive: true });
 fs.mkdirSync(localAppData, { recursive: true });
 const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
@@ -35,11 +38,31 @@ const env = {
   APPDATA: appData,
   LOCALAPPDATA: localAppData,
   USERPROFILE: directory,
+  XDG_CONFIG_HOME: appData,
+  XDG_STATE_HOME: localAppData,
 };
 for (const key of Object.keys(env)) {
   if (key.toLowerCase() === "path") delete env[key];
 }
 env.Path = sparsePath;
+
+async function waitForSessionPersistence(empty) {
+  // Herdr v0.8.2 saves on a five-second debounce. An immediate hard restart can
+  // restore a workspace that workspace.close already removed from memory.
+  const deadline = Date.now() + 20_000;
+  console.log(`[herdr-windows-e2e] waiting for ${empty ? "empty" : "populated"} persisted session`);
+  while (Date.now() < deadline) {
+    try {
+      const saved = JSON.parse(await fs.promises.readFile(sessionFile, "utf8"));
+      if (!empty && Array.isArray(saved.workspaces) && saved.workspaces.length === 1) return;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      if (empty) return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Herdr did not persist the ${empty ? "empty" : "populated"} session`);
+}
 
 let manager;
 try {
@@ -94,7 +117,7 @@ try {
   const settings = {
     enabled: true,
     mode: "managed",
-    sessionName: "pi-desktop-windows-e2e",
+    sessionName,
     autoConnect: true,
     releaseControlOnViewClose: true,
   };
@@ -120,6 +143,7 @@ try {
   });
   assert.equal(created.type, "workspace_created");
   try {
+    await waitForSessionPersistence(false);
     const pane = await client.request({
       method: "pane.read",
       params: { pane_id: created.root_pane.pane_id, source: "recent_unwrapped", lines: 40 },
@@ -161,6 +185,7 @@ try {
       params: { workspace_id: created.workspace.workspace_id },
     });
     assert.equal(closed.type, "ok");
+    await waitForSessionPersistence(true);
   }
 
   fs.unlinkSync(canonicalAgent);
@@ -180,6 +205,8 @@ try {
   assert.equal(restarted.error, undefined, restarted.error?.code);
   assert.equal(restarted.agentCliRestartRequired, undefined);
   assert.equal((await client.request({ method: "ping", params: {} })).type, "pong");
+  const afterRestart = await client.request({ method: "session.snapshot", params: {} });
+  assert.equal(afterRestart.snapshot.workspaces.length, 0, "restart must not resurrect a closed fixture workspace");
   const cmdWorkspace = await client.request({
     method: "workspace.create",
     params: { cwd: directory, label: "pi-desktop-windows-cmd-e2e", focus: true, env: {} },
@@ -187,6 +214,7 @@ try {
   });
   assert.equal(cmdWorkspace.type, "workspace_created");
   try {
+    await waitForSessionPersistence(false);
     const cmdAgent = await client.request({
       method: "agent.start",
       params: {
@@ -205,6 +233,7 @@ try {
       params: { workspace_id: cmdWorkspace.workspace.workspace_id },
     });
     assert.equal(closed.type, "ok");
+    await waitForSessionPersistence(true);
   }
 
   const attached = new HerdrRuntimeManager({
@@ -230,7 +259,7 @@ try {
     }
   } finally {
     console.log("[herdr-windows-e2e] removing isolated fixture");
-    fs.rmSync(testRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    await removeDirectoryWithRetry(testRoot);
     console.log("[herdr-windows-e2e] isolated fixture removed");
   }
 }
