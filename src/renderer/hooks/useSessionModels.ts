@@ -6,7 +6,7 @@ import { useI18n } from "@/i18n";
 import type { NoticeType } from "@/lib/notice-queue";
 
 type SelectedModel = { provider: string; modelId: string };
-type ModelEntry = { id: string; name: string; provider: string };
+type ModelEntry = { id: string; name: string; provider: string; virtual?: boolean };
 
 export interface SessionModelsOptions {
   isNew: boolean;

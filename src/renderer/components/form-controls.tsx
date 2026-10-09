@@ -199,7 +199,7 @@ export function Select({
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: readonly string[];
+  options: readonly (string | { value: string; label: string })[];
   required?: boolean;
 }) {
   const controlId = useFieldControlId();
@@ -213,8 +213,8 @@ export function Select({
     >
       {!required && <option value="">— inherit / none —</option>}
       {options.map((o) => (
-        <option key={o} value={o}>
-          {o}
+        <option key={typeof o === "string" ? o : o.value} value={typeof o === "string" ? o : o.value}>
+          {typeof o === "string" ? o : o.label}
         </option>
       ))}
     </select>

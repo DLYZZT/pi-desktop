@@ -6,6 +6,7 @@ import type { ApiKeyProviderStatus as ApiKeyProvider } from "@contract/types";
 import { type ModelSelectionControl, ManagedModelsControl } from "./ManagedModelsControl";
 import { AuthReplacementNotice } from "./AuthReplacementNotice";
 import type { CredentialMutationOptions } from "@contract/auth";
+import { OAuthDetail } from "./OAuthDetail";
 import { AuxiliaryModels } from "./AuxiliaryModels";
 
 export function ApiKeyDetail({
@@ -25,6 +26,7 @@ export function ApiKeyDetail({
 }) {
   const { t } = useI18n();
   const [apiKey, setApiKey] = useState("");
+  const [guided, setGuided] = useState(provider.id.startsWith("cloudflare-"));
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +41,7 @@ export function ApiKeyDetail({
     setWarning(null);
     setSavedOk(false);
     setReplacement(null);
+    setGuided(provider.id.startsWith("cloudflare-"));
   }, [provider.id]);
 
   const saveKey = useCallback(
@@ -91,6 +94,34 @@ export function ApiKeyDetail({
       setRemoving(false);
     }
   }, [provider.id, provider.credentialVersion, onRefresh, onReloadCredentials]);
+
+  if (guided)
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <OAuthDetail
+          authType="api_key"
+          provider={{
+            id: provider.id,
+            name: provider.displayName,
+            loggedIn: provider.storedAuthType === "api_key",
+            usesCallbackServer: false,
+            storedAuthType: provider.storedAuthType,
+            credentialVersion: provider.credentialVersion,
+          }}
+          onRefresh={onRefresh}
+          onReloadCredentials={onReloadCredentials}
+          modelSelection={modelSelection}
+        />
+        <AuxiliaryModels providerId={provider.id} models={provider.auxiliaryModels ?? []} />
+        <Field label={t("modelBaseUrl", "Base URL")}>
+          <TextInput
+            value={baseUrl}
+            onChange={onBaseUrlChange}
+            placeholder={t("modelBaseUrlPlaceholder", "Leave empty to use the provider default")}
+          />
+        </Field>
+      </div>
+    );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -214,7 +245,10 @@ export function ApiKeyDetail({
       {error && <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{error}</p>}
       {warning && <p style={{ margin: 0, fontSize: 12, color: "#d97706" }}>{warning}</p>}
 
-      <AuxiliaryModels models={provider.auxiliaryModels ?? []} />
+      <button type="button" onClick={() => setGuided(true)}>
+        {t("modelGuidedLogin", "Guided API key setup")}
+      </button>
+      <AuxiliaryModels providerId={provider.id} models={provider.auxiliaryModels ?? []} />
       {provider.configured && provider.chatModelCount !== 0 && (
         <ManagedModelsControl providerId={provider.id} {...modelSelection} />
       )}

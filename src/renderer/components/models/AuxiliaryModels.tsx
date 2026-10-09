@@ -1,9 +1,16 @@
 import { useI18n } from "@/i18n";
 import type { ApiKeyProviderStatus } from "@contract/types";
 import { SectionTitle } from "../form-controls";
+import { ModelConnectionTest } from "./ModelConnectionTest";
 
 /** Provider catalog entries that Codemode uses independently of chat-model preferences. */
-export function AuxiliaryModels({ models }: { models: NonNullable<ApiKeyProviderStatus["auxiliaryModels"]> }) {
+export function AuxiliaryModels({
+  models,
+  providerId,
+}: {
+  models: NonNullable<ApiKeyProviderStatus["auxiliaryModels"]>;
+  providerId?: string;
+}) {
   const { t } = useI18n();
   if (!models.length) return null;
   return (
@@ -23,6 +30,14 @@ export function AuxiliaryModels({ models }: { models: NonNullable<ApiKeyProvider
           "These catalog models are used through Codemode with supported provider credentials. Enable Codemode in the session tools menu. They do not appear in the chat model picker.",
         )}
       </p>
+      {providerId && (
+        <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)" }}>
+          {t(
+            "modelTestUsageHint",
+            "Tests send a small decision request or generate one sample image using your provider credentials and may incur usage charges.",
+          )}
+        </p>
+      )}
       <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
         {models.map((model, index) => (
           <div
@@ -38,6 +53,7 @@ export function AuxiliaryModels({ models }: { models: NonNullable<ApiKeyProvider
               </span>
             </div>
             <code style={{ fontSize: 10, color: "var(--text-dim)", overflowWrap: "anywhere" }}>{model.id}</code>
+            {providerId && <ModelConnectionTest provider={providerId} modelId={model.id} type={model.type} />}
           </div>
         ))}
       </div>

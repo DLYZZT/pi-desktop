@@ -49,6 +49,7 @@ export interface ContextInfo {
   entryIds: string[];
   thinkingLevel: string;
   model: { provider: string; modelId: string } | null;
+  selectedModel?: { provider: string; modelId: string };
 }
 
 export interface HistoryWindow {
@@ -70,6 +71,7 @@ export interface EntryContentResult {
 }
 
 export interface SessionRuntimeState {
+  model?: { provider: string; id: string };
   agentSettled?: { aborted: boolean };
   modelSelectionNotice?: ModelSelectionNotice;
   contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null } | null;
@@ -124,6 +126,7 @@ export interface FuzzyMatch {
 }
 
 export interface ModelInfo {
+  virtual?: boolean;
   id: string;
   name: string;
   provider: string;

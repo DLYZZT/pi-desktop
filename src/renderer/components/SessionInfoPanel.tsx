@@ -437,6 +437,17 @@ export function SessionInfoPanel({
                       {sessionInfoSection}
                       {section(t("messages", "Messages"), messageRows)}
                       {section(t("tokenStatistics", "Tokens"), [...tokenRows, ...extraTokenRows], "right", true)}
+                      {!!sessionStats.modelUsage?.length &&
+                        section(
+                          t("modelUsageBreakdown", "Usage by actual model"),
+                          sessionStats.modelUsage.map((row) => [
+                            row.model
+                              ? `${row.provider}/${row.model}`
+                              : t("modelUnattributedUsage", "Tools and summaries"),
+                            `${row.tokens.toLocaleString(language)} · $${row.cost.toFixed(4)}`,
+                          ]),
+                          "right",
+                        )}
                     </div>
                   );
                 })()

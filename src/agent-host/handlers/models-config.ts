@@ -1,3 +1,4 @@
+import { validateModelEditorConfig } from "../model-editor-validation";
 import {
   existsSync,
   chmodSync,
@@ -116,6 +117,7 @@ export const modelConfigHandlers = {
     if (typeof body.expectedVersion !== "string" || !body.expectedVersion) {
       throw new RpcError({ code: "BAD_REQUEST", message: "expectedVersion is required" });
     }
+    validateModelEditorConfig(config);
     const version = await writeModelsJson(config, body.expectedVersion);
     await reloadSharedModelRuntimeConfig();
     return { ok: true as const, version };

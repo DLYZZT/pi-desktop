@@ -13,12 +13,13 @@ export async function createGuardedOAuthRuntime() {
     refresh: runtime.refresh.bind(runtime),
     async login(
       provider: string,
-      type: "oauth",
+      type: "oauth" | "api_key",
       interaction: AuthInteraction,
       options?: LoginOptions,
       mutation?: CredentialMutationOptions,
     ) {
       if (
+        type === "oauth" &&
         provider === "openai" &&
         runtime.getModels(provider).some((model) => model.baseUrl !== "https://api.openai.com/v1")
       ) {

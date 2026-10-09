@@ -1,3 +1,4 @@
+import { enUS as routingEnUS, zhCN as routingZhCN, zhTW as routingZhTW } from "./i18n/model-routing.ts";
 import type { AppLanguage } from "../shared/app-language.ts";
 import { mergeDictionaries } from "./i18n/merge-dictionaries.ts";
 import { enUS as browserEnUS, zhCN as browserZhCN, zhTW as browserZhTW } from "./i18n/browser.ts";
@@ -14,6 +15,7 @@ import { enUS as sessionEnUS, zhCN as sessionZhCN, zhTW as sessionZhTW } from ".
 import { enUS as settingsEnUS, zhCN as settingsZhCN, zhTW as settingsZhTW } from "./i18n/settings.ts";
 
 export const enUS = mergeDictionaries(
+  routingEnUS,
   browserEnUS,
   channelsEnUS,
   commonEnUS,
@@ -28,6 +30,7 @@ export const enUS = mergeDictionaries(
   settingsEnUS,
 );
 export const zhCN = mergeDictionaries(
+  routingZhCN,
   browserZhCN,
   channelsZhCN,
   commonZhCN,
@@ -42,6 +45,7 @@ export const zhCN = mergeDictionaries(
   settingsZhCN,
 );
 export const zhTW = mergeDictionaries(
+  routingZhTW,
   browserZhTW,
   channelsZhTW,
   commonZhTW,

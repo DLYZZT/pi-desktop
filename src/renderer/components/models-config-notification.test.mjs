@@ -57,6 +57,9 @@ const { ModelsConfig, useSessionModels, testApi } = await importTestBundle("mode
           state.calls.push({method,params});
           if(method === 'auth.loginCancel') return await take(state.cancelQueue,{ok:true});
           if(method === 'auth.loginStart') return await take(state.startQueue,{ok:true,started:true});
+          if(method === 'models.routing.get') return {config:{enabled:false,strategy:'thinking',fastThinking:'low',strongThinking:'high',retryFallback:false},version:'routing-v1'};
+          if(method === 'settings.advanced.get') return {config:{retry:{maxRetries:3}},version:'advanced-v1'};
+          if(method === 'models.catalog') return {models:[{provider:'fixture',modelId:'fast',name:'Fast',type:'chat',available:true,virtual:false},{provider:'fixture',modelId:'strong',name:'Strong',type:'chat',available:true,virtual:false},{provider:'typesafe',modelId:'jev-latest',name:'Jev',type:'classifier',available:true,virtual:false}]};
           if(method === 'modelsConfig.get') {if(state.configError)throw state.configError;return {config:structuredClone(state.config),version:state.version};}
           if(method === 'auth.providers')return {providers:[{id:'oauth-fixture',name:'OAuth fixture',usesCallbackServer:false,loggedIn:true}]};
           if(method === 'auth.allProviders')return {providers:state.apiKeyProviders??[{id:'api-fixture',displayName:'API fixture',configured:true,modelCount:1}]};
@@ -660,4 +663,99 @@ test("model connection results preserve endpoint status and latency separately f
   await fixture.click("Test", fixture.detail("ModelDetail"));
   await fixture.reply(1, { ok: true, responseText: "OK", status: 200, latencyMs: 3 });
   assert.match(JSON.stringify(fixture.renderer.toJSON()), /Connected/);
+});
+
+test("routing settings save selected models and strategy, preserving edits after a version conflict", async (t) => {
+  const fixture = await mount(t);
+  await fixture.click("Auto routing");
+  const detail = () => fixture.detail("RoutingSettings");
+  const select = async (index, value) =>
+    act(async () => detail().findAllByType("select")[index].props.onChange({ target: { value } }));
+  await act(async () =>
+    detail()
+      .findAllByType("input")[0]
+      .props.onChange({ target: { checked: true } }),
+  );
+  await select(0, "classifier");
+  await select(1, JSON.stringify(["fixture", "fast"]));
+  await select(3, JSON.stringify(["fixture", "strong"]));
+  await select(5, JSON.stringify(["typesafe", "jev-latest"]));
+  await fixture.click("Save", detail());
+  assert.equal(fixture.requests[0].method, "models.routing.set");
+  assert.deepEqual(fixture.requests[0].params.config.classifier, { provider: "typesafe", modelId: "jev-latest" });
+  assert.equal(fixture.requests[0].params.expectedVersion, "routing-v1");
+  await fixture.fail(0, "CONFLICT", "Settings changed");
+  assert.equal(detail().findAllByType("select")[5].props.value, JSON.stringify(["typesafe", "jev-latest"]));
+  assert.equal(fixture.changed, 0);
+  await fixture.click("Save", detail());
+  await fixture.reply(1, { config: fixture.requests[1].params.config, version: "routing-v2" });
+  assert.equal(fixture.changed, 1);
+});
+
+test("advanced configuration blocks malformed JSON and saves per-model overrides with a revision", async (t) => {
+  const fixture = await mount(t);
+  await fixture.click("Advanced model settings");
+  const detail = () => fixture.detail("AdvancedSettings");
+  const input = () => detail().findByType("textarea");
+  await act(async () => input().props.onChange({ target: { value: "{broken" } }));
+  assert.equal(detail().find((node) => node.type === "button" && text(node) === "Save").props.disabled, true);
+  await act(async () => input().props.onChange({ target: { value: '{"fixture/fast":{"reserveTokens":512}}' } }));
+  await fixture.click("Save", detail());
+  assert.equal(fixture.requests[0].method, "settings.advanced.set");
+  assert.equal(fixture.requests[0].params.config.compaction.modelOverrides["fixture/fast"].reserveTokens, 512);
+  assert.equal(fixture.requests[0].params.config.retry.maxRetries, 3);
+  assert.equal(fixture.requests[0].params.expectedVersion, "advanced-v1");
+  await fixture.reply(0, { config: fixture.requests[0].params.config, version: "advanced-v2" });
+  assert.equal(fixture.changed, 1);
+});
+
+test("guided API-key setup masks secrets and clears them before displaying the next field", async (t) => {
+  const fixture = await mount(t, {
+    apiKeyProviders: [
+      {
+        id: "cloudflare-workers-ai",
+        displayName: "Cloudflare fixture",
+        configured: true,
+        storedAuthType: "api_key",
+        credentialVersion: "key-v1",
+        modelCount: 1,
+      },
+    ],
+  });
+  await fixture.select("Cloudflare fixture");
+  await fixture.click("Configure credentials", fixture.detail("OAuthDetail"));
+  assert.equal(testApi.state.calls.find((call) => call.method === "auth.loginStart").params.authType, "api_key");
+  await fixture.event(0, { type: "prompt_request", message: "Key", token: "secret", secret: true, placeholder: null });
+  const input = () => fixture.detail("OAuthDetail").findByType("input");
+  assert.equal(input().props.type, "password");
+  await act(async () => input().props.onChange({ target: { value: "fixture-secret" } }));
+  await fixture.event(0, {
+    type: "prompt_request",
+    message: "Account ID",
+    token: "account",
+    secret: false,
+    placeholder: null,
+  });
+  assert.equal(input().props.type, "text");
+  assert.equal(input().props.value, "");
+  await fixture.click("Cancel", fixture.detail("OAuthDetail"));
+  assert.equal(fixture.changed, 0);
+});
+
+test("explicit disk reload replaces an invalid JSON draft even when the stored object is unchanged", async (t) => {
+  const overrides = { fixture: { samplingParams: { temperature: 0.2 } } };
+  const fixture = await mount(t, {
+    config: { providers: { custom: { api: "openai-completions", modelOverrides: overrides } } },
+  });
+  await fixture.click("Save");
+  await fixture.fail(0, "CONFLICT", "External update");
+  const input = () => fixture.detail("ProviderDetail").findByType("textarea");
+  await act(async () => input().props.onChange({ target: { value: "{invalid" } }));
+  testApi.state.version = "new-disk-version";
+  await fixture.click("Reload disk version");
+  assert.deepEqual(JSON.parse(input().props.value), overrides);
+  assert.equal(
+    fixture.renderer.root.find((node) => node.type === "button" && text(node) === "Save").props.disabled,
+    false,
+  );
 });

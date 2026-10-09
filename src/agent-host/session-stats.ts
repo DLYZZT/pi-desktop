@@ -1,4 +1,4 @@
-import type { SessionStatsInfo } from "../shared/pi-types.ts";
+import type { AgentSessionLike, SessionStatsInfo } from "../shared/pi-types.ts";
 import type { SessionEntry, Usage } from "../shared/types.ts";
 
 type StatsOptions = {
@@ -8,27 +8,45 @@ type StatsOptions = {
   contextUsage?: SessionStatsInfo["contextUsage"];
 };
 
+export function buildLiveSessionStats(session: AgentSessionLike): SessionStatsInfo {
+  const stats = session.getSessionStats();
+  return {
+    ...stats,
+    modelUsage: buildSessionStats(session.sessionManager.getEntries() as unknown as SessionEntry[], {
+      sessionId: session.sessionId,
+    }).modelUsage,
+    totalMessages: stats.userMessages + stats.assistantMessages + stats.toolResults,
+    sessionName: session.sessionManager.getSessionName(),
+  };
+}
+
 /** Read-only equivalent of Pi's all-entry usage totals, with Desktop chat counts. */
 export function buildSessionStats(entries: readonly SessionEntry[], options: StatsOptions): SessionStatsInfo {
   const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
   let cost = 0;
+  const modelUsage = new Map<string, { provider: string; model: string; tokens: number; cost: number }>();
   let userMessages = 0;
   let assistantMessages = 0;
   let toolResults = 0;
   let toolCalls = 0;
 
-  function includeUsage(usage?: Usage): void {
+  function includeUsage(usage?: Usage, provider = "", model = ""): void {
     if (!usage) return;
     tokens.input += usage.input;
     tokens.output += usage.output;
     tokens.cacheRead += usage.cacheRead;
     tokens.cacheWrite += usage.cacheWrite;
     cost += usage.cost.total;
+    const key = JSON.stringify([provider, model]);
+    const row = modelUsage.get(key) ?? { provider, model, tokens: 0, cost: 0 };
+    row.tokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+    row.cost += usage.cost.total;
+    modelUsage.set(key, row);
   }
 
   for (const entry of entries) {
     if (entry.type === "usage") {
-      includeUsage(entry.usage);
+      includeUsage(entry.usage, entry.provider, entry.model);
       continue;
     }
     if (entry.type === "compaction" || entry.type === "branch_summary") {
@@ -44,7 +62,7 @@ export function buildSessionStats(entries: readonly SessionEntry[], options: Sta
     } else if (message.role === "assistant") {
       assistantMessages++;
       toolCalls += message.content.filter((block) => block.type === "toolCall").length;
-      includeUsage(message.usage);
+      includeUsage(message.usage, message.provider, message.model);
     }
   }
   tokens.total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
@@ -60,5 +78,6 @@ export function buildSessionStats(entries: readonly SessionEntry[], options: Sta
     totalMessages: userMessages + assistantMessages + toolResults,
     tokens,
     cost,
+    modelUsage: [...modelUsage.values()].sort((a, b) => b.cost - a.cost || a.model.localeCompare(b.model)),
   };
 }

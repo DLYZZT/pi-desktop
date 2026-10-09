@@ -20,7 +20,10 @@ function filterByExactEnabledModels<T extends { id: string; provider: string }>(
 ): T[] {
   if (!enabledModels || enabledModels.length === 0) return available;
   const refs = new Set(enabledModels.map(stripThinkingSuffix).filter(Boolean));
-  const visible = available.filter((m) => refs.has(`${m.provider}/${m.id}`) || refs.has(m.id));
+  const visible = available.filter(
+    (m) =>
+      refs.has(`${m.provider}/${m.id}`) || refs.has(m.id) || (m.provider === "pi-desktop-router" && m.id === "auto"),
+  );
   return visible.length > 0 ? visible : available;
 }
 
@@ -135,7 +138,12 @@ export async function projectModelsList(
   const enabledModels = settings.getEnabledModels();
   const visible = filterByExactEnabledModels(available, enabledModels);
   const models = visible
-    .map((model) => ({ id: model.id, name: model.name, provider: model.provider }))
+    .map((model) => ({
+      id: model.id,
+      name: model.name,
+      provider: model.provider,
+      ...(model.api === "pi-virtual" ? { virtual: true } : {}),
+    }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.provider.localeCompare(b.provider));
 
   const nameMap: Record<string, string> = {};

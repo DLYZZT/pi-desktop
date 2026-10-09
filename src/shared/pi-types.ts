@@ -17,6 +17,7 @@ export interface ContextUsage {
 export interface ModelLike {
   id: string;
   provider: string;
+  api?: string;
 }
 
 export interface ToolInfo {
@@ -53,6 +54,7 @@ export interface SessionStatsInfo {
     total: number;
   };
   cost: number;
+  modelUsage?: Array<{ provider: string; model: string; tokens: number; cost: number }>;
   contextUsage?: ContextUsage;
 }
 

@@ -149,30 +149,10 @@ function QueuedMessageRow({ kind, text }: { kind: "steer" | "follow-up"; text: s
 const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput(
   {
     onSend,
-    onAbort,
     onSteer,
     onFollowUp,
     isStreaming,
-    model,
-    isAutoModelSelection,
-    modelNames,
-    modelList,
-    modelCatalog,
-    modelRefreshing,
-    onModelChange,
-    onModelsRefresh,
-    onModelsRefreshCancel,
-    onCompact,
-    onAbortCompaction,
-    isCompacting,
-    compactError,
     compactResult,
-    toolPreset,
-    onToolPresetChange,
-    thinkingLevel,
-    onThinkingLevelChange,
-    availableThinkingLevels,
-    thinkingLevelMap,
     retryInfo,
     queuedMessages,
     onRecallQueue,
@@ -180,13 +160,12 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
     slashCommandsLoading,
     onLoadSlashCommands,
     onBuiltinCommand,
-    soundEnabled,
-    onSoundToggle,
     onAudioUnlock,
     onPromptWithStreamingBehavior,
     draftKey,
     draftPromotionFrom,
     cwd,
+    ...toolbarOptions
   }: Props,
   ref,
 ) {
@@ -1509,31 +1488,7 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
         </div>
 
         <ComposerToolbar
-          options={{
-            onAbort,
-            isStreaming,
-            model,
-            isAutoModelSelection,
-            modelNames,
-            modelList,
-            modelCatalog,
-            modelRefreshing,
-            onModelChange,
-            onModelsRefresh,
-            onModelsRefreshCancel,
-            onCompact,
-            onAbortCompaction,
-            isCompacting,
-            compactError,
-            toolPreset,
-            onToolPresetChange,
-            thinkingLevel,
-            onThinkingLevelChange,
-            availableThinkingLevels,
-            thinkingLevelMap,
-            soundEnabled,
-            onSoundToggle,
-          }}
+          options={{ ...toolbarOptions, isStreaming }}
           isMobile={isMobile}
           hasAttachments={attachedImages.length > 0 || attachedFiles.length > 0}
           onAttach={openAttachmentPicker}

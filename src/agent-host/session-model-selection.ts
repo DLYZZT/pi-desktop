@@ -3,6 +3,7 @@ import type { ModelSelectionNotice } from "../contract/types";
 import type { AgentSessionLike, ModelLike } from "../shared/pi-types";
 import type { createDesktopAgentSessionServices } from "./desktop-session-services";
 import { LEGACY_AZURE_PROVIDER } from "./azure-upgrade";
+import { getBranchModelSelection } from "./branch-model-selection";
 
 type Services = Awaited<ReturnType<typeof createDesktopAgentSessionServices>>;
 
@@ -15,7 +16,9 @@ export class SessionModelSelection {
 
   prepare(services: Services, manager: SessionManager) {
     this.trackBranch = true;
-    const saved = manager.buildSessionContext().model;
+    const saved = getBranchModelSelection(manager.getBranch(), (provider, id) =>
+      services.modelRuntime.getModel(provider, id),
+    );
     const provider = services.settingsManager.getDefaultProvider(),
       modelId = services.settingsManager.getDefaultModel();
     this.requested = saved ?? (provider ? { provider, modelId: modelId ?? "" } : undefined);
@@ -59,7 +62,9 @@ export class SessionModelSelection {
   snapshot(inner: AgentSessionLike): ModelSelectionNotice | undefined {
     const model = inner.model;
     if (this.trackBranch) {
-      const saved = inner.sessionManager.buildSessionContext().model;
+      const saved = getBranchModelSelection(inner.sessionManager.getBranch(), (provider, id) =>
+        inner.modelRuntime.getModel(provider, id),
+      );
       if (
         saved?.provider === LEGACY_AZURE_PROVIDER &&
         model?.provider !== LEGACY_AZURE_PROVIDER &&

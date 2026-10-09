@@ -1,3 +1,4 @@
+import type { AdvancedModelSettings, AutoRoutingConfig, CatalogModel, ModelSettingsSnapshot } from "./model-settings";
 import type {
   AgentCommand,
   AgentEvent,
@@ -444,6 +445,21 @@ export interface Api {
     params: { cwd?: string; enabledModels: string[] | null };
     result: ModelPreferencesResult;
   };
+  "models.routing.get": { params: void; result: ModelSettingsSnapshot<AutoRoutingConfig> };
+  "models.routing.set": {
+    params: { config: AutoRoutingConfig; expectedVersion: string; cwd?: string };
+    result: ModelSettingsSnapshot<AutoRoutingConfig>;
+  };
+  "settings.advanced.get": { params: void; result: ModelSettingsSnapshot<AdvancedModelSettings> };
+  "settings.advanced.set": {
+    params: { config: AdvancedModelSettings; expectedVersion: string };
+    result: ModelSettingsSnapshot<AdvancedModelSettings>;
+  };
+  "models.catalog": { params: { cwd?: string } | void; result: { models: CatalogModel[] } };
+  "models.test": {
+    params: { provider: string; modelId: string; type: "chat" | "classifier" | "image"; cwd?: string };
+    result: TestResult;
+  };
   "modelsConfig.get": { params: void; result: ModelsConfigSnapshot };
   "modelsConfig.set": {
     params: { config: ModelsConfig; expectedVersion: string };
@@ -476,7 +492,7 @@ export interface Api {
   };
   /** Kick off OAuth login; progress arrives on Streams["auth.login"]. */
   "auth.loginStart": {
-    params: { provider: string } & CredentialMutationOptions;
+    params: { provider: string; authType?: "oauth" | "api_key" } & CredentialMutationOptions;
     result: { ok: true; started: boolean };
   };
   "auth.loginCancel": {

@@ -1,5 +1,5 @@
 /**
- * OAuth login progress service for Streams["auth.login"].
+ * Provider login progress service for Streams["auth.login"].
  */
 import type { AuthEvent, AuthInteraction, AuthPrompt, LoginOptions } from "@earendil-works/pi-ai";
 import { CredentialSynchronizationError } from "@earendil-works/pi-coding-agent";
@@ -42,10 +42,10 @@ export function cancelLogin(provider: string): void {
 }
 
 type OAuthRuntime = {
-  getProvider(provider: string): { auth: { oauth?: unknown } } | undefined;
+  getProvider(provider: string): { auth: { oauth?: unknown; apiKey?: unknown } } | undefined;
   login(
     provider: string,
-    type: "oauth",
+    type: "oauth" | "api_key",
     interaction: AuthInteraction,
     options?: LoginOptions,
     mutation?: CredentialMutationOptions,
@@ -70,8 +70,14 @@ export function createAuthLoginService(
   }
 
   return {
-    async start(provider: string, mutation: CredentialMutationOptions = {}): Promise<{ started: boolean }> {
+    async start(
+      provider: string,
+      mutation: CredentialMutationOptions = {},
+      authType: "oauth" | "api_key" = "oauth",
+    ): Promise<{ started: boolean }> {
       if (closed) throw new RpcError({ code: "CLOSED", message: "Login service is closed" });
+      if (authType !== "oauth" && authType !== "api_key")
+        throw new RpcError({ code: "BAD_REQUEST", message: "Invalid authentication type" });
       if (activeLogins.has(provider)) {
         return { started: false };
       }
@@ -102,9 +108,9 @@ export function createAuthLoginService(
           releaseSlot();
           return { started: false };
         }
-        if (!modelRuntime.getProvider(provider)?.auth.oauth)
+        if (!modelRuntime.getProvider(provider)?.auth[authType === "oauth" ? "oauth" : "apiKey"])
           throw new RpcError({ code: "NOT_FOUND", message: `Unknown provider: ${provider}` });
-        deviceId = await createDeviceId(abort.signal);
+        deviceId = authType === "oauth" ? await createDeviceId(abort.signal) : "";
         if (closed || abort.signal.aborted) {
           releaseSlot();
           return { started: false };
@@ -236,7 +242,7 @@ export function createAuthLoginService(
         try {
           await modelRuntime.login(
             provider,
-            "oauth",
+            authType,
             {
               signal: abort.signal,
               notify,
@@ -251,7 +257,7 @@ export function createAuthLoginService(
           if (err instanceof CredentialSynchronizationError) {
             const recovered = await recoverCommittedCredential(modelRuntime, provider, {
               present: true,
-              type: "oauth",
+              type: authType,
             });
             if (recovered) {
               emitTerminal({ type: "success", ...(recovered.warning ? { warning: recovered.warning } : {}) });

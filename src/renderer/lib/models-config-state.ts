@@ -30,6 +30,8 @@ export interface ModelsJson {
 }
 
 export type ModelsConfigSelection =
+  | { type: "routing" }
+  | { type: "advanced" }
   | { type: "provider"; name: string }
   | { type: "model"; providerName: string; index: number }
   | { type: "oauth"; providerId: string }

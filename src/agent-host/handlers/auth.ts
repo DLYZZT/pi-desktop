@@ -43,7 +43,6 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
   return {
     providers: async () => {
       const modelRuntime = await getSharedModelRuntime();
-      const EXCLUDED = new Set(["anthropic"]);
       const DISPLAY_NAMES: Record<string, string> = {
         "openai-codex": "OpenAI Codex (legacy)",
         openai: "OpenAI / ChatGPT",
@@ -52,7 +51,7 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
       const result = await Promise.all(
         modelRuntime
           .getProviders()
-          .filter((p) => p.auth.oauth && !EXCLUDED.has(p.id))
+          .filter((p) => p.auth.oauth)
           .map(async (p) => {
             const credential = await getCredentialMutations().snapshot(p.id);
             return {
@@ -72,7 +71,7 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
     allProviders: async () => {
       const modelRuntime = await getSharedModelRuntime();
       const all = modelRuntime.getAllModels();
-      const OAUTH_PROVIDER_IDS = new Set(["anthropic", "github-copilot", "openai-codex"]);
+      const OAUTH_PROVIDER_IDS = new Set(["github-copilot", "openai-codex"]);
       const seen = new Set<string>();
       const result: ApiKeyProviderStatus[] = [];
       for (const model of all) {
@@ -181,8 +180,8 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
     },
 
     startLogin: async (params) => {
-      const { provider, expectedVersion, replaceExisting } = params;
-      const result = await authLogin.start(provider, { expectedVersion, replaceExisting });
+      const { provider, expectedVersion, replaceExisting, authType } = params;
+      const result = await authLogin.start(provider, { expectedVersion, replaceExisting }, authType);
       return { ok: true as const, started: result.started };
     },
 

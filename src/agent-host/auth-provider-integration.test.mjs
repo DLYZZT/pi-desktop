@@ -203,3 +203,75 @@ for (const outcome of ["cancel", "error-callback"]) {
     }
   });
 }
+
+test("Anthropic account and API-key authentication are both exposed", async (t) => {
+  const service = createAuthLoginService({ emit() {} });
+  t.after(() => service.dispose());
+  const handlers = createAuthHandlers(service);
+  assert.ok((await handlers.providers()).providers.some((provider) => provider.id === "anthropic"));
+  assert.ok((await handlers.allProviders()).providers.some((provider) => provider.id === "anthropic"));
+});
+
+for (const provider of ["cloudflare-workers-ai", "cloudflare-ai-gateway"]) {
+  test(`${provider} native multi-field key login commits all fields once`, async (t) => {
+    const terminal = createDeferred();
+    const fields = [],
+      responses = ["offline-cloudflare-key", "offline-account", "offline-gateway"];
+    let handlers;
+    const service = createAuthLoginService({
+      emit(_topic, _key, event) {
+        if (event.type === "prompt_request") {
+          fields.push(event);
+          globalThis.queueMicrotask(() => {
+            void handlers.submitLogin({ provider, token: event.token, code: responses[fields.length - 1] });
+          });
+        } else if (["success", "error", "cancelled"].includes(event.type)) terminal.resolve(event);
+      },
+    });
+    t.after(() => service.dispose());
+    handlers = createAuthHandlers(service);
+    const before = await getCredentialMutations().snapshot(provider);
+    await handlers.startLogin({ provider, authType: "api_key", expectedVersion: before.version });
+    assert.equal((await terminal.promise).type, "success");
+    assert.equal(fields.length, provider.endsWith("gateway") ? 3 : 2);
+    assert.equal(fields[0].secret, true);
+    assert.equal(fields[1].secret, false);
+    const credentials = JSON.parse(readFileSync(path.join(agentDir, "auth.json"), "utf8"))[provider];
+    assert.equal(credentials.key, responses[0]);
+    assert.equal(credentials.env.CLOUDFLARE_ACCOUNT_ID, responses[1]);
+    if (provider.endsWith("gateway")) assert.equal(credentials.env.CLOUDFLARE_GATEWAY_ID, responses[2]);
+    await handlers.deleteApiKey({
+      provider,
+      expectedVersion: (await getCredentialMutations().snapshot(provider)).version,
+    });
+  });
+}
+
+test("cancelling the second API-key prompt leaves the stored credential unchanged", async (t) => {
+  const provider = "cloudflare-workers-ai",
+    terminal = createDeferred();
+  let handlers,
+    prompts = 0;
+  const before = await getCredentialMutations().snapshot(provider);
+  const service = createAuthLoginService({
+    emit(_topic, _key, event) {
+      if (event.type === "prompt_request") {
+        prompts++;
+        if (prompts === 1)
+          globalThis.queueMicrotask(() => {
+            void handlers.submitLogin({ provider, token: event.token, code: "discarded-key" });
+          });
+        else
+          globalThis.queueMicrotask(() => {
+            service.cancel(provider);
+          });
+      } else if (["cancelled", "success", "error"].includes(event.type)) terminal.resolve(event);
+    },
+  });
+  t.after(() => service.dispose());
+  handlers = createAuthHandlers(service);
+  await handlers.startLogin({ provider, authType: "api_key", expectedVersion: before.version });
+  assert.equal((await terminal.promise).type, "cancelled");
+  await service.dispose();
+  assert.deepEqual(await getCredentialMutations().snapshot(provider), before);
+});

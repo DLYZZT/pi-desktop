@@ -1,3 +1,4 @@
+import { buildLiveSessionStats } from "./session-stats";
 import {
   createAgentSessionFromServices,
   getAgentDir,
@@ -590,6 +591,10 @@ export class AgentSessionWrapper {
 
       case "set_model": {
         const { provider, modelId } = command as { provider: string; modelId: string };
+        if (provider === "pi-desktop-router") {
+          if (this.isRunning()) throw new Error("Wait for the current turn before changing Auto routing");
+          await this.reloadSessionResources();
+        }
         await this.inner.modelRuntime.refresh?.({ allowNetwork: false });
         const model = this.inner.modelRuntime.getModel(provider, modelId);
         if (!model) throw new Error(`Model not found: ${provider}/${modelId}`);
@@ -682,14 +687,8 @@ export class AgentSessionWrapper {
         return null;
       }
 
-      case "get_session_stats": {
-        const stats = this.inner.getSessionStats();
-        return {
-          ...stats,
-          totalMessages: stats.userMessages + stats.assistantMessages + stats.toolResults,
-          sessionName: this.inner.sessionManager.getSessionName(),
-        };
-      }
+      case "get_session_stats":
+        return buildLiveSessionStats(this.inner);
 
       case "get_last_assistant_text": {
         return { text: this.inner.getLastAssistantText() ?? "" };
@@ -1483,7 +1482,7 @@ export async function startRpcSession(
           ],
         },
       },
-      { project: true },
+      { project: true, sessionManager },
     );
     const { executionContext, customTools } = await createDesktopSessionTools(
       cwd,

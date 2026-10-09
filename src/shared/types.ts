@@ -77,6 +77,7 @@ export interface ChannelMessageAttachment {
 }
 
 export interface AssistantMessage {
+  thinkingLevel?: string;
   role: "assistant";
   content: AssistantContentBlock[];
   model: string;

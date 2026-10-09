@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ModelCatalogStatus } from "@contract/types";
 import { useI18n } from "@/i18n";
@@ -22,6 +22,7 @@ export interface ComposerToolbarOptions {
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
+  modelStatus?: ReactNode;
   modelList?: { id: string; name: string; provider: string }[];
   modelCatalog?: ModelCatalogStatus;
   modelRefreshing?: boolean;
@@ -79,6 +80,7 @@ function ComposerToolbarView({
     model,
     isAutoModelSelection,
     modelNames,
+    modelStatus,
     modelList,
     modelCatalog,
     modelRefreshing,
@@ -283,7 +285,7 @@ function ComposerToolbarView({
       {/* LEFT: attach + model selector (idle) or steer/followup toggle (streaming) */}
       <div
         style={{
-          flex: isMobile ? "1 1 auto" : "0 0 auto",
+          flex: isMobile ? "1 1 auto" : "0 1 auto",
           minWidth: 0,
           display: "flex",
           alignItems: "center",
@@ -559,6 +561,7 @@ function ComposerToolbarView({
               )}
           </div>
         )}
+        {modelStatus}
       </div>
 
       {/* spacer */}

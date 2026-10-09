@@ -1,3 +1,4 @@
+import { modelSettingsHandlers } from "./handlers/model-settings";
 /**
  * Register all Api handlers on the RPC server.
  * Implements the desktop RPC contract in the Agent Host process.
@@ -310,6 +311,12 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
     "models.preferences.set": guard(modelCatalogHandlers.setPreferences),
 
+    "models.routing.get": guard(modelSettingsHandlers.routingGet),
+    "models.routing.set": guard(modelSettingsHandlers.routingSet),
+    "settings.advanced.get": guard(modelSettingsHandlers.advancedGet),
+    "settings.advanced.set": guard(modelSettingsHandlers.advancedSet),
+    "models.catalog": guard(modelSettingsHandlers.catalog),
+    "models.test": guard(modelSettingsHandlers.test),
     "modelsConfig.get": guard(modelConfigHandlers.get),
     "modelsConfig.set": guard(modelConfigHandlers.set),
     "modelsConfig.test": guard(modelConfigHandlers.test),

@@ -1,3 +1,4 @@
+import { ModelRoutingStatus } from "./models/ModelRoutingStatus";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { phaseLabel } from "@/lib/agent-phase-label";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -343,6 +344,21 @@ export function ChatWindow({
     ? (modelThinkingLevelMaps[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
     : null;
 
+  const selectedProvider = displayModelValue?.provider;
+  const selectedModelId = displayModelValue?.modelId;
+  const modelStatus = useMemo(
+    () => (
+      <ModelRoutingStatus
+        selection={
+          selectedProvider && selectedModelId ? { provider: selectedProvider, modelId: selectedModelId } : null
+        }
+        models={modelList}
+        messages={messages}
+      />
+    ),
+    [selectedProvider, selectedModelId, modelList, messages],
+  );
+
   const chatInputElement = (
     <ChatInput
       ref={chatInputRef}
@@ -353,6 +369,7 @@ export function ChatWindow({
       onPromptWithStreamingBehavior={agentRunning ? handlePromptWithStreamingBehavior : undefined}
       isStreaming={agentRunning}
       model={displayModelValue}
+      modelStatus={modelStatus}
       isAutoModelSelection={isAutoModelSelection}
       modelNames={modelNames}
       modelList={modelList}

@@ -1,3 +1,4 @@
+import { sessionModelForDisplay, sessionStatsForDisplay } from "@shared/session-model-display";
 import type { ThinkingLevelOption } from "@shared/thinking-levels";
 import { useState, useCallback, useRef, useEffect, useReducer } from "react";
 import type { AgentMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
@@ -359,18 +360,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     initialScrollDoneRef,
   } = viewport;
 
-  const currentModel = currentModelOverride ?? data?.context.model ?? pendingModel ?? null;
+  const currentModel = sessionModelForDisplay(currentModelOverride, data, modelList, pendingModel);
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
 
-  const sessionStats = (() => {
-    const stats = sessionStatsOverride ?? data?.stats;
-    if (!stats) return null;
-    return {
-      ...stats,
-      sessionName: data?.info ? data.info.name : (stats.sessionName ?? session?.name),
-      ...(contextUsage ? { contextUsage } : {}),
-    };
-  })();
+  const sessionStats = sessionStatsForDisplay(sessionStatsOverride, data, session?.name, contextUsage);
   useSessionPresentation(opts.presentationStore, {
     sessionId: sessionIdRef.current,
     info: data?.info ?? session,

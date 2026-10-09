@@ -1,3 +1,5 @@
+import { JsonObjectField } from "./models/JsonObjectField";
+import { RoutingSettings, AdvancedSettings } from "./models/ModelSettings";
 import { useState, useEffect, useCallback, useReducer, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
@@ -61,6 +63,8 @@ export function ModelsConfig({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
+  const [modelFormValid, setModelFormValid] = useState(true);
+  useEffect(() => setModelFormValid(true), [selection]);
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
   const [modelPreferences, setModelPreferencesState] = useState<ModelPreferencesResult | null>(null);
@@ -281,47 +285,71 @@ export function ModelsConfig({
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
   const activeApiKey = apiKeyProviders.filter((p) => p.configured);
 
+  const providerOverrides = (id: string) => (
+    <JsonObjectField
+      key={`${id}:${configVersion}`}
+      label={t("modelProviderOverrides", "Chat model overrides by model ID (JSON)")}
+      example={JSON.stringify({ "model-id": { samplingParams: { temperature: 0.2 } } }, null, 2)}
+      value={config.providers?.[id]?.modelOverrides}
+      onValidityChange={setModelFormValid}
+      onChange={(modelOverrides) =>
+        setConfig((current) => ({
+          ...current,
+          providers: { ...current.providers, [id]: { ...current.providers?.[id], modelOverrides } },
+        }))
+      }
+    />
+  );
+
   // Resolve current detail
   const detailContent = (() => {
     if (!selection) return null;
+    if (selection.type === "routing") return <RoutingSettings cwd={cwd} onChanged={onChanged} />;
+    if (selection.type === "advanced") return <AdvancedSettings onChanged={onChanged} />;
     if (selection.type === "oauth") {
       const p = oauthProviders.find((p) => p.id === selection.providerId);
       if (!p) return null;
       return (
-        <OAuthDetail
-          key={p.id}
-          provider={p}
-          onRefresh={refreshOAuthProviders}
-          onReloadCredentials={reloadCredentials}
-          modelSelection={{
-            preferences: modelPreferences,
-            loading: modelPreferencesLoading,
-            saving: modelPreferencesSaving,
-            error: modelPreferencesError,
-            onChange: updateModelPreferences,
-          }}
-        />
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <OAuthDetail
+            key={p.id}
+            provider={p}
+            onRefresh={refreshOAuthProviders}
+            onReloadCredentials={reloadCredentials}
+            modelSelection={{
+              preferences: modelPreferences,
+              loading: modelPreferencesLoading,
+              saving: modelPreferencesSaving,
+              error: modelPreferencesError,
+              onChange: updateModelPreferences,
+            }}
+          />
+          {providerOverrides(p.id)}
+        </div>
       );
     }
     if (selection.type === "apikey") {
       const p = apiKeyProviders.find((p) => p.id === selection.providerId);
       if (!p) return null;
       return (
-        <ApiKeyDetail
-          key={p.id}
-          provider={p}
-          baseUrl={config.providers?.[p.id]?.baseUrl ?? ""}
-          onBaseUrlChange={(baseUrl) => setConfig((prev) => setProviderBaseUrl(prev, p.id, baseUrl))}
-          onRefresh={refreshApiKeyProviders}
-          onReloadCredentials={reloadCredentials}
-          modelSelection={{
-            preferences: modelPreferences,
-            loading: modelPreferencesLoading,
-            saving: modelPreferencesSaving,
-            error: modelPreferencesError,
-            onChange: updateModelPreferences,
-          }}
-        />
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <ApiKeyDetail
+            key={p.id}
+            provider={p}
+            baseUrl={config.providers?.[p.id]?.baseUrl ?? ""}
+            onBaseUrlChange={(baseUrl) => setConfig((prev) => setProviderBaseUrl(prev, p.id, baseUrl))}
+            onRefresh={refreshApiKeyProviders}
+            onReloadCredentials={reloadCredentials}
+            modelSelection={{
+              preferences: modelPreferences,
+              loading: modelPreferencesLoading,
+              saving: modelPreferencesSaving,
+              error: modelPreferencesError,
+              onChange: updateModelPreferences,
+            }}
+          />
+          {providerOverrides(p.id)}
+        </div>
       );
     }
     if (selection.type === "provider") {
@@ -329,12 +357,13 @@ export function ModelsConfig({
       if (!provider) return null;
       return (
         <ProviderDetail
-          key={selection.name}
+          key={`${selection.name}:${configVersion}`}
           name={selection.name}
           provider={provider}
           onChange={(p) => updateProvider(selection.name, p)}
           onRename={(n) => renameProvider(selection.name, n)}
           onDelete={() => deleteProvider(selection.name)}
+          onValidityChange={setModelFormValid}
         />
       );
     }
@@ -343,10 +372,11 @@ export function ModelsConfig({
     if (!model) return null;
     return (
       <ModelDetail
-        key={`${selection.providerName}-${selection.index}`}
+        key={`${selection.providerName}-${selection.index}-${configVersion}`}
         providerName={selection.providerName}
         provider={provider}
         model={model}
+        onValidityChange={setModelFormValid}
         onChange={(m) => updateModel(selection.providerName, selection.index, m)}
         onDelete={() => removeModel(selection.providerName, selection.index)}
       />
@@ -457,6 +487,30 @@ export function ModelsConfig({
               }}
             >
               <div style={{ flex: 1, overflowY: "auto", padding: "8px 6px" }}>
+                {(["routing", "advanced"] as const).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setSelection({ type })}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "8px",
+                      marginBottom: 4,
+                      border: "none",
+                      borderRadius: 5,
+                      background: selection?.type === type ? "var(--bg-selected)" : "transparent",
+                      color: "var(--text)",
+                      cursor: "pointer",
+                      fontSize: 12,
+                    }}
+                  >
+                    {type === "routing"
+                      ? t("modelAutoRouting", "Auto routing")
+                      : t("modelAdvancedSettings", "Advanced model settings")}
+                  </button>
+                ))}
                 {/* Active OAuth subscriptions */}
                 {activeOAuth.map((p) => {
                   const isSelected = selection?.type === "oauth" && selection.providerId === p.id;
@@ -753,106 +807,117 @@ export function ModelsConfig({
           </div>
 
           {/* Footer */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "flex-end",
-              gap: 10,
-              padding: "10px 18px",
-              borderTop: "1px solid var(--border)",
-              flexShrink: 0,
-            }}
-          >
-            {saveError && <span style={{ fontSize: 12, color: "#f87171", flex: 1 }}>{saveError}</span>}
-            {saveConflict && (
-              <button
-                type="button"
-                onClick={() => void loadModelsConfig()}
-                disabled={loading || saving}
-                title={t("modelReloadDiskVersionHint", "Discard local edits and load the current models.json")}
-                style={{
-                  padding: "6px 12px",
-                  background: "none",
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
-                  color: "var(--text)",
-                  cursor: loading || saving ? "default" : "pointer",
-                  fontSize: 12,
-                }}
-              >
-                {t("modelReloadDiskVersion", "Reload disk version")}
-              </button>
-            )}
-            {!embedded && (
-              <button
-                onClick={onClose}
-                style={{
-                  padding: "6px 14px",
-                  background: "none",
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  fontSize: 13,
-                }}
-              >
-                {t("cancel", "Cancel")}
-              </button>
-            )}
-            <button
-              onClick={handleSave}
-              disabled={saving || savedOk || loading || loadFailed || saveConflict || !configLoaded || !configVersion}
-              title={
-                loadFailed ? t("modelCannotSaveBeforeLoad", "Cannot save until config loads successfully") : undefined
-              }
+          {selection?.type !== "routing" && selection?.type !== "advanced" && (
+            <div
               style={{
-                position: "relative",
-                padding: "6px 16px",
-                minWidth: 92,
-                background: savedOk
-                  ? "#16a34a"
-                  : saving || loadFailed || saveConflict || !configLoaded || !configVersion
-                    ? "var(--bg-panel)"
-                    : "var(--accent)",
-                border: "none",
-                borderRadius: 6,
-                color:
-                  savedOk || !(saving || loadFailed || saveConflict || !configLoaded || !configVersion)
-                    ? "#fff"
-                    : "var(--text-muted)",
-                cursor:
-                  saving || savedOk || loading || loadFailed || saveConflict || !configLoaded || !configVersion
-                    ? "default"
-                    : "pointer",
-                fontSize: 13,
-                fontWeight: 600,
-                display: "inline-flex",
+                display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
-                gap: 6,
-                transition: "background-color 0.2s ease, color 0.2s ease",
-                animation: savedOk ? "saved-pop 0.45s ease" : undefined,
+                justifyContent: "flex-end",
+                gap: 10,
+                padding: "10px 18px",
+                borderTop: "1px solid var(--border)",
+                flexShrink: 0,
               }}
             >
-              {savedOk && (
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ strokeDasharray: 18, animation: "saved-check-draw 0.35s ease forwards", flexShrink: 0 }}
+              {saveError && <span style={{ fontSize: 12, color: "#f87171", flex: 1 }}>{saveError}</span>}
+              {saveConflict && (
+                <button
+                  type="button"
+                  onClick={() => void loadModelsConfig()}
+                  disabled={loading || saving}
+                  title={t("modelReloadDiskVersionHint", "Discard local edits and load the current models.json")}
+                  style={{
+                    padding: "6px 12px",
+                    background: "none",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    color: "var(--text)",
+                    cursor: loading || saving ? "default" : "pointer",
+                    fontSize: 12,
+                  }}
                 >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
+                  {t("modelReloadDiskVersion", "Reload disk version")}
+                </button>
               )}
-              <span>{savedOk ? t("saved", "Saved") : saving ? t("saving", "Saving…") : t("save", "Save")}</span>
-            </button>
-          </div>
+              {!embedded && (
+                <button
+                  onClick={onClose}
+                  style={{
+                    padding: "6px 14px",
+                    background: "none",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  {t("cancel", "Cancel")}
+                </button>
+              )}
+              <button
+                onClick={handleSave}
+                disabled={
+                  !modelFormValid ||
+                  saving ||
+                  savedOk ||
+                  loading ||
+                  loadFailed ||
+                  saveConflict ||
+                  !configLoaded ||
+                  !configVersion
+                }
+                title={
+                  loadFailed ? t("modelCannotSaveBeforeLoad", "Cannot save until config loads successfully") : undefined
+                }
+                style={{
+                  position: "relative",
+                  padding: "6px 16px",
+                  minWidth: 92,
+                  background: savedOk
+                    ? "#16a34a"
+                    : saving || loadFailed || saveConflict || !configLoaded || !configVersion
+                      ? "var(--bg-panel)"
+                      : "var(--accent)",
+                  border: "none",
+                  borderRadius: 6,
+                  color:
+                    savedOk || !(saving || loadFailed || saveConflict || !configLoaded || !configVersion)
+                      ? "#fff"
+                      : "var(--text-muted)",
+                  cursor:
+                    saving || savedOk || loading || loadFailed || saveConflict || !configLoaded || !configVersion
+                      ? "default"
+                      : "pointer",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  transition: "background-color 0.2s ease, color 0.2s ease",
+                  animation: savedOk ? "saved-pop 0.45s ease" : undefined,
+                }}
+              >
+                {savedOk && (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ strokeDasharray: 18, animation: "saved-check-draw 0.35s ease forwards", flexShrink: 0 }}
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+                <span>{savedOk ? t("saved", "Saved") : saving ? t("saving", "Saving…") : t("save", "Save")}</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
       {pickerOpen && (

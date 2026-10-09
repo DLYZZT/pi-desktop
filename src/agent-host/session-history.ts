@@ -296,6 +296,9 @@ export function buildSessionHistoryPage(options: {
   const { entries, historyWindow, historyRevision, cursor } = options;
   const anchorLeafId = cursor?.anchorLeafId ?? options.leafId ?? entries.at(-1)?.id ?? null;
   const path = buildEntryPath(entries, anchorLeafId);
+  const selection = path.findLast((entry) => entry.type === "model_change");
+  const selectedModel =
+    selection?.type === "model_change" ? { provider: selection.provider, modelId: selection.modelId } : undefined;
   if (cursor) {
     if (cursor.historyRevision !== historyRevision) throw new StaleHistoryCursorError();
     if (path.length < cursor.anchorPathLength) throw new StaleHistoryCursorError();
@@ -307,6 +310,7 @@ export function buildSessionHistoryPage(options: {
     const context = buildSessionContext(entries, options.leafId);
     return {
       ...context,
+      selectedModel,
       totalMessages: context.messages.length,
       loadedMessages: context.messages.length,
       truncatedBefore: false,
@@ -355,6 +359,7 @@ export function buildSessionHistoryPage(options: {
     messages: selected.map((item) => item.message),
     entryIds: selected.map((item) => item.entryId),
     ...settings,
+    selectedModel,
     totalMessages: allMessages.length,
     loadedMessages: selected.length,
     truncatedBefore: hasOlder,
