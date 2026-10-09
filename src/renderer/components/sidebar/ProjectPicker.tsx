@@ -13,6 +13,9 @@ interface Props {
   allSessions: SessionInfo[];
   restoringInitialSession: boolean;
   setSelectedCwd: (cwd: string | null) => void;
+  /** Aggregated mode: render a compact "Open project…" trigger instead of the
+   *  selected-path display, because the project groups already show the path. */
+  compact?: boolean;
 }
 
 export function ProjectPicker({
@@ -22,6 +25,7 @@ export function ProjectPicker({
   allSessions,
   restoringInitialSession,
   setSelectedCwd,
+  compact = false,
 }: Props) {
   const { t } = useI18n();
   const deferFocus = useDeferredFocus();
@@ -114,50 +118,97 @@ export function ProjectPicker({
 
   return (
     <div ref={dropdownRef} style={{ position: "relative" }}>
-      <button
-        onClick={() => setDropdownOpen((v) => !v)}
-        title={selectedProject ?? selectedCwd ?? ""}
-        style={{
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          padding: "6px 10px",
-          background: selectedCwd ? "var(--bg-hover)" : "var(--accent-soft)",
-          border: selectedCwd ? "1px solid var(--border)" : "1px solid var(--accent-soft-border)",
-          borderRadius: 7,
-          cursor: "pointer",
-          fontSize: 12,
-          color: "var(--text)",
-          textAlign: "left",
-          transition: "border-color 0.15s, background 0.15s",
-        }}
-      >
-        {selectedCwd ? (
-          <PathLabel
-            text={abbreviateHomePath(selectedProject ?? selectedCwd, homeDir)}
-            style={{
-              flex: 1,
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              color: "var(--text)",
-            }}
-          />
-        ) : (
-          <span
-            style={{
-              flex: 1,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              color: "var(--text-dim)",
-            }}
+      {compact ? (
+        <button
+          onClick={() => setDropdownOpen((v) => !v)}
+          title={t("openProjectEllipsis", "Open project…")}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            padding: "8px 10px",
+            background: "var(--text)",
+            border: "none",
+            borderRadius: 7,
+            cursor: "pointer",
+            fontSize: 12.5,
+            fontWeight: 600,
+            fontFamily: "var(--font-mono)",
+            color: "var(--bg)",
+            flexShrink: 0,
+            transition: "opacity 0.12s",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.opacity = "0.9";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.opacity = "1";
+          }}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.1"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            style={{ flexShrink: 0 }}
           >
-            {restoringInitialSession ? "" : t("selectProjectEllipsis", "Select project…")}
-          </span>
-        )}
-      </button>
+            <path d="M1 3A1 1 0 0 1 2 2H4L5 3.5H8.5a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 1 8V3Z" />
+          </svg>
+          {t("openProjectEllipsis", "Open project…")}
+        </button>
+      ) : (
+        <button
+          onClick={() => setDropdownOpen((v) => !v)}
+          title={selectedProject ?? selectedCwd ?? ""}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            padding: "6px 10px",
+            background: selectedCwd ? "var(--bg-hover)" : "var(--accent-soft)",
+            border: selectedCwd ? "1px solid var(--border)" : "1px solid var(--accent-soft-border)",
+            borderRadius: 7,
+            cursor: "pointer",
+            fontSize: 12,
+            color: "var(--text)",
+            textAlign: "left",
+            transition: "border-color 0.15s, background 0.15s",
+          }}
+        >
+          {selectedCwd ? (
+            <PathLabel
+              text={abbreviateHomePath(selectedProject ?? selectedCwd, homeDir)}
+              style={{
+                flex: 1,
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                color: "var(--text)",
+              }}
+            />
+          ) : (
+            <span
+              style={{
+                flex: 1,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                color: "var(--text-dim)",
+              }}
+            >
+              {restoringInitialSession ? "" : t("selectProjectEllipsis", "Select project…")}
+            </span>
+          )}
+        </button>
+      )}
 
       <AnimatedDropdown
         open={dropdownOpen}

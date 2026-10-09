@@ -1,4 +1,5 @@
 import type { SessionInfo } from "./types";
+import { worktreePathsEqual } from "../../shared/worktree-path.ts";
 
 export type SessionDateGroup = "today" | "recent" | "older";
 
@@ -66,4 +67,61 @@ export function filterSessionsForQuery(sessions: SessionInfo[], rawQuery: string
   }
 
   return sessions.filter((session) => visibleIds.has(session.id));
+}
+
+export interface SessionProjectGroup {
+  /** Main repo root shared by all worktrees of the project (cwd for non-git dirs). */
+  projectRoot: string;
+  sessions: SessionInfo[];
+  /** Most recent `modified` in the group — drives group ordering. */
+  latestModified: string;
+}
+
+/**
+ * Group sessions by project (worktrees of one repo collapse into their main
+ * checkout), most recently active project first. Sessions without any usable
+ * path are dropped, mirroring getRecentProjects.
+ */
+export function groupSessionsByProject(sessions: SessionInfo[]): SessionProjectGroup[] {
+  const byRoot = new Map<string, SessionInfo[]>();
+  for (const session of sessions) {
+    const root = session.projectRoot ?? session.cwd;
+    if (!root) continue;
+    const bucket = byRoot.get(root);
+    if (bucket) bucket.push(session);
+    else byRoot.set(root, [session]);
+  }
+  return [...byRoot.entries()]
+    .map(([projectRoot, groupSessions]) => ({
+      projectRoot,
+      sessions: groupSessions,
+      latestModified: groupSessions.reduce(
+        (latest, session) => (session.modified > latest ? session.modified : latest),
+        "",
+      ),
+    }))
+    .sort((a, b) => b.latestModified.localeCompare(a.latestModified));
+}
+
+/**
+ * Projects that must appear in aggregated mode without any sessions: the
+ * active project (so a freshly opened one shows up immediately) plus projects
+ * opened earlier, most recent first. The active project leads so it is easy to
+ * spot; session-backed groups render ahead of these.
+ */
+export function resolveEmptyProjectRoots(
+  sessionRoots: readonly string[],
+  selectedProject: string | null,
+  knownRoots: readonly string[],
+): string[] {
+  const extras: string[] = [];
+  const seen = (root: string) =>
+    sessionRoots.some((existing) => worktreePathsEqual(existing, root)) ||
+    extras.some((existing) => worktreePathsEqual(existing, root));
+  const add = (root: string | null) => {
+    if (root && !seen(root)) extras.push(root);
+  };
+  add(selectedProject);
+  for (const root of knownRoots) add(root);
+  return extras;
 }

@@ -8,6 +8,8 @@ interface WorktreeEntry {
   isMain: boolean;
 }
 
+export type { WorktreeEntry };
+
 export interface WorktreeState {
   /** The cwd this data was fetched for — guards against stale responses */
   forCwd: string;
@@ -15,6 +17,15 @@ export interface WorktreeState {
   isGit: boolean;
   /** False when forCwd is a repo subdirectory — the switcher is hidden there
    *  because subdir sessions keep their own project identity */
+  isTopLevel: boolean;
+  worktrees: WorktreeEntry[];
+}
+
+/** Worktree facts for one project, fetched independently of the active cwd. */
+export interface ProjectWorktreeInfo {
+  /** Resolved repo root as reported by git (may differ from the requested path). */
+  projectRoot: string;
+  isGit: boolean;
   isTopLevel: boolean;
   worktrees: WorktreeEntry[];
 }
@@ -99,6 +110,55 @@ export function useSidebarWorkspace({
 
   // Load worktrees for the current effective cwd
   const [wtRefreshKey, setWtRefreshKey] = useState(0);
+  // Aggregated mode shows every project at once, so worktree facts are cached
+  // per project instead of only for the active cwd. Failed lookups are not
+  // cached, letting a later retry (e.g. after roots are allowed) succeed.
+  const projectWorktreesRef = useRef<Map<string, ProjectWorktreeInfo>>(new Map());
+  const projectWorktreesInflightRef = useRef<Map<string, Promise<ProjectWorktreeInfo | null>>>(new Map());
+  const [projectWorktreesRevision, setProjectWorktreesRevision] = useState(0);
+
+  const invalidateProjectWorktrees = useCallback(() => {
+    projectWorktreesRef.current.clear();
+    setProjectWorktreesRevision((revision) => revision + 1);
+  }, []);
+
+  const getProjectWorktrees = useCallback(
+    (projectRoot: string): ProjectWorktreeInfo | null => projectWorktreesRef.current.get(projectRoot) ?? null,
+    [],
+  );
+
+  const ensureProjectWorktrees = useCallback(async (projectRoot: string): Promise<ProjectWorktreeInfo | null> => {
+    const cached = projectWorktreesRef.current.get(projectRoot);
+    if (cached) return cached;
+    const inflight = projectWorktreesInflightRef.current.get(projectRoot);
+    if (inflight) return inflight;
+    const request = (async () => {
+      try {
+        const { call } = await import("@/lib/api-client");
+        const d = await call("worktrees.list", { projectRoot });
+        const info: ProjectWorktreeInfo = {
+          projectRoot: d.projectRoot,
+          isGit: d.isGit,
+          isTopLevel: d.isTopLevel,
+          worktrees: d.worktrees.map((worktree) => ({
+            path: worktree.path,
+            branch: worktree.branch ?? null,
+            isMain: worktree.isMain === true,
+          })),
+        };
+        projectWorktreesRef.current.set(projectRoot, info);
+        setProjectWorktreesRevision((revision) => revision + 1);
+        return info;
+      } catch {
+        return null;
+      } finally {
+        projectWorktreesInflightRef.current.delete(projectRoot);
+      }
+    })();
+    projectWorktreesInflightRef.current.set(projectRoot, request);
+    return request;
+  }, []);
+
   useLayoutEffect(() => {
     if (!selectedCwd) {
       setWorktreeState(null);
@@ -135,23 +195,30 @@ export function useSidebarWorkspace({
     };
   }, [selectedCwd, wtRefreshKey, worktreesRefreshKey, projectInfoRevision]);
 
-  const registerCreatedWorktree = useCallback((worktreePath: string, branch: string) => {
-    // Optimistically register the new worktree so projectRootFor() resolves
-    // it to the main repo before the refetch lands (keeps AppShell from
-    // treating the new cwd as a different project).
-    setWorktreeState((prev) =>
-      prev
-        ? {
-            ...prev,
-            forCwd: worktreePath,
-            worktrees: [...prev.worktrees, { path: worktreePath, branch, isMain: false }],
-          }
-        : prev,
-    );
-    setSelectedCwd(worktreePath);
-    setWtRefreshKey((k) => k + 1);
-  }, []);
-  const refreshWorktrees = useCallback(() => setWtRefreshKey((key) => key + 1), []);
+  const registerCreatedWorktree = useCallback(
+    (worktreePath: string, branch: string) => {
+      // Optimistically register the new worktree so projectRootFor() resolves
+      // it to the main repo before the refetch lands (keeps AppShell from
+      // treating the new cwd as a different project).
+      setWorktreeState((prev) =>
+        prev
+          ? {
+              ...prev,
+              forCwd: worktreePath,
+              worktrees: [...prev.worktrees, { path: worktreePath, branch, isMain: false }],
+            }
+          : prev,
+      );
+      setSelectedCwd(worktreePath);
+      invalidateProjectWorktrees();
+      setWtRefreshKey((k) => k + 1);
+    },
+    [invalidateProjectWorktrees],
+  );
+  const refreshWorktrees = useCallback(() => {
+    invalidateProjectWorktrees();
+    setWtRefreshKey((key) => key + 1);
+  }, [invalidateProjectWorktrees]);
   return {
     selectedCwd,
     setSelectedCwd,
@@ -161,5 +228,8 @@ export function useSidebarWorkspace({
     worktreeLoadingCwd,
     registerCreatedWorktree,
     refreshWorktrees,
+    projectWorktreesRevision,
+    getProjectWorktrees,
+    ensureProjectWorktrees,
   };
 }

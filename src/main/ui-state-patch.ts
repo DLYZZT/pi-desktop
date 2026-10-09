@@ -2,6 +2,7 @@ import { isAppLanguage } from "../shared/app-language.ts";
 import type { DesktopUiStatePatch } from "../contract/desktop";
 import { isChatAppearancePreferences } from "../shared/chat-appearance.ts";
 import { isHerdrSettings } from "../contract/herdr.ts";
+import { isSessionListMode } from "../shared/session-list-mode.ts";
 
 const RENDERER_WRITABLE_UI_STATE_FIELDS = new Set([
   "language",
@@ -9,6 +10,7 @@ const RENDERER_WRITABLE_UI_STATE_FIELDS = new Set([
   "managedProcessesEnabled",
   "chatAppearance",
   "herdrSettings",
+  "sessionListMode",
 ]);
 
 export function validateDesktopUiStatePatch(value: unknown): DesktopUiStatePatch {
@@ -40,6 +42,10 @@ export function validateDesktopUiStatePatch(value: unknown): DesktopUiStatePatch
   if ("herdrSettings" in patch) {
     if (!isHerdrSettings(patch.herdrSettings)) throw new Error("Invalid Herdr settings");
     validated.herdrSettings = patch.herdrSettings;
+  }
+  if ("sessionListMode" in patch) {
+    if (!isSessionListMode(patch.sessionListMode)) throw new Error("Invalid session list mode");
+    validated.sessionListMode = patch.sessionListMode;
   }
   return validated;
 }

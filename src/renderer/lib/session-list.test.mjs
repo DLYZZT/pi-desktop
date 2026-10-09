@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   filterSessionsForQuery,
   getSessionDisplayTitle,
+  groupSessionsByProject,
+  resolveEmptyProjectRoots,
   resolveInitialSessionRestore,
   sessionDateGroup,
 } from "./session-list.ts";
@@ -81,4 +83,60 @@ test("initial session restore returns the matching session", () => {
     status: "restore",
     session: target,
   });
+});
+
+test("groups sessions by project with worktrees collapsed, most recent project first", () => {
+  const older = session("older", { cwd: "/workspace/alpha", modified: "2026-07-01T08:00:00.000Z" });
+  const mainNewest = session("main-newest", {
+    cwd: "/workspace/beta",
+    modified: "2026-07-14T10:00:00.000Z",
+  });
+  const worktree = session("worktree", {
+    cwd: "/workspace/beta-feature",
+    projectRoot: "/workspace/beta",
+    worktreeBranch: "feature",
+    modified: "2026-07-13T10:00:00.000Z",
+  });
+  const fallbackRoot = session("fallback", {
+    cwd: "/workspace/gamma",
+    projectRoot: undefined,
+    modified: "2026-07-10T10:00:00.000Z",
+  });
+  const pathless = session("pathless", { cwd: "", projectRoot: "" });
+
+  const groups = groupSessionsByProject([older, mainNewest, worktree, fallbackRoot, pathless]);
+
+  assert.deepEqual(
+    groups.map((group) => group.projectRoot),
+    ["/workspace/beta", "/workspace/gamma", "/workspace/alpha"],
+  );
+  assert.deepEqual(
+    groups[0].sessions.map((item) => item.id),
+    ["main-newest", "worktree"],
+  );
+  assert.equal(groups[0].latestModified, "2026-07-14T10:00:00.000Z");
+  assert.equal(groups[2].latestModified, "2026-07-01T08:00:00.000Z");
+  assert.deepEqual(groupSessionsByProject([]), []);
+});
+
+test("empty project roots keep the active project and remembered projects listed", () => {
+  const sessionRoots = ["/workspace/beta"];
+
+  // The active project leads so a freshly opened one is easy to spot.
+  assert.deepEqual(resolveEmptyProjectRoots(sessionRoots, "/workspace/gamma", ["/workspace/delta"]), [
+    "/workspace/gamma",
+    "/workspace/delta",
+  ]);
+
+  // A project that already has sessions is not repeated as an empty group.
+  assert.deepEqual(resolveEmptyProjectRoots(sessionRoots, "/workspace/beta", ["/workspace/delta"]), [
+    "/workspace/delta",
+  ]);
+  assert.deepEqual(resolveEmptyProjectRoots(sessionRoots, "/workspace\\beta", ["/workspace/delta"]), [
+    "/workspace/delta",
+  ]);
+
+  // Nothing selected and nothing remembered means no empty groups.
+  assert.deepEqual(resolveEmptyProjectRoots(sessionRoots, null, []), []);
+  assert.deepEqual(resolveEmptyProjectRoots([], null, ["/workspace/delta", "/workspace/delta"]), ["/workspace/delta"]);
 });

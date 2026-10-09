@@ -3,6 +3,7 @@ import type { ChannelId } from "../shared/channel-types";
 import type { ManagedProcessCapability } from "./processes";
 import type { ChatAppearancePreferences } from "../shared/chat-appearance";
 import type { HerdrSettings } from "./herdr";
+import type { SessionListMode } from "../shared/session-list-mode";
 import type { PublicToolchainState, ToolchainActionRequest } from "../shared/toolchains/types";
 import type {
   BrowserBoundsInput,
@@ -127,6 +128,7 @@ export interface DesktopUiState {
   managedProcessesEnabled?: boolean;
   chatAppearance?: ChatAppearancePreferences;
   herdrSettings?: HerdrSettings;
+  sessionListMode?: SessionListMode;
 }
 
 export type DesktopUiStatePatch = Partial<DesktopUiState>;

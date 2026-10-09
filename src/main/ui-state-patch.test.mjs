@@ -49,3 +49,12 @@ test("language preference permits only supported locales across the IPC boundary
     assert.throws(() => validateDesktopUiStatePatch({ language }), /Invalid app language/);
   }
 });
+
+test("session list mode permits only the independent and aggregated modes", () => {
+  for (const sessionListMode of ["independent", "aggregated"]) {
+    assert.deepEqual(validateDesktopUiStatePatch({ sessionListMode }), { sessionListMode });
+  }
+  for (const sessionListMode of [null, undefined, {}, "", "grouped", 42]) {
+    assert.throws(() => validateDesktopUiStatePatch({ sessionListMode }), /Invalid session list mode/);
+  }
+});

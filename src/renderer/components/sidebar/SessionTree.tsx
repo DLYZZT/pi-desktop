@@ -128,7 +128,7 @@ export function SessionTreeItem({
   );
 }
 
-function RunningSessionIndicator() {
+export function RunningSessionIndicator() {
   const { t } = useI18n();
   return (
     <span
@@ -161,7 +161,7 @@ function RunningSessionIndicator() {
   );
 }
 
-function UnreadSessionIndicator() {
+export function UnreadSessionIndicator() {
   const { t } = useI18n();
   return (
     <span
