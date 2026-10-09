@@ -65,7 +65,9 @@ const timer = setTimeout(
     removeSmokeUserData();
     process.exit(1);
   },
-  executionRecovery ? 150_000 : 45_000,
+  // The MCP presentation matrix covers 12 language/theme/width combinations;
+  // hidden-window animation frames on Windows alone can take over 45 seconds.
+  executionRecovery ? 150_000 : 120_000,
 );
 
 child.on("error", (error) => {
