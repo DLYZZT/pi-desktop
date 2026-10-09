@@ -4,17 +4,12 @@ import { MarkdownBody } from "./MarkdownBody";
 import { ToolResultImages } from "./ToolResultImages";
 import { ReplyImage } from "./ReplyImage";
 import { DeferredContentActions } from "./DeferredContentActions";
+import { AssistantOutcome } from "./AssistantOutcome";
 import { scaledChatFont } from "@/lib/chat-appearance";
 import { getToolResultDisplayText } from "@/lib/tool-result-display";
 import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
-import {
-  getAssistantFailureDetail,
-  hasRenderableAssistantMessage,
-  isAssistantFailure,
-  isEmptyTextBlock,
-  isEmptyThinkingBlock,
-} from "@/lib/message-display";
+import { hasRenderableAssistantMessage, isEmptyTextBlock, isEmptyThinkingBlock } from "@/lib/message-display";
 import { getUserBubbleStyle } from "@/lib/channel-message-style";
 import { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelAttachmentCopyText } from "@shared/channel-message";
 import { parseSkillInvocation, skillInvocationCommandText, type SkillInvocation } from "@shared/skill-invocation";
@@ -603,7 +598,6 @@ function AssistantMessageView({
   entryId?: string;
   thinkingExpansionStore?: ThinkingExpansionStore;
 }) {
-  const { t } = useI18n();
   const time = showTimestamp ? formatTime(message.timestamp) : null;
   const blockItems = (message.content ?? [])
     .map((block, originalIndex) => ({ block, originalIndex }))
@@ -615,13 +609,6 @@ function AssistantMessageView({
   const [tps, setTps] = useState<number | null>(null);
   const blockItemsRef = useRef(blockItems);
   blockItemsRef.current = blockItems;
-  const failureDetail = isAssistantFailure(message)
-    ? (getAssistantFailureDetail(message) ??
-      t(
-        "modelRequestFailedFallback",
-        "The model service did not return error details. Check the API key, service URL, and model configuration.",
-      ))
-    : null;
 
   // Streaming-based timing for thinking blocks
   const blockStartTimesRef = useRef<Map<number, number>>(new Map());
@@ -814,26 +801,7 @@ function AssistantMessageView({
           content={message.content.filter((block) => block.type !== "image")}
           onLoad={onLoadDeferredContent}
         />
-        {failureDetail && !isStreaming && (
-          <div
-            role="alert"
-            data-testid="assistant-error-message"
-            style={{
-              border: "1px solid color-mix(in srgb, var(--danger) 45%, var(--border))",
-              borderRadius: 9,
-              background: "color-mix(in srgb, var(--danger) 8%, var(--assistant-bg))",
-              color: "var(--danger)",
-              padding: "10px 12px",
-              fontSize: scaledChatFont(13),
-              lineHeight: 1.55,
-              overflowWrap: "anywhere",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            <div style={{ fontWeight: 600, marginBottom: 3 }}>{t("modelRequestFailed", "Model request failed")}</div>
-            <div>{failureDetail}</div>
-          </div>
-        )}
+        <AssistantOutcome message={message} isStreaming={isStreaming} />
       </div>
 
       <div

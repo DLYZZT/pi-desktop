@@ -2,7 +2,7 @@
   "name": "@dlyzzt/pi-desktop",
   "version": "0.3.0",
   "private": true,
-  "description": "Pi Agent Desktop — pure Electron desktop app for the pi coding agent",
+  "description": "Pi Agent Desktop \u2014 pure Electron desktop app for the pi coding agent",
   "homepage": "https://github.com/DLYZZT/pi-desktop#readme",
   "license": "Apache-2.0",
   "productName": "Pi Agent Desktop",
@@ -67,10 +67,10 @@
     "dist:mac:notarized": "node scripts/build-mac-release.mjs --notarize"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "1.0.4",
-    "@earendil-works/pi-coding-agent": "1.0.4",
-    "@earendil-works/pi-mcp": "1.0.4",
-    "@earendil-works/pi-telemetry": "1.0.4",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-mcp": "1.1.0",
+    "@earendil-works/pi-telemetry": "1.1.0",
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "@lobehub/icons": "^5.6.0",
     "@rc-component/qrcode": "^2.0.0",
@@ -98,7 +98,7 @@
     "yauzl": "3.4.0"
   },
   "overrides": {
-    "@earendil-works/pi-telemetry": "1.0.4",
+    "@earendil-works/pi-telemetry": "1.1.0",
     "@xmldom/xmldom": "0.8.15"
   },
   "devDependencies": {

@@ -1,5 +1,11 @@
 // Translation entries owned by the models domain.
 export const enUS: Record<string, string> = {
+  modelAuxiliaryModels: "Image and decision models",
+  modelAuxiliaryDescription:
+    "These catalog models are used through Codemode with supported provider credentials. Enable Codemode in the session tools menu. They do not appear in the chat model picker.",
+  modelDecision: "Decision",
+  modelImageGeneration: "Image generation",
+
   modelSelectionNone: "No model",
   modelSelectionRequired:
     "Could not safely restore {requested}. Current model: {actual}. Choose a model explicitly before sending.",
@@ -116,6 +122,12 @@ export const enUS: Record<string, string> = {
 };
 
 export const zhCN: Record<string, string> = {
+  modelAuxiliaryModels: "图片与决策模型",
+  modelAuxiliaryDescription:
+    "这些目录模型通过 Codemode 使用，需要服务商支持的认证方式。在会话工具菜单中启用 Codemode 后即可调用，不会出现在聊天主模型选择器中。",
+  modelDecision: "决策",
+  modelImageGeneration: "图片生成",
+
   modelSelectionNone: "未选择模型",
   modelSelectionRequired: "无法可靠恢复 {requested}。当前模型：{actual}。请明确选择模型后再发送。",
   modelAzureSelectionRenamed: "Azure 服务商标识已更新：{requested} → {actual}。原始会话历史保留不变。",
@@ -226,6 +238,12 @@ export const zhCN: Record<string, string> = {
 };
 
 export const zhTW: Record<string, string> = {
+  modelAuxiliaryModels: "圖片與決策模型",
+  modelAuxiliaryDescription:
+    "這些目錄模型透過 Codemode 使用，需要服務商支援的驗證方式。在對話工具選單中啟用 Codemode 後即可呼叫，不會出現在聊天主模型選擇器中。",
+  modelDecision: "決策",
+  modelImageGeneration: "圖片生成",
+
   modelSelectionNone: "尚未選擇模型",
   modelSelectionRequired: "無法可靠恢復 {requested}。目前模型：{actual}。請明確選擇模型後再傳送。",
   modelAzureSelectionRenamed: "Azure 服務商識別碼已更新：{requested} → {actual}。原始對話歷史保持不變。",

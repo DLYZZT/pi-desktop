@@ -5,8 +5,9 @@ import test from "node:test";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { stream } from "@earendil-works/pi-ai/api/openai-responses";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 
-test("1.0.4 catalogs keep chat selection separate from images and classifiers", async () => {
+test("1.1.0 catalogs keep chat selection separate from images and classifiers", async () => {
   for (const provider of ["openai", "azure", "openai-codex"]) {
     assert.equal(getModel(provider, "gpt-6.1-sol")?.contextWindow, 272_000);
   }
@@ -70,10 +71,43 @@ test("ChatGPT request trimming depends on both the credential and the exact Open
 
 test("runtime probe executes OpenAI OAuth and MCP lazy imports without user storage or login", async () => {
   const root = path.resolve(import.meta.dirname, "..", "..");
-  const { probePiRuntimeModules } = await importTestBundle("pi-104-runtime-probe", {
+  const { probePiRuntimeModules } = await importTestBundle("pi-110-runtime-probe", {
     packages: "external",
     absWorkingDir: root,
     entryPoints: ["src/agent-host/pi-runtime-probe.ts"],
   });
-  assert.deepEqual(await probePiRuntimeModules(), { piVersion: "1.0.4", openaiOAuthLoaded: true, mcpLoaded: true });
+  assert.deepEqual(await probePiRuntimeModules(), { piVersion: "1.1.0", openaiOAuthLoaded: true, mcpLoaded: true });
+});
+
+test("Haiku 5.5 supports max while OpenAI decision availability follows the credential type", async () => {
+  assert.ok(getSupportedThinkingLevels(getModel("anthropic", "claude-haiku-5-5")).includes("max"));
+  for (const credential of [
+    { type: "api_key", key: "sk-offline-fixture" },
+    { type: "oauth", access: "offline-subscription", refresh: "offline-refresh", expires: Date.now() + 3600000 },
+  ]) {
+    const runtime = await ModelRuntime.create({
+      modelsPath: null,
+      refreshOnCreate: false,
+      credentials: {
+        async read(provider) {
+          return provider === "openai" ? credential : undefined;
+        },
+        async list() {
+          return [{ providerId: "openai", type: credential.type }];
+        },
+        async modify() {
+          throw new Error("read-only fixture");
+        },
+        async delete() {
+          throw new Error("read-only fixture");
+        },
+      },
+    });
+    const available = await runtime.getAvailableOfType("classifier", "openai");
+    assert.equal(
+      available.some((model) => model.id === "gpt-6-luna"),
+      credential.type === "api_key",
+    );
+    assert.ok(runtime.getModels().every((model) => (model.type ?? "chat") === "chat"));
+  }
 });

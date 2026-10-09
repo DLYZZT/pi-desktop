@@ -6,6 +6,7 @@ import type { ApiKeyProviderStatus as ApiKeyProvider } from "@contract/types";
 import { type ModelSelectionControl, ManagedModelsControl } from "./ManagedModelsControl";
 import { AuthReplacementNotice } from "./AuthReplacementNotice";
 import type { CredentialMutationOptions } from "@contract/auth";
+import { AuxiliaryModels } from "./AuxiliaryModels";
 
 export function ApiKeyDetail({
   provider,
@@ -213,7 +214,10 @@ export function ApiKeyDetail({
       {error && <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{error}</p>}
       {warning && <p style={{ margin: 0, fontSize: 12, color: "#d97706" }}>{warning}</p>}
 
-      {provider.configured && <ManagedModelsControl providerId={provider.id} {...modelSelection} />}
+      <AuxiliaryModels models={provider.auxiliaryModels ?? []} />
+      {provider.configured && provider.chatModelCount !== 0 && (
+        <ManagedModelsControl providerId={provider.id} {...modelSelection} />
+      )}
 
       {provider.configured && (provider.storedAuthType === undefined || provider.storedAuthType === "api_key") && (
         <button

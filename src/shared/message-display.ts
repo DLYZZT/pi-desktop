@@ -8,6 +8,10 @@ export function isAssistantFailure(message: AssistantMessage): boolean {
   return message.stopReason === "error";
 }
 
+export function isAssistantAborted(message: AssistantMessage): boolean {
+  return message.stopReason === "aborted";
+}
+
 export function getAssistantFailureDetail(message: AssistantMessage): string | null {
   if (!isAssistantFailure(message)) return null;
   const detail = message.errorMessage?.trim();
@@ -36,7 +40,11 @@ export function getDisplayableAssistantBlocks(
 }
 
 export function hasRenderableAssistantMessage(message: AssistantMessage, options: DisplayOptions = {}): boolean {
-  return isAssistantFailure(message) || getDisplayableAssistantBlocks(message, options).length > 0;
+  return (
+    isAssistantFailure(message) ||
+    isAssistantAborted(message) ||
+    getDisplayableAssistantBlocks(message, options).length > 0
+  );
 }
 
 function isFinalAnswerBlock(block: AssistantContentBlock): boolean {

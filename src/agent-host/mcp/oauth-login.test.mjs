@@ -62,7 +62,7 @@ function fixture(t, options = {}) {
           client_name: metadata.client_name,
         };
       } else if (url.endsWith("/token")) {
-        await options.onToken?.();
+        await options.onToken?.(init);
         value = {
           access_token: "PRIVATE_MCP_TOKEN",
           token_type: "Bearer",
@@ -83,6 +83,71 @@ function fixture(t, options = {}) {
   const start = (patch = {}) => manager.start({ ...input, ...patch });
   return { store, manager, start, opened, snapshots, base, requests, config, input, root, loginOptions };
 }
+
+for (const phase of ["discovery", "registration"]) {
+  test(`native OAuth signal cancels ${phase} before credentials or a browser redirect are issued`, async (t) => {
+    const f = fixture(t, { oauth: {} });
+    const fetch = f.loginOptions.fetch;
+    let entered, receivedSignal;
+    const waiting = new Promise((resolve) => {
+      entered = resolve;
+    });
+    f.loginOptions.fetch = (input, init) => {
+      if (phase === "discovery" || String(input).endsWith("/register")) {
+        receivedSignal = init.signal;
+        entered();
+        return new Promise((_resolve, reject) => {
+          const abort = () => reject(init.signal.reason);
+          if (init.signal.aborted) abort();
+          else init.signal.addEventListener("abort", abort, { once: true });
+        });
+      }
+      return fetch(input, init);
+    };
+    const request = f.start();
+    await waiting;
+    const result = await f.manager.cancel(request.requestId);
+    assert.equal(receivedSignal.aborted, true);
+    assert.equal(result.state, "cancelled");
+    assert.equal((await f.store.forServer("fixture", f.config.url).load())?.tokens, undefined);
+    assert.ok(f.snapshots.every((snapshot) => !snapshot.authUrl));
+  });
+}
+
+test("OAuth discovery deadline fails the network phase without misreporting a user cancellation", async (t) => {
+  const deadline = new globalThis.AbortController();
+  t.mock.method(globalThis.AbortSignal, "timeout", (ms) => {
+    assert.equal(ms, 15000);
+    return deadline.signal;
+  });
+  const f = fixture(t);
+  let entered, completed;
+  const waiting = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const finished = new Promise((resolve) => {
+    completed = resolve;
+  });
+  f.loginOptions.updated = (snapshot) => {
+    if (snapshot.state !== "waiting") completed(snapshot);
+  };
+  f.loginOptions.fetch = (_input, init) =>
+    new Promise((_resolve, reject) => {
+      if (init.signal.aborted) {
+        reject(init.signal.reason);
+        return;
+      }
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+      entered();
+    });
+  f.start();
+  await waiting;
+  deadline.abort(new globalThis.DOMException("OAuth phase timed out", "TimeoutError"));
+  const result = await finished;
+  assert.equal(result.state, "failed");
+  assert.match(result.error, /timed out/);
+  assert.equal((await f.store.forServer("fixture", f.config.url).load())?.tokens, undefined);
+});
 
 test("MCP sign-in accepts a matching pasted callback, keeps credentials private and closes the loopback listener", async (t) => {
   const f = fixture(t),
@@ -271,6 +336,7 @@ for (const invalidation of ["cancel", "logout", "configuration", "external-flow"
   test(`an in-flight token response respects ${invalidation} without stale credential writes`, async (t) => {
     let entered,
       release,
+      tokenSignal,
       valid = true;
     const tokenStarted = new Promise((resolve) => {
       entered = resolve;
@@ -279,7 +345,8 @@ for (const invalidation of ["cancel", "logout", "configuration", "external-flow"
       release = resolve;
     });
     const f = fixture(t, {
-      onToken: async () => {
+      onToken: async (init) => {
+        tokenSignal = init.signal;
         entered();
         await tokenGate;
       },
@@ -303,6 +370,7 @@ for (const invalidation of ["cancel", "logout", "configuration", "external-flow"
         const state = await f.store.forServer("fixture", f.config.url).load();
         await f.store.forServer("fixture", f.config.url).save({ ...state, oauthState: "other-cli-flow" });
       }
+      assert.equal(tokenSignal.aborted, invalidation === "logout" || invalidation === "configuration");
     } finally {
       release();
     }

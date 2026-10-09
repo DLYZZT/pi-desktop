@@ -70,6 +70,7 @@ export interface EntryContentResult {
 }
 
 export interface SessionRuntimeState {
+  agentSettled?: { aborted: boolean };
   modelSelectionNotice?: ModelSelectionNotice;
   contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null } | null;
   systemPrompt?: string;
@@ -204,6 +205,8 @@ export interface ApiKeyProviderStatus {
   configured: boolean;
   source?: string;
   modelCount: number;
+  chatModelCount?: number;
+  auxiliaryModels?: Array<{ id: string; name: string; type: "image" | "classifier" }>;
   storedAuthType?: "api_key" | "oauth" | null;
   credentialVersion?: string;
 }

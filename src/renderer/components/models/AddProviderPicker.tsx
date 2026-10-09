@@ -33,7 +33,12 @@ export function AddProviderPicker({
 
   const availableOAuth = oauthProviders.filter((p) => !p.loggedIn && (!q || p.name.toLowerCase().includes(q)));
   const availableApiKey = apiKeyProviders.filter(
-    (p) => !p.configured && (!q || p.displayName.toLowerCase().includes(q) || p.id.toLowerCase().includes(q)),
+    (p) =>
+      !p.configured &&
+      (!q ||
+        p.displayName.toLowerCase().includes(q) ||
+        p.id.toLowerCase().includes(q) ||
+        p.auxiliaryModels?.some((model) => `${model.name} ${model.id}`.toLowerCase().includes(q))),
   );
   const customSearchTerms = [
     "custom",

@@ -71,7 +71,7 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
 
     allProviders: async () => {
       const modelRuntime = await getSharedModelRuntime();
-      const all = modelRuntime.getModels();
+      const all = modelRuntime.getAllModels();
       const OAUTH_PROVIDER_IDS = new Set(["anthropic", "github-copilot", "openai-codex"]);
       const seen = new Set<string>();
       const result: ApiKeyProviderStatus[] = [];
@@ -84,6 +84,7 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
         const status = modelRuntime.getProviderAuthStatus(model.provider);
         const credential = await getCredentialMutations().snapshot(model.provider);
         if (status.source === "models_json_key") continue;
+        const models = all.filter((candidate) => candidate.provider === model.provider);
         result.push({
           id: model.provider,
           displayName: provider.name,
@@ -93,7 +94,13 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
           source: credential.type === "oauth" ? "stored_oauth" : (status.label ?? status.source),
           storedAuthType: credential.type,
           credentialVersion: credential.version,
-          modelCount: all.filter((candidate) => candidate.provider === model.provider).length,
+          modelCount: models.length,
+          chatModelCount: models.filter((candidate) => (candidate.type ?? "chat") === "chat").length,
+          auxiliaryModels: models.flatMap((candidate) =>
+            candidate.type === "classifier" || candidate.type === "image"
+              ? [{ id: candidate.id, name: candidate.name, type: candidate.type }]
+              : [],
+          ),
         });
       }
       return { providers: result };

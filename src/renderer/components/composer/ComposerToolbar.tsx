@@ -861,7 +861,7 @@ function ComposerToolbarView({
                           ? t("permissionStandardDescription", "4 built-in tools")
                           : t(
                               "permissionFullDescription",
-                              "All tools, code orchestration, image generation and search",
+                              "All tools, code orchestration, image generation, classification and search",
                             );
                     return (
                       <button

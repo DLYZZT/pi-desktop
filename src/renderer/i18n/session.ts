@@ -1,5 +1,6 @@
 // Translation entries owned by the session domain.
 export const enUS: Record<string, string> = {
+  agentResponseStopped: "Response stopped",
   addModelsFromSettings: "Open Settings at the bottom, then add models",
   agentRunningStatus: "Agent running",
   confirm: "Confirm",
@@ -192,6 +193,7 @@ export const enUS: Record<string, string> = {
 };
 
 export const zhCN: Record<string, string> = {
+  agentResponseStopped: "已停止",
   addModelsFromSettings: "在底部打开“设置”，然后添加模型",
   agentRunningStatus: "Agent 运行中",
   confirm: "确认",
@@ -380,6 +382,7 @@ export const zhCN: Record<string, string> = {
 };
 
 export const zhTW: Record<string, string> = {
+  agentResponseStopped: "已停止",
   addModelsFromSettings: "在底部開啟「設定」，然後新增模型",
   agentRunningStatus: "Agent 執行中",
   confirm: "確認",

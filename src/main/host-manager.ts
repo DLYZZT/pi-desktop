@@ -27,7 +27,7 @@ export type HostMessage =
   | { type: "pong"; ts?: number }
   | { type: "log"; message: string }
   | { type: "running-sessions"; sessionIds: string[] }
-  | { type: "agent-end"; sessionId: string; eventType?: string }
+  | { type: "agent-end"; sessionId: string; eventType?: string; aborted?: boolean }
   | { type: "toolchain:ack"; revision: number }
   | { type: "browser:ack"; revision: number }
   | { type: "herdr:ack"; revision: number; hostGeneration: number }

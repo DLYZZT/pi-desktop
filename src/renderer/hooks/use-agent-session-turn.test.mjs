@@ -415,6 +415,60 @@ test("a resumed view accepts completion from the client run created by its previ
   assert.equal(fixture.completions, 1);
 });
 
+test("SDK cancellation marks completion as aborted without ending the enclosing prompt early", async (t) => {
+  const outcomes = [];
+  const fixture = await mountRuntime(
+    t,
+    runtimeDetail({ running: true, state: { isStreaming: true, isPromptRunning: true } }),
+    {
+      onAgentEnd: (aborted) => outcomes.push(aborted),
+    },
+  );
+  await fixture.emit({ type: "agent_settled", aborted: true });
+  assert.equal(fixture.current.agentRunning, true);
+  assert.deepEqual(outcomes, []);
+  testApi.setHistory(
+    runtimeDetail({
+      running: true,
+      state: { isStreaming: false, isPromptRunning: false, agentSettled: { aborted: true } },
+    }),
+    undefined,
+  );
+  await fixture.emit({ type: "prompt_error", aborted: true, errorMessage: "Aborted" });
+  await fixture.emit({ type: "prompt_done" });
+  await fixture.emit({ type: "prompt_done" });
+  assert.equal(fixture.current.agentRunning, false);
+  assert.deepEqual(outcomes, [true]);
+  assert.ok(!fixture.current.notices.some((notice) => notice.message === "Aborted"));
+  await fixture.emit({ type: "agent_start" });
+  await fixture.emit({ type: "agent_settled", aborted: false });
+  testApi.setHistory(
+    runtimeDetail({
+      running: true,
+      state: { isStreaming: false, isPromptRunning: false, agentSettled: { aborted: false } },
+    }),
+    undefined,
+  );
+  await fixture.emit({ type: "prompt_done" });
+  assert.deepEqual(outcomes, [true, false]);
+});
+
+test("state reconciliation retains cancellation when its settlement stream event was missed", async (t) => {
+  const outcomes = [];
+  const fixture = await mountRuntime(t, runtimeDetail({ running: true, state: { isStreaming: true } }), {
+    onAgentEnd: (aborted) => outcomes.push(aborted),
+  });
+  const idle = {
+    running: true,
+    state: { isStreaming: false, isPromptRunning: false, agentSettled: { aborted: true } },
+  };
+  testApi.setStateResponse(idle);
+  testApi.setHistory(runtimeDetail(idle), undefined);
+  await fixture.reconcile();
+  assert.equal(fixture.current.agentRunning, false);
+  assert.deepEqual(outcomes, [true]);
+});
+
 test("local client IDs still reject unrelated completion and cannot stop a later channel turn", async (t) => {
   const fixture = await mountRuntime(t, runtimeDetail({ running: false }));
   testApi.queueCommand("prompt", {});

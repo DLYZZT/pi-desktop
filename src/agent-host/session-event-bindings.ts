@@ -18,9 +18,9 @@ type Binding = {
 /** One registry owns subscriptions for one Host RPC server lifetime. */
 export function createSessionEventBindings(
   server: Pick<RpcServer, "emit">,
-  notifyEnd: (sessionId: string) => void = (sessionId) => {
+  notifyEnd: (sessionId: string, aborted: boolean) => void = (sessionId, aborted) => {
     try {
-      process.parentPort?.postMessage({ type: "agent-end", sessionId, eventType: "agent_end" });
+      process.parentPort?.postMessage({ type: "agent-end", sessionId, eventType: "agent_settled", aborted });
     } catch {
       /* best effort */
     }
@@ -60,10 +60,15 @@ export function createSessionEventBindings(
       byId.set(id, binding);
       bySource.set(source, binding);
       try {
+        let settlementPending = true;
         const batcher = new SessionEventBatcher((event) => {
           if (!binding.active || byId.get(id) !== binding) return;
           server.emit("agent.events", id, event as never);
-          if (event.type === "agent_end") notifyEnd(id);
+          if (event.type === "agent_start") settlementPending = true;
+          if (event.type === "agent_settled" && typeof event.aborted === "boolean" && settlementPending) {
+            settlementPending = false;
+            notifyEnd(id, event.aborted);
+          }
         }, batchOptions);
         binding.discardPending = () => batcher.dispose();
         const eventOff = source.onEvent((event) => batcher.push(event));

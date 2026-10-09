@@ -90,11 +90,17 @@ Managed background processes in v0.3.0 support macOS, Linux, and Windows 11 x64.
 
 ### Unified model and extension management
 
-- Bundle Pi Coding Agent 0.99.1 and manage model providers and model configurations
+- The development version bundles Pi Coding Agent 1.1.0 and manages model providers and model configurations
 - Prefer the local model directory when sessions start; explicitly refresh the remote directory when needed while preserving cached models across offline, timeout, or partial-provider failures
 - Sign in through browser-based OAuth flows
 - Search for, install, and configure Skills; normal installs keep npm's default concurrency, with one isolated-cache retry for network, timeout, or cache-lock failures
 - Manage Plugins while continuing to use the Pi Agent extension ecosystem
+
+### Codemode image generation and decision models
+
+In the development version, enable Codemode from the session tools menu (included in Full access) to let the Agent generate images or call decision models for classification, yes/no questions, and scoring. Image-capable classifiers can also judge screenshots and images. Models are discovered using the provider's existing credentials; classifiers are auxiliary capabilities outside the chat model picker.
+
+Each model call follows Codemode permission, supports cancellation, and retains original inputs, results, and execution states. Usage counts toward session totals, and calls appear in the existing tool history. OpenAI decisions require an API key; ChatGPT subscription login does not provide this capability. To configure TypeSafe Jev, open Settings → Models → Add provider, search for TypeSafe or Jev, and enter its API key; the provider details list `jev-latest`. Ask the Agent to classify items with an available decision model.
 
 ### Cross-platform developer tool management
 

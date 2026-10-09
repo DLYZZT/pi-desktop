@@ -10,13 +10,13 @@ application.
 | Component                              | Version          | Use in Pi Agent Desktop                   | License                                                                                                                          | Attribution / source                                                                                                   |
 | -------------------------------------- | ---------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `@agegr/pi-web`                        | Reference        | Early UI reference; not bundled           | [MIT](https://github.com/agegr/pi-web/blob/main/LICENSE)                                                                         | [agegr/pi-web](https://github.com/agegr/pi-web); Copyright © 2026 agegr                                                |
-| `@earendil-works/pi-ai`                | 1.0.4            | Unified model-provider API                | [MIT](https://github.com/earendil-works/pi/blob/v1.0.4/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.0.4); Copyright © 2025 Mario Zechner                  |
-| `@earendil-works/pi-agent-core`        | 1.0.4            | Agent runtime                             | [MIT](https://github.com/earendil-works/pi/blob/v1.0.4/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.0.4); Copyright © 2025 Mario Zechner                  |
-| `@earendil-works/pi-coding-agent`      | 1.0.4            | Coding Agent and extension runtime        | [MIT](https://github.com/earendil-works/pi/blob/v1.0.4/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.0.4); Copyright © 2025 Mario Zechner                  |
-| `@earendil-works/pi-tui`               | 1.0.4            | Pi runtime dependency                     | [MIT](https://github.com/earendil-works/pi/blob/v1.0.4/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.0.4); Copyright © 2025 Mario Zechner                  |
-| `@earendil-works/pi-telemetry`         | 1.0.4            | Pi runtime telemetry API                  | [MIT](https://github.com/earendil-works/pi/blob/v1.0.4/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.0.4); Copyright © 2025 Mario Zechner                  |
-| `@earendil-works/pi-codemode`          | 1.0.4            | Sandboxed tool orchestration              | [MIT](https://github.com/earendil-works/pi/blob/v1.0.4/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.0.4)                                                  |
-| `@earendil-works/pi-mcp`               | 1.0.4            | MCP client, transports and OAuth          | [MIT](https://github.com/earendil-works/pi/blob/v1.0.4/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.0.4)                                                  |
+| `@earendil-works/pi-ai`                | 1.1.0            | Unified model-provider API                | [MIT](https://github.com/earendil-works/pi/blob/v1.1.0/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.1.0); Copyright © 2025 Mario Zechner                  |
+| `@earendil-works/pi-agent-core`        | 1.1.0            | Agent runtime                             | [MIT](https://github.com/earendil-works/pi/blob/v1.1.0/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.1.0); Copyright © 2025 Mario Zechner                  |
+| `@earendil-works/pi-coding-agent`      | 1.1.0            | Coding Agent and extension runtime        | [MIT](https://github.com/earendil-works/pi/blob/v1.1.0/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.1.0); Copyright © 2025 Mario Zechner                  |
+| `@earendil-works/pi-tui`               | 1.1.0            | Pi runtime dependency                     | [MIT](https://github.com/earendil-works/pi/blob/v1.1.0/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.1.0); Copyright © 2025 Mario Zechner                  |
+| `@earendil-works/pi-telemetry`         | 1.1.0            | Pi runtime telemetry API                  | [MIT](https://github.com/earendil-works/pi/blob/v1.1.0/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.1.0); Copyright © 2025 Mario Zechner                  |
+| `@earendil-works/pi-codemode`          | 1.1.0            | Sandboxed tool orchestration              | [MIT](https://github.com/earendil-works/pi/blob/v1.1.0/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.1.0)                                                  |
+| `@earendil-works/pi-mcp`               | 1.1.0            | MCP client, transports and OAuth          | [MIT](https://github.com/earendil-works/pi/blob/v1.1.0/LICENSE)                                                                  | [earendil-works/pi](https://github.com/earendil-works/pi/tree/v1.1.0)                                                  |
 | Tencent `openclaw-weixin` adapted code | 2.4.6            | Weixin channel transport                  | [MIT](https://github.com/Tencent/openclaw-weixin/blob/v2.4.6/LICENSE)                                                            | [Tencent/openclaw-weixin](https://github.com/Tencent/openclaw-weixin/tree/v2.4.6); Copyright © 2026 Tencent            |
 | `@rc-component/qrcode`                 | 2.0.0            | QR-code settings UI                       | [MIT](https://github.com/react-component/qrcode/blob/master/LICENSE)                                                             | [react-component/qrcode](https://github.com/react-component/qrcode); Copyright © 2015-present Alipay.com               |
 | `@larksuiteoapi/node-sdk`              | 1.71.1           | Feishu/Lark channel transport             | [MIT](https://github.com/larksuite/node-sdk/blob/main/LICENSE)                                                                   | [larksuite/node-sdk](https://github.com/larksuite/node-sdk); Copyright © 2022 Lark Technologies Pte. Ltd.              |
@@ -31,10 +31,10 @@ application.
 | `windows-link`                         | 0.2.1            | Windows import-link support               | [Apache-2.0 OR MIT](https://github.com/microsoft/windows-rs/tree/0.61.2/license-mit)                                             | [microsoft/windows-rs](https://github.com/microsoft/windows-rs/tree/0.61.2)                                            |
 | Microsoft Visual C++ runtime           | Per release SBOM | Statically linked into the Windows helper | [Microsoft software license terms](https://go.microsoft.com/fwlink/?LinkId=2086102)                                              | The authoritative native toolset version is recorded in the Windows CycloneDX SBOM                                     |
 
-## Pi 1.0.4 runtime dependencies
+## Pi 1.1.0 runtime dependencies
 
-The 1.0.4 SDK includes `@earendil-works/chord` 1.0.4 under the
-[Pi MIT license](https://github.com/earendil-works/pi/blob/v1.0.4/LICENSE).
+The 1.1.0 SDK includes `@earendil-works/chord` 1.1.0 under the
+[Pi MIT license](https://github.com/earendil-works/pi/blob/v1.1.0/LICENSE).
 The temporary pi-server dependency from 0.85.0 is no longer bundled. The experimental
 pi-client and pi-protocol packages are not production dependencies of the published SDK.
 Chord brings esbuild 0.28.2 as a runtime dependency under the
@@ -51,6 +51,14 @@ The Desktop build tool remains separately pinned to esbuild 0.27.7.
 | `undici`          | 8.10.2  | [MIT](https://github.com/nodejs/undici/blob/v8.10.2/LICENSE)                             | [nodejs/undici](https://github.com/nodejs/undici/tree/v8.10.2)                                                                                  |
 | `protobufjs`      | 7.6.6   | [BSD-3-Clause](https://github.com/protobufjs/protobuf.js/blob/protobufjs-v7.6.6/LICENSE) | [protobufjs/protobuf.js](https://github.com/protobufjs/protobuf.js/tree/protobufjs-v7.6.6)                                                      |
 | `brace-expansion` | 5.0.12  | [MIT](https://github.com/juliangruber/brace-expansion/blob/v5.0.12/LICENSE)              | [juliangruber/brace-expansion](https://github.com/juliangruber/brace-expansion/tree/v5.0.12)                                                    |
+
+## Provider brand assets
+
+The TypeSafe provider icon is the unmodified favicon linked by [TypeSafe AI](https://typesafe.ai/),
+retrieved on 2026-10-08 from
+[its official website asset](https://framerusercontent.com/images/aNFzSFxM4fjICmnibw7npfZjcQ.png).
+It is bundled locally as `src/renderer/assets/providers/typesafe.png` for provider identification.
+The TypeSafe name and logo belong to TypeSafe AI; this notice does not relicense the brand asset.
 
 ## Developer toolchains
 

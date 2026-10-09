@@ -117,6 +117,7 @@ export class AgentSessionWrapper {
   private extensionEditorText = "";
   private unsupportedExtensionFeatures = new Set<string>();
   private promptRunning = false;
+  private agentSettled: { aborted: boolean } | undefined;
   private queuedTurnCount = 0;
   private turnTail: Promise<void> = Promise.resolve();
   private externalTurnActive = false;
@@ -181,6 +182,9 @@ export class AgentSessionWrapper {
   start(): void {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
       this.resetIdleTimer();
+      if (event.type === "agent_start") this.agentSettled = undefined;
+      if (event.type === "agent_settled" && typeof event.aborted === "boolean")
+        this.agentSettled = { aborted: event.aborted };
       const sourceEvent = this.withExternalChannelSource(event);
       const displayEvent = this.executionHistory?.projectEvent(sourceEvent) ?? sourceEvent;
       this.emit(displayEvent);
@@ -363,6 +367,7 @@ export class AgentSessionWrapper {
       .then(async () => {
         if (!this._alive) throw new Error("Agent session is no longer available");
         this.promptRunning = true;
+        this.agentSettled = undefined;
         notifyRunningChange();
         try {
           return await task();
@@ -539,6 +544,7 @@ export class AgentSessionWrapper {
             this.emit({
               type: "prompt_error",
               clientRunId,
+              ...(this.agentSettled ? { aborted: this.agentSettled.aborted } : {}),
               errorMessage: error instanceof Error ? error.message : String(error),
             });
             if (!streamingBehavior) this.emit({ type: "prompt_done", clientRunId });
@@ -558,6 +564,7 @@ export class AgentSessionWrapper {
           sessionFile: this.inner.sessionFile ?? "",
           isStreaming: this.inner.isStreaming,
           isPromptRunning: this.promptRunning,
+          ...(this.agentSettled ? { agentSettled: this.agentSettled } : {}),
           isCompacting: this.inner.isCompacting,
           autoCompactionEnabled: this.inner.autoCompactionEnabled,
           autoRetryEnabled: this.inner.autoRetryEnabled,

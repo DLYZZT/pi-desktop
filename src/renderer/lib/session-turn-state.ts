@@ -133,6 +133,7 @@ function reduceAgentEvent(state: SessionTurnState, event: AgentEvent): SessionTu
       return reduceSessionTurnState(state, { type: "start" });
     // One prompt may contain several SDK runs; only confirmed prompt settlement ends it.
     case "agent_end":
+    case "agent_settled":
     case "prompt_done":
       return state;
     case "message_start":

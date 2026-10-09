@@ -18,6 +18,7 @@ import { resolveProject, type ProjectInfo } from "../shared/worktree";
 import { skillInvocationCommandText } from "../shared/skill-invocation";
 import { sessionIndex } from "./session-index";
 import { readSessionSnapshot } from "./session-readonly.ts";
+import { abortedAssistantEntryIds } from "./agent-settlement";
 
 export { getAgentDir };
 
@@ -217,6 +218,7 @@ export function buildSessionContext(entries: SessionEntry[], leafId?: string | n
   // inline summary messages so the user still sees where context was compressed.
   const messages: AgentMessage[] = [];
   const entryIds: string[] = [];
+  const aborted = abortedAssistantEntryIds(path);
   let pendingChannelSource: ChannelSourceMarker | null = null;
   for (const e of path) {
     if (e.type === "custom" && e.customType === "pi-desktop-channel-source") {
@@ -232,6 +234,7 @@ export function buildSessionContext(entries: SessionEntry[], leafId?: string | n
 
     let m = entryToUiMessage(e);
     if (m) {
+      if (m.role === "assistant" && aborted.has(e.id)) m = { ...m, stopReason: "aborted" };
       if (m.role === "user") {
         m = withUserMessageSource(m, pendingChannelSource?.channel, pendingChannelSource?.attachments);
         pendingChannelSource = null;

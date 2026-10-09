@@ -6,6 +6,7 @@ import type { SessionExecutionHistory } from "./session-execution-history";
 import { createLegacyChannelContextExtension } from "./legacy-channel-context";
 import { desktopMcpExtensions } from "./mcp/extensions";
 import { sessionOrchestrationExtensions } from "./session-orchestration";
+import { createAgentSettlementExtension } from "./agent-settlement";
 
 export function desktopSessionExtensions(
   policy: SessionToolPolicy,
@@ -14,6 +15,7 @@ export function desktopSessionExtensions(
   running: () => boolean,
 ): InlineExtension[] {
   return [
+    createAgentSettlementExtension(),
     policy.extension(),
     history.extension(),
     ...sessionOrchestrationExtensions(undefined, { isAllowed: () => policy.isAllowed("codemode"), history }),

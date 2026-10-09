@@ -50,6 +50,89 @@ test("Pi 1.0.4 CLI and Desktop isolate accounts at the same URL and adopt a lega
   assert.equal((await cli.forServer("second", url).load()).tokens.access_token, "SECOND");
 });
 
+for (const outcome of ["timeout", "closing"]) {
+  test(`native refresh signal ${outcome === "timeout" ? "prevents fallback authorization on timeout" : "lets an already started rotation persist during close"}`, async (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-native-signal-"));
+    const store = new McpOAuthStore(root),
+      base = "http://127.0.0.1:12345",
+      url = base + "/mcp";
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    await store.forServer("fixture", url).save({
+      serverUrl: url,
+      discovery: {
+        authorizationServerUrl: base,
+        authorizationServerMetadata: {
+          issuer: base,
+          authorization_endpoint: base + "/authorize",
+          token_endpoint: base + "/token",
+          response_types_supported: ["code"],
+          token_endpoint_auth_methods_supported: ["none"],
+        },
+      },
+      clientInformation: { client_id: "fixture", redirect_uris: ["http://127.0.0.1/callback"] },
+      tokens: { access_token: "OLD", refresh_token: "OLD_REFRESH", token_type: "Bearer" },
+      tokensExpireAt: 0,
+    });
+    const deadline = new globalThis.AbortController(),
+      connection = new globalThis.AbortController();
+    t.mock.method(globalThis.AbortSignal, "timeout", (ms) => {
+      assert.equal(ms, 15000);
+      return deadline.signal;
+    });
+    let entered, release, requestSignal;
+    const waiting = new Promise((resolve) => {
+      entered = resolve;
+    });
+    const fetch = async (input, init) => {
+      assert.equal(String(input), base + "/token");
+      requestSignal = init.signal;
+      entered();
+      return new Promise((resolve, reject) => {
+        release = () =>
+          resolve(
+            new globalThis.Response(
+              JSON.stringify({ access_token: "NEW", refresh_token: "ROTATED", token_type: "Bearer" }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+      });
+    };
+    const auth = store.authProvider(
+      "fixture",
+      url,
+      {},
+      fetch,
+      undefined,
+      () => !connection.signal.aborted,
+      connection.signal,
+    );
+    const pending = auth.onUnauthorized({
+      serverUrl: url,
+      token: "OLD",
+      fetch,
+      response: new globalThis.Response("", { status: 401 }),
+    });
+    await waiting;
+    assert.equal(requestSignal, deadline.signal, "SDK options and HTTP use the same refresh deadline");
+    if (outcome === "timeout") {
+      deadline.abort(new globalThis.DOMException("refresh timed out", "TimeoutError"));
+      await assert.rejects(pending, /timed out/);
+      const saved = await store.forServer("fixture", url).load();
+      assert.equal(saved.tokens.refresh_token, "OLD_REFRESH");
+      assert.equal(saved.codeVerifier, undefined, "a timeout must not start a new authorization");
+    } else {
+      connection.abort();
+      assert.equal(requestSignal.aborted, false, "closing cannot discard a started token rotation");
+      release();
+      await pending;
+      await auth.settled();
+      assert.equal((await store.forServer("fixture", url).load()).tokens.refresh_token, "ROTATED");
+      await assert.rejects(auth.token());
+    }
+  });
+}
+
 test("refresh-lock cancellation does not enter the credential mutation", async (t) => {
   const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-refresh-cancel-")),
     store = new McpOAuthStore(root);

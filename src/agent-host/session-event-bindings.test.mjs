@@ -20,12 +20,12 @@ function source(id = "session") {
   return { instance, calls, emit: (value) => event(value), destroy: () => destroy() };
 }
 
-test("one source binds once and only SDK agent_end sends the completion notification", () => {
+test("one source binds once and forwards each SDK settlement outcome without intermediate completion notifications", () => {
   const events = [],
     notifications = [],
     fixture = source();
-  const registry = createSessionEventBindings({ emit: (...event) => events.push(event) }, (id) =>
-    notifications.push(id),
+  const registry = createSessionEventBindings({ emit: (...event) => events.push(event) }, (id, aborted) =>
+    notifications.push({ id, aborted }),
   );
   registry.ensure(fixture.instance, "fallback");
   registry.ensure(fixture.instance, "fallback");
@@ -33,7 +33,16 @@ test("one source binds once and only SDK agent_end sends the completion notifica
   fixture.emit({ type: "agent_end" });
   assert.equal(fixture.calls.events, 1);
   assert.equal(events.length, 2);
-  assert.deepEqual(notifications, ["session"]);
+  assert.deepEqual(notifications, []);
+  fixture.emit({ type: "agent_settled", aborted: false });
+  fixture.emit({ type: "agent_settled", aborted: false });
+  fixture.emit({ type: "agent_start" });
+  fixture.emit({ type: "agent_end" });
+  fixture.emit({ type: "agent_settled", aborted: true });
+  assert.deepEqual(notifications, [
+    { id: "session", aborted: false },
+    { id: "session", aborted: true },
+  ]);
   registry.close();
   registry.close();
   assert.equal(fixture.calls.closed, 1);

@@ -147,6 +147,24 @@ test("renders actionable fallback text when a failed response has no provider de
   assert.match(html, /Check the API key, service URL, and model configuration/);
 });
 
+test("an aborted response keeps partial text and shows a neutral stopped status instead of a provider error", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: assistant({
+        stopReason: "aborted",
+        errorMessage: "This operation was aborted",
+        content: [{ type: "text", text: "Partial reply" }],
+      }),
+    }),
+  );
+  assert.match(html, /Partial reply/);
+  assert.match(html, /Response stopped/);
+  assert.match(html, /role="status"/);
+  assert.doesNotMatch(html, /Model request failed|Check the API key|role="alert"/);
+  const empty = renderToStaticMarkup(createElement(MessageView, { message: assistant({ stopReason: "aborted" }) }));
+  assert.match(empty, /Response stopped/);
+});
+
 test("continues to hide a completed empty non-error assistant message", () => {
   assert.equal(renderToStaticMarkup(createElement(MessageView, { message: assistant() })), "");
 });

@@ -274,7 +274,9 @@ export class McpOAuthStore {
               ? new URL(oauth.authServerMetadataUrl)
               : undefined,
             // A started refresh may rotate the token; allow its response to be persisted before shutdown.
-            fetch: (input, init) => fetch(input, { ...init, signal: refreshSignal }),
+            // The SDK also observes this deadline, so timeout cannot start a new authorization flow.
+            signal: refreshSignal,
+            fetch,
           });
           if (result !== "AUTHORIZED") throw new McpOAuthAuthorizationRequiredError();
         },

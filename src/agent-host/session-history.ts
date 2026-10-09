@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
+import { abortedAssistantEntryIds } from "./agent-settlement";
 import type { HistoryWindow, PagedContextInfo } from "../contract/types";
 import type {
   AgentMessage,
@@ -109,6 +110,7 @@ function deriveContextSettings(path: SessionEntry[]): Pick<PagedContextInfo, "th
 
 function projectDisplayMessages(path: SessionEntry[]): ProjectedMessage[] {
   const projected: ProjectedMessage[] = [];
+  const aborted = abortedAssistantEntryIds(path);
   let pendingChannelSource: ReturnType<typeof parseChannelSourceMarker> = null;
   path.forEach((entry, pathIndex) => {
     if (entry.type === "custom" && entry.customType === "pi-desktop-channel-source") {
@@ -123,6 +125,7 @@ function projectDisplayMessages(path: SessionEntry[]): ProjectedMessage[] {
     }
     let message = entryToUiMessage(entry);
     if (!message) return;
+    if (message.role === "assistant" && aborted.has(entry.id)) message = { ...message, stopReason: "aborted" };
     if (message.role === "user") {
       message = withUserMessageSource(message, pendingChannelSource?.channel, pendingChannelSource?.attachments);
       pendingChannelSource = null;

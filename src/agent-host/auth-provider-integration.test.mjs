@@ -23,6 +23,29 @@ const { createAuthHandlers, createAuthLoginService, getSharedModelRuntime, getCr
     },
   });
 
+test("TypeSafe Jev is configurable despite having no chat models and its key enables classifiers", async (t) => {
+  const runtime = await getSharedModelRuntime();
+  const service = createAuthLoginService({ emit() {} });
+  t.after(() => service.dispose());
+  const handlers = createAuthHandlers(service);
+  const status = (await handlers.allProviders()).providers.find((provider) => provider.id === "typesafe");
+  assert.ok(status, "classifier-only providers must appear in settings");
+  assert.equal(status.chatModelCount, 0);
+  assert.ok(status.auxiliaryModels.some((model) => model.id === "jev-latest" && model.type === "classifier"));
+  assert.equal(runtime.getModels("typesafe").length, 0);
+  await handlers.setApiKey({
+    provider: "typesafe",
+    key: "typesafe-local-fixture",
+    expectedVersion: status.credentialVersion,
+  });
+  const configured = (await handlers.allProviders()).providers.find((provider) => provider.id === "typesafe");
+  assert.equal(configured.configured, true);
+  assert.ok((await runtime.getAvailableOfType("classifier", "typesafe")).some((model) => model.id === "jev-latest"));
+  assert.equal(runtime.getModels("typesafe").length, 0);
+  await handlers.deleteApiKey({ provider: "typesafe", expectedVersion: configured.credentialVersion });
+  assert.equal((await getCredentialMutations().snapshot("typesafe")).type, null);
+});
+
 test("desktop auth commits OpenAI subscription login with device ID and never deletes OAuth as an API key", async (t) => {
   const runtime = await getSharedModelRuntime();
   const original = runtime.getProvider("openai");

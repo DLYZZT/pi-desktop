@@ -58,7 +58,7 @@ export type BuiltinSlashCommandResult =
 export interface UseAgentSessionOptions {
   session: SessionInfo | null;
   newSessionCwd: string | null;
-  onAgentEnd?: () => void;
+  onAgentEnd?: (aborted: boolean) => void;
   onSessionCreated?: (session: SessionInfo) => void;
   onSessionForked?: (newSessionId: string) => void;
   modelsRefreshKey?: number;
@@ -161,6 +161,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const [runtimeGate] = useState(() => new SessionRuntimeGate());
   const agentRunningRef = useRef(false);
+  const agentAbortedRef = useRef(false);
   const loadSessionRef = useRef<((sid: string) => Promise<unknown>) | null>(null);
   const {
     ensureEventsConnected,
@@ -263,6 +264,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     (snapshot: SessionDetail["agentState"], ticket: RuntimeSnapshotTicket) => {
       const liveState = snapshot?.state;
       if (liveState) {
+        if (liveState.agentSettled && runtimeGate.isCurrent(ticket, "run"))
+          agentAbortedRef.current = liveState.agentSettled.aborted;
         if (liveState.contextUsage !== undefined && runtimeGate.accept(ticket, "usage"))
           setContextUsage(liveState.contextUsage ?? null);
         if (liveState.systemPrompt !== undefined && runtimeGate.accept(ticket, "systemPrompt"))
@@ -495,7 +498,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         agentRunningRef.current = false;
         runtimeGate.beginRun();
         dispatchTurn({ type: "settled" });
-        onAgentEnd?.();
+        onAgentEnd?.(agentAbortedRef.current);
       }
     },
     [isActive, loadSession, onAgentEnd, runtimeGate, cancelPendingSessionRefresh],
@@ -536,11 +539,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     [finishPromptWithoutStream, getViewSignal, isActive, runtimeGate],
   );
 
-  // Reconcile client streaming state with the server. When stream events are
-  // missed (renderer suspension, backgrounded tab, or a restarted Host),
-  // agent_end never arrives and the UI stays in streaming state forever.
-  // If the server reports idle while we still think it's running, finish
-  // through the same path as prompt_done.
+  // Recover missed settlement events after suspension or a Host restart.
+  // Reconcile an idle server through the same path as prompt_done.
   const reconcileAgentState = useCallback(
     async (sid: string) => {
       if (!isActive() || !agentRunningRef.current) return;
@@ -627,6 +627,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       dispatchTurn({ type: "event", event });
       switch (event.type) {
         case "channel_turn_start": {
+          agentAbortedRef.current = false;
           ownedPromptRunIdRef.current = null;
           externalTurnRunIdRef.current = typeof event.runId === "string" ? event.runId : null;
           beginExternalTurn();
@@ -641,7 +642,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           break;
         }
         case "agent_start":
+          agentAbortedRef.current = false;
           agentRunningRef.current = true;
+          break;
+        case "agent_settled":
+          // Remember the outcome, but wait for the wrapper's prompt_done before enabling another prompt.
+          if (agentRunningRef.current && typeof event.aborted === "boolean") agentAbortedRef.current = event.aborted;
           break;
         case "agent_end":
           // One Desktop prompt may have several SDK runs (retry, boundary continuation).
@@ -657,6 +663,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           break;
         }
         case "prompt_error":
+          if (event.aborted === true || agentAbortedRef.current) break;
           addNotice({
             type: "error",
             message: (event.errorMessage as string | undefined) ?? t("commandFailed", "Command failed"),
@@ -728,6 +735,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const ownsView = captureCommandView();
       const isSlashCommandPrompt = !images?.length && trimmedMessage.startsWith("/");
       const promptRunId = promptRunIdRef.current + 1;
+      agentAbortedRef.current = false;
       runtimeGate.beginRun();
 
       const imageBlocks = images?.map((img) => ({

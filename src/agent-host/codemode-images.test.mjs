@@ -26,7 +26,7 @@ const {
     resolveDir: import.meta.dirname,
     loader: "ts",
     contents: `
-    export {createDesktopCodemodeExtension} from './codemode-images.ts';
+    export {createDesktopCodemodeExtension} from './codemode-models.ts';
     export {SessionToolPolicy} from './session-tool-policy.ts';
     export {SessionExecutionHistory} from './session-execution-history.ts';
     export {buildSessionStats} from './session-stats.ts';
@@ -235,7 +235,7 @@ test("image API failures and denied permissions preserve the child state without
   assert.equal(f.requests.length, 1);
 });
 
-test("classification remains unavailable and cannot use the image capability", async (t) => {
+test("an image model cannot be called as a classifier", async (t) => {
   const f = await fixture(t);
   const result = await run(
     f,

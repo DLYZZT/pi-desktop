@@ -41,7 +41,7 @@ const { ModelsConfig, useSessionModels, testApi } = await importTestBundle("mode
                 : `
         export const state = {reads:0, catalogReads:0, writes:[], writeResult:null, requests:[], calls:[], sources:[], cancelQueue:[], startQueue:[], subscribeQueue:[], config:{providers:{}}, version:'one', configError:null};
         const model = {id:'fixture-model',name:'Fixture model',provider:'api-fixture',reasoning:false,input:['text'],contextWindow:4096,maxTokens:512};
-        export function reset() {state.reads=0;state.catalogReads=0;state.writes=[];state.writeResult=null;state.requests=[];state.calls=[];state.sources=[];state.cancelQueue=[];state.startQueue=[];state.subscribeQueue=[];state.config={providers:{}};state.version='one';state.configError=null;}
+        export function reset() {state.reads=0;state.catalogReads=0;state.writes=[];state.writeResult=null;state.requests=[];state.calls=[];state.sources=[];state.cancelQueue=[];state.startQueue=[];state.subscribeQueue=[];state.config={providers:{}};state.version='one';state.configError=null;state.apiKeyProviders=null;}
         export async function listModels() {state.catalogReads++;return {models:[{...model,name:'Catalog '+state.catalogReads}],catalog:{source:'cache',refreshed:false,aborted:false,warnings:[]}};}
         export async function cancelModelsRefresh() {}
         export async function refreshModels() {throw new Error('Unexpected remote catalog refresh');}
@@ -59,7 +59,7 @@ const { ModelsConfig, useSessionModels, testApi } = await importTestBundle("mode
           if(method === 'auth.loginStart') return await take(state.startQueue,{ok:true,started:true});
           if(method === 'modelsConfig.get') {if(state.configError)throw state.configError;return {config:structuredClone(state.config),version:state.version};}
           if(method === 'auth.providers')return {providers:[{id:'oauth-fixture',name:'OAuth fixture',usesCallbackServer:false,loggedIn:true}]};
-          if(method === 'auth.allProviders')return {providers:[{id:'api-fixture',displayName:'API fixture',configured:true,modelCount:1}]};
+          if(method === 'auth.allProviders')return {providers:state.apiKeyProviders??[{id:'api-fixture',displayName:'API fixture',configured:true,modelCount:1}]};
           let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});
           state.requests.push({method,params,resolve,reject});return promise;
         }
@@ -75,6 +75,7 @@ const text = (node) => (typeof node === "string" ? node : (node.children?.map(te
 async function mount(t, options = {}) {
   testApi.reset();
   if (options.config) testApi.state.config = options.config;
+  if (options.apiKeyProviders) testApi.state.apiKeyProviders = options.apiKeyProviders;
   testApi.state.configError = options.configError ?? null;
   const requests = testApi.state.requests,
     sources = testApi.state.sources,
@@ -196,6 +197,67 @@ async function mount(t, options = {}) {
     },
   };
 }
+
+test("Jev search finds TypeSafe and opens its existing API key settings with classifier details", async (t) => {
+  const fixture = await mount(t, {
+    apiKeyProviders: [
+      {
+        id: "typesafe",
+        displayName: "TypeSafe",
+        configured: false,
+        modelCount: 1,
+        chatModelCount: 0,
+        credentialVersion: "typesafe-empty",
+        auxiliaryModels: [{ id: "jev-latest", name: "Jev", type: "classifier" }],
+      },
+    ],
+  });
+  await fixture.click("+ Add provider");
+  const search = fixture.detail("AddProviderPicker").find((node) => node.type === "input");
+  await act(async () => search.props.onChange({ target: { value: "Jev" } }));
+  const provider = fixture
+    .detail("AddProviderPicker")
+    .find((node) => node.type === "button" && text(node).includes("TypeSafe"));
+  await act(async () => provider.props.onClick());
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /jev-latest/);
+  assert.match(JSON.stringify(fixture.renderer.toJSON()), /Decision/);
+  const detail = fixture.detail("ApiKeyDetail");
+  const secret = detail.find((node) => node.type === "input" && node.props.type === "password");
+  await act(async () => secret.props.onChange({ target: { value: "typesafe-fixture-key" } }));
+  await fixture.click("Save", detail);
+  assert.deepEqual(fixture.requests[0].params, {
+    provider: "typesafe",
+    key: "typesafe-fixture-key",
+    expectedVersion: "typesafe-empty",
+  });
+  await fixture.reply(0, { ok: true, synchronized: true });
+});
+
+test("a configured classifier-only provider shows Jev without an empty chat selection panel", async (t) => {
+  const fixture = await mount(t, {
+    apiKeyProviders: [
+      {
+        id: "typesafe",
+        displayName: "TypeSafe",
+        configured: true,
+        modelCount: 1,
+        chatModelCount: 0,
+        auxiliaryModels: [{ id: "jev-latest", name: "Jev", type: "classifier" }],
+      },
+    ],
+  });
+  await fixture.select("TypeSafe");
+  const rendered = JSON.stringify(fixture.renderer.toJSON());
+  assert.match(rendered, /jev-latest/);
+  assert.match(rendered, /Codemode/);
+  assert.doesNotMatch(rendered, /No models are currently available|Choose which models appear/);
+  assert.equal(
+    fixture
+      .detail("ApiKeyDetail")
+      .findAll((node) => typeof node.type === "function" && node.type.name === "ManagedModelsControl").length,
+    0,
+  );
+});
 
 test("provider picker owns its search and focus lifecycle, supports Escape, and returns a custom selection to the editor", async (t) => {
   const fixture = await mount(t, { captureFocus: true });

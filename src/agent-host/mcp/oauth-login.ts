@@ -220,22 +220,19 @@ export class McpOAuthLoginManager {
         await this.store.commitAuthorization(name, serverUrl, tokens, flowState, pending.commitController.signal);
         pending.committed = true;
       };
-      const fetcher =
-        (exchange: boolean): McpFetch =>
-        (input, init) =>
-          (this.options.fetch ?? globalThis.fetch)(input, {
-            ...init,
-            signal: exchange
-              ? AbortSignal.timeout(15000)
-              : AbortSignal.any([signal, AbortSignal.timeout(15000), ...(init?.signal ? [init.signal] : [])]),
-          });
       const flow = {
         serverUrl,
         scope,
         resourceMetadataUrl: challenge?.resourceMetadataUrl,
         authorizationServerMetadataUrl: oauth.authServerMetadataUrl ? new URL(oauth.authServerMetadataUrl) : undefined,
       };
-      const result = await authorizeMcp(provider, { ...flow, skipRefresh: true, fetch: fetcher(false) });
+      const result = await authorizeMcp(provider, {
+        ...flow,
+        skipRefresh: true,
+        // Bound discovery and registration as one phase; the browser wait has its own deadline.
+        signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+        fetch: this.options.fetch,
+      });
       if (result === "REDIRECT") {
         const authUrl = new URL(pending.snapshot.authUrl!),
           state = authUrl.searchParams.get("state");
@@ -266,7 +263,7 @@ export class McpOAuthLoginManager {
             if ((await store.load())?.oauthState !== callback.state)
               throw new Error("MCP sign-in was replaced by another flow");
             // Authorize using the current discovery result, including uncached configured metadata.
-            // A signal-free provider finishes the exchange and its persisted tokens as one operation.
+            // UI cancellation lets a started exchange commit; logout/config changes still invalidate it.
             const exchangeProvider = this.store.provider(
               name,
               serverUrl,
@@ -281,7 +278,8 @@ export class McpOAuthLoginManager {
               ...flow,
               authorizationCode: callback.code,
               iss: callback.iss,
-              fetch: fetcher(true),
+              signal: AbortSignal.any([pending.commitController.signal, AbortSignal.timeout(15000)]),
+              fetch: this.options.fetch,
             });
             if (exchanged !== "AUTHORIZED") throw new Error("MCP sign-in did not complete");
           },

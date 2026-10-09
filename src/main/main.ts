@@ -877,7 +877,7 @@ function startMainProcess(): void {
         const count = Number(msg.count);
         runningManagedProcessCount = Number.isSafeInteger(count) && count >= 0 ? count : 0;
         setTrayManagedProcessCount(runningManagedProcessCount, getMainWindow);
-      } else if (msg.type === "agent-end") {
+      } else if (msg.type === "agent-end" && msg.eventType === "agent_settled" && msg.aborted === false) {
         const sessionId = String(msg.sessionId ?? "");
         // Notify if no focused window or window is hidden (desktop value-add)
         const win = getMainWindow();

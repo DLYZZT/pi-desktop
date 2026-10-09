@@ -15,6 +15,7 @@ import {
   countToolCallBlocks,
   getDisplayableAssistantBlocks,
   isAssistantFailure,
+  isAssistantAborted,
   splitFinalAssistantBlocks,
 } from "@/lib/message-display";
 import { MessageView } from "./MessageView";
@@ -87,7 +88,7 @@ function toMinimapMessage(message: AgentMessage | Partial<AgentMessage>): ChatMi
 
 function hasFinalAssistantAnswer(message: AgentMessage): boolean {
   if (message.role !== "assistant") return false;
-  if (isAssistantFailure(message as AssistantMessage)) return true;
+  if (isAssistantFailure(message as AssistantMessage) || isAssistantAborted(message as AssistantMessage)) return true;
   return splitFinalAssistantBlocks(message as AssistantMessage).answerBlocks.some(
     (block) => block.type === "image" || (block.type === "text" && block.text.trim().length > 0),
   );
@@ -156,7 +157,7 @@ function getAssistantRenderParts(
     answerMessage:
       split.answerBlocks.length > 0
         ? withAssistantBlocks(message, split.answerBlocks)
-        : isAssistantFailure(message)
+        : isAssistantFailure(message) || isAssistantAborted(message)
           ? withAssistantBlocks(message, [])
           : null,
   };
@@ -193,12 +194,15 @@ export function ChatWindow({
   playDoneSoundRef.current = playDoneSound;
   const soundEnabledRef = useRef(soundEnabled);
   soundEnabledRef.current = soundEnabled;
-  const wrappedOnAgentEnd = useCallback(() => {
-    if (soundEnabledRef.current) {
-      playDoneSoundRef.current();
-    }
-    onAgentEnd?.();
-  }, [onAgentEnd]);
+  const wrappedOnAgentEnd = useCallback(
+    (aborted: boolean) => {
+      if (!aborted && soundEnabledRef.current) {
+        playDoneSoundRef.current();
+      }
+      onAgentEnd?.();
+    },
+    [onAgentEnd],
+  );
 
   const {
     sessionId: currentSessionId,

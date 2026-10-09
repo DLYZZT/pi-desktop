@@ -15,6 +15,7 @@ type ToolEvent = {
   args?: unknown;
   result?: unknown;
   isError?: boolean;
+  durationMs?: number;
 };
 type StoredExecution = Omit<ToolExecutionRecord, "schemaVersion" | "sessionId" | "sequence">;
 type HistoryManager = Pick<SessionManager, "getSessionId" | "getBranch">;
@@ -101,7 +102,10 @@ export class SessionExecutionHistory {
         ...entry,
         status,
         endedAt,
-        durationMs: endedAt - (entry.startedAt ?? entry.requestedAt),
+        durationMs:
+          typeof event.durationMs === "number" && Number.isFinite(event.durationMs) && event.durationMs >= 0
+            ? event.durationMs
+            : Math.max(0, endedAt - (entry.startedAt ?? entry.requestedAt)),
         isError: Boolean(error),
         ...(error ? { error: text.slice(0, 8192) } : {}),
         result: await this.store.payload(event.result),

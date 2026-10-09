@@ -150,6 +150,10 @@ async function fixture(
 
 test("SDK nested results and original canonical history survive reopening without an in-memory restore layer", async (t) => {
   const f = await fixture(t);
+  const completions = [];
+  f.session.subscribe((event) => {
+    if (event.type === "tool_execution_end") completions.push(event);
+  });
   await f.session.prompt("Use the fixture", { source: "rpc" });
   assert.equal(f.executed, 1);
   assert.match(readFileSync(f.manager.getSessionFile(), "utf8"), /PRIVATE_ORIGINAL/);
@@ -162,6 +166,15 @@ test("SDK nested results and original canonical history survive reopening withou
   assert.equal(child.rootToolCallId, "parent-call");
   assert.equal(child.status, "succeeded");
   assert.equal(parent.status, "succeeded");
+  for (const record of [child, parent]) {
+    const completed = completions.find((event) => event.toolCallId === record.toolCallId);
+    assert.ok(Number.isFinite(completed.durationMs));
+    assert.equal(
+      record.durationMs,
+      completed.durationMs,
+      "SDK and reopened Desktop history use the same execution duration",
+    );
+  }
   assert.equal(child.arguments.value.text, "PRIVATE_ORIGINAL");
   assert.equal(child.result.value.structuredContent.output, "STRUCTURED_ORIGINAL_PRIVATE_ORIGINAL");
   assert.equal(child.resourceRefs.processId, "fixture-process");
