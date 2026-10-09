@@ -218,16 +218,28 @@ try {
   const attach = await attached.initialize({ ...settings, mode: "attach" });
   assert.equal(attach.error, undefined);
   assert.equal(attach.endpoint, descriptor.endpoint);
-  console.log(
-    "OK: native Windows managed Herdr, named-pipe RPC, sparse-PATH EXE/CMD Agent start, restart, and Attach mode",
-  );
+  console.log("[herdr-windows-e2e] functional assertions passed");
 } finally {
   try {
     if (manager) {
+      console.log("[herdr-windows-e2e] stopping managed server");
       await manager.stopManagedServer();
+      console.log("[herdr-windows-e2e] removing managed runtime");
       await manager.removeManagedRuntime();
+      console.log("[herdr-windows-e2e] managed runtime removed");
     }
   } finally {
+    console.log("[herdr-windows-e2e] removing isolated fixture");
     fs.rmSync(testRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    console.log("[herdr-windows-e2e] isolated fixture removed");
   }
 }
+
+console.log(
+  "OK: native Windows managed Herdr, named-pipe RPC, sparse-PATH EXE/CMD Agent start, restart, and Attach mode",
+);
+// A successful assertion run must also release its resources and exit naturally.
+setTimeout(() => {
+  console.error("[herdr-windows-e2e] exit stalled", process.getActiveResourcesInfo());
+  process.exit(1);
+}, 30_000).unref();

@@ -350,6 +350,7 @@ jobs:
 
       - name: Run native Windows Herdr integration
         if: runner.os == 'Windows'
+        timeout-minutes: 5
         run: npm run test:herdr-windows-e2e
 
       - name: Run Electron smoke on Windows
