@@ -20,6 +20,7 @@ import type {
 } from "./backend.ts";
 import {
   WINDOWS_HELPER_BOOTSTRAP_MAX_BYTES,
+  WINDOWS_HELPER_ERROR_CODES,
   WINDOWS_HELPER_KIND,
   WindowsHelperFrameDecoder,
   encodeWindowsHelperJson,
@@ -34,27 +35,6 @@ const PING_INTERVAL_MS = 15_000;
 const PING_TIMEOUT_MS = 10_000;
 const OUTPUT_FORWARD_RATE_BYTES_PER_SECOND = 128 * 1024;
 const OUTPUT_FORWARD_BURST_BYTES = 64 * 1024;
-const SAFE_HELPER_SUBCODES = new Set([
-  "HELPER_PROTOCOL_MISMATCH",
-  "HELPER_INVALID_FRAME",
-  "HELPER_BOOTSTRAP_TOO_LARGE",
-  "HELPER_PARENT_UNAVAILABLE",
-  "HELPER_PARENT_TIME_MISMATCH",
-  "HELPER_PARENT_IMAGE_MISMATCH",
-  "JOB_CREATE_FAILED",
-  "JOB_LIMIT_FAILED",
-  "JOB_COMPLETION_PORT_FAILED",
-  "CONSOLE_SETUP_FAILED",
-  "PIPE_SETUP_FAILED",
-  "TARGET_CREATE_FAILED",
-  "TARGET_ASSIGN_FAILED",
-  "TARGET_RESUME_FAILED",
-  "JOB_QUERY_FAILED",
-  "JOB_TERMINATE_FAILED",
-  "TARGET_COMMAND_LINE_TOO_LONG",
-  "TARGET_ENVIRONMENT_TOO_LARGE",
-  "HELPER_INTEGRITY_FAILED",
-]);
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -484,7 +464,7 @@ export class WindowsJobProcessBackend implements ManagedProcessBackend {
       if (
         !exactKeys(value, ["subcode", "win32Code"]) ||
         typeof value.subcode !== "string" ||
-        !SAFE_HELPER_SUBCODES.has(value.subcode) ||
+        !WINDOWS_HELPER_ERROR_CODES.has(value.subcode) ||
         !Number.isSafeInteger(value.win32Code) ||
         (value.win32Code as number) < 0
       ) {

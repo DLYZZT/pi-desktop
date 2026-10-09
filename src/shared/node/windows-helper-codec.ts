@@ -6,6 +6,45 @@ export const WINDOWS_HELPER_CONTROL_MAX_BYTES = 128 * 1024;
 export const WINDOWS_HELPER_BOOTSTRAP_MAX_BYTES = 512 * 1024;
 export const WINDOWS_HELPER_OUTPUT_MAX_BYTES = 64 * 1024;
 
+export const WINDOWS_HELPER_ERROR_CODES: ReadonlySet<string> = new Set([
+  "HELPER_PROTOCOL_MISMATCH",
+  "HELPER_INVALID_FRAME",
+  "HELPER_BOOTSTRAP_TOO_LARGE",
+  "HELPER_PARENT_UNAVAILABLE",
+  "HELPER_PARENT_TIME_MISMATCH",
+  "HELPER_PARENT_IMAGE_MISMATCH",
+  "HELPER_INTEGRITY_FAILED",
+  "HELPER_REAP_FAILED",
+  "JOB_CREATE_FAILED",
+  "JOB_LIMIT_FAILED",
+  "JOB_COMPLETION_PORT_FAILED",
+  "CONSOLE_SETUP_FAILED",
+  "PIPE_SETUP_FAILED",
+  "TARGET_CREATE_FAILED",
+  "TARGET_ASSIGN_FAILED",
+  "TARGET_RESUME_FAILED",
+  "JOB_QUERY_FAILED",
+  "JOB_TERMINATE_FAILED",
+  "TARGET_COMMAND_LINE_TOO_LONG",
+  "TARGET_ENVIRONMENT_TOO_LARGE",
+  "JOURNAL_SECURITY_FAILED",
+]);
+
+/** Only native error codes and a numeric Win32 code may cross the diagnostic boundary. */
+export function describeWindowsHelperError(frame: WindowsHelperFrame): string {
+  try {
+    const value = parseWindowsHelperJson(frame);
+    if (typeof value.subcode !== "string" || !WINDOWS_HELPER_ERROR_CODES.has(value.subcode))
+      return "HELPER_PROTOCOL_ERROR";
+    const code = value.win32Code;
+    return Number.isSafeInteger(code) && (code as number) >= 0 && (code as number) <= 0xffff_ffff
+      ? `${value.subcode} (Win32 ${code})`
+      : value.subcode;
+  } catch {
+    return "HELPER_PROTOCOL_ERROR";
+  }
+}
+
 export const WINDOWS_HELPER_KIND = {
   bootstrap: 1,
   commit: 2,

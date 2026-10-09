@@ -59,6 +59,18 @@ jobs:
         if: runner.os == 'Windows'
         run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc
 
+      - name: Install Electron binary
+        run: npx install-electron --no
+
+      - name: Check Windows Electron and MCP integration early
+        if: runner.os == 'Windows'
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          npm run build
+          npm run prepare:bundled-tools -- --target win32-x64
+          npm run smoke
+
       - name: Install pinned Windows cross toolchain (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -76,9 +88,6 @@ jobs:
         run: |
           cargo install cargo-audit --locked --version 0.22.2
           cargo install cargo-deny --locked --version 0.20.2
-
-      - name: Install Electron binary
-        run: npx install-electron --no
 
       - name: Validate Windows managed process helper
         if: runner.os == 'Windows'

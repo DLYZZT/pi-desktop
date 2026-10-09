@@ -194,6 +194,11 @@ impl Bootstrap {
             Some(Value::Bool(true)) => true,
             _ => return Err(HelperError::protocol("HELPER_INVALID_FRAME")),
         };
+        let electron_node_mode = match object.remove("electronNodeMode") {
+            None => false,
+            Some(Value::Bool(true)) => true,
+            _ => return Err(HelperError::protocol("HELPER_INVALID_FRAME")),
+        };
         let command = take_string(&mut object, "command", MAX_COMMAND_BYTES)?;
         let argv_prefix = match object.remove("argvPrefix") {
             Some(Value::Array(values)) if values.len() <= 32 => values
@@ -209,7 +214,7 @@ impl Bootstrap {
                 .collect::<Result<Vec<_>>>()?,
             _ => return Err(HelperError::protocol("HELPER_INVALID_FRAME")),
         };
-        let environment = normalized_environment(
+        let mut environment = normalized_environment(
             object
                 .remove("environment")
                 .ok_or_else(|| HelperError::protocol("HELPER_INVALID_FRAME"))?,
@@ -247,7 +252,8 @@ impl Bootstrap {
             crate::protocol::json_escape(&host_instance_id),
         )
         .len()
-        .saturating_add(if terminal_mode { 32 } else { 0 });
+        .saturating_add(if terminal_mode { 32 } else { 0 })
+        .saturating_add(if electron_node_mode { 32 } else { 0 });
         if !valid_hash(&process_id_hash)
             || !valid_hash(&run_id_hash)
             || !valid_job_name(&job_name)
@@ -266,6 +272,28 @@ impl Bootstrap {
         }
         if metadata_bytes > MAX_METADATA_JSON_BYTES {
             return Err(HelperError::protocol("HELPER_BOOTSTRAP_TOO_LARGE"));
+        }
+        if electron_node_mode {
+            // Never inherit Node mode into ordinary commands. Only an explicit
+            // raw-byte re-execution of the fingerprint-verified Host may opt in.
+            if !terminal_mode
+                || shell_executable.replace('/', "\\").to_lowercase()
+                    != host_image_path.replace('/', "\\").to_lowercase()
+            {
+                return Err(HelperError::protocol("HELPER_INVALID_FRAME"));
+            }
+            environment.insert("ELECTRON_RUN_AS_NODE".into(), "1".into());
+            let environment_json_bytes = environment.iter().fold(2_usize, |bytes, (key, value)| {
+                bytes
+                    .saturating_add(crate::protocol::json_escape(key).len())
+                    .saturating_add(crate::protocol::json_escape(value).len())
+                    .saturating_add(2)
+            });
+            if environment.len() > MAX_ENVIRONMENT_ENTRIES
+                || environment_json_bytes > MAX_ENVIRONMENT_JSON_BYTES
+            {
+                return Err(HelperError::protocol("TARGET_ENVIRONMENT_TOO_LARGE"));
+            }
         }
         Ok(Self {
             job_name,
@@ -542,6 +570,50 @@ mod tests {
                 .unwrap_err()
                 .subcode,
             "HELPER_INVALID_FRAME"
+        );
+    }
+
+    fn electron_node_bootstrap(environment: &str) -> String {
+        bootstrap_json("terminal", &["launcher.mjs".into()], environment)
+            .replace(r"C:\\bash.exe", r"C:\\electron.exe")
+            .replacen(
+                "\"command\":",
+                "\"terminalMode\":true,\"electronNodeMode\":true,\"command\":",
+                1,
+            )
+    }
+
+    #[test]
+    fn explicit_node_mode_is_limited_to_raw_host_reexecution() {
+        let request = electron_node_bootstrap(r#"{"ELECTRON_RUN_AS_NODE":"0"}"#);
+        let parsed = Bootstrap::parse(request.as_bytes()).unwrap();
+        assert!(parsed.terminal_mode);
+        assert_eq!(parsed.environment.get("ELECTRON_RUN_AS_NODE").unwrap(), "1");
+
+        for invalid in [
+            request.replace("\"terminalMode\":true,", ""),
+            request.replacen(
+                r#""shellExecutable":"C:\\electron.exe""#,
+                r#""shellExecutable":"C:\\unrelated.exe""#,
+                1,
+            ),
+        ] {
+            assert_eq!(
+                Bootstrap::parse(invalid.as_bytes()).unwrap_err().subcode,
+                "HELPER_INVALID_FRAME"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_node_mode_counts_toward_the_environment_budget() {
+        let entries = (0..MAX_ENVIRONMENT_ENTRIES)
+            .map(|index| format!(r#""PI_{index}":"value""#))
+            .collect::<Vec<_>>();
+        let request = electron_node_bootstrap(&format!("{{{}}}", entries.join(",")));
+        assert_eq!(
+            Bootstrap::parse(request.as_bytes()).unwrap_err().subcode,
+            "TARGET_ENVIRONMENT_TOO_LARGE"
         );
     }
 

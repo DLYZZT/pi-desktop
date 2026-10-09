@@ -10,7 +10,29 @@ import {
   encodeWindowsHelperFrame,
   encodeWindowsHelperJson,
   parseWindowsHelperJson,
+  describeWindowsHelperError,
 } from "./windows-helper-codec.ts";
+
+test("native helper diagnostics preserve only known error codes", () => {
+  const frame = (value) => ({
+    kind: WINDOWS_HELPER_KIND.error,
+    sequence: 1,
+    payload: Buffer.from(JSON.stringify(value)),
+  });
+  assert.equal(
+    describeWindowsHelperError(frame({ subcode: "HELPER_INVALID_FRAME", win32Code: 87, secret: "PRIVATE" })),
+    "HELPER_INVALID_FRAME (Win32 87)",
+  );
+  assert.equal(
+    describeWindowsHelperError(frame({ subcode: "PRIVATE", win32Code: "PRIVATE" })),
+    "HELPER_PROTOCOL_ERROR",
+  );
+  assert.equal(
+    describeWindowsHelperError(frame({ subcode: "TARGET_CREATE_FAILED", win32Code: "PRIVATE" })),
+    "TARGET_CREATE_FAILED",
+  );
+  assert.equal(describeWindowsHelperError({ payload: Buffer.from("PRIVATE") }), "HELPER_PROTOCOL_ERROR");
+});
 
 test("Windows helper codec handles fragmented and coalesced frames", () => {
   const first = encodeWindowsHelperJson(WINDOWS_HELPER_KIND.hello, 1, { protocolVersion: 1 });

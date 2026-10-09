@@ -18,6 +18,7 @@ import type { ManagedProcessBackend, PreparedContainment } from "../managed-proc
 import { WindowsByteProcessChild } from "../managed-process/windows-byte-child";
 import type { ToolchainRuntime } from "../toolchain-runtime";
 import { safeChannelError } from "../channels/redaction";
+import { mcpProcessEnvironment } from "./process-environment.ts";
 
 const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const quote = (value: string) => "'" + value.replace(/'/gu, "'\"'\"'") + "'";
@@ -91,8 +92,7 @@ export class ContainedMcpStdioTransport implements McpTransport {
     if (!settings.reaperReady || !capability?.ready) throw new Error("MCP process containment is not ready");
     const config = this.options.config;
     if (!config.command) throw new Error("MCP stdio command is missing");
-    const environment = { ...context.shellEnv, ...this.options.env };
-    delete environment.ELECTRON_RUN_AS_NODE;
+    const environment = mcpProcessEnvironment(process.platform, context, this.options.env ?? {});
     if (process.platform === "win32") {
       const child = new WindowsByteProcessChild(
         process.execPath,
@@ -100,9 +100,10 @@ export class ContainedMcpStdioTransport implements McpTransport {
         randomUUID(),
         {
           cwd: this.options.cwd,
-          env: { ...environment, ELECTRON_RUN_AS_NODE: "1" },
+          env: environment,
           processPrefix: "mcp",
           capabilityScope: "transport",
+          electronNodeMode: true,
         },
       );
       this.windowsChild = child;

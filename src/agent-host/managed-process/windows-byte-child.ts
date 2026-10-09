@@ -14,6 +14,7 @@ import {
   encodeWindowsHelperFrame,
   encodeWindowsHelperJson,
   parseWindowsHelperJson,
+  describeWindowsHelperError,
   type WindowsHelperFrame,
 } from "../../shared/node/windows-helper-codec.ts";
 
@@ -99,6 +100,7 @@ export class WindowsByteProcessChild extends EventEmitter {
       env?: Record<string, string>;
       processPrefix?: string;
       capabilityScope?: "managed" | "transport";
+      electronNodeMode?: boolean;
     } = {},
   ) {
     super();
@@ -135,6 +137,7 @@ export class WindowsByteProcessChild extends EventEmitter {
       throw new Error("Windows terminal helper integrity check failed");
     }
     const nonce = randomBytes(32).toString("hex");
+    const executable = await realpath(this.executable);
     if (this.stopRequested) throw new Error("Owned byte process start was cancelled");
     const processId = `${this.options.processPrefix ?? "herdr-terminal"}-${this.terminalId}`;
     const runId = randomUUID();
@@ -146,10 +149,11 @@ export class WindowsByteProcessChild extends EventEmitter {
       jobName,
       nonce,
       cwd: this.options.cwd ?? path.dirname(this.executable),
-      shellExecutable: this.executable,
+      shellExecutable: executable,
       argvPrefix: this.args,
       command: "terminal",
       terminalMode: true,
+      ...(this.options.electronNodeMode ? { electronNodeMode: true } : {}),
       environment: this.options.env ?? terminalEnvironment(),
       mainPid: owner.mainPid,
       mainStartTimeMs: Number(owner.mainStartFingerprint),
@@ -268,8 +272,10 @@ export class WindowsByteProcessChild extends EventEmitter {
           this.activeZero = true;
         } else if (frame.kind === WINDOWS_HELPER_KIND.exit) {
           this.cleanExit = true;
-        } else if (frame.kind === WINDOWS_HELPER_KIND.error || frame.kind === WINDOWS_HELPER_KIND.outputDropped) {
-          throw new Error("Windows terminal helper reported a protocol or output failure");
+        } else if (frame.kind === WINDOWS_HELPER_KIND.error) {
+          throw new Error(`Windows process helper failed: ${describeWindowsHelperError(frame)}`);
+        } else if (frame.kind === WINDOWS_HELPER_KIND.outputDropped) {
+          throw new Error("Windows process helper output exceeded its limit");
         }
       }
     } catch (error) {
