@@ -1,4 +1,5 @@
-import { ModelRoutingStatus } from "./models/ModelRoutingStatus";
+import { lastRoutedModel, ModelRoutingStatus } from "./models/ModelRoutingStatus";
+import { isVirtualSelection } from "@shared/session-model-display";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { phaseLabel } from "@/lib/agent-phase-label";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -344,20 +345,9 @@ export function ChatWindow({
     ? (modelThinkingLevelMaps[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
     : null;
 
-  const selectedProvider = displayModelValue?.provider;
-  const selectedModelId = displayModelValue?.modelId;
-  const modelStatus = useMemo(
-    () => (
-      <ModelRoutingStatus
-        selection={
-          selectedProvider && selectedModelId ? { provider: selectedProvider, modelId: selectedModelId } : null
-        }
-        models={modelList}
-        messages={messages}
-      />
-    ),
-    [selectedProvider, selectedModelId, modelList, messages],
-  );
+  // Reduce to a string so new messages only re-render the composer when the routed model changes.
+  const routedModel = isVirtualSelection(modelList, displayModelValue) ? lastRoutedModel(messages) : null;
+  const modelStatus = useMemo(() => <ModelRoutingStatus route={routedModel} />, [routedModel]);
 
   const chatInputElement = (
     <ChatInput

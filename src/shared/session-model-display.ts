@@ -3,6 +3,12 @@ import type { ContextUsage, SessionStatsInfo } from "./pi-types";
 
 type Selection = { provider: string; modelId: string };
 
+export function isVirtualSelection(catalog: ModelInfo[], selection: Selection | null | undefined): boolean {
+  return catalog.some(
+    (model) => model.virtual && model.provider === selection?.provider && model.id === selection?.modelId,
+  );
+}
+
 export function sessionModelForDisplay(
   override: Selection | null,
   data: SessionDetail | null | undefined,
@@ -13,11 +19,7 @@ export function sessionModelForDisplay(
   const live = data?.agentState?.state?.model;
   if (live) return { provider: live.provider, modelId: live.id };
   const selected = data?.context.selectedModel;
-  if (
-    selected &&
-    catalog.some((model) => model.virtual && model.provider === selected.provider && model.id === selected.modelId)
-  )
-    return selected;
+  if (selected && isVirtualSelection(catalog, selected)) return selected;
   return data?.context.model ?? pending;
 }
 

@@ -1,9 +1,9 @@
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { ApiHandler } from "../../contract/rpc";
 import type { CatalogModel } from "../../contract/model-settings";
 import { RpcError } from "../../contract/types";
 import { createDesktopAgentSessionServices } from "../desktop-session-services";
+import { probeChatModel } from "../model-chat-probe";
 import {
   readRoutingSettings,
   saveRoutingSettings,
@@ -24,12 +24,10 @@ export function createModelSettingsHandlers(resolveRuntime: typeof runtime = run
       if (config.enabled) {
         const models = await resolveRuntime(cwd);
         const available = await models.getAllAvailable();
-        for (const [role, reference] of [
-          ["fast", config.fast],
-          ["strong", config.strong],
-          ...(config.strategy === "classifier" ? [["classifier", config.classifier]] : []),
-        ] as const) {
-          const ref = reference as typeof config.fast;
+        const roles: ("fast" | "strong" | "classifier")[] = ["fast", "strong"];
+        if (config.strategy === "classifier") roles.push("classifier");
+        for (const role of roles) {
+          const ref = config[role];
           const type = role === "classifier" ? "classifier" : "chat";
           if (
             !ref ||
@@ -53,19 +51,16 @@ export function createModelSettingsHandlers(resolveRuntime: typeof runtime = run
     advancedSet: async ({ config, expectedVersion }) => saveAdvancedSettings(config, expectedVersion),
     catalog: async (params) => {
       const models = await resolveRuntime(params?.cwd);
-      const available = new Set(
-        (await models.getAllAvailable()).map((model) =>
-          JSON.stringify([model.provider, model.id, model.type ?? "chat"]),
-        ),
-      );
+      const key = (model: { provider: string; id: string; type?: CatalogModel["type"] }) =>
+        JSON.stringify([model.provider, model.id, model.type ?? "chat"]);
+      const available = new Set((await models.getAllAvailable()).map(key));
       const catalog: CatalogModel[] = models.getAllModels().map((model) => ({
         provider: model.provider,
         modelId: model.id,
         name: model.name,
         type: model.type ?? "chat",
         virtual: model.api === "pi-virtual",
-        available: available.has(JSON.stringify([model.provider, model.id, model.type ?? "chat"])),
-        thinkingLevels: (model.type ?? "chat") === "chat" ? getSupportedThinkingLevels(model as never) : [],
+        available: available.has(key(model)),
       }));
       return { models: catalog };
     },
@@ -76,9 +71,7 @@ export function createModelSettingsHandlers(resolveRuntime: typeof runtime = run
       const model = models.getModelOfType(type, provider, modelId);
       if (!model || model.api === "pi-virtual") return { ok: false, error: "Select a physical catalog model" };
       const started = Date.now();
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60_000);
-      const options = { signal: controller.signal, timeoutMs: 60_000, maxRetries: 0 };
+      const options = { signal: AbortSignal.timeout(60_000), timeoutMs: 60_000, maxRetries: 0 };
       try {
         if (type === "classifier") {
           const result = await models.classify(
@@ -116,21 +109,9 @@ export function createModelSettingsHandlers(resolveRuntime: typeof runtime = run
             ...(result.stopReason !== "stop" || !count ? { error: result.errorMessage ?? "No image returned" } : {}),
           };
         }
-        const result = await models.completeSimple(
-          model as never,
-          { messages: [{ role: "user", content: "Reply OK.", timestamp: Date.now() }] },
-          { ...options, maxTokens: 16, cacheRetention: "none" },
-        );
-        return {
-          ok: result.stopReason !== "error" && result.stopReason !== "aborted",
-          latencyMs: Date.now() - started,
-          responseText: result.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(""),
-          ...(result.errorMessage ? { error: result.errorMessage } : {}),
-        };
+        return await probeChatModel(models, model as never, 60_000);
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
-      } finally {
-        clearTimeout(timeout);
       }
     },
   } satisfies {

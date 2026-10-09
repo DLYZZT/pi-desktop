@@ -44,7 +44,7 @@ export function ModelConnectionTest({
           }
         }}
       >
-        {busy ? t("modelTesting", "Testing…") : t("modelTestRequest", "Send test request")}
+        {busy ? t("testingConnection", "Testing…") : t("modelTestRequest", "Send test request")}
       </button>
       {result && (
         <div

@@ -47,7 +47,6 @@ export const enUS = {
   modelSamplingByThinking: "Sampling parameters by thinking level (JSON)",
   modelInputLimits: "Image and request input limits (JSON)",
   modelTestPassed: "Test passed",
-  modelTesting: "Testing…",
   modelTestRequest: "Send test request",
   modelTestUsageHint:
     "Tests send a small decision request or generate one sample image using your provider credentials and may incur usage charges.",
@@ -105,7 +104,6 @@ export const zhCN = {
   modelSamplingByThinking: "按思考级别设置采样参数（JSON）",
   modelInputLimits: "图像与请求输入限制（JSON）",
   modelTestPassed: "测试通过",
-  modelTesting: "正在测试…",
   modelTestRequest: "发送测试请求",
   modelTestUsageHint: "测试会使用该服务商凭据发送一次简单决策请求或生成一张示例图片，可能产生用量费用。",
   modelRoutedTo: "最近实际使用的模型",
@@ -162,7 +160,6 @@ export const zhTW = {
   modelSamplingByThinking: "依思考層級設定取樣參數（JSON）",
   modelInputLimits: "影像與請求輸入限制（JSON）",
   modelTestPassed: "測試通過",
-  modelTesting: "正在測試…",
   modelTestRequest: "傳送測試請求",
   modelTestUsageHint: "測試會使用該服務商憑據傳送一次簡單決策請求或產生一張範例圖片，可能產生用量費用。",
   modelRoutedTo: "最近實際使用的模型",

@@ -2,6 +2,7 @@ import type { Usage, ClassifierResult } from "@earendil-works/pi-ai";
 import type { InlineExtension, ModelRouteRequest, ExtensionContext, ModelRoute } from "@earendil-works/pi-coding-agent";
 import type { AutoRoutingConfig, ModelReference } from "../contract/model-settings";
 import { AUTO_ROUTING_MODEL, AUTO_ROUTING_PROVIDER } from "../contract/model-settings";
+import { THINKING_LEVELS } from "../shared/thinking-levels";
 import { readRoutingSettings } from "./model-settings-store";
 
 type UsageRecorder = (provider: string, model: string, usage: Usage) => void;
@@ -43,7 +44,7 @@ export async function routeDesktopModel(
   if (!classifier) return choose(config.strong, "classifier-unavailable");
   let result: ClassifierResult;
   try {
-    const user = request.messages.filter((message) => message.role === "user").at(-1);
+    const user = request.messages.findLast((message) => message.role === "user");
     const text =
       typeof user?.content === "string"
         ? user.content
@@ -98,7 +99,7 @@ export function createAutoRoutingExtension(
         provider: AUTO_ROUTING_PROVIDER,
         id: AUTO_ROUTING_MODEL,
         name: "Auto",
-        thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+        thinkingLevels: [...THINKING_LEVELS],
         route: (request, ctx) => routeDesktopModel(config, request, ctx, recordUsage),
       });
     },

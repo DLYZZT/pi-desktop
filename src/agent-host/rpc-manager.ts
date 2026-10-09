@@ -1,4 +1,5 @@
 import { buildLiveSessionStats } from "./session-stats";
+import { AUTO_ROUTING_PROVIDER } from "../contract/model-settings";
 import {
   createAgentSessionFromServices,
   getAgentDir,
@@ -591,7 +592,7 @@ export class AgentSessionWrapper {
 
       case "set_model": {
         const { provider, modelId } = command as { provider: string; modelId: string };
-        if (provider === "pi-desktop-router") {
+        if (provider === AUTO_ROUTING_PROVIDER) {
           if (this.isRunning()) throw new Error("Wait for the current turn before changing Auto routing");
           await this.reloadSessionResources();
         }

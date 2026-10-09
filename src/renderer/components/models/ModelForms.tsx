@@ -115,14 +115,27 @@ export function ProviderDetail({
           required
         />
       </Field>
-      <JsonObjectField
-        label={t("modelProviderOverrides", "Chat model overrides by model ID (JSON)")}
-        example={JSON.stringify({ "model-id": { samplingParams: { temperature: 0.2 } } }, null, 2)}
+      <ModelOverridesField
         value={provider.modelOverrides}
         onValidityChange={onValidityChange}
         onChange={(modelOverrides) => set("modelOverrides", modelOverrides)}
       />
     </div>
+  );
+}
+
+export function ModelOverridesField(props: {
+  value: ProviderEntry["modelOverrides"];
+  onValidityChange?: (valid: boolean) => void;
+  onChange: (value: ProviderEntry["modelOverrides"]) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <JsonObjectField
+      {...props}
+      label={t("modelProviderOverrides", "Chat model overrides by model ID (JSON)")}
+      example={JSON.stringify({ "model-id": { samplingParams: { temperature: 0.2 } } }, null, 2)}
+    />
   );
 }
 

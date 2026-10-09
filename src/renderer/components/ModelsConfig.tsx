@@ -1,4 +1,3 @@
-import { JsonObjectField } from "./models/JsonObjectField";
 import { RoutingSettings, AdvancedSettings } from "./models/ModelSettings";
 import { useState, useEffect, useCallback, useReducer, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -25,7 +24,7 @@ import type {
   ApiKeyProviderStatus as ApiKeyProvider,
   AzureUpgradeReport,
 } from "@contract/types";
-import { ProviderDetail, ModelDetail } from "./models/ModelForms";
+import { ProviderDetail, ModelDetail, ModelOverridesField } from "./models/ModelForms";
 import { ProviderIcon } from "./models/ProviderIcon";
 import { OAuthDetail } from "./models/OAuthDetail";
 import { ApiKeyDetail } from "./models/ApiKeyDetail";
@@ -286,10 +285,8 @@ export function ModelsConfig({
   const activeApiKey = apiKeyProviders.filter((p) => p.configured);
 
   const providerOverrides = (id: string) => (
-    <JsonObjectField
+    <ModelOverridesField
       key={`${id}:${configVersion}`}
-      label={t("modelProviderOverrides", "Chat model overrides by model ID (JSON)")}
-      example={JSON.stringify({ "model-id": { samplingParams: { temperature: 0.2 } } }, null, 2)}
       value={config.providers?.[id]?.modelOverrides}
       onValidityChange={setModelFormValid}
       onChange={(modelOverrides) =>

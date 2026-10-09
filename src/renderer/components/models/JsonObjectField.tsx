@@ -17,15 +17,16 @@ export function JsonObjectField({
 }) {
   const { t } = useI18n();
   const serialized = JSON.stringify(value);
+  const pretty = value ? JSON.stringify(value, null, 2) : "";
   const last = useRef(serialized);
-  const [text, setText] = useState(value ? JSON.stringify(value, null, 2) : "");
+  const [text, setText] = useState(pretty);
   const [error, setError] = useState(false);
   useEffect(() => {
     if (last.current === serialized) return;
     last.current = serialized;
-    setText(serialized ? JSON.stringify(JSON.parse(serialized), null, 2) : "");
+    setText(pretty);
     setError(false);
-  }, [serialized]);
+  }, [serialized, pretty]);
   return (
     <Field label={label}>
       <textarea

@@ -41,7 +41,6 @@ export function ApiKeyDetail({
     setWarning(null);
     setSavedOk(false);
     setReplacement(null);
-    setGuided(provider.id.startsWith("cloudflare-"));
   }, [provider.id]);
 
   const saveKey = useCallback(

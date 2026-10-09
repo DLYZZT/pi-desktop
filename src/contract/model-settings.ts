@@ -41,7 +41,6 @@ export interface CatalogModel extends ModelReference {
   type: "chat" | "classifier" | "image";
   virtual: boolean;
   available: boolean;
-  thinkingLevels: string[];
 }
 
 export const AUTO_ROUTING_PROVIDER = "pi-desktop-router";

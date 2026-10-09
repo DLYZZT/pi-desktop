@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -158,6 +160,36 @@ test("settings persist Pi advanced options, preserve unrelated settings, and rej
   );
   writeFileSync(path.join(root, "settings.json"), "broken");
   assert.throws(() => readAdvancedSettings(root), /parse/);
+});
+
+test("settings saves keep an external edit made while the locked write is in flight", async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-routing-race-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "settings.json");
+  writeFileSync(file, JSON.stringify({ transport: "auto" }));
+  const external = JSON.stringify({ transport: "sse", editor: "external" });
+  const realOpen = fsPromises.open;
+  // An editor that ignores the lock writes after the version check but before the rename.
+  fsPromises.open = async (...args) => {
+    const handle = await realOpen(...args);
+    const sync = handle.sync.bind(handle);
+    handle.sync = async () => {
+      await sync();
+      writeFileSync(file, external);
+    };
+    return handle;
+  };
+  syncBuiltinESMExports();
+  t.after(() => {
+    fsPromises.open = realOpen;
+    syncBuiltinESMExports();
+  });
+  await assert.rejects(
+    saveAdvancedSettings({ transport: "websocket" }, readAdvancedSettings(root).version, root),
+    (error) => error.code === "CONFLICT",
+  );
+  assert.equal(readFileSync(file, "utf8"), external);
+  assert.deepEqual(readdirSync(root).sort(), ["settings.json"]);
 });
 
 test("a real SDK session restores Auto after physical replies, retains branch selection, and can route the next turn", async (t) => {

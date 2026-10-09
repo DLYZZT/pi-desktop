@@ -13,6 +13,7 @@ import {
 import { modelCatalogRefreshCoordinator } from "../model-runtime";
 import { createDesktopAgentSessionServices as createAgentSessionServices } from "../desktop-session-services";
 import { stripThinkingSuffix } from "../../shared/thinking-levels";
+import { AUTO_ROUTING_MODEL, AUTO_ROUTING_PROVIDER } from "../../contract/model-settings";
 
 function filterByExactEnabledModels<T extends { id: string; provider: string }>(
   available: T[],
@@ -22,7 +23,9 @@ function filterByExactEnabledModels<T extends { id: string; provider: string }>(
   const refs = new Set(enabledModels.map(stripThinkingSuffix).filter(Boolean));
   const visible = available.filter(
     (m) =>
-      refs.has(`${m.provider}/${m.id}`) || refs.has(m.id) || (m.provider === "pi-desktop-router" && m.id === "auto"),
+      refs.has(`${m.provider}/${m.id}`) ||
+      refs.has(m.id) ||
+      (m.provider === AUTO_ROUTING_PROVIDER && m.id === AUTO_ROUTING_MODEL),
   );
   return visible.length > 0 ? visible : available;
 }

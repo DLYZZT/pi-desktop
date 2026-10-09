@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { call } from "@/lib/api-client";
 import { useI18n } from "@/i18n";
-import type { AdvancedModelSettings, AutoRoutingConfig, CatalogModel, ModelReference } from "@contract/model-settings";
-import { Field, Check, Select, SectionTitle } from "../form-controls";
+import type {
+  AdvancedModelSettings,
+  AutoRoutingConfig,
+  CatalogModel,
+  ModelReference,
+  ModelSettingsSnapshot,
+} from "@contract/model-settings";
+import { Field, Check, NumInput, Select, SectionTitle } from "../form-controls";
 import { JsonObjectField } from "./JsonObjectField";
 import { THINKING_LEVELS } from "@shared/thinking-levels";
 
@@ -15,39 +21,110 @@ const buttonStyle = {
   cursor: "pointer",
 };
 
-export function RoutingSettings({ cwd, onChanged }: { cwd?: string | null; onChanged?: () => void }) {
-  const { t } = useI18n();
-  const [config, setConfig] = useState<AutoRoutingConfig>();
+/** Load / edit / save state for a revision-checked settings file. */
+function useVersionedSettings<T>(
+  fetch: () => Promise<ModelSettingsSnapshot<T>>,
+  persist: (config: T, expectedVersion: string) => Promise<ModelSettingsSnapshot<T>>,
+  onChanged?: () => void,
+) {
+  const [config, setConfig] = useState<T>();
   const [version, setVersion] = useState("");
-  const [models, setModels] = useState<CatalogModel[]>([]);
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
-  const load = useCallback(async () => {
+  const run = useCallback(async (action: () => Promise<void>) => {
     setBusy(true);
     setError("");
     try {
-      const [snapshot, catalog] = await Promise.all([
-        call("models.routing.get"),
-        call("models.catalog", { cwd: cwd ?? undefined }),
-      ]);
-      setConfig(snapshot.config);
-      setVersion(snapshot.version);
-      setModels(catalog.models);
-      setSaved(false);
+      await action();
     } catch (error) {
       setError(String(error));
     } finally {
       setBusy(false);
     }
-  }, [cwd]);
+  }, []);
+  const load = useCallback(
+    () =>
+      run(async () => {
+        const snapshot = await fetch();
+        setConfig(snapshot.config);
+        setVersion(snapshot.version);
+        setSaved(false);
+      }),
+    [fetch, run],
+  );
   useEffect(() => {
     void load();
   }, [load]);
-  const change = (patch: Partial<AutoRoutingConfig>) => {
-    setConfig((current) => (current ? { ...current, ...patch } : current));
+  const change = (update: (current: T) => T) => {
+    setConfig((current) => (current ? update(current) : current));
     setSaved(false);
   };
+  const save = () =>
+    run(async () => {
+      if (!config) return;
+      const next = await persist(config, version);
+      setVersion(next.version);
+      setSaved(true);
+      onChanged?.();
+    });
+  return { config, version, busy, error, saved, load, change, save };
+}
+
+function SettingsActions({
+  error,
+  saved,
+  busy,
+  canSave,
+  onSave,
+  onReload,
+}: {
+  error: string;
+  saved: boolean;
+  busy: boolean;
+  canSave: boolean;
+  onSave: () => void;
+  onReload: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <>
+      {error && (
+        <p role="alert" style={{ color: "#ef4444", overflowWrap: "anywhere" }}>
+          {error}
+        </p>
+      )}
+      {saved && <p role="status">{t("saved", "Saved")}</p>}
+      <div style={{ display: "flex", gap: 8 }}>
+        <button style={buttonStyle} disabled={busy || !canSave} onClick={onSave}>
+          {t("save", "Save")}
+        </button>
+        <button style={buttonStyle} disabled={busy} onClick={onReload}>
+          {t("reload", "Reload")}
+        </button>
+      </div>
+    </>
+  );
+}
+
+export function RoutingSettings({ cwd, onChanged }: { cwd?: string | null; onChanged?: () => void }) {
+  const { t } = useI18n();
+  const [models, setModels] = useState<CatalogModel[]>([]);
+  const fetch = useCallback(async () => {
+    const [snapshot, catalog] = await Promise.all([
+      call("models.routing.get"),
+      call("models.catalog", { cwd: cwd ?? undefined }),
+    ]);
+    setModels(catalog.models);
+    return snapshot;
+  }, [cwd]);
+  const settings = useVersionedSettings<AutoRoutingConfig>(
+    fetch,
+    (config, expectedVersion) => call("models.routing.set", { config, expectedVersion, cwd: cwd ?? undefined }),
+    onChanged,
+  );
+  const { config } = settings;
+  const change = (patch: Partial<AutoRoutingConfig>) => settings.change((current) => ({ ...current, ...patch }));
   const chooseModel = (label: string, role: "fast" | "strong" | "classifier") => {
     const choices = models.filter(
       (model) => !model.virtual && model.available && model.type === (role === "classifier" ? "classifier" : "chat"),
@@ -119,7 +196,7 @@ export function RoutingSettings({ cwd, onChanged }: { cwd?: string | null; onCha
               required
               value={config.fastThinking}
               onChange={(fastThinking) => change({ fastThinking })}
-              options={THINKING_LEVELS.map((value) => ({ value, label: value }))}
+              options={THINKING_LEVELS}
             />
           </Field>
           {chooseModel(t("modelStrongModel", "Capable model"), "strong")}
@@ -128,7 +205,7 @@ export function RoutingSettings({ cwd, onChanged }: { cwd?: string | null; onCha
               required
               value={config.strongThinking}
               onChange={(strongThinking) => change({ strongThinking })}
-              options={THINKING_LEVELS.map((value) => ({ value, label: value }))}
+              options={THINKING_LEVELS}
             />
           </Field>
           {config.strategy === "classifier" && (
@@ -149,76 +226,33 @@ export function RoutingSettings({ cwd, onChanged }: { cwd?: string | null; onCha
           />
         </>
       )}
-      {error && (
-        <p role="alert" style={{ color: "#ef4444", overflowWrap: "anywhere" }}>
-          {error}
-        </p>
-      )}
-      {saved && <p role="status">{t("saved", "Saved")}</p>}
-      <div style={{ display: "flex", gap: 8 }}>
-        <button
-          style={buttonStyle}
-          disabled={busy || !config || !version}
-          onClick={async () => {
-            if (!config) return;
-            setBusy(true);
-            setError("");
-            try {
-              const next = await call("models.routing.set", {
-                config,
-                expectedVersion: version,
-                cwd: cwd ?? undefined,
-              });
-              setVersion(next.version);
-              setSaved(true);
-              onChanged?.();
-            } catch (error) {
-              setError(String(error));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {t("save", "Save")}
-        </button>
-        <button style={buttonStyle} disabled={busy} onClick={() => void load()}>
-          {t("reload", "Reload")}
-        </button>
-      </div>
+      <SettingsActions
+        error={settings.error}
+        saved={settings.saved}
+        busy={settings.busy}
+        canSave={Boolean(config && settings.version)}
+        onSave={() => void settings.save()}
+        onReload={() => void settings.load()}
+      />
     </div>
   );
 }
 
 export function AdvancedSettings({ onChanged }: { onChanged?: () => void }) {
   const { t } = useI18n();
-  const [config, setConfig] = useState<AdvancedModelSettings>();
-  const [version, setVersion] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
   const [valid, setValid] = useState(true);
-  const [saved, setSaved] = useState(false);
-  const load = useCallback(async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const next = await call("settings.advanced.get");
-      setConfig(next.config);
-      setVersion(next.version);
-      setValid(true);
-      setSaved(false);
-    } catch (error) {
-      setError(String(error));
-    } finally {
-      setBusy(false);
-    }
+  const fetch = useCallback(async () => {
+    const snapshot = await call("settings.advanced.get");
+    setValid(true);
+    return snapshot;
   }, []);
-  useEffect(() => {
-    void load();
-  }, [load]);
-  const change = (next: AdvancedModelSettings) => {
-    setConfig(next);
-    setSaved(false);
-  };
+  const settings = useVersionedSettings<AdvancedModelSettings>(
+    fetch,
+    (config, expectedVersion) => call("settings.advanced.set", { config, expectedVersion }),
+    onChanged,
+  );
+  const { config, version } = settings;
+  const change = (next: AdvancedModelSettings) => settings.change(() => next);
   const number = (
     label: string,
     value: number | undefined,
@@ -226,15 +260,10 @@ export function AdvancedSettings({ onChanged }: { onChanged?: () => void }) {
     update: (value: number | undefined) => void,
   ) => (
     <Field label={label}>
-      <input
-        aria-label={label}
-        type="number"
-        min={0}
-        step={1}
-        value={value ?? ""}
+      <NumInput
+        value={value === undefined ? "" : String(value)}
         placeholder={String(placeholder)}
-        onChange={(event) => update(event.target.value === "" ? undefined : Number(event.target.value))}
-        style={{ ...buttonStyle, cursor: "text" }}
+        onChange={(next) => update(next === "" ? undefined : Number(next))}
       />
     </Field>
   );
@@ -330,43 +359,19 @@ export function AdvancedSettings({ onChanged }: { onChanged?: () => void }) {
               onChange={(transport) =>
                 change({ ...config, transport: transport as AdvancedModelSettings["transport"] })
               }
-              options={["auto", "sse", "websocket", "websocket-cached"].map((value) => ({ value, label: value }))}
+              options={["auto", "sse", "websocket", "websocket-cached"]}
             />
           </Field>
         </>
       )}
-      {error && (
-        <p role="alert" style={{ color: "#ef4444" }}>
-          {error}
-        </p>
-      )}
-      {saved && <p role="status">{t("saved", "Saved")}</p>}
-      <div style={{ display: "flex", gap: 8 }}>
-        <button
-          style={buttonStyle}
-          disabled={busy || !config || !version || !valid}
-          onClick={async () => {
-            if (!config) return;
-            setBusy(true);
-            setError("");
-            try {
-              const next = await call("settings.advanced.set", { config, expectedVersion: version });
-              setVersion(next.version);
-              setSaved(true);
-              onChanged?.();
-            } catch (error) {
-              setError(String(error));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {t("save", "Save")}
-        </button>
-        <button style={buttonStyle} disabled={busy} onClick={() => void load()}>
-          {t("reload", "Reload")}
-        </button>
-      </div>
+      <SettingsActions
+        error={settings.error}
+        saved={settings.saved}
+        busy={settings.busy}
+        canSave={Boolean(config && version && valid)}
+        onSave={() => void settings.save()}
+        onReload={() => void settings.load()}
+      />
     </div>
   );
 }

@@ -19,10 +19,18 @@ export function parseJsonRecord(text: string): JsonRecord {
   return value as JsonRecord;
 }
 
-/** Uses the same <file>.lock protocol and realpath:false policy as Pi 0.99.1. */
+/**
+ * Uses the same <file>.lock protocol and realpath:false policy as Pi 0.99.1.
+ * `text` is the raw content `current` was parsed from (null when missing). `beforeCommit` runs synchronously
+ * immediately before the rename, so callers can reject writers that ignore the lock (e.g. external editors).
+ */
 export async function withLockedJsonFile<T>(
   filename: string,
-  action: (current: JsonRecord, save: (next: JsonRecord) => Promise<void>) => Promise<T>,
+  action: (
+    current: JsonRecord,
+    save: (next: JsonRecord, beforeCommit?: () => void) => Promise<void>,
+    text: string | null,
+  ) => Promise<T>,
   signal?: AbortSignal,
   options: { allowEmpty?: boolean } = {},
 ): Promise<T> {
@@ -54,14 +62,15 @@ export async function withLockedJsonFile<T>(
   try {
     assertOwned();
     let current: JsonRecord;
+    let text: string | null = null;
     try {
-      const text = await readFile(filename, "utf8");
+      text = await readFile(filename, "utf8");
       current = options.allowEmpty && !text.trim() ? {} : parseJsonRecord(text);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       current = {};
     }
-    const result = await action(current, async (next) => {
+    const save = async (next: JsonRecord, beforeCommit?: () => void) => {
       assertOwned();
       const temporary = `${filename}.${process.pid}.${randomUUID()}.tmp`;
       try {
@@ -73,13 +82,15 @@ export async function withLockedJsonFile<T>(
           await handle.close();
         }
         assertOwned();
-        // Keep the final cancellation check and commit in one event-loop step.
+        // Keep the final cancellation/content checks and commit in one event-loop step.
+        beforeCommit?.();
         renameSync(temporary, filename);
         committed = true;
       } finally {
         await rm(temporary, { force: true });
       }
-    });
+    };
+    const result = await action(current, save, text);
     assertOwned();
     return result;
   } finally {

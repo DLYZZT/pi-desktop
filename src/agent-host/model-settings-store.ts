@@ -1,11 +1,13 @@
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { AdvancedModelSettings, AutoRoutingConfig, ModelSettingsSnapshot } from "../contract/model-settings";
 import { RpcError } from "../contract/types";
 import { THINKING_LEVELS } from "../shared/thinking-levels";
 import { withLockedJsonFile } from "../shared/node/locked-json-file";
+
+const ADVANCED_KEYS = ["compaction", "retry", "transport"] as const;
 
 export const DEFAULT_ROUTING: AutoRoutingConfig = {
   enabled: false,
@@ -53,7 +55,7 @@ export function validateRouting(value: unknown): asserts value is AutoRoutingCon
 export function validateAdvanced(value: unknown): asserts value is AdvancedModelSettings {
   if (!record(value)) invalid("Invalid advanced settings");
   for (const key of Object.keys(value))
-    if (!["compaction", "retry", "transport"].includes(key)) invalid(`Unknown setting: ${key}`);
+    if (!(ADVANCED_KEYS as readonly string[]).includes(key)) invalid(`Unknown setting: ${key}`);
   if (
     value.transport !== undefined &&
     !["auto", "sse", "websocket", "websocket-cached"].includes(String(value.transport))
@@ -88,8 +90,16 @@ export function validateAdvanced(value: unknown): asserts value is AdvancedModel
   }
 }
 
+function contentVersion(raw: string | null): string {
+  return raw === null ? "missing" : createHash("sha256").update(raw).digest("hex");
+}
+
+function readRaw(file: string): string | null {
+  return existsSync(file) ? readFileSync(file, "utf8") : null;
+}
+
 function read(file: string): { raw: string | null; value: Record<string, unknown>; version: string } {
-  const raw = existsSync(file) ? readFileSync(file, "utf8") : null;
+  const raw = readRaw(file);
   let value: unknown;
   try {
     value = raw === null ? {} : JSON.parse(raw);
@@ -97,7 +107,7 @@ function read(file: string): { raw: string | null; value: Record<string, unknown
     throw new RpcError({ code: "PARSE_ERROR", message: `Cannot parse ${path.basename(file)}` });
   }
   if (!record(value)) throw new RpcError({ code: "PARSE_ERROR", message: `Invalid ${path.basename(file)}` });
-  return { raw, value, version: raw === null ? "missing" : createHash("sha256").update(raw).digest("hex") };
+  return { raw, value, version: contentVersion(raw) };
 }
 
 export function readRoutingSettings(agentDir = getAgentDir()): ModelSettingsSnapshot<AutoRoutingConfig> {
@@ -110,7 +120,7 @@ export function readRoutingSettings(agentDir = getAgentDir()): ModelSettingsSnap
 export function readAdvancedSettings(agentDir = getAgentDir()): ModelSettingsSnapshot<AdvancedModelSettings> {
   const { value, version } = read(path.join(agentDir, "settings.json"));
   const config = Object.fromEntries(
-    ["compaction", "retry", "transport"].flatMap((key) => (value[key] === undefined ? [] : [[key, value[key]]])),
+    ADVANCED_KEYS.flatMap((key) => (value[key] === undefined ? [] : [[key, value[key]]])),
   ) as AdvancedModelSettings;
   return { config, version };
 }
@@ -121,20 +131,14 @@ async function write(
   project: (previous: Record<string, unknown>) => Record<string, unknown>,
 ) {
   if (typeof expectedVersion !== "string" || !expectedVersion) invalid("expectedVersion is required");
-  return withLockedJsonFile(file, async () => {
-    const snapshot = read(file);
-    if (snapshot.version !== expectedVersion)
+  const assertVersion = (raw: string | null) => {
+    if (contentVersion(raw) !== expectedVersion)
       throw new RpcError({ code: "CONFLICT", message: `${path.basename(file)} changed. Reload before saving.` });
-    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    const temporary = `${file}.${randomUUID()}.tmp`;
-    try {
-      writeFileSync(temporary, JSON.stringify(project(snapshot.value), null, 2), { mode: 0o600 });
-      if (read(file).version !== expectedVersion)
-        throw new RpcError({ code: "CONFLICT", message: "Settings changed before saving" });
-      renameSync(temporary, file);
-    } finally {
-      rmSync(temporary, { force: true });
-    }
+  };
+  await withLockedJsonFile(file, async (current, save, text) => {
+    // Check and merge the same snapshot; re-check right before rename for writers outside the lock.
+    assertVersion(text);
+    await save(project(current), () => assertVersion(readRaw(file)));
   });
 }
 
@@ -148,7 +152,7 @@ export async function saveAdvancedSettings(config: AdvancedModelSettings, versio
   validateAdvanced(config);
   await write(path.join(agentDir, "settings.json"), version, (previous) => {
     const next = { ...previous };
-    for (const key of ["compaction", "retry", "transport"] as const) {
+    for (const key of ADVANCED_KEYS) {
       if (config[key] === undefined) delete next[key];
       else next[key] = config[key];
     }

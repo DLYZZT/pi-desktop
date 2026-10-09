@@ -9,15 +9,12 @@ type StatsOptions = {
 };
 
 export function buildLiveSessionStats(session: AgentSessionLike): SessionStatsInfo {
-  const stats = session.getSessionStats();
-  return {
-    ...stats,
-    modelUsage: buildSessionStats(session.sessionManager.getEntries() as unknown as SessionEntry[], {
-      sessionId: session.sessionId,
-    }).modelUsage,
-    totalMessages: stats.userMessages + stats.assistantMessages + stats.toolResults,
+  return buildSessionStats(session.sessionManager.getEntries() as unknown as SessionEntry[], {
+    sessionId: session.sessionId,
+    sessionFile: session.sessionFile,
     sessionName: session.sessionManager.getSessionName(),
-  };
+    contextUsage: session.getContextUsage(),
+  });
 }
 
 /** Read-only equivalent of Pi's all-entry usage totals, with Desktop chat counts. */
@@ -37,7 +34,7 @@ export function buildSessionStats(entries: readonly SessionEntry[], options: Sta
     tokens.cacheRead += usage.cacheRead;
     tokens.cacheWrite += usage.cacheWrite;
     cost += usage.cost.total;
-    const key = JSON.stringify([provider, model]);
+    const key = `${provider}\u0000${model}`;
     const row = modelUsage.get(key) ?? { provider, model, tokens: 0, cost: 0 };
     row.tokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
     row.cost += usage.cost.total;

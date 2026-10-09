@@ -15,6 +15,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createDesktopModelRuntime } from "../model-credentials";
+import { probeChatModel } from "../model-chat-probe";
 import type { ApiHandler } from "../../contract/rpc";
 import { RpcError } from "../../contract/types";
 import { reloadSharedModelRuntimeConfig } from "../model-runtime";
@@ -167,53 +168,7 @@ export const modelConfigHandlers = {
       const auth = await modelRuntime.getAuth(model);
       if (!auth) return { ok: false, error: `No authentication found for "${providerName}"` };
 
-      const TEST_TIMEOUT_MS = 20_000;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
-      let status: number | undefined;
-      const startedAt = Date.now();
-      try {
-        const message = await modelRuntime.completeSimple(
-          model,
-          {
-            messages: [
-              {
-                role: "user",
-                content: "Reply with OK only.",
-                timestamp: Date.now(),
-              },
-            ],
-          },
-          {
-            maxTokens: 16,
-            timeoutMs: TEST_TIMEOUT_MS,
-            maxRetries: 0,
-            cacheRetention: "none",
-            signal: controller.signal,
-            onResponse: (response: { status: number }) => {
-              status = response.status;
-            },
-          },
-        );
-
-        const latencyMs = Date.now() - startedAt;
-        if (message.stopReason === "error" || message.stopReason === "aborted") {
-          return {
-            ok: false,
-            error: message.errorMessage ?? (controller.signal.aborted ? "Test timed out" : "Model returned an error"),
-            latencyMs,
-            status,
-          };
-        }
-        const responseText = message.content
-          .filter((b) => b.type === "text")
-          .map((b) => (b as { text: string }).text)
-          .join("")
-          .slice(0, 300);
-        return { ok: true, latencyMs, status, responseText };
-      } finally {
-        clearTimeout(timeout);
-      }
+      return await probeChatModel(modelRuntime, model, 20_000);
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     } finally {
