@@ -55,7 +55,8 @@ test(
       workerEntryPath: path.join(import.meta.dirname, "../managed-process/worker.ts"),
       workerExecArgv: ["--experimental-strip-types", "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON"],
       parentCall: async (method, params) => {
-        if (method === "managedProcesses.getSettings") return { reaperReady: true, capability: { ready: true } };
+        if (method === "managedProcesses.getSettings")
+          return { reaperReady: true, capability: { ready: false }, containmentCapability: { ready: true } };
         if (method === "managedProcesses.register") {
           registered.push(params.record);
           return { journalRevision: 1 };
@@ -94,3 +95,20 @@ test(
     assert.ok(stderr.some((text) => text.includes("starting fixture [REDACTED]")));
   },
 );
+
+test("MCP rejects unavailable native containment even when the managed feature projection is ready", async () => {
+  const transport = new ContainedMcpStdioTransport({
+    config: { command: process.execPath },
+    cwd: process.cwd(),
+    trusted: true,
+    env: {},
+    runtime: { createExecutionContext: async () => ({}) },
+    parentCall: async () => ({
+      reaperReady: true,
+      capability: { ready: true },
+      containmentCapability: { ready: false },
+    }),
+  });
+  await assert.rejects(transport.start(), /MCP process containment is not ready/);
+  await transport.close();
+});

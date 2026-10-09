@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { projectManagedProcessCapability } from "./capability.ts";
+import { projectManagedProcessCapability, projectProcessContainmentCapability } from "./capability.ts";
 
 const descriptor = {
   path: "C:\\fixed\\pi-managed-process-helper.exe",
@@ -115,4 +115,32 @@ test("POSIX capability does not depend on the Windows helper or owner ACK", () =
   assert.equal(ready.supported, true);
   assert.equal(ready.ready, true);
   assert.equal(ready.backend, "posix-group");
+});
+
+test("Windows Server transports require real Job containment while managed features remain unsupported", () => {
+  const input = {
+    platform: "win32",
+    arch: "x64",
+    reaperReady: true,
+    helper: { ok: true, descriptor },
+    ownerReady: true,
+    windowsRelease: "10.0.26100",
+    windowsVersion: "Windows Server 2025 Datacenter",
+  };
+  assert.equal(projectManagedProcessCapability(input).supported, false);
+  const transport = projectProcessContainmentCapability(input);
+  assert.equal(transport.platform, "win32");
+  assert.equal(transport.backend, "windows-job");
+  assert.equal(transport.ready, true);
+  for (const [override, errorCode] of [
+    [{ helper: { ok: false, errorCode: "HELPER_INTEGRITY" } }, "HELPER_INTEGRITY"],
+    [{ reaperReady: false }, "REAPER_UNHEALTHY"],
+    [{ ownerReady: false }, "OWNER_IDENTITY_UNAVAILABLE"],
+    [{ arch: "arm64" }, "ARCH_UNSUPPORTED"],
+    [{ windowsRelease: "6.3.9600" }, "PLATFORM_UNSUPPORTED"],
+  ]) {
+    const unavailable = projectProcessContainmentCapability({ ...input, ...override });
+    assert.equal(unavailable.ready, false);
+    assert.equal(unavailable.errorCode, errorCode);
+  }
 });

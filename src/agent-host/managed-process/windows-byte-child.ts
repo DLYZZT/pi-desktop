@@ -23,6 +23,7 @@ const INPUT_CHUNK_BYTES = 32 * 1024;
 type HelperSettings = {
   reaperReady?: boolean;
   capability?: { backend?: string; ready?: boolean };
+  containmentCapability?: { backend?: string; ready?: boolean };
   windowsHelper?: WindowsManagedProcessHelperDescriptor;
 };
 
@@ -93,7 +94,12 @@ export class WindowsByteProcessChild extends EventEmitter {
     private readonly executable: string,
     private readonly args: string[],
     private readonly terminalId: string,
-    private readonly options: { cwd?: string; env?: Record<string, string>; processPrefix?: string } = {},
+    private readonly options: {
+      cwd?: string;
+      env?: Record<string, string>;
+      processPrefix?: string;
+      capabilityScope?: "managed" | "transport";
+    } = {},
   ) {
     super();
     this.stdin = new Writable({
@@ -111,14 +117,12 @@ export class WindowsByteProcessChild extends EventEmitter {
     const settings = await callMain<HelperSettings>("managedProcesses.getSettings", undefined, 5_000);
     const owner = getManagedProcessOwnerIdentity();
     const descriptor = settings.windowsHelper;
+    const capability =
+      this.options.capabilityScope === "transport"
+        ? (settings.containmentCapability ?? settings.capability)
+        : settings.capability;
     if (this.stopRequested) throw new Error("Owned byte process start was cancelled");
-    if (
-      !settings.reaperReady ||
-      settings.capability?.backend !== "windows-job" ||
-      !settings.capability.ready ||
-      !descriptor ||
-      !owner
-    ) {
+    if (!settings.reaperReady || capability?.backend !== "windows-job" || !capability.ready || !descriptor || !owner) {
       throw new Error("Windows terminal containment is unavailable");
     }
     const canonical = await realpath(descriptor.path);

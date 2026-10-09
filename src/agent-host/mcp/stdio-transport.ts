@@ -81,13 +81,14 @@ export class ContainedMcpStdioTransport implements McpTransport {
       trusted: this.options.trusted,
     });
     const parent = this.options.parentCall ?? callMain;
-    const settings = await parent<{ reaperReady?: boolean; capability?: { ready?: boolean } }>(
-      "managedProcesses.getSettings",
-      undefined,
-      5000,
-    );
+    const settings = await parent<{
+      reaperReady?: boolean;
+      capability?: { ready?: boolean };
+      containmentCapability?: { ready?: boolean };
+    }>("managedProcesses.getSettings", undefined, 5000);
     if (this.closed || this.closing) throw new Error("MCP connection was cancelled");
-    if (!settings.reaperReady || !settings.capability?.ready) throw new Error("MCP process containment is not ready");
+    const capability = settings.containmentCapability ?? settings.capability;
+    if (!settings.reaperReady || !capability?.ready) throw new Error("MCP process containment is not ready");
     const config = this.options.config;
     if (!config.command) throw new Error("MCP stdio command is missing");
     const environment = { ...context.shellEnv, ...this.options.env };
@@ -101,6 +102,7 @@ export class ContainedMcpStdioTransport implements McpTransport {
           cwd: this.options.cwd,
           env: { ...environment, ELECTRON_RUN_AS_NODE: "1" },
           processPrefix: "mcp",
+          capabilityScope: "transport",
         },
       );
       this.windowsChild = child;

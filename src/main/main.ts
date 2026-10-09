@@ -38,7 +38,7 @@ import {
   verifyWindowsManagedProcessHelperReplaceable,
 } from "../shared/windows-managed-process-helper";
 import type { ManagedProcessCapability } from "../contract/processes";
-import { projectManagedProcessCapability } from "./managed-process/capability";
+import { projectManagedProcessCapability, projectProcessContainmentCapability } from "./managed-process/capability";
 import { runPackagedCleanupFaultValidation } from "./packaged-cleanup-fault-validation";
 import { HerdrRuntimeManager } from "./herdr/runtime-manager";
 import { resolveBundledHerdrRoot, resolveHerdrCatalogPath } from "./herdr/catalog";
@@ -111,10 +111,10 @@ async function refreshHerdrAgentCliDiscovery(): Promise<void> {
   }
 }
 
-function getManagedProcessCapability(): ManagedProcessCapability {
+function getProcessCapabilityInput() {
   const status = managedProcessReaper?.status();
   const owner = hostManager?.getManagedProcessOwnerState();
-  return projectManagedProcessCapability({
+  return {
     platform: process.platform,
     arch: process.arch,
     reaperReady: status?.ready === true,
@@ -122,7 +122,11 @@ function getManagedProcessCapability(): ManagedProcessCapability {
     ownerReady: owner?.ready === true && Boolean(owner.hostInstanceId),
     windowsRelease: os.release(),
     windowsVersion: os.version(),
-  });
+  };
+}
+
+function getManagedProcessCapability(): ManagedProcessCapability {
+  return projectManagedProcessCapability(getProcessCapabilityInput());
 }
 
 async function cleanupManagedProcesses(deadline: number, requireConfirmedEmpty: boolean): Promise<void> {
@@ -152,6 +156,7 @@ function finishPackagedStartupValidation(error?: string): void {
       error = `Agent Host Pi version mismatch: expected ${expectedPiVersion ?? "unknown"}, got ${hostManager?.getPiVersion() ?? "unknown"}`;
     }
     if ((hostManager?.getToolchainAckRevision() ?? -1) < snapshot.revision) return;
+    if (process.platform === "win32" && !hostManager?.getManagedProcessOwnerState().ready) return;
     for (const capability of ["search.rg", "search.fd"] as const) {
       const candidates = snapshot.publicState.capabilities[capability]?.candidates ?? [];
       if (!candidates.some((candidate) => candidate.provider === "bundled" && candidate.health === "healthy")) return;
@@ -761,6 +766,7 @@ function startMainProcess(): void {
           enabled: capability.ready && loadUiState().managedProcessesEnabled === true,
           reaperReady: status?.ready === true,
           capability,
+          containmentCapability: projectProcessContainmentCapability(getProcessCapabilityInput()),
           ...(windowsManagedProcessHelper?.ok ? { windowsHelper: windowsManagedProcessHelper.descriptor } : {}),
         };
       }
@@ -867,7 +873,8 @@ function startMainProcess(): void {
     });
 
     hostManager.setMessageListener((msg) => {
-      if (packagedStartupValidation && msg.type === "toolchain:ack") finishPackagedStartupValidation();
+      if (packagedStartupValidation && (msg.type === "toolchain:ack" || msg.type === "managed-process-owner:ack"))
+        finishPackagedStartupValidation();
       if (msg.type === "running-sessions") {
         const ids = (msg.sessionIds as string[]) ?? [];
         runningAgentSessionCount = ids.length;

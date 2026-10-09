@@ -9,7 +9,10 @@ import type { BrowserAgentAuthorizationRequest, BrowserEvent } from "../contract
 import { BrowserError } from "../main/browser/browser-error";
 import { BrowserService } from "../main/browser/browser-service";
 import { HostManager, type HostStatus } from "../main/host-manager";
-import { projectManagedProcessCapability } from "../main/managed-process/capability";
+import {
+  projectManagedProcessCapability,
+  projectProcessContainmentCapability,
+} from "../main/managed-process/capability";
 import { ManagedProcessReaper, secureWindowsReaperDirectory } from "../main/managed-process/reaper";
 import { resolveRuntimeCatalogPath } from "../main/toolchains/catalog";
 import { ToolchainManager } from "../main/toolchains/manager";
@@ -272,7 +275,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
     if (method === "managedProcesses.getSettings") {
       const reaperStatus = managedProcessReaper!.status();
       const owner = hostManager?.getManagedProcessOwnerState();
-      const capability = projectManagedProcessCapability({
+      const capabilityInput = {
         platform: process.platform,
         arch: process.arch,
         reaperReady: reaperStatus.ready,
@@ -280,11 +283,13 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
         ownerReady: owner?.ready === true && Boolean(owner.hostInstanceId),
         windowsRelease: os.release(),
         windowsVersion: os.version(),
-      });
+      };
+      const capability = projectManagedProcessCapability(capabilityInput);
       return {
         enabled: capability.ready,
         reaperReady: reaperStatus.ready,
         capability,
+        containmentCapability: projectProcessContainmentCapability(capabilityInput),
         ...(windowsManagedProcessHelper?.ok ? { windowsHelper: windowsManagedProcessHelper.descriptor } : {}),
       };
     }

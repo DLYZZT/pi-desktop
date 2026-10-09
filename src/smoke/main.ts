@@ -16,7 +16,10 @@ import { resolveBundledCorePaths } from "../main/toolchains/bundled-core";
 import { isExecutionIntent } from "../shared/toolchains/types";
 import os from "node:os";
 import { ManagedProcessReaper, secureWindowsReaperDirectory } from "../main/managed-process/reaper";
-import { projectManagedProcessCapability } from "../main/managed-process/capability";
+import {
+  projectManagedProcessCapability,
+  projectProcessContainmentCapability,
+} from "../main/managed-process/capability";
 import {
   resolveWindowsManagedProcessHelper,
   type WindowsManagedProcessHelperResolution,
@@ -111,16 +114,16 @@ void app.whenReady().then(async () => {
     const status = await reaper!.reapAll();
     if (!status.ready || status.records) throw new Error("Smoke process cleanup blocked Host restart");
   });
-  const capability = () =>
-    projectManagedProcessCapability({
-      platform: process.platform,
-      arch: process.arch,
-      reaperReady: reaper?.status().ready === true,
-      helper,
-      ownerReady: hostManager?.getManagedProcessOwnerState().ready === true,
-      windowsRelease: os.release(),
-      windowsVersion: os.version(),
-    });
+  const capabilityInput = () => ({
+    platform: process.platform,
+    arch: process.arch,
+    reaperReady: reaper?.status().ready === true,
+    helper,
+    ownerReady: hostManager?.getManagedProcessOwnerState().ready === true,
+    windowsRelease: os.release(),
+    windowsVersion: os.version(),
+  });
+  const capability = () => projectManagedProcessCapability(capabilityInput());
   const smokeVaultPath = path.join(app.getPath("userData"), "smoke-channel-secrets.json");
   const credentialVault = new CredentialVault(smokeVaultPath);
   hostManager.setToolchainSnapshot(toolchainManager.getSnapshot());
@@ -133,6 +136,7 @@ void app.whenReady().then(async () => {
         enabled: true,
         reaperReady: reaper!.status().ready,
         capability: capability(),
+        containmentCapability: projectProcessContainmentCapability(capabilityInput()),
         ...(helper?.ok ? { windowsHelper: helper.descriptor } : {}),
       };
     if (method === "managedProcesses.register") {

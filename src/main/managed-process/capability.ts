@@ -1,7 +1,7 @@
 import type { ManagedProcessCapability } from "../../contract/processes.ts";
 import type { WindowsManagedProcessHelperResolution } from "../../shared/windows-managed-process-helper.ts";
 
-export function projectManagedProcessCapability(input: {
+type ProcessCapabilityInput = {
   platform: NodeJS.Platform;
   arch: NodeJS.Architecture;
   reaperReady: boolean;
@@ -9,13 +9,14 @@ export function projectManagedProcessCapability(input: {
   ownerReady: boolean;
   windowsRelease?: string;
   windowsVersion?: string;
-}): ManagedProcessCapability {
+};
+
+/** Internal transports need a verified containment backend, independently of desktop feature support. */
+export function projectProcessContainmentCapability(input: ProcessCapabilityInput): ManagedProcessCapability {
   const posixSupported = input.platform === "darwin" || input.platform === "linux";
   const windowsOsSupported =
     input.platform !== "win32" ||
-    (/^\d+\./u.test(input.windowsRelease ?? "") &&
-      Number.parseInt(input.windowsRelease ?? "0", 10) >= 10 &&
-      !/windows server/iu.test(input.windowsVersion ?? ""));
+    (/^\d+\./u.test(input.windowsRelease ?? "") && Number.parseInt(input.windowsRelease ?? "0", 10) >= 10);
   const windowsSupported = input.platform === "win32" && input.arch === "x64" && windowsOsSupported;
   const helperReady = windowsSupported && input.helper?.ok === true;
   const helperError = input.helper && !input.helper.ok ? input.helper.errorCode : undefined;
@@ -50,4 +51,12 @@ export function projectManagedProcessCapability(input: {
       : {}),
     ...(errorCode ? { errorCode } : {}),
   };
+}
+
+export function projectManagedProcessCapability(input: ProcessCapabilityInput): ManagedProcessCapability {
+  const capability = projectProcessContainmentCapability(input);
+  if (input.platform === "win32" && input.arch === "x64" && /windows server/iu.test(input.windowsVersion ?? "")) {
+    return { ...capability, supported: false, ready: false, backend: "none", errorCode: "PLATFORM_UNSUPPORTED" };
+  }
+  return capability;
 }

@@ -98,11 +98,17 @@ export async function runSmokeHostChecks(
   try {
     await call("host.ping");
     const ackDeadline = Date.now() + 5_000;
-    while (manager.getToolchainAckRevision() < 0 && Date.now() < ackDeadline) {
+    while (
+      (manager.getToolchainAckRevision() < 0 ||
+        (process.platform === "win32" && !manager.getManagedProcessOwnerState().ready)) &&
+      Date.now() < ackDeadline
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     const acknowledgedRevision = manager.getToolchainAckRevision();
     if (acknowledgedRevision < 0) throw new Error("Agent Host did not acknowledge its toolchain snapshot");
+    if (process.platform === "win32" && !manager.getManagedProcessOwnerState().ready)
+      throw new Error("Agent Host did not acknowledge its Windows process owner identity");
     const runtime = await call<{
       openaiOAuthLoaded?: boolean;
       mcpLoaded?: boolean;
