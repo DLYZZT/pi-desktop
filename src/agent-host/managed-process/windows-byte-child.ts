@@ -137,7 +137,13 @@ export class WindowsByteProcessChild extends EventEmitter {
       throw new Error("Windows terminal helper integrity check failed");
     }
     const nonce = randomBytes(32).toString("hex");
+    if (!path.isAbsolute(this.executable)) throw new Error("Windows process executable must be absolute");
     const executable = await realpath(this.executable);
+    const requestedCwd = this.options.cwd ?? path.dirname(executable);
+    if (!path.isAbsolute(requestedCwd)) throw new Error("Windows process working directory must be absolute");
+    // GetFinalPathNameByHandleW expands short DOS names; send that same canonical
+    // path so the native reparse-point/identity check remains strict.
+    const cwd = await realpath(requestedCwd);
     if (this.stopRequested) throw new Error("Owned byte process start was cancelled");
     const processId = `${this.options.processPrefix ?? "herdr-terminal"}-${this.terminalId}`;
     const runId = randomUUID();
@@ -148,7 +154,7 @@ export class WindowsByteProcessChild extends EventEmitter {
       runIdHash: createHash("sha256").update(runId).digest("hex"),
       jobName,
       nonce,
-      cwd: this.options.cwd ?? path.dirname(this.executable),
+      cwd,
       shellExecutable: executable,
       argvPrefix: this.args,
       command: "terminal",
