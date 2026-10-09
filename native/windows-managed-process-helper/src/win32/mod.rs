@@ -319,9 +319,20 @@ fn open_and_validate_owner(
     if creation_time_millis(handle.raw())? != start_time_ms {
         return Err(HelperError::protocol("HELPER_PARENT_TIME_MISMATCH"));
     }
-    if normalize_image_path(&process_image_path(handle.raw())?)
-        != normalize_image_path(expected_image_path)
-    {
+    // QueryFullProcessImageNameW can preserve DOS 8.3 components from launch
+    // (for example RUNNER~1). Main/Host supply real paths, so resolve the image
+    // observed through the verified process handle before comparing identities.
+    let observed_image =
+        std::fs::canonicalize(process_image_path(handle.raw())?).map_err(|error| {
+            HelperError::win32(
+                "HELPER_PARENT_UNAVAILABLE",
+                error.raw_os_error().unwrap_or(0) as u32,
+            )
+        })?;
+    let observed_image = observed_image
+        .to_str()
+        .ok_or_else(|| HelperError::protocol("HELPER_PARENT_IMAGE_MISMATCH"))?;
+    if normalize_image_path(observed_image) != normalize_image_path(expected_image_path) {
         return Err(HelperError::protocol("HELPER_PARENT_IMAGE_MISMATCH"));
     }
     Ok(handle)
@@ -1138,6 +1149,79 @@ pub fn current_process_fingerprint(build_id: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_identity_resolves_short_image_names() {
+        const CHILD_MARKER: &str = "PI_HELPER_OWNER_ALIAS_TEST_CHILD";
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            // SAFETY: GetCurrentProcess returns a live pseudo-handle owned by
+            // the OS; it is only borrowed for these query operations.
+            let current = unsafe { windows_sys::Win32::System::Threading::GetCurrentProcess() };
+            let started = creation_time_millis(current).unwrap();
+            let canonical = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+            open_and_validate_owner(std::process::id(), started, canonical.to_str().unwrap())
+                .unwrap();
+            return;
+        }
+
+        let fixture = std::env::temp_dir().join(format!(
+            "Pi owner identity Unicode 空格 {}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&fixture).unwrap();
+        let executable = fixture.join("owner identity regression.exe");
+        std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+        let wide: Vec<u16> = executable.as_os_str().encode_wide().chain([0]).collect();
+        let mut buffer = vec![0_u16; 32_768];
+        // SAFETY: both buffers remain live; input is NUL-terminated and the
+        // output capacity matches the writable allocation. On volumes without
+        // 8.3 names Windows returns the long path, which must also pass.
+        let length = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetShortPathNameW(
+                wide.as_ptr(),
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+            )
+        };
+        assert!(length > 0 && (length as usize) < buffer.len());
+        let alias = String::from_utf16(&buffer[..length as usize]).unwrap();
+        let result = std::process::Command::new(alias)
+            .args([
+                "--exact",
+                "win32::tests::owner_identity_resolves_short_image_names",
+            ])
+            .env(CHILD_MARKER, "1")
+            .output();
+        std::fs::remove_dir_all(fixture).unwrap();
+        let output = result.unwrap();
+        assert!(
+            output.status.success(),
+            "short-path owner validation failed: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn owner_identity_still_rejects_wrong_start_time_and_image() {
+        // SAFETY: the borrowed pseudo-handle is valid for the current process.
+        let current = unsafe { windows_sys::Win32::System::Threading::GetCurrentProcess() };
+        let started = creation_time_millis(current).unwrap();
+        let canonical = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let wrong_time =
+            open_and_validate_owner(std::process::id(), started + 1, canonical.to_str().unwrap());
+        assert_eq!(
+            wrong_time.err().unwrap().subcode,
+            "HELPER_PARENT_TIME_MISMATCH"
+        );
+        let wrong_image = canonical.with_file_name("different-owner.exe");
+        let wrong_image =
+            open_and_validate_owner(std::process::id(), started, wrong_image.to_str().unwrap());
+        assert_eq!(
+            wrong_image.err().unwrap().subcode,
+            "HELPER_PARENT_IMAGE_MISMATCH"
+        );
+    }
 
     #[test]
     fn named_job_dacl_is_exact_and_name_collision_fails_closed() {

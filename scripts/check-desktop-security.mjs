@@ -164,7 +164,8 @@ const checks = [
       windowsHelperMain + windowsHelperState + windowsHelperProtocol + windowsHelperJson + windowsHelperError,
     ) &&
       documentedWindowsHelperUnsafe &&
-      windowsHelperUnsafeCount === 99,
+      // Includes three test-only calls for the current-process/short-path identity regression.
+      windowsHelperUnsafeCount === 102,
     "the Windows helper safe parser/state machine must contain no unsafe code and every allowlisted Win32 unsafe operation must retain a SAFETY invariant",
   ],
   [
