@@ -46,6 +46,10 @@ export interface ProjectSessionGroupProps {
   /** Move the window context to the project root (no session opened). */
   onActivateProject: () => void;
   onNewSessionInProject: () => void;
+  /** Delete every session record of this project (code on disk is untouched). */
+  onRemoveProject: () => void | Promise<void>;
+  /** True while this project's removal is in flight. */
+  removing?: boolean;
   onSelectSession: (session: SessionInfo) => void;
   onSelectWorktree: (path: string) => void;
   onWorktreeCreated: (path: string, branch: string) => void;
@@ -76,6 +80,8 @@ export function ProjectSessionGroup({
   onToggleCollapse,
   onActivateProject,
   onNewSessionInProject,
+  onRemoveProject,
+  removing = false,
   onSelectSession,
   onSelectWorktree,
   onWorktreeCreated,
@@ -86,22 +92,27 @@ export function ProjectSessionGroup({
   const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
   const closeMenu = useCallback((restoreFocus = false) => {
     setMenuOpen(false);
+    setConfirmRemove(false);
     if (restoreFocus) menuButtonRef.current?.focus();
   }, []);
 
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!menuOpen && !confirmRemove) return;
     const handler = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setMenuOpen(false);
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+        setConfirmRemove(false);
+      }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [menuOpen]);
+  }, [menuOpen, confirmRemove]);
 
   const label = abbreviateHomePath(projectRoot, homeDir);
 
@@ -327,12 +338,13 @@ export function ProjectSessionGroup({
             ref={menuButtonRef}
             onClick={(event) => {
               event.stopPropagation();
+              setConfirmRemove(false);
               setMenuOpen((open) => !open);
             }}
             title={t("projectActions", "Project actions")}
             aria-label={t("projectActionsFor", "Project actions for {name}").replace("{name}", label)}
             aria-haspopup="menu"
-            aria-expanded={menuOpen}
+            aria-expanded={menuOpen || confirmRemove}
             style={{
               display: "flex",
               alignItems: "center",
@@ -353,16 +365,16 @@ export function ProjectSessionGroup({
               <circle cx="19" cy="12" r="1.7" />
             </svg>
           </button>
-          {menuOpen && (
+          {(menuOpen || confirmRemove) && (
             <div
-              role="menu"
+              role={confirmRemove ? "alertdialog" : "menu"}
               aria-label={t("projectActions", "Project actions")}
               style={{
                 position: "absolute",
                 top: 24,
                 right: 0,
                 zIndex: 50,
-                minWidth: 148,
+                minWidth: confirmRemove ? 236 : 148,
                 padding: 4,
                 border: "1px solid var(--border)",
                 borderRadius: 8,
@@ -370,86 +382,172 @@ export function ProjectSessionGroup({
                 boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
               }}
             >
-              <button
-                type="button"
-                role="menuitem"
-                className="session-menu-item"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  closeMenu();
-                  onActivateProject();
-                }}
-                title={t("switchToProject", "Switch to project “{name}”").replace("{name}", label)}
-                style={groupMenuItemStyle}
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 10 10"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.1"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M1 3A1 1 0 0 1 2 2H4L5 3.5H8.5a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 1 8V3Z" />
-                </svg>
-                {t("openProject", "Open project")}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="session-menu-item"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  closeMenu();
-                  void window.piBridge?.showItemInFolder(projectRoot);
-                }}
-                style={groupMenuItemStyle}
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                </svg>
-                {t("projectRevealInFolder", "Show in File Explorer")}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="session-menu-item"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  closeMenu();
-                  void copyText(projectRoot).catch(() => {});
-                }}
-                style={groupMenuItemStyle}
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <rect x="9" y="9" width="13" height="13" rx="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-                {t("projectCopyPath", "Copy project path")}
-              </button>
+              {confirmRemove ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "6px 8px 4px" }}>
+                  <span style={{ fontSize: 12, lineHeight: 1.5, color: "var(--text)" }}>
+                    {sessionCount > 0
+                      ? t(
+                          "projectRemoveConfirm",
+                          "Remove “{name}”? Its {count} session records are deleted; code on disk is untouched. This cannot be undone.",
+                        )
+                          .replace("{name}", label)
+                          .replace("{count}", String(sessionCount))
+                      : t("projectRemoveConfirmEmpty", "Remove “{name}” from the list?").replace("{name}", label)}
+                  </span>
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+                    <button
+                      type="button"
+                      className="session-menu-item"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setConfirmRemove(false);
+                      }}
+                      disabled={removing}
+                      style={{
+                        ...groupMenuItemStyle,
+                        width: "auto",
+                        minHeight: 28,
+                        justifyContent: "center",
+                        padding: "0 10px",
+                      }}
+                    >
+                      {t("cancel", "Cancel")}
+                    </button>
+                    <button
+                      type="button"
+                      className="session-menu-item"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void onRemoveProject();
+                      }}
+                      disabled={removing}
+                      style={{
+                        ...groupMenuItemStyle,
+                        width: "auto",
+                        minHeight: 28,
+                        justifyContent: "center",
+                        padding: "0 10px",
+                        background: "var(--danger)",
+                        color: "#fff",
+                      }}
+                    >
+                      {removing ? t("projectRemoving", "Removing…") : t("projectRemove", "Remove project")}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="session-menu-item"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeMenu();
+                      onActivateProject();
+                    }}
+                    title={t("switchToProject", "Switch to project “{name}”").replace("{name}", label)}
+                    style={groupMenuItemStyle}
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 10 10"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.1"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M1 3A1 1 0 0 1 2 2H4L5 3.5H8.5a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 1 8V3Z" />
+                    </svg>
+                    {t("openProject", "Open project")}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="session-menu-item"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeMenu();
+                      void window.piBridge?.showItemInFolder(projectRoot);
+                    }}
+                    style={groupMenuItemStyle}
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
+                    {t("projectRevealInFolder", "Show in File Explorer")}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="session-menu-item"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeMenu();
+                      void copyText(projectRoot).catch(() => {});
+                    }}
+                    style={groupMenuItemStyle}
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <rect x="9" y="9" width="13" height="13" rx="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                    {t("projectCopyPath", "Copy project path")}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="session-menu-item"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setMenuOpen(false);
+                      setConfirmRemove(true);
+                    }}
+                    disabled={removing}
+                    title={t("projectRemoveHint", "Delete this project's session records; code on disk is untouched")}
+                    style={{ ...groupMenuItemStyle, color: "#ef4444" }}
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                    {t("projectRemove", "Remove project")}
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

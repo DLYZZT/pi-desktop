@@ -7,6 +7,7 @@ import {
   loadKnownProjectRoots,
   MAX_KNOWN_PROJECTS,
   pruneKnownProjectRoots,
+  removeKnownProjectRoot,
   saveKnownProjectRoots,
 } from "./known-projects.ts";
 
@@ -66,4 +67,12 @@ test("pruning keeps projects that still exist and drops the rest", () => {
     "/workspace/beta",
   ]);
   assert.deepEqual(pruneKnownProjectRoots(roots, []), []);
+});
+
+test("removing one project keeps the others and tolerates path spellings", () => {
+  const roots = ["/workspace/alpha", "/workspace/beta", "/workspace/gamma"];
+  assert.deepEqual(removeKnownProjectRoot(roots, "/workspace/beta"), ["/workspace/alpha", "/workspace/gamma"]);
+  assert.deepEqual(removeKnownProjectRoot(roots, "/workspace\\beta"), ["/workspace/alpha", "/workspace/gamma"]);
+  assert.deepEqual(removeKnownProjectRoot(roots, "/workspace/missing"), [...roots]);
+  assert.deepEqual(removeKnownProjectRoot(roots, ""), [...roots]);
 });

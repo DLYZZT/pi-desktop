@@ -1,4 +1,4 @@
-import { subscribeRunning } from "@/lib/api-client";
+import { subscribeRunning, call } from "@/lib/api-client";
 import { useEffect, useState, useCallback, useRef, useSyncExternalStore } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { useI18n } from "@/i18n";
@@ -7,6 +7,7 @@ import {
   saveUnreadSessionIds as saveStoredUnreadSessionIds,
 } from "@/lib/unread-session-storage";
 import {
+  collectProjectSessions,
   filterSessionsForQuery,
   groupSessionsByProject,
   resolveEmptyProjectRoots,
@@ -18,9 +19,11 @@ import {
   addKnownProjectRoot,
   loadKnownProjectRoots,
   pruneKnownProjectRoots,
+  removeKnownProjectRoot,
   saveKnownProjectRoots,
 } from "@/lib/known-projects";
 import type { SessionListStore } from "@/lib/session-list-store";
+import { resolveProjectRemovalFallback } from "@/lib/session-sidebar-state";
 import { worktreePathsEqual } from "@shared/worktree-path";
 import { buildSessionTree, SessionTreeItem, type SessionTreeNode } from "./sidebar/SessionTree";
 import { PiAgentTitle } from "./sidebar/PiAgentTitle";
@@ -144,6 +147,7 @@ export function SessionSidebar({
   const [knownProjectRoots, setKnownProjectRoots] = useState<string[]>(() =>
     typeof window === "undefined" ? [] : loadKnownProjectRoots(window.localStorage),
   );
+  const [removingProjectRoot, setRemovingProjectRoot] = useState<string | null>(null);
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
   // Once the live stream has delivered a frame it is the source of truth for
   // running state; late session responses must not overwrite it.
@@ -332,6 +336,59 @@ export function SessionSidebar({
       onNewSession?.(createTempSessionId(), projectRoot);
     },
     [onNewSession, setSelectedCwd],
+  );
+
+  // Remove a project from the sidebar: delete its session records and forget
+  // the remembered root. Running agents and managed processes are stopped
+  // first (force), matching what a single delete does once the user stops the
+  // session. Code on disk is never touched.
+  const handleRemoveProject = useCallback(
+    async (projectRoot: string) => {
+      setRemovingProjectRoot(projectRoot);
+      const sessionsToDelete = collectProjectSessions(allSessions, projectRoot);
+      const failures: string[] = [];
+      try {
+        for (const session of sessionsToDelete) {
+          try {
+            await call("sessions.delete", { id: session.id, force: true });
+            sessionList.applyChange({ cwd: session.cwd ?? null, sessionId: session.id, deleted: true });
+          } catch (error) {
+            failures.push(error instanceof Error ? error.message : String(error));
+          }
+        }
+      } finally {
+        setRemovingProjectRoot(null);
+      }
+
+      // Forget the project even when it had no sessions left to delete.
+      setKnownProjectRoots((previous) => {
+        const next = removeKnownProjectRoot(previous, projectRoot);
+        if (next.length === previous.length) return previous;
+        try {
+          saveKnownProjectRoots(window.localStorage, next);
+        } catch {
+          // Keep the in-memory list when persistence is unavailable.
+        }
+        return next;
+      });
+
+      // Leave the project only once every record is gone; a partial failure
+      // keeps the remaining sessions listed under it.
+      if (failures.length === 0 && selectedProject && worktreePathsEqual(selectedProject, projectRoot)) {
+        const deletedIds = new Set(sessionsToDelete.map((session) => session.id));
+        const remainingSessions = allSessions.filter((session) => !deletedIds.has(session.id));
+        setSelectedCwd(resolveProjectRemovalFallback(remainingSessions, projectRoot, knownProjectRoots));
+      }
+
+      if (failures.length > 0) {
+        window.alert(
+          t("projectRemovePartialFailed", "{count} session record(s) could not be deleted: {message}")
+            .replace("{count}", String(failures.length))
+            .replace("{message}", failures[0]),
+        );
+      }
+    },
+    [allSessions, knownProjectRoots, selectedProject, sessionList, setSelectedCwd, t],
   );
 
   const toggleProjectGroupCollapse = useCallback((projectRoot: string) => {
@@ -750,6 +807,8 @@ export function SessionSidebar({
                   onToggleCollapse={() => toggleProjectGroupCollapse(group.projectRoot)}
                   onActivateProject={() => setSelectedCwd(group.projectRoot)}
                   onNewSessionInProject={() => handleNewSessionInProject(group.projectRoot)}
+                  onRemoveProject={() => handleRemoveProject(group.projectRoot)}
+                  removing={removingProjectRoot !== null && worktreePathsEqual(removingProjectRoot, group.projectRoot)}
                   onSelectSession={handleSelectSessionFromList}
                   onSelectWorktree={(path) => setSelectedCwd(path)}
                   onWorktreeCreated={registerCreatedWorktree}

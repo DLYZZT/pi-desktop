@@ -30,22 +30,9 @@ export interface ProjectWorktreeInfo {
   worktrees: WorktreeEntry[];
 }
 
-/**
- * Return all projects (deduped by projectRoot so worktrees collapse into their
- * main repo) sorted by most recent session activity.
- */
-export function getRecentProjects(sessions: SessionInfo[]): string[] {
-  const latestByRoot = new Map<string, string>(); // projectRoot -> most recent modified
-  for (const s of sessions) {
-    const root = s.projectRoot ?? s.cwd;
-    if (!root) continue;
-    const prev = latestByRoot.get(root);
-    if (!prev || s.modified > prev) {
-      latestByRoot.set(root, s.modified);
-    }
-  }
-  return [...latestByRoot.entries()].sort((a, b) => b[1].localeCompare(a[1])).map(([root]) => root);
-}
+// Pure list helpers live with the other session-list logic; re-exported here
+// for the sidebar's existing import sites.
+export { getRecentProjects } from "@/lib/session-list";
 
 /** Own the effective directory and the project/worktree data used by the sidebar. */
 export function useSidebarWorkspace({

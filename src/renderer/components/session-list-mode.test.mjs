@@ -75,6 +75,27 @@ test("project group headers carry the branch and a per-project worktree switcher
   assert.match(worktreePanel, /newWorktree/);
 });
 
+test("a project can be removed together with its session records", () => {
+  // The menu offers removal and confirms in place before anything is deleted.
+  assert.match(group, /setConfirmRemove\(true\)/);
+  assert.match(group, /projectRemoveConfirm/);
+  assert.match(group, /projectRemoveConfirmEmpty/);
+  assert.match(group, /onRemoveProject/);
+  // Removal deletes exactly the project's session records, stopping running
+  // agents and managed processes first (force), and never touches code.
+  assert.match(sidebar, /collectProjectSessions\(allSessions, projectRoot\)/);
+  assert.match(sidebar, /call\("sessions\.delete", \{ id: session\.id, force: true \}\)/);
+  assert.match(
+    sidebar,
+    /sessionList\.applyChange\(\{ cwd: session\.cwd \?\? null, sessionId: session\.id, deleted: true \}\)/,
+  );
+  // The remembered root is forgotten and the window moves to another project.
+  assert.match(sidebar, /removeKnownProjectRoot\(previous, projectRoot\)/);
+  assert.match(sidebar, /resolveProjectRemovalFallback\(remainingSessions, projectRoot, knownProjectRoots\)/);
+  // Partial failures keep the remaining sessions listed and are reported.
+  assert.match(sidebar, /projectRemovePartialFailed/);
+});
+
 test("the session list mode preference persists through the validated UI state patch", () => {
   assert.match(contract, /sessionListMode\?: SessionListMode/);
   assert.match(patchValidator, /isSessionListMode\(patch\.sessionListMode\)/);

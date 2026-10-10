@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  collectProjectSessions,
   filterSessionsForQuery,
   getSessionDisplayTitle,
   groupSessionsByProject,
@@ -117,6 +118,27 @@ test("groups sessions by project with worktrees collapsed, most recent project f
   assert.equal(groups[0].latestModified, "2026-07-14T10:00:00.000Z");
   assert.equal(groups[2].latestModified, "2026-07-01T08:00:00.000Z");
   assert.deepEqual(groupSessionsByProject([]), []);
+});
+
+test("collecting a project's sessions spans its worktrees and skips pathless rows", () => {
+  const main = session("main", { cwd: "/workspace/alpha", projectRoot: "/workspace/alpha" });
+  const worktree = session("worktree", {
+    cwd: "/workspace/alpha-feature",
+    projectRoot: "/workspace/alpha",
+  });
+  const other = session("other", { cwd: "/workspace/beta", projectRoot: "/workspace/beta" });
+  const pathless = session("pathless", { cwd: "", projectRoot: "" });
+
+  assert.deepEqual(
+    collectProjectSessions([main, worktree, other, pathless], "/workspace/alpha").map((item) => item.id),
+    ["main", "worktree"],
+  );
+  // A different stored spelling names the same project.
+  assert.deepEqual(
+    collectProjectSessions([main, worktree, other], "/workspace\\alpha").map((item) => item.id),
+    ["main", "worktree"],
+  );
+  assert.deepEqual(collectProjectSessions([other], "/workspace/alpha"), []);
 });
 
 test("empty project roots keep the active project and remembered projects listed", () => {

@@ -69,6 +69,34 @@ export function filterSessionsForQuery(sessions: SessionInfo[], rawQuery: string
   return sessions.filter((session) => visibleIds.has(session.id));
 }
 
+/**
+ * Every session that belongs to the project, across all of its worktrees.
+ * Removing a project deletes exactly these session records.
+ */
+export function collectProjectSessions(sessions: readonly SessionInfo[], projectRoot: string): SessionInfo[] {
+  return sessions.filter((session) => {
+    const root = session.projectRoot ?? session.cwd;
+    return Boolean(root) && worktreePathsEqual(root, projectRoot);
+  });
+}
+
+/**
+ * Return all projects (deduped by projectRoot so worktrees collapse into their
+ * main repo) sorted by most recent session activity.
+ */
+export function getRecentProjects(sessions: readonly SessionInfo[]): string[] {
+  const latestByRoot = new Map<string, string>(); // projectRoot -> most recent modified
+  for (const s of sessions) {
+    const root = s.projectRoot ?? s.cwd;
+    if (!root) continue;
+    const prev = latestByRoot.get(root);
+    if (!prev || s.modified > prev) {
+      latestByRoot.set(root, s.modified);
+    }
+  }
+  return [...latestByRoot.entries()].sort((a, b) => b[1].localeCompare(a[1])).map(([root]) => root);
+}
+
 export interface SessionProjectGroup {
   /** Main repo root shared by all worktrees of the project (cwd for non-git dirs). */
   projectRoot: string;

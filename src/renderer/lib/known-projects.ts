@@ -44,3 +44,9 @@ export function addKnownProjectRoot(roots: readonly string[], projectRoot: strin
 export function pruneKnownProjectRoots(roots: readonly string[], existing: readonly string[]): string[] {
   return roots.filter((root) => existing.some((candidate) => worktreePathsEqual(candidate, root)));
 }
+
+/** Forget one removed project, tolerating a different stored path spelling. */
+export function removeKnownProjectRoot(roots: readonly string[], projectRoot: string): string[] {
+  if (!projectRoot) return [...roots];
+  return roots.filter((root) => !worktreePathsEqual(root, projectRoot));
+}
