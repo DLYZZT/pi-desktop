@@ -16,23 +16,61 @@
 
 [English](./README.en.md) · **简体中文**
 
-[下载 v0.3.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.3.0) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
+[下载 v0.4.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.4.0) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
 
 </div>
 
 ## 应用截图
 
-![Pi Agent Desktop 主工作区：会话、Agent 回复与代码预览](./images/app-workspace.jpg)
+主工作区与主要设置界面，点击图片可查看原图。
+
+[![Pi Agent Desktop 主工作区：会话侧栏、Auto 模型选择、工具预设与右侧浏览器](./images/app-main.png)](./images/app-main.png)
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="./images/app-skills.jpg" alt="Pi Agent Desktop 技能管理" />
+      <a href="./images/app-models.png">
+        <img src="./images/app-models.png" width="100%" alt="自动路由设置：快模型、强模型、思考级别和 TypeSafe Jev 决策模型" />
+      </a>
       <br />
-      <sub>技能浏览、启用与内容编辑</sub>
+      <sub>模型与自动路由：快模型、强模型和决策模型</sub>
     </td>
     <td width="50%" align="center">
-      <img src="./images/app-developer-tools.jpg" alt="Pi Agent Desktop 开发工具管理" />
+      <a href="./images/app-mcp.png">
+        <img src="./images/app-mcp.png" width="100%" alt="MCP 服务设置：配置范围、HTTP 连接、测试与登录入口" />
+      </a>
+      <br />
+      <sub>MCP 服务：配置、连接测试与登录</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <a href="./images/app-browser.png">
+        <img src="./images/app-browser.png" width="100%" alt="内置浏览器设置：Profile、标签页限额、超时与网络访问" />
+      </a>
+      <br />
+      <sub>浏览器设置：Profile、标签页与网络访问</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="./images/app-herdr.png">
+        <img src="./images/app-herdr.png" width="100%" alt="Herdr 设置：连接状态、运行时信息与 Agent CLI 诊断" />
+      </a>
+      <br />
+      <sub>Herdr：连接状态与 Agent CLI 诊断</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <a href="./images/app-skill.png">
+        <img src="./images/app-skill.png" width="100%" alt="技能管理：技能列表、启用开关与 SKILL.md 编辑器" />
+      </a>
+      <br />
+      <sub>技能管理：启用开关与 SKILL.md 编辑</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="./images/app-dev-tools.png">
+        <img src="./images/app-dev-tools.png" width="100%" alt="开发工具管理：系统工具发现、来源选择与托管 Node.js 运行时" />
+      </a>
       <br />
       <sub>系统工具发现与托管运行时管理</sub>
     </td>
@@ -52,6 +90,14 @@
 - 支持图片附件、斜杠命令与 `@` 文件引用
 - 对话与输入框使用一致的阅读宽度，右侧文件面板可通过鼠标或键盘调整并记住宽度
 
+### 会话工具与执行历史
+
+- 在会话工具菜单中管理 Codemode、工具搜索和工具预设；“完全访问”预设包含 Codemode 与工具搜索
+- 分别控制模型可见的工具入口、可被嵌套查找的工具与实际执行授权；嵌套调用同样遵守当前会话的工具权限
+- 按父子执行树查看直接与嵌套调用的状态、耗时和原始参数／结果，并按当前会话分支查看历史
+- 大结果和临时输出持久化后可分页读取；重开或压缩会话后，Agent 可通过 `tool_history_get` 查询原文
+- Host 中断后保留已完成的子调用，将未确认结果的调用标为中断／结果未知，恢复时不自动重放操作
+
 ### 用户与 Agent 共享的内置浏览器
 
 - 在主界面右侧使用 Electron `WebContentsView` 承载真实 Chromium 页面，支持多 Tab、临时/持久 Profile、登录态、下载、上传和代理
@@ -69,12 +115,11 @@
 - macOS/Linux 使用 POSIX process group；Windows x64 使用经过完整性校验的 Rust helper 和 Job Object，helper、reaper 或 owner identity 未就绪时会 fail-closed
 - 功能默认关闭且不是安全沙箱：子进程拥有与 Agent Bash 相同的本机文件、网络和环境权限；常见 LAN bind 需要确认，Host/App 故障或退出时会有界清理进程树
 
-v0.3.0 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows ARM64、Windows Server 和 32 位 Windows 暂不支持。
+受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows ARM64、Windows Server 和 32 位 Windows 暂不支持。
 
 ### Pi 对话式控制 Herdr
 
 - 可选连接本机 Herdr，可在原主对话中查看 Fleet，创建、聚焦或重命名 workspace/tab/pane，解释 Agent 状态，脱敏查看进程，等待输出，并启动、提示或等待 Agent
-- 工具会话历史保留原始参数和结果；聊天中按父子关系查看直接与获准的嵌套调用状态，并按页读取原文。重开或压缩后可通过 `tool_history_get` 查询原文，中断操作显示结果未知；备份时同时保留 Desktop 数据目录的 `tool-executions` 日志及内容文件。
 - Pi Session 侧栏和主对话始终是主入口；Agent Fleet 在初始页和激活会话中都位于标题栏右侧，右侧 ANSI terminal 仅用于观察、故障排查和显式接管
 - workspace/pane/Agent close 均需要 Pi 本机确认，确认框随界面语言显示完整中英文；Herdr v0.8.2 没有 `agent.stop`，因此 Agent close 会明确关闭其所在 pane，不会静默伪造停止语义
 - Herdr 随 macOS/Linux/Windows x64 应用内置；安装、版本、更新、修复和卸载统一在“开发工具”中管理，Managed 模式从已校验内置副本激活且不单独联网下载。Windows 已支持 Fleet/Agent 控制，以及由原生 Job Object 保护的实时 ANSI 终端和显式键盘接管
@@ -84,9 +129,10 @@ v0.3.0 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows AR
 
 ### MCP 服务与工具
 
-- 在“设置 → MCP”管理全局及当前项目的 stdio／Streamable HTTP 服务，支持配置导入、连接测试、重连、OAuth 登录和普通资源／模板预览。
-- 会话工具面板区分模型入口、可被嵌套查找的工具与实际执行授权；保存配置后，仍需在当前会话授权工具。项目配置覆盖同名全局配置，扩展注册来源及待应用状态会单独显示。
-- MCP 原始结果进入执行历史，Codemode 收到完整结构化内容，模型通过摘要及 `tool_history_get` 查询全文；SDK bash／Codemode 的临时全文另存为可分页读取的持久 `output`。
+- 在“设置 → MCP”新增、编辑或导入全局及当前项目的 stdio／Streamable HTTP 服务，查看连接状态、测试连接和重新连接
+- 支持 MCP OAuth 登录、取消与凭据刷新，以及服务商凭据引用；可浏览工具、资源和资源模板，并预览资源内容
+- 项目配置覆盖同名全局配置，扩展注册来源及待应用状态会单独显示；保存配置后，仍需在当前会话授权工具
+- MCP 工具可按配置直接提供给模型，或通过工具搜索／Codemode 按需发现与调用；原始结果和完整结构化内容进入执行历史
 
 ### 围绕项目工作的文件体验
 
@@ -97,17 +143,33 @@ v0.3.0 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows AR
 
 ### 模型与扩展统一管理
 
-- 当前开发版本内置 Pi Coding Agent 1.1.0，管理模型提供商和模型配置
+- 内置 Pi Coding Agent 1.1.0，管理模型提供商和模型配置
 - 会话启动优先使用本地模型目录；需要时可显式刷新远程目录，离线、超时或部分 provider 失败时继续保留缓存模型
-- 支持浏览器 OAuth 登录流程
+- 按服务商提供 API Key、订阅或 OAuth 登录，支持多步凭据配置向导、已有凭据替换确认和 Azure 旧配置迁移
+- 模型编辑支持采样参数、按思考级别设置采样参数、图像与请求输入限制，以及按模型 ID 覆盖参数；支持的模型可选择 `max` 推理级别
+- 在“设置 → 模型 → 模型高级配置”调整自动压缩、Token 保留、重试、超时及 SSE／WebSocket 传输方式；这些 Pi 全局设置与 CLI 共享，现有会话需重新加载后生效
+- 保存模型和高级配置时检测外部修改冲突，避免覆盖在 CLI 或编辑器中更新的配置
 - 搜索、安装和配置 Skills；正常安装沿用 npm 默认并发，遇到网络、超时或 cache lock 故障时使用隔离缓存重试一次
 - 管理 Plugins，并沿用 Pi Agent 的扩展体系
 
+### Auto 虚拟模型与自动路由
+
+在“设置 → 模型 → 自动路由”启用 Auto，选择快模型、强模型及各自的思考级别，保存后在聊天模型菜单中选择 **Auto**。
+
+- 支持按思考级别路由：`high` 及以上使用强模型，其余使用快模型；也可配置决策模型，根据每次新提问的复杂度选择模型
+- 每轮新提问选择一次模型，后续工具执行沿用已选模型；可启用自动重试时切换到另一个已配置模型
+- 决策请求会增加耗时和用量，失败或不可用时使用强模型；实际调用用量计入会话统计
+- 最近实际使用的模型和思考级别显示在输入框下方 **Auto** 右侧，并可查看按实际模型统计的用量
+
+路由配置在新建、重新加载会话或重新选择 Auto 后生效。
+
 ### Codemode 图片生成与决策模型
 
-当前开发版本可通过会话工具菜单启用 Codemode（“完全访问”预设已包含），让 Agent 按需生成图片，或调用决策模型进行分类、是非判断和评分。支持图片输入的分类器也可判断截图和图片。模型按提供商的现有凭据发现，分类器作为辅助能力使用，不进入聊天主模型选择器。
+通过会话工具菜单启用 Codemode（“完全访问”预设已包含），让 Agent 按需生成图片，或调用决策模型进行分类、是非判断和评分。支持图片输入的分类器也可判断截图和图片。模型按提供商的现有凭据发现，分类器作为辅助能力使用，不进入聊天主模型选择器。
 
-每次模型调用都遵循 Codemode 权限，支持停止，并保存原始输入、结果和执行状态；用量计入会话统计，可在已有工具记录中查看。OpenAI 决策接口需要 API key，ChatGPT 订阅登录不提供该能力。TypeSafe Jev 可在“设置 → 模型配置 → 添加服务商”中搜索 TypeSafe 或 Jev，填写 API key 后使用；详情页会列出 `jev-latest`。可以让 Agent“使用可用的决策模型给这些条目分类”。
+每次模型调用都遵循 Codemode 权限，支持停止，并保存原始输入、结果和执行状态；用量计入会话统计，可在已有工具记录中查看。OpenAI 决策接口需要 API key，ChatGPT 订阅登录不提供该能力。TypeSafe Jev 可在“设置 → 模型 → 添加服务商”中搜索 TypeSafe 或 Jev，填写 API key 后使用；详情页会列出 `jev-latest`。可以让 Agent“使用可用的决策模型给这些条目分类”。
+
+生成的图片可在最终回复及重开的会话历史中查看。服务商详情页列出可用的图片与决策模型，并提供测试请求；测试使用所配置的服务商凭据，可能产生用量费用。
 
 ### 跨平台开发工具管理
 
@@ -133,6 +195,7 @@ v0.3.0 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows AR
 - 单实例、系统托盘、桌面通知与 Dock / 任务栏角标
 - 窗口状态记忆、系统主题跟随和自定义协议
 - Agent Host 异常恢复、崩溃报告与诊断信息导出
+- 区分自然完成与主动停止：停止的回合显示“已停止”，重开历史后保留该状态，并且不会触发完成提示音或后台完成通知
 - 已启用平台的正式安装版可定时或手工检查稳定版更新，由用户确认下载，并在任务结束后重启安装
 - `sandbox: true`、严格 CSP 与类型化 IPC 契约
 
@@ -140,9 +203,11 @@ v0.3.0 的受管后台进程支持 macOS、Linux 和 Windows 11 x64；Windows AR
 
 ### 使用桌面安装包
 
-最新稳定版为 [v0.3.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.3.0)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
+最新稳定版为 [v0.4.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.4.0)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
 
-Pi Agent Desktop v0.3.0 已内置 Pi Coding Agent 0.99.1 运行时。普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
+v0.4.0 内置 Pi Coding Agent 1.1.0，包含 MCP 管理、图片生成、决策模型和 Auto 自动路由等功能。也可按下方步骤[从源码运行](#本地运行)。
+
+普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
 
 应用会读取 `~/.pi/agent/` 中的会话与配置。如果你已经使用 Pi CLI，可以直接复用现有数据，无需迁移；此前没有使用过 Pi CLI 也不影响使用。
 
@@ -157,7 +222,7 @@ Pi Desktop 会先发现并验证用户已经安装的 Node.js/npm、Python、Git
 
 ### 源码开发环境要求
 
-- Node.js 22.19 或更高版本
+- Node.js 22.19 或更高的 22.x 版本（`>=22.19.0 <23`）
 - npm（随 Node.js 安装即可）
 - macOS、Windows 或 Linux
 
@@ -210,6 +275,7 @@ flowchart LR
 ## 数据、安全与隐私
 
 - 会话与 Pi 配置默认留在本机 `~/.pi/agent/`
+- Desktop 的工具权限和工具执行记录另存于应用数据目录；备份完整工具历史时，还需保留其中的 `tool-executions` 日志及内容文件
 - 应用不会为了 UI 通信额外开放本地网络端口
 - Renderer 开启 Electron sandbox，并使用严格的 Content Security Policy
 - preload 只暴露受控桥接接口，Host RPC 由 TypeScript 契约约束
@@ -223,24 +289,27 @@ flowchart LR
 
 ### 常用命令
 
-| 命令                                     | 说明                                             |
-| ---------------------------------------- | ------------------------------------------------ |
-| `npm run dev`                            | 启动 Vite、主进程构建监听与 Electron             |
-| `npm run typecheck`                      | 执行 TypeScript 类型检查                         |
-| `npm run test`                           | 运行自动化测试套件                               |
-| `npm run check:contract`                 | 检查 API 方法与 Host handler 覆盖关系            |
-| `npm run smoke`                          | 运行 Electron 冒烟测试                           |
-| `npm run test:browser-electron`          | 运行本地 Browser Electron 集成测试               |
-| `npm run test:managed-process-workflows` | 运行受管进程生命周期与清理测试                   |
-| `npm run test:herdr-e2e`                 | 使用指定官方 binary 运行隔离 Herdr E2E           |
-| `npm run test:herdr-desktop-e2e`         | 运行 production Electron/Renderer Herdr 集成 E2E |
-| `npm run test:windows-managed-helper`    | 在 Windows x64 验收 Rust helper 与 Job Object    |
-| `npm run verify`                         | 执行提交前的完整质量检查                         |
-| `npm run build`                          | 构建 main、preload 与 renderer                   |
-| `npm run pack`                           | 生成未封装的应用目录                             |
-| `npm run dist`                           | 生成当前平台配置的全部架构安装包                 |
-| `npm run dist:mac:signed`                | 生成当前 Mac 架构的 Developer ID 签名包          |
-| `npm run dist:mac:notarized`             | 生成签名并经 Apple 公证的 macOS 包               |
+| 命令                                                         | 说明                                             |
+| ------------------------------------------------------------ | ------------------------------------------------ |
+| `npm run dev`                                                | 启动 Vite、主进程构建监听与 Electron             |
+| `npm run typecheck`                                          | 执行 TypeScript 类型检查                         |
+| `npm run test`                                               | 运行自动化测试套件                               |
+| `npm run check:contract`                                     | 检查 API 方法与 Host handler 覆盖关系            |
+| `npm run check:architecture`                                 | 检查进程架构边界与代码结构约束                   |
+| `npm run smoke`                                              | 运行 Electron 冒烟测试                           |
+| `npm run test:execution-recovery`                            | 验证 Host 崩溃后的工具执行历史恢复               |
+| `npm run test:browser-electron`                              | 运行本地 Browser Electron 集成测试               |
+| `npm run test:managed-process-workflows`                     | 运行受管进程生命周期与清理测试                   |
+| `npm run test:herdr-e2e`                                     | 使用指定官方 binary 运行隔离 Herdr E2E           |
+| `npm run test:herdr-desktop-e2e`                             | 运行 production Electron/Renderer Herdr 集成 E2E |
+| `npm run test:windows-managed-helper`                        | 在 Windows x64 验收 Rust helper 与 Job Object    |
+| `npm run test:windows-nsis-upgrade -- <旧安装包> <新安装包>` | 在 Windows x64 验证安装、升级、回滚和卸载        |
+| `npm run verify`                                             | 执行提交前的完整质量检查                         |
+| `npm run build`                                              | 构建 main、preload 与 renderer                   |
+| `npm run pack`                                               | 生成未封装的应用目录                             |
+| `npm run dist`                                               | 生成当前平台配置的全部架构安装包                 |
+| `npm run dist:mac:signed`                                    | 生成当前 Mac 架构的 Developer ID 签名包          |
+| `npm run dist:mac:notarized`                                 | 生成签名并经 Apple 公证的 macOS 包               |
 
 ### 项目结构
 
@@ -266,6 +335,10 @@ npm run verify
 
 - [x] Electron 三进程架构与类型化 IPC
 - [x] 会话、项目文件、模型、Skills、Plugins 与 OAuth
+- [x] Pi 1.1.0 运行时、服务商认证流程和扩展后的模型／高级配置界面
+- [x] MCP 服务管理、OAuth、资源预览与会话工具授权
+- [x] Codemode／工具搜索、嵌套调用、执行树和持久化原文历史
+- [x] 图片生成、决策模型、Auto 自动路由与 `max` 推理级别
 - [x] 个人微信、Telegram 与飞书/Lark 文本、图片、文件和语音消息渠道，以及飞书/Lark 视频资源
 - [x] 托盘、通知、系统主题、崩溃恢复与诊断导出
 - [x] Linux、macOS、Windows CI 测试与正式发布构建矩阵

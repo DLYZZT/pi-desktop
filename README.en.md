@@ -16,23 +16,61 @@ Local-first · No internal server · Cross-platform
 
 **English** · [简体中文](./README.md)
 
-[Download v0.3.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.3.0) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
+[Download v0.4.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.4.0) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
 
 </div>
 
 ## Screenshots
 
-![Pi Agent Desktop workspace with a conversation, agent response, and code preview](./images/app-workspace.jpg)
+The workspace and key settings. Click an image to view it at full size.
+
+[![Pi Agent Desktop workspace with the session sidebar, Auto model picker, tool presets, and browser panel](./images/app-main.png)](./images/app-main.png)
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="./images/app-skills.jpg" alt="Pi Agent Desktop skill management" />
+      <a href="./images/app-models.png">
+        <img src="./images/app-models.png" width="100%" alt="Auto routing settings with fast and capable models, thinking levels, and the TypeSafe Jev decision model" />
+      </a>
       <br />
-      <sub>Browse, enable, and edit skills</sub>
+      <sub>Models and Auto routing: fast, capable, and decision models</sub>
     </td>
     <td width="50%" align="center">
-      <img src="./images/app-developer-tools.jpg" alt="Pi Agent Desktop developer tool management" />
+      <a href="./images/app-mcp.png">
+        <img src="./images/app-mcp.png" width="100%" alt="MCP service settings with configuration scope, HTTP connection details, connection testing, and sign-in controls" />
+      </a>
+      <br />
+      <sub>MCP services: configuration, connection tests, and sign-in</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <a href="./images/app-browser.png">
+        <img src="./images/app-browser.png" width="100%" alt="Built-in browser settings for profiles, tab limits, timeouts, and network access" />
+      </a>
+      <br />
+      <sub>Browser settings: profiles, tabs, and network access</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="./images/app-herdr.png">
+        <img src="./images/app-herdr.png" width="100%" alt="Herdr settings showing connection state, runtime information, and Agent CLI diagnostics" />
+      </a>
+      <br />
+      <sub>Herdr: connection state and Agent CLI diagnostics</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <a href="./images/app-skill.png">
+        <img src="./images/app-skill.png" width="100%" alt="Skill management with the skill list, enable switch, and SKILL.md editor" />
+      </a>
+      <br />
+      <sub>Skills: enable controls and SKILL.md editing</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="./images/app-dev-tools.png">
+        <img src="./images/app-dev-tools.png" width="100%" alt="Developer Tools showing system tool discovery, source selection, and the managed Node.js runtime" />
+      </a>
       <br />
       <sub>Discover system tools and manage private runtimes</sub>
     </td>
@@ -52,6 +90,14 @@ Local-first · No internal server · Cross-platform
 - Attach images, run slash commands, and reference project files with `@`
 - Keep chat and composer content aligned to one reading width, with a mouse- and keyboard-resizable file panel that remembers its width
 
+### Session tools and execution history
+
+- Manage Codemode, tool search, and tool presets from the session tools menu; Full access includes Codemode and tool search
+- Control model-visible entry points, tools available for nested discovery, and execution grants separately; nested calls follow the current session's tool permissions
+- Inspect direct and nested calls in a parent/child execution tree, including state, duration, and original arguments/results, with history filtered to the current session branch
+- Read large results and persisted temporary output in pages; after reopening or compacting a session, the Agent can retrieve original content with `tool_history_get`
+- Retain completed child calls after a Host interruption, mark unconfirmed outcomes as interrupted/unknown, and recover without automatically replaying operations
+
 ### A built-in browser shared by the user and Agent
 
 - Run real Chromium pages in a right-side Electron `WebContentsView`, with multiple tabs, temporary or persistent profiles, signed-in state, downloads, uploads, and proxy support
@@ -69,7 +115,7 @@ Local-first · No internal server · Cross-platform
 - Use POSIX process groups on macOS/Linux and an integrity-verified Rust helper with Windows Job Objects on Windows x64; missing helper, reaper, or owner identity readiness fails closed
 - Keep the feature off by default and treat it as lifecycle control, not a security sandbox: child processes have the same local file, network, and environment access as Agent Bash; common LAN binds require confirmation, and Host/App failure or exit triggers bounded process-tree cleanup
 
-Managed background processes in v0.3.0 support macOS, Linux, and Windows 11 x64. Windows ARM64, Windows Server, and 32-bit Windows are not supported.
+Managed background processes support macOS, Linux, and Windows 11 x64. Windows ARM64, Windows Server, and 32-bit Windows are not supported.
 
 ### Conversational Herdr control from Pi
 
@@ -81,6 +127,13 @@ Managed background processes in v0.3.0 support macOS, Linux, and Windows 11 x64.
 - Pi Sessions and Herdr Sessions remain separate. Closing the Pi Desktop terminal view does not close a Herdr pane or Agent, and unknown protocols fail closed.
 - In Settings, Herdr sits between Browser and Channels; installation, update, repair, and removal remain centralized under Developer Tools.
 
+### MCP services and tools
+
+- Add, edit, or import global and project-scoped stdio or Streamable HTTP services in Settings → MCP, inspect connection status, test connections, and reconnect
+- Use MCP OAuth sign-in, cancellation, credential refresh, and provider credential references; browse tools, resources, and resource templates, and preview resource content
+- Project configuration overrides global entries with the same name; extension sources and pending changes are shown separately, and tools still require session authorization after configuration is saved
+- Expose MCP tools directly to the model or discover and call them through tool search or Codemode; original results and complete structured content are retained in execution history
+
 ### A project-focused file experience
 
 - Select project directories natively and manage Git branches and worktrees
@@ -90,17 +143,33 @@ Managed background processes in v0.3.0 support macOS, Linux, and Windows 11 x64.
 
 ### Unified model and extension management
 
-- The development version bundles Pi Coding Agent 1.1.0 and manages model providers and model configurations
+- Bundle Pi Coding Agent 1.1.0 and manage model providers and model configurations
 - Prefer the local model directory when sessions start; explicitly refresh the remote directory when needed while preserving cached models across offline, timeout, or partial-provider failures
-- Sign in through browser-based OAuth flows
+- Use API keys, subscriptions, or OAuth as supported by each provider, with guided credential setup, confirmation before replacing existing credentials, and migration of older Azure configuration
+- Configure sampling parameters, sampling by thinking level, image/request input limits, and per-model overrides; select `max` reasoning on models that support it
+- Adjust automatic compaction, token reserves, retries, timeouts, and SSE/WebSocket transport in Settings → Models → Advanced model settings; these global Pi settings are shared with the CLI and require reloading existing sessions to take effect
+- Detect external configuration changes when saving model and advanced settings to avoid overwriting edits made through the CLI or an editor
 - Search for, install, and configure Skills; normal installs keep npm's default concurrency, with one isolated-cache retry for network, timeout, or cache-lock failures
 - Manage Plugins while continuing to use the Pi Agent extension ecosystem
 
+### Auto virtual model and routing
+
+Enable Auto in Settings → Models → Auto routing, choose a fast model, a capable model, and their thinking levels, then save and select **Auto** in the chat model picker.
+
+- Route by thinking level: `high` and above use the capable model, while lower levels use the fast model; alternatively, configure a decision model to judge the complexity of each new user request
+- Choose a model once per new user turn and keep it for tool continuations; optionally try the other configured model on an automatic retry
+- Decision requests add latency and usage, and failure or unavailability falls back to the capable model; actual model usage is included in session totals
+- Show the last actual model and thinking level beside **Auto** below the composer, with usage also available by actual model
+
+Routing changes take effect in new or reloaded sessions, or when Auto is selected again.
+
 ### Codemode image generation and decision models
 
-In the development version, enable Codemode from the session tools menu (included in Full access) to let the Agent generate images or call decision models for classification, yes/no questions, and scoring. Image-capable classifiers can also judge screenshots and images. Models are discovered using the provider's existing credentials; classifiers are auxiliary capabilities outside the chat model picker.
+Enable Codemode from the session tools menu (included in Full access) to let the Agent generate images or call decision models for classification, yes/no questions, and scoring. Image-capable classifiers can also judge screenshots and images. Models are discovered using the provider's existing credentials; classifiers are auxiliary capabilities outside the chat model picker.
 
 Each model call follows Codemode permission, supports cancellation, and retains original inputs, results, and execution states. Usage counts toward session totals, and calls appear in the existing tool history. OpenAI decisions require an API key; ChatGPT subscription login does not provide this capability. To configure TypeSafe Jev, open Settings → Models → Add provider, search for TypeSafe or Jev, and enter its API key; the provider details list `jev-latest`. Ask the Agent to classify items with an available decision model.
+
+Generated images appear in final replies and remain viewable when session history is reopened. Provider details list available image and decision models and offer test requests; tests use the configured provider credentials and may incur usage charges.
 
 ### Cross-platform developer tool management
 
@@ -126,6 +195,7 @@ Each model call follows Codemode permission, supports cancellation, and retains 
 - Single-instance behavior, system tray, desktop notifications, and Dock/taskbar badges
 - Window-state persistence, system theme integration, and custom protocol handling
 - Agent Host crash recovery, crash reports, and diagnostic exports
+- Distinguish completed turns from user-stopped turns: show Stopped in the conversation and reopened history, without playing a completion sound or sending a background completion notification
 - Periodic or manual stable-release checks on enabled platforms, with user-approved downloads and restart installation after active tasks finish
 - Electron `sandbox: true`, a strict Content Security Policy, and typed IPC contracts
 
@@ -133,9 +203,11 @@ Each model call follows Codemode permission, supports cancellation, and retains 
 
 ### Use a desktop build
 
-The latest stable version is [v0.3.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.3.0), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
+The latest stable version is [v0.4.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.4.0), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
 
-Pi Agent Desktop v0.3.0 bundles the Pi Coding Agent 0.99.1 runtime. Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
+Version 0.4.0 bundles Pi Coding Agent 1.1.0, including MCP management, image generation, decision models, and Auto routing. You can also [run from source](#run-locally) using the steps below.
+
+Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
 
 The application reads sessions and configuration from `~/.pi/agent/`. If you already use the Pi CLI, your existing data is available without migration. The desktop application also works if you have never used the CLI.
 
@@ -150,7 +222,7 @@ Pi Desktop first discovers and verifies the user's existing Node.js/npm, Python,
 
 ### Development requirements
 
-- Node.js 22.19 or later
+- Node.js 22.x, version 22.19 or later (`>=22.19.0 <23`)
 - npm, included with Node.js
 - macOS, Windows, or Linux
 
@@ -203,6 +275,7 @@ flowchart LR
 ## Data, security, and privacy
 
 - Sessions and Pi configuration remain in `~/.pi/agent/` by default
+- Desktop tool permissions and execution records are stored separately in the application data directory; include its `tool-executions` logs and content files when backing up complete tool history
 - The application does not open an additional local network port for UI communication
 - The Renderer runs in the Electron sandbox with a strict Content Security Policy
 - Preload exposes only controlled bridge APIs, and TypeScript contracts constrain Host RPC
@@ -216,24 +289,27 @@ flowchart LR
 
 ### Common commands
 
-| Command                                  | Description                                                          |
-| ---------------------------------------- | -------------------------------------------------------------------- |
-| `npm run dev`                            | Start Vite, Main process build watch, and Electron                   |
-| `npm run typecheck`                      | Run TypeScript type checking                                         |
-| `npm run test`                           | Run the automated test suite                                         |
-| `npm run check:contract`                 | Verify coverage between API methods and Host handlers                |
-| `npm run smoke`                          | Run Electron smoke tests                                             |
-| `npm run test:browser-electron`          | Run the local Browser Electron integration suite                     |
-| `npm run test:managed-process-workflows` | Test managed-process lifecycle and cleanup                           |
-| `npm run test:herdr-e2e`                 | Run the isolated upstream Herdr E2E with an official binary          |
-| `npm run test:herdr-desktop-e2e`         | Run the production Electron/Renderer Herdr integration E2E           |
-| `npm run test:windows-managed-helper`    | Validate the Rust helper and Job Objects on Windows x64              |
-| `npm run verify`                         | Run the complete pre-commit quality gate                             |
-| `npm run build`                          | Build Main, preload, and Renderer                                    |
-| `npm run pack`                           | Generate the unpacked application directory                          |
-| `npm run dist`                           | Build every configured architecture for this platform                |
-| `npm run dist:mac:signed`                | Build a Developer ID-signed package for the current Mac architecture |
-| `npm run dist:mac:notarized`             | Build a signed and Apple-notarized macOS package                     |
+| Command                                                                         | Description                                                          |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `npm run dev`                                                                   | Start Vite, Main process build watch, and Electron                   |
+| `npm run typecheck`                                                             | Run TypeScript type checking                                         |
+| `npm run test`                                                                  | Run the automated test suite                                         |
+| `npm run check:contract`                                                        | Verify coverage between API methods and Host handlers                |
+| `npm run check:architecture`                                                    | Check process boundaries and code structure constraints              |
+| `npm run smoke`                                                                 | Run Electron smoke tests                                             |
+| `npm run test:execution-recovery`                                               | Verify tool execution history recovery after a Host crash            |
+| `npm run test:browser-electron`                                                 | Run the local Browser Electron integration suite                     |
+| `npm run test:managed-process-workflows`                                        | Test managed-process lifecycle and cleanup                           |
+| `npm run test:herdr-e2e`                                                        | Run the isolated upstream Herdr E2E with an official binary          |
+| `npm run test:herdr-desktop-e2e`                                                | Run the production Electron/Renderer Herdr integration E2E           |
+| `npm run test:windows-managed-helper`                                           | Validate the Rust helper and Job Objects on Windows x64              |
+| `npm run test:windows-nsis-upgrade -- <previous-installer> <current-installer>` | Verify Windows x64 installation, upgrade, rollback, and uninstall    |
+| `npm run verify`                                                                | Run the complete pre-commit quality gate                             |
+| `npm run build`                                                                 | Build Main, preload, and Renderer                                    |
+| `npm run pack`                                                                  | Generate the unpacked application directory                          |
+| `npm run dist`                                                                  | Build every configured architecture for this platform                |
+| `npm run dist:mac:signed`                                                       | Build a Developer ID-signed package for the current Mac architecture |
+| `npm run dist:mac:notarized`                                                    | Build a signed and Apple-notarized macOS package                     |
 
 ### Project structure
 
@@ -259,6 +335,10 @@ npm run verify
 
 - [x] Electron three-process architecture and typed IPC
 - [x] Sessions, project files, models, Skills, Plugins, and OAuth
+- [x] Pi 1.1.0 runtime, provider authentication flows, and expanded model and advanced settings
+- [x] MCP service management, OAuth, resource previews, and session tool authorization
+- [x] Codemode/tool search, nested calls, execution trees, and durable original tool history
+- [x] Image generation, decision models, Auto routing, and `max` reasoning
 - [x] Personal WeChat, Telegram, and Feishu/Lark text, image, file, and voice channels, plus Feishu/Lark video resources
 - [x] Tray, notifications, system theme, crash recovery, and diagnostic exports
 - [x] Linux, macOS, and Windows CI tests plus the production release build matrix
