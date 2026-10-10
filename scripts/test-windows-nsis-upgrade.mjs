@@ -43,7 +43,31 @@ try {
   await install(currentInstaller, installPath);
   assert.equal(fileVersion(appExecutable(installPath)), currentVersion);
   const helper = await verifyInstalledHelper(installPath);
+  verifyInstalledResources(installPath);
+  verifyInstalledHerdr(installPath, "upgraded");
   reports.push(validateStartup(appExecutable(installPath), isolated, currentVersion, "upgraded"));
+
+  // Reproduce the old NSIS decoder dropping the ARM64 member of the x64 Herdr
+  // bundle, then prove reinstalling the same app version restores it on disk.
+  const missingMember = path.join(
+    installPath,
+    "resources",
+    "herdr",
+    "bin",
+    "win32-x64",
+    "conpty",
+    "arm64",
+    "OpenConsole.exe",
+  );
+  fs.unlinkSync(missingMember);
+  const incomplete = probeInstalledResources(installPath);
+  assert.equal(incomplete.status, 1, "installed resource validation must reject an incomplete Herdr bundle");
+  assert.match(`${incomplete.stdout}\n${incomplete.stderr}`, /packaged Herdr Windows bundle files/u);
+  await install(currentInstaller, installPath);
+  assert.equal(fileVersion(appExecutable(installPath)), currentVersion);
+  verifyInstalledResources(installPath);
+  verifyInstalledHerdr(installPath, "repaired");
+  reports.push(validateStartup(appExecutable(installPath), isolated, currentVersion, "repaired"));
 
   await install(previousInstaller, installPath);
   assert.equal(fileVersion(appExecutable(installPath)), previousVersion);
@@ -68,7 +92,14 @@ try {
       currentInstallerSha256: sha256(currentInstaller),
       helper,
       reports,
-      scenarios: ["previous packaged startup", "cross-version upgrade", "direct rollback", "official uninstall"],
+      scenarios: [
+        "previous packaged startup",
+        "cross-version upgrade",
+        "installed Herdr integrity and native lifecycle",
+        "same-version missing-file repair",
+        "direct rollback",
+        "official uninstall",
+      ],
     }),
   );
 } finally {
@@ -116,6 +147,46 @@ function compareVersions(left, right) {
     if (delta !== 0) return delta;
   }
   return 0;
+}
+
+function probeInstalledResources(directory) {
+  return spawnSync(
+    process.execPath,
+    [
+      "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
+      path.join(import.meta.dirname, "verify-packaged-toolchains.mjs"),
+      "win32-x64",
+      directory,
+      "--static",
+      "--release-helper",
+    ],
+    { encoding: "utf8", timeout: 60_000, windowsHide: true },
+  );
+}
+
+function verifyInstalledResources(directory) {
+  const result = probeInstalledResources(directory);
+  if (result.error || result.signal || result.status !== 0) {
+    throw new Error(
+      `installed resources failed verification: ${result.error?.message ?? result.signal ?? result.status}\n${[result.stdout, result.stderr].filter(Boolean).join("\n").slice(-4000)}`,
+      { cause: result.error },
+    );
+  }
+  console.log("[nsis-upgrade] installed resources and complete Herdr bundle verified");
+}
+
+function verifyInstalledHerdr(directory, phase) {
+  console.log(`[nsis-upgrade] verifying ${phase} Herdr activation, Agent startup, and cleanup`);
+  execFileSync(
+    process.execPath,
+    [
+      "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON",
+      path.join(import.meta.dirname, "test-herdr-windows-e2e.mjs"),
+      "--resources",
+      path.join(directory, "resources"),
+    ],
+    { stdio: "inherit", timeout: 180_000, windowsHide: true },
+  );
 }
 
 async function install(installer, directory) {

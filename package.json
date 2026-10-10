@@ -116,7 +116,7 @@
     "@types/yauzl": "3.4.0",
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "43.1.1",
-    "electron-builder": "26.15.3",
+    "electron-builder": "26.15.6",
     "esbuild": "0.27.7",
     "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",

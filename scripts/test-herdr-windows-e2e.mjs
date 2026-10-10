@@ -13,8 +13,15 @@ if (process.platform !== "win32" || process.arch !== "x64") {
 }
 
 const root = path.resolve(import.meta.dirname, "..");
-const catalogPath = path.join(root, "build", "herdr", "runtime-catalog.json");
-const bundledRoot = path.join(root, "build", "herdr", "bin", "win32-x64");
+const argumentsList = process.argv.slice(2);
+if (argumentsList.length !== 0 && (argumentsList.length !== 2 || argumentsList[0] !== "--resources")) {
+  throw new Error("Usage: test-herdr-windows-e2e.mjs [--resources <installed-application-resources>]");
+}
+const resourcesRoot = argumentsList.length ? fs.realpathSync.native(path.resolve(argumentsList[1])) : undefined;
+const herdrRoot = resourcesRoot ? path.join(resourcesRoot, "herdr") : path.join(root, "build", "herdr");
+const catalogPath = path.join(herdrRoot, "runtime-catalog.json");
+const bundledRoot = path.join(herdrRoot, "bin", "win32-x64");
+console.log(`[herdr-windows-e2e] testing ${resourcesRoot ? "installed application" : "build"} resources`);
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-windows-e2e-"));
 const tempRoot = fs.realpathSync.native(os.tmpdir());
 const testRoot = fs.realpathSync.native(directory);
