@@ -157,6 +157,7 @@ export function registerAppProtocol(): void {
       scheme: "app",
       privileges: {
         standard: true,
+        codeCache: true,
         secure: true,
         supportFetchAPI: true,
         corsEnabled: true,

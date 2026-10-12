@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import {
   linkifyLocalFileText,
+  createMarkdownRehypePlugins,
   markdownRehypePlugins,
   markdownRemarkPlugins,
   remarkLocalFileLinks,
@@ -15,11 +16,14 @@ import {
 
 test("Markdown plugins preserve GFM/math, add AST path links, and sanitize raw HTML", () => {
   assert.deepEqual(markdownRemarkPlugins, [remarkGfm, remarkMath, remarkLocalFileLinks]);
-  assert.equal(markdownRehypePlugins[0], rehypeRaw);
-  assert.equal(markdownRehypePlugins[1][0], rehypeSanitize);
-  assert.equal(markdownRehypePlugins[2][0], rehypeKatex);
-  assert.deepEqual(markdownRehypePlugins[2][1], { throwOnError: false, strict: false });
-  const schema = markdownRehypePlugins[1][1];
+  assert.equal(markdownRehypePlugins.length, 1);
+  assert.equal(markdownRehypePlugins[0][0], rehypeSanitize);
+  const richPlugins = createMarkdownRehypePlugins({ raw: rehypeRaw, katex: rehypeKatex });
+  assert.equal(richPlugins[0], rehypeRaw);
+  assert.equal(richPlugins[1][0], rehypeSanitize);
+  assert.equal(richPlugins[2][0], rehypeKatex);
+  assert.deepEqual(richPlugins[2][1], { throwOnError: false, strict: false });
+  const schema = richPlugins[1][1];
   assert.deepEqual(schema.strip.slice(-4), ["iframe", "object", "style", "form"]);
   assert.ok(schema.protocols.href.includes("file"));
 });

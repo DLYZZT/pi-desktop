@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { importTestBundle } from "#test-bundle";
 
-const { MarkdownBody } = await importTestBundle("markdown-body-math", {
-  entryPoints: [fileURLToPath(new URL("./MarkdownBody.tsx", import.meta.url))],
+const { MarkdownBody, loadMarkdownPlugins } = await importTestBundle("markdown-body-math", {
+  stdin: {
+    contents:
+      'export { MarkdownBody } from "./MarkdownBody.tsx"; export { loadMarkdownPlugins } from "@/lib/markdown";',
+    resolveDir: import.meta.dirname,
+    loader: "tsx",
+  },
   tsconfig: "tsconfig.renderer.json",
   packages: "external",
   define: { "import.meta.env.DEV": "false" },
@@ -14,6 +18,8 @@ const { MarkdownBody } = await importTestBundle("markdown-body-math", {
     {
       name: "plain-code-highlighter",
       setup(build) {
+        build.onResolve({ filter: /katex\/dist\/katex\.min\.css$/ }, () => ({ path: "css", namespace: "test-css" }));
+        build.onLoad({ filter: /.*/, namespace: "test-css" }, () => ({ contents: "", loader: "js" }));
         build.onResolve({ filter: /^@\/lib\/syntax-highlight$/ }, (args) => ({
           path: args.path,
           namespace: "test-highlighter",
@@ -27,6 +33,10 @@ const { MarkdownBody } = await importTestBundle("markdown-body-math", {
     },
   ],
 });
+
+// Static rendering does not run effects. Load the optional plugins first for
+// these formatting regressions; the lazy-loading tests exercise the effects.
+await loadMarkdownPlugins({ math: true, html: true });
 
 function render(markdown) {
   return renderToStaticMarkup(createElement(MarkdownBody, null, markdown));

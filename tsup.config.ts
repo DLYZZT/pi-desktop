@@ -58,7 +58,8 @@ export default defineConfig([
       // Keep the adjacent silk.wasm asset resolvable from the packaged dependency.
       "silk-wasm",
     ],
-    splitting: false,
+    // Preserve lazy adapter boundaries, including external SDK imports.
+    splitting: true,
     treeshake: true,
     define: piVersionDefine,
     banner: {

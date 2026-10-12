@@ -5,10 +5,12 @@ import test from "node:test";
 test("renderer loads KaTeX CSS from the installed package without runtime CDN links", () => {
   const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
   const main = readFileSync(new URL("./main.tsx", import.meta.url), "utf8");
+  const math = readFileSync(new URL("./lib/markdown-math.ts", import.meta.url), "utf8");
   const katexCss = readFileSync(new URL("../../node_modules/katex/dist/katex.min.css", import.meta.url), "utf8");
 
   assert.doesNotMatch(html, /https?:\/\//i);
-  assert.match(main, /import\s+["']katex\/dist\/katex\.min\.css["']/);
+  assert.doesNotMatch(main, /katex/);
+  assert.match(math, /import\s+["']katex\/dist\/katex\.min\.css["']/);
   assert.match(katexCss, /@font-face/);
   assert.match(katexCss, /url\(fonts\/KaTeX_[^)]+\.woff2\)/);
 });

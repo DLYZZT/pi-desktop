@@ -87,12 +87,12 @@ export function createChannelHandlers(
     loginWait: async (params) => channelManager.waitLogin(params.channel, params.sessionKey),
 
     loginSubmitCode: async (params) => {
-      channelManager.submitLoginCode(params.channel, params.sessionKey, params.code);
+      await channelManager.submitLoginCode(params.channel, params.sessionKey, params.code);
       return { ok: true as const };
     },
 
     loginCancel: async (params) => {
-      channelManager.cancelLogin(params.channel, params.sessionKey);
+      await channelManager.cancelLogin(params.channel, params.sessionKey);
       return { ok: true as const };
     },
 

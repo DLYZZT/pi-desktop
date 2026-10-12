@@ -15,7 +15,7 @@ import { SyntaxHighlighter, vs, vscDarkPlus } from "@/lib/syntax-highlight";
 import { useTheme } from "@/hooks/useTheme";
 import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { resolveLocalFileHref } from "@/lib/file-links";
-import { markdownRehypePlugins, markdownRemarkPlugins } from "@/lib/markdown";
+import { useMarkdownPlugins } from "@/lib/markdown";
 import { shouldHighlightCode } from "@/lib/code-highlight-policy";
 import { mermaidCacheKey, renderMermaidSvg } from "@/lib/mermaid-renderer";
 import { SessionProfiler } from "./SessionProfiler";
@@ -177,6 +177,7 @@ export const MarkdownBody = memo(function MarkdownBody({
     () => (lightweightPreview ? "" : normalizeDisplayMath(children)),
     [children, lightweightPreview],
   );
+  const { remarkPlugins, rehypePlugins } = useMarkdownPlugins(normalizedMarkdown);
   const renderContext = useMemo(
     () => ({ isStreaming, cwd, imageBasePath, sourceSessionId, onOpenFile }),
     [cwd, imageBasePath, isStreaming, onOpenFile, sourceSessionId],
@@ -192,8 +193,8 @@ export const MarkdownBody = memo(function MarkdownBody({
             </div>
           ) : (
             <ReactMarkdown
-              remarkPlugins={markdownRemarkPlugins}
-              rehypePlugins={markdownRehypePlugins}
+              remarkPlugins={remarkPlugins}
+              rehypePlugins={rehypePlugins}
               urlTransform={fileAwareUrlTransform}
               components={markdownComponents}
             >

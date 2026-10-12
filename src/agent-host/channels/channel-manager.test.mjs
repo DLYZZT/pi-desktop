@@ -149,6 +149,23 @@ test("concurrent starts create only one adapter runtime per account", async () =
   await Promise.all([pendingStart, pendingStop]);
   assert.equal(fake.startCount, 2, "a stop during credential lookup must cancel the pending adapter launch");
   assert.equal(fake.activeCount, 0);
+
+  blockSecretReads = false;
+  let releaseAdapter;
+  const adapterGate = new Promise((resolve) => {
+    releaseAdapter = resolve;
+  });
+  registry.get = async () => {
+    await adapterGate;
+    return fake.adapter;
+  };
+  const loadingStart = manager.startAccount("wx-concurrent");
+  await new Promise((resolve) => setImmediate(resolve));
+  const loadingStop = manager.stopAccount("wx-concurrent");
+  releaseAdapter();
+  await Promise.all([loadingStart, loadingStop]);
+  assert.equal(fake.startCount, 2, "a stop during lazy adapter loading must cancel the pending launch");
+  assert.equal(fake.activeCount, 0);
   await manager.shutdown();
 });
 

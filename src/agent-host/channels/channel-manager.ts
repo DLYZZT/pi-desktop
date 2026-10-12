@@ -293,7 +293,8 @@ export class ChannelManager {
     if (!secret) throw new Error("消息渠道凭证尚未写入系统安全存储");
 
     try {
-      const probe = await this.registry.get(account.channel).probe(account, secret);
+      const adapter = await this.registry.get(account.channel);
+      const probe = await adapter.probe(account, secret);
       if (!probe.ok) throw new Error(probe.message);
       const providerAccountId = probe.providerAccountId ?? secret.providerAccountId;
       const providerUsername = probe.providerUsername ?? secret.providerUsername;
@@ -357,7 +358,8 @@ export class ChannelManager {
       this.emitStatus(account, { state: "error", connected: false, lastError: message });
       throw new Error(message);
     }
-    const adapter = this.registry.get(account.channel);
+    const adapter = await this.registry.get(account.channel);
+    if (controller.signal.aborted) return;
     this.emitStatus(account, { state: "starting", connected: false, lastError: undefined });
     const task = adapter
       .start({
@@ -416,12 +418,12 @@ export class ChannelManager {
     if (!account) throw new Error("Channel account not found");
     const secret = await this.getSecret(account);
     if (!secret) return { ok: false, message: "消息渠道账号尚未配置凭证", accountId };
-    return this.registry.get(account.channel).probe(account, secret);
+    return (await this.registry.get(account.channel)).probe(account, secret);
   }
 
   async startLogin(request: ChannelLoginStartRequest): Promise<ChannelLoginEvent> {
     const channel = request.channel;
-    const adapter = this.registry.get(channel);
+    const adapter = await this.registry.get(channel);
     if (!adapter.startLogin) throw new Error(`${channel} does not use interactive login`);
     const localTokens: string[] = [];
     if (channel === "weixin") {
@@ -464,9 +466,10 @@ export class ChannelManager {
   }
 
   private async waitLoginOnce(channel: ChannelId, sessionKey: string): Promise<ChannelLoginEvent> {
-    const pollLogin = this.registry.get(channel).pollLogin;
+    const adapter = await this.registry.get(channel);
+    const pollLogin = adapter.pollLogin;
     if (!pollLogin) throw new Error(`${channel} does not use interactive login`);
-    const result = await pollLogin.call(this.registry.get(channel), sessionKey);
+    const result = await pollLogin.call(adapter, sessionKey);
     if (result.credential && result.event.accountId) {
       try {
         const accountId = result.event.accountId;
@@ -548,8 +551,7 @@ export class ChannelManager {
           return event;
         }
 
-        const probe = await this.registry
-          .get(channel)
+        const probe = await adapter
           .probe(provisional, credential)
           .catch(() => ({ ok: false as const, accountId, message: "无法验证机器人身份，请检查网络后重试。" }));
         if (!probe.ok) {
@@ -606,16 +608,18 @@ export class ChannelManager {
     return result.event;
   }
 
-  submitLoginCode(channel: ChannelId, sessionKey: string, code: string): void {
-    const submit = this.registry.get(channel).submitLoginCode;
+  async submitLoginCode(channel: ChannelId, sessionKey: string, code: string): Promise<void> {
+    const adapter = await this.registry.get(channel);
+    const submit = adapter.submitLoginCode;
     if (!submit) throw new Error(`${channel} does not accept login verification codes`);
-    submit.call(this.registry.get(channel), sessionKey, code);
+    submit.call(adapter, sessionKey, code);
   }
 
-  cancelLogin(channel: ChannelId, sessionKey: string): void {
-    const cancel = this.registry.get(channel).cancelLogin;
+  async cancelLogin(channel: ChannelId, sessionKey: string): Promise<void> {
+    const adapter = await this.registry.get(channel);
+    const cancel = adapter.cancelLogin;
     if (!cancel) throw new Error(`${channel} does not use interactive login`);
-    cancel.call(this.registry.get(channel), sessionKey);
+    cancel.call(adapter, sessionKey);
     const event: ChannelLoginEvent = {
       channel,
       sessionKey,
@@ -635,8 +639,8 @@ export class ChannelManager {
     const secret = await this.getSecret(account).catch(() => null);
     const contextToken = this.state.getContextToken(account.id, pairing.peerId);
     if (secret && (account.channel !== "weixin" || contextToken)) {
-      await this.registry
-        .get(account.channel)
+      const adapter = await this.registry.get(account.channel);
+      await adapter
         .send({
           account,
           secret,
@@ -677,9 +681,8 @@ export class ChannelManager {
     if (account.channel === "weixin" && !contextToken) {
       throw new Error("该用户尚未向机器人发送消息，无法建立回复上下文");
     }
-    const receipt = await this.registry
-      .get(account.channel)
-      .send({ account, secret, peerId, text: message, contextToken });
+    const adapter = await this.registry.get(account.channel);
+    const receipt = await adapter.send({ account, secret, peerId, text: message, contextToken });
     this.state.addDelivery(receipt);
     return { ok: true, messageId: receipt.messageId };
   }
@@ -822,7 +825,8 @@ export class ChannelManager {
       created = true;
     }
     if (!created) return;
-    const receipt = await this.registry.get(account.channel).send({
+    const adapter = await this.registry.get(account.channel);
+    const receipt = await adapter.send({
       account,
       secret,
       peerId: envelope.peer.id,
@@ -866,7 +870,8 @@ export class ChannelManager {
       }
       if (!envelope.text.trim() && envelope.attachments.length === 0) {
         const label = "消息内容为空。";
-        const receipt = await this.registry.get(account.channel).send({
+        const adapter = await this.registry.get(account.channel);
+        const receipt = await adapter.send({
           account,
           secret,
           peerId: envelope.peer.id,
@@ -880,7 +885,7 @@ export class ChannelManager {
       }
 
       const binding = this.resolveBinding(account, envelope);
-      const adapter = this.registry.get(account.channel);
+      const adapter = await this.registry.get(account.channel);
       let stagedAttachments: StagedInboundAttachment[] = [];
       if (envelope.attachments.length > 0 && adapter.downloadInbound) {
         try {

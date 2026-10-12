@@ -23,7 +23,8 @@ import { SessionPresentationStore } from "@/lib/session-presentation-store";
 import { FileExplorer } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
-import { SettingsConfig, type SettingsTab } from "./SettingsConfig";
+import type { SettingsTab } from "./SettingsConfig";
+import { SettingsConfig, TerminalDock } from "./DeferredPanels";
 import { useMcpSettingsRequests } from "../hooks/useMcpSettingsRequests";
 import { QuickChannelBinding } from "./channels/QuickChannelBinding";
 import { BrowserDock } from "./browser/BrowserDock";
@@ -58,7 +59,6 @@ import { worktreePathsEqual } from "@shared/worktree-path";
 import type { BrowserAgentAuthorizationRequest, BrowserAgentAuthorizationDecision } from "../../contract/browser";
 import { isManagedProcessActiveState } from "@contract/processes";
 import { QuickHerdrFleet } from "./herdr/QuickHerdrFleet";
-import { TerminalDock } from "./herdr/TerminalDock";
 import type { HerdrPane } from "@contract/herdr";
 
 const EXPLORER_TAB_ID = "explorer";

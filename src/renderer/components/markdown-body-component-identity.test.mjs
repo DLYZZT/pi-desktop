@@ -31,7 +31,7 @@ const { MarkdownBody, getMarkdownComponentIdentityForTest, parseStats } = await 
                   : args.path === "@/lib/file-links"
                     ? "export const resolveLocalFileHref = () => null;"
                     : args.path === "@/lib/markdown"
-                      ? "export const parseStats = { count: 0 }; export const markdownRehypePlugins = []; export const markdownRemarkPlugins = [() => () => { parseStats.count++; }];"
+                      ? "export const parseStats = { count: 0 }; const remarkPlugins = [() => () => { parseStats.count++; }]; export const useMarkdownPlugins = () => ({ remarkPlugins, rehypePlugins: [] });"
                       : args.path === "@/lib/code-highlight-policy"
                         ? "export const shouldHighlightCode = () => false;"
                         : args.path === "@/lib/chat-appearance"

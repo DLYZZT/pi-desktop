@@ -1,6 +1,6 @@
 import type { Options as ReactMarkdownOptions } from "react-markdown";
-import rehypeKatex from "rehype-katex";
-import rehypeRaw from "rehype-raw";
+import type rehypeKatex from "rehype-katex";
+import type rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -23,8 +23,24 @@ type MarkdownNode = {
   type: string;
   value?: string;
   url?: string;
+  lang?: string;
   children?: MarkdownNode[];
 };
+
+export type MarkdownFeatures = { math: boolean; html: boolean };
+
+// Inspect the parsed tree so code examples, escaped dollars, and autolinks do
+// not load optional renderers. This runs as part of the existing remark pass.
+export function collectMarkdownFeatures(node: MarkdownNode, features: MarkdownFeatures): void {
+  if (node.type === "math" || node.type === "inlineMath" || (node.type === "code" && node.lang === "math")) {
+    features.math = true;
+  }
+  if (node.type === "html") {
+    features.html = true;
+    if (/\b(?:language-math|math-inline|math-display)\b/.test(node.value ?? "")) features.math = true;
+  }
+  for (const child of node.children ?? []) collectMarkdownFeatures(child, features);
+}
 
 const ABSOLUTE_PATH_PREFIX = String.raw`(?:file:\/\/|[A-Za-z]:[\\/]|\\\\|\/)`;
 const PATH_LIST_SEPARATOR = String.raw`(?:\s+(?:and|or)\s+|\s*[和与及或]\s*)(?=${ABSOLUTE_PATH_PREFIX})`;
@@ -111,8 +127,19 @@ export const markdownRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [
   remarkLocalFileLinks,
 ];
 
-export const markdownRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
-  rehypeRaw,
-  [rehypeSanitize, markdownSanitizeSchema],
-  [rehypeKatex, { throwOnError: false, strict: false }],
-];
+export type OptionalMarkdownPlugins = {
+  raw?: typeof rehypeRaw;
+  katex?: typeof rehypeKatex;
+};
+
+export function createMarkdownRehypePlugins({ raw, katex }: OptionalMarkdownPlugins = {}): NonNullable<
+  ReactMarkdownOptions["rehypePlugins"]
+> {
+  const plugins: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [];
+  if (raw) plugins.push(raw);
+  plugins.push([rehypeSanitize, markdownSanitizeSchema]);
+  if (katex) plugins.push([katex, { throwOnError: false, strict: false }]);
+  return plugins;
+}
+
+export const markdownRehypePlugins = createMarkdownRehypePlugins();
