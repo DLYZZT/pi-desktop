@@ -1,6 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import path from "node:path";
-import { filterDesktopToolNames, validateDesktopToolNames } from "../../shared/pi-tool-policy.ts";
+import {
+  DESKTOP_TOOL_POLICY_REVISION,
+  filterStoredToolNames,
+  validateDesktopToolNames,
+} from "../../shared/pi-tool-policy.ts";
 import type { ChannelAccountConfig, ChannelBinding, ChannelId, FeishuDomain } from "../../shared/channel-types";
 
 type ChannelConfigFile = {
@@ -59,7 +63,7 @@ function defaultChannelName(channel: ChannelId): string {
   return "微信";
 }
 
-function normalizeAccount(value: ChannelAccountConfig, touchUpdatedAt = false): ChannelAccountConfig {
+function normalizeAccount(value: ChannelAccountConfig, platform: string, touchUpdatedAt = false): ChannelAccountConfig {
   const now = new Date().toISOString();
   const channel = normalizeChannel(value.channel);
   return {
@@ -81,13 +85,14 @@ function normalizeAccount(value: ChannelAccountConfig, touchUpdatedAt = false): 
     requireMention: value.requireMention !== false,
     commandsEnabled: value.commandsEnabled === true,
     ...(value.defaultCwd?.trim() ? { defaultCwd: path.resolve(value.defaultCwd.trim()) } : {}),
-    toolNames: filterDesktopToolNames(readStringArray(value.toolNames)),
+    toolNames: filterStoredToolNames(readStringArray(value.toolNames), value.policyRevision, platform),
+    ...(value.policyRevision === DESKTOP_TOOL_POLICY_REVISION ? { policyRevision: value.policyRevision } : {}),
     createdAt: value.createdAt || now,
     updatedAt: touchUpdatedAt ? now : value.updatedAt || now,
   };
 }
 
-function normalizeBinding(value: ChannelBinding): ChannelBinding {
+function normalizeBinding(value: ChannelBinding, platform: string): ChannelBinding {
   const now = new Date().toISOString();
   return {
     id: value.id.trim(),
@@ -98,7 +103,8 @@ function normalizeBinding(value: ChannelBinding): ChannelBinding {
     ...(value.threadId?.trim() ? { threadId: value.threadId.trim() } : {}),
     ...(value.sessionId?.trim() ? { sessionId: value.sessionId.trim() } : {}),
     cwd: path.resolve(value.cwd),
-    toolNames: filterDesktopToolNames(readStringArray(value.toolNames)),
+    toolNames: filterStoredToolNames(readStringArray(value.toolNames), value.policyRevision, platform),
+    ...(value.policyRevision === DESKTOP_TOOL_POLICY_REVISION ? { policyRevision: value.policyRevision } : {}),
     createdAt: value.createdAt || now,
     lastUsedAt: value.lastUsedAt || now,
   };
@@ -107,9 +113,11 @@ function normalizeBinding(value: ChannelBinding): ChannelBinding {
 export class ChannelConfigStore {
   private data: ChannelConfigFile;
   private readonly filePath: string;
+  private readonly platform: NodeJS.Platform;
 
-  constructor(filePath: string) {
+  constructor(filePath: string, platform: NodeJS.Platform = process.platform) {
     this.filePath = filePath;
+    this.platform = platform;
     this.data = this.read();
   }
 
@@ -123,8 +131,12 @@ export class ChannelConfigStore {
       }
       const migrated = {
         version: 1 as const,
-        accounts: Array.isArray(parsed.accounts) ? parsed.accounts.map((account) => normalizeAccount(account)) : [],
-        bindings: Array.isArray(parsed.bindings) ? parsed.bindings.map(normalizeBinding) : [],
+        accounts: Array.isArray(parsed.accounts)
+          ? parsed.accounts.map((account) => normalizeAccount(account, this.platform))
+          : [],
+        bindings: Array.isArray(parsed.bindings)
+          ? parsed.bindings.map((binding) => normalizeBinding(binding, this.platform))
+          : [],
       };
       if (parsed.version === undefined) atomicWrite(this.filePath, migrated);
       return migrated;
@@ -151,8 +163,12 @@ export class ChannelConfigStore {
   }
 
   upsertAccount(account: ChannelAccountConfig): ChannelAccountConfig {
-    validateDesktopToolNames(account.toolNames);
-    const normalized = normalizeAccount(account, true);
+    validateDesktopToolNames(account.toolNames, this.platform);
+    const normalized = normalizeAccount(
+      { ...account, policyRevision: DESKTOP_TOOL_POLICY_REVISION },
+      this.platform,
+      true,
+    );
     if (!normalized.id) throw new Error("Channel account id is required");
     const index = this.data.accounts.findIndex((item) => item.id === normalized.id);
     if (index >= 0) {
@@ -176,8 +192,8 @@ export class ChannelConfigStore {
   }
 
   upsertBinding(binding: ChannelBinding): ChannelBinding {
-    validateDesktopToolNames(binding.toolNames);
-    const normalized = normalizeBinding(binding);
+    validateDesktopToolNames(binding.toolNames, this.platform);
+    const normalized = normalizeBinding({ ...binding, policyRevision: DESKTOP_TOOL_POLICY_REVISION }, this.platform);
     if (!normalized.id || !normalized.accountId || !normalized.peerId) throw new Error("Invalid channel binding");
     const index = this.data.bindings.findIndex((item) => item.id === normalized.id);
     if (index >= 0) {

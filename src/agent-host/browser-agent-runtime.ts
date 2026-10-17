@@ -624,6 +624,8 @@ function detectBypass(command: string, denied: DeniedTarget[]): { target: Denied
   if (typeof command !== "string" || !command || command.length > 2_000_000) return undefined;
   const routeTool =
     /(?:^|[;&|(\s])(?:curl|wget)\b/i.test(command) ||
+    /(?:^|[;&|(\s])(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod|Start-Process)\b/i.test(command) ||
+    /\[(?:System\.)?Net\.(?:WebClient|Http\.HttpClient)\]/i.test(command) ||
     /\b(?:playwright|puppeteer)\b/i.test(command) ||
     /(?:^|[;&|(\s])(?:open|start|xdg-open)\b/i.test(command) ||
     /file:\/\//i.test(command);

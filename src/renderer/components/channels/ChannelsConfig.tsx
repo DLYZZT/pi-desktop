@@ -1,5 +1,6 @@
+import { ChannelToolSelection } from "./ChannelToolSelection";
 import { QRCodeSVG } from "@rc-component/qrcode";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   ChannelAccountConfig,
   ChannelAccountView,
@@ -34,11 +35,6 @@ export const FEISHU_PERMISSION_IMPORT_JSON = JSON.stringify(
   null,
   2,
 );
-const TOOL_PRESETS = {
-  none: [],
-  read: ["read", "grep", "find", "ls"],
-  full: ["read", "bash", "edit", "write", "grep", "find", "ls"],
-} as const;
 
 function buttonStyle(primary = false): React.CSSProperties {
   return {
@@ -636,12 +632,6 @@ export function AccountCard({
     const timer = setTimeout(() => setProbeFeedback(null), 8_000);
     return () => clearTimeout(timer);
   }, [probeFeedback]);
-  const preset = useMemo(() => {
-    const value = [...draft.toolNames].sort().join(",");
-    if (value === [...TOOL_PRESETS.read].sort().join(",")) return "read";
-    if (value === [...TOOL_PRESETS.full].sort().join(",")) return "full";
-    return "none";
-  }, [draft.toolNames]);
 
   const handleProbe = async () => {
     setProbing(true);
@@ -865,24 +855,11 @@ export function AccountCard({
           </label>
         </Field>
         <Field label={t("defaultTools", "Default tools")}>
-          <select
-            aria-label={t("defaultTools", "Default tools")}
-            style={inputStyle}
-            value={preset}
-            onChange={(event) =>
-              setDraft({ ...draft, toolNames: [...TOOL_PRESETS[event.target.value as keyof typeof TOOL_PRESETS]] })
-            }
-          >
-            <option value="none">{t("toolPresetNone", "No tools (recommended)")}</option>
-            <option value="read">{t("toolPresetRead", "Read-only tools")}</option>
-            <option value="full">{t("toolPresetFull", "Full coding tools")}</option>
-          </select>
-          <span style={{ color: "var(--text-dim)", fontSize: 10, lineHeight: 1.5 }}>
-            {t(
-              "defaultToolsHint",
-              "Used for new channel sessions and synchronized to sessions currently bound to this account when saved.",
-            )}
-          </span>
+          <ChannelToolSelection
+            toolNames={draft.toolNames}
+            cwd={draft.defaultCwd}
+            onChange={(toolNames) => setDraft({ ...draft, toolNames })}
+          />
         </Field>
         <Field label={t("defaultProjectDirectory", "Default project directory")}>
           <div style={{ display: "flex", gap: 6 }}>
@@ -1009,6 +986,7 @@ export function AccountCard({
               draft.groupPolicy === "open" ||
               draft.commandsEnabled === true ||
               draft.toolNames.includes("bash") ||
+              draft.toolNames.includes("powershell") ||
               draft.toolNames.includes("write");
             if (
               elevated &&

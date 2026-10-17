@@ -1,5 +1,6 @@
 // Translation entries owned by the composer domain.
 export const enUS: Record<string, string> = {
+  shellToolUnavailable: "Unavailable; configure Developer tools and reload",
   attachLocalFiles: "Add images or local file references",
   attachLocalFilesDescription:
     "Add images or local file references. The agent reads absolute paths on this computer; moved files, remote agents, or sandboxes may not be able to access them.",
@@ -79,6 +80,7 @@ export const enUS: Record<string, string> = {
 };
 
 export const zhCN: Record<string, string> = {
+  shellToolUnavailable: "不可用；请在开发工具中配置并重载会话",
   attachLocalFiles: "添加图片或本地文件引用",
   attachLocalFilesDescription:
     "添加图片或本地文件引用。Agent 会读取本机绝对路径；文件移动后、远程 Agent 或沙箱环境可能无法访问。",
@@ -156,6 +158,7 @@ export const zhCN: Record<string, string> = {
 };
 
 export const zhTW: Record<string, string> = {
+  shellToolUnavailable: "無法使用；請在開發工具中設定並重新載入工作階段",
   attachLocalFiles: "新增圖片或本機檔案參考",
   attachLocalFilesDescription:
     "新增圖片或本機檔案參考。Agent 會讀取本機絕對路徑；檔案移動後、遠端 Agent 或沙盒環境可能無法存取。",

@@ -150,6 +150,43 @@ async function mount(t) {
   };
 }
 
+test("Windows shell choices expose PowerShell, disable a missing Bash and allow revoking an unavailable grant", async (t) => {
+  const f = await mount(t);
+  await f.update({
+    shellTools: {
+      tools: [
+        { name: "bash", available: false, active: false },
+        { name: "powershell", available: true, active: false },
+      ],
+    },
+    onLoadShellTools: () => f.actions.push(["load-shells"]),
+    onShellToolChange: (name, enabled) => f.actions.push([name, enabled]),
+  });
+  await f.clickLabel("Change permission settings");
+  assert.ok(f.actions.some(([type]) => type === "load-shells"));
+  const inputs = f.root.findAllByType("input");
+  const powershell = inputs.find((input) => text(input.parent).includes("PowerShell"));
+  const bash = inputs.find((input) => text(input.parent).includes("Bash"));
+  assert.equal(bash.props.disabled, true);
+  assert.equal(powershell.props.disabled, false);
+  await act(async () => powershell.props.onChange({ target: { checked: true } }));
+  assert.deepEqual(f.actions.at(-1), ["powershell", true]);
+  await f.update({ shellTools: { tools: [{ name: "powershell", available: false, active: true }] } });
+  assert.equal(f.root.findByType("input").props.disabled, false);
+  assert.match(text(f.root), /configure Developer tools and reload/);
+});
+
+test("choosing the displayed no-tools preset still sends a fresh revocation intent", async (t) => {
+  const f = await mount(t);
+  await f.update({ toolPreset: "none" });
+  await f.clickLabel("Change permission settings");
+  const selected = f.root.find(
+    (node) => node.type === "button" && node.props.role === "menuitemradio" && node.props["aria-checked"] === true,
+  );
+  await act(async () => selected.props.onClick());
+  assert.deepEqual(f.actions.at(-1), ["permission", "none"]);
+});
+
 test("model menus preserve provider identity, cancel an active refresh on close and release positioning observers", async (t) => {
   const f = await mount(t);
   await f.clickText("Chosen model");

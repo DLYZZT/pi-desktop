@@ -122,7 +122,11 @@ const requiredMarkers = [
   ["src/agent-host/credential-sync.ts", "recoverCommittedCredential"],
   ["src/renderer/lib/models-config-state.ts", "samplingParams"],
   ["src/agent-host/rpc-manager.ts", "services.diagnostics"],
-  ["src/agent-host/rpc-manager.ts", "excludeTools: [...EXCLUDED_PI_TOOLS]"],
+  ["src/agent-host/rpc-manager.ts", "excludeTools: [...excludedPiTools(process.platform)]"],
+  ["src/agent-host/desktop-session-tools.ts", 'platform === "win32"'],
+  ["src/agent-host/toolchain-powershell.ts", '"-EncodedCommand"'],
+  ["src/agent-host/toolchain-powershell.ts", "defaultActive: false"],
+  ["src/agent-host/session-tool-store.ts", "policyRevision: DESKTOP_TOOL_POLICY_REVISION"],
   ["src/agent-host/session-readonly.ts", "SessionManager.inMemory"],
 ];
 for (const [relativePath, marker] of requiredMarkers) {

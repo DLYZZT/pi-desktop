@@ -6,7 +6,6 @@ import { readLegacyMcpEvidence } from "./legacy-permissions";
 import type { SessionExecutionHistory } from "../session-execution-history";
 import {
   getDesktopSessionToolNames,
-  setDesktopSessionToolNames,
   setDesktopSessionMcpExecutionTools,
   getDesktopSessionMcpDeclarations,
   setDesktopSessionMcpDeclarations,
@@ -143,13 +142,13 @@ export function desktopMcpExtensions(
             orchestration: () => getDefaultStore().getOrchestration(ctx.sessionManager.getSessionId()),
             setDeclarations: (names) => {
               const id = ctx.sessionManager.getSessionId();
-              if (getDesktopSessionToolNames(id) === undefined) setDesktopSessionToolNames(id, pi.getActiveTools());
+              if (getDesktopSessionToolNames(id) === undefined) store.setFromActive(id, pi.getActiveTools());
               setDesktopSessionMcpDeclarations(id, names);
             },
             setGrants: (names) => {
               const id = ctx.sessionManager.getSessionId();
               if (getDesktopSessionToolNames(id) === undefined)
-                setDesktopSessionToolNames(
+                store.setFromActive(
                   id,
                   policy
                     .describe()

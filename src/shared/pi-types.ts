@@ -29,6 +29,7 @@ export interface ToolInfo {
   active?: boolean;
   callable?: boolean;
   executionAllowed?: boolean;
+  available?: boolean;
 }
 
 export interface NavigateTreeResult {

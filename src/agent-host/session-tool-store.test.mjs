@@ -122,7 +122,7 @@ test("execution grants are optional v1 metadata, survive reopen and ordinary sel
   const dir = mkdtempSync(path.join(tmpdir(), "pi-execution-grants-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const filename = path.join(dir, "session-tools.json");
-  const store = new DesktopSessionToolStore(filename);
+  const store = new DesktopSessionToolStore(filename, "darwin");
   store.set("fixture", ["read"]);
   assert.equal(store.getExecution("fixture"), undefined);
   store.setExecution("fixture", [" deferred ", "deferred", "powershell"]);
@@ -131,11 +131,11 @@ test("execution grants are optional v1 metadata, survive reopen and ordinary sel
   granted.push("other");
   assert.deepEqual(store.getExecution("fixture"), ["deferred"]);
   store.set("fixture", ["read", "write"]);
-  assert.deepEqual(new DesktopSessionToolStore(filename).getExecution("fixture"), ["deferred"]);
+  assert.deepEqual(new DesktopSessionToolStore(filename, "darwin").getExecution("fixture"), ["deferred"]);
   store.set("fixture", []);
-  assert.deepEqual(new DesktopSessionToolStore(filename).getExecution("fixture"), []);
+  assert.deepEqual(new DesktopSessionToolStore(filename, "darwin").getExecution("fixture"), []);
   store.set("fixture", ["read"]);
-  assert.equal(new DesktopSessionToolStore(filename).getExecution("fixture"), undefined);
+  assert.equal(new DesktopSessionToolStore(filename, "darwin").getExecution("fixture"), undefined);
   assert.equal(JSON.parse(readFileSync(filename)).version, 1);
 });
 

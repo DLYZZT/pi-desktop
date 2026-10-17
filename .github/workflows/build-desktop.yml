@@ -169,6 +169,10 @@ jobs:
           npm run test:herdr-e2e
           xvfb-run --auto-servernum npm run test:herdr-desktop-e2e
 
+      - name: Validate native PowerShell 5.1 and 7
+        if: runner.os == 'Windows'
+        run: npm run test:windows-powershell
+
       - name: Run cross-platform quality checks (Windows)
         if: runner.os == 'Windows'
         run: |

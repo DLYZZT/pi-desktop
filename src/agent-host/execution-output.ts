@@ -11,11 +11,14 @@ export async function captureExecutionOutput(
   toolName: string,
   result: unknown,
 ): Promise<ExecutionPayload | undefined> {
-  if (toolName !== "bash" && toolName !== "codemode") return;
+  if (toolName !== "bash" && toolName !== "powershell" && toolName !== "codemode") return;
   const details = (result as { details?: { fullOutputPath?: unknown } } | undefined)?.details;
   const filename = details?.fullOutputPath;
   if (typeof filename !== "string") return;
-  const pattern = toolName === "bash" ? /^pi-bash-[a-f0-9]{16}\.log$/u : /^pi-codemode-[a-f0-9]{16}\.txt$/u;
+  const pattern =
+    toolName === "codemode"
+      ? /^pi-codemode-[a-f0-9]{16}\.txt$/u
+      : new RegExp(`^pi-${toolName}-[a-f0-9]{16}\\.log$`, "u");
   try {
     if (
       !path.isAbsolute(filename) ||

@@ -28,6 +28,7 @@ export interface ChannelAccountConfig {
   commandsEnabled?: boolean;
   defaultCwd?: string;
   toolNames: string[];
+  policyRevision?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -72,6 +73,7 @@ export interface ChannelBinding {
   sessionId?: string;
   cwd: string;
   toolNames: string[];
+  policyRevision?: number;
   createdAt: string;
   lastUsedAt: string;
 }

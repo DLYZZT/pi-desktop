@@ -1,6 +1,7 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import path from "node:path";
 
 const POLL_INTERVAL_MS = 20;
 const execFileAsync = promisify(execFile);
@@ -128,28 +129,37 @@ function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boole
   });
 }
 
-function taskkill(processId: number, force: boolean): Promise<void> {
+function taskkill(processId: number, force: boolean): Promise<boolean> {
   return new Promise((resolve) => {
     const args = ["/PID", String(processId), "/T", ...(force ? ["/F"] : [])];
     let command: ChildProcess;
     try {
-      command = spawn("taskkill", args, { shell: false, windowsHide: true, stdio: "ignore" });
+      command = spawn(path.win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"), args, {
+        shell: false,
+        windowsHide: true,
+        stdio: "ignore",
+      });
     } catch {
-      resolve();
+      resolve(false);
       return;
     }
     let settled = false;
-    const finish = () => {
+    const timer = setTimeout(() => {
+      command.kill();
+      finish(false);
+    }, 5_000);
+    const finish = (success: boolean) => {
       if (settled) return;
       settled = true;
-      resolve();
+      clearTimeout(timer);
+      resolve(success);
     };
-    command.once("error", finish);
-    command.once("close", finish);
+    command.once("error", () => finish(false));
+    command.once("close", (code) => finish(code === 0));
   });
 }
 
-export async function terminateProcessTree(child: ChildProcess, graceMs = 1_000): Promise<void> {
+export async function terminateProcessTree(child: ChildProcess, graceMs = 1_000, force = false): Promise<void> {
   const processId = child.pid;
   if (!processId) {
     try {
@@ -161,6 +171,17 @@ export async function terminateProcessTree(child: ChildProcess, graceMs = 1_000)
   }
 
   if (process.platform === "win32") {
+    if (force) {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const treeStopped = await taskkill(processId, true);
+      if (!(await waitForChildExit(child, graceMs))) {
+        child.kill("SIGKILL");
+        if (!(await waitForChildExit(child, graceMs)))
+          throw new Error("PowerShell process termination could not be confirmed");
+      }
+      if (!treeStopped) throw new Error("PowerShell cancellation could not confirm process-tree termination");
+      return;
+    }
     await taskkill(processId, false);
     if (await waitForChildExit(child, graceMs)) return;
     await taskkill(processId, true);

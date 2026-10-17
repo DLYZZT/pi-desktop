@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ToolInfo } from "../shared/pi-types";
-import { EXCLUDED_PI_TOOLS, filterDesktopToolNames } from "../shared/pi-tool-policy";
+import { excludedPiTools, filterDesktopToolNames } from "../shared/pi-tool-policy";
 import { getAgentSessionSource } from "./session-source";
 import { isHerdrToolName } from "./herdr/tool-names";
 import { isManagedProcessToolName } from "./managed-process/tool-names";
@@ -12,6 +12,14 @@ import { isOrchestrationTool } from "../shared/orchestration-tools";
 export class SessionToolPolicy {
   private session?: AgentSessionLike;
   private initialActive = new Set<string>();
+  private availability?: (name: string) => boolean;
+  private resourceReady?: () => boolean;
+  setResourceReady(check: () => boolean): void {
+    this.resourceReady = check;
+  }
+  setAvailability(check: (name: string) => boolean): void {
+    this.availability = check;
+  }
   private mcpIdentityGuard?: (name: string) => boolean;
   private mcpPreparation?: (name: string, input: unknown, ctx: ExtensionContext, callId: string) => Promise<void>;
   setMcpPreparation(prepare: NonNullable<SessionToolPolicy["mcpPreparation"]>): void {
@@ -34,9 +42,12 @@ export class SessionToolPolicy {
     private requested?: string[],
     private execution?: string[],
     private mcpExecution?: string[],
+    private readonly platform: string = process.platform,
   ) {}
   bind(session: AgentSessionLike): void {
     this.session = session;
+    if (!this.requested?.includes("powershell") && session.getActiveToolNames().includes("powershell"))
+      session.setActiveToolsByName(session.getActiveToolNames().filter((name) => name !== "powershell"));
     this.initialActive = new Set(session.getActiveToolNames());
   }
   setRequested(names: string[]): void {
@@ -57,14 +68,16 @@ export class SessionToolPolicy {
     return this.mcpExecution ? [...this.mcpExecution] : undefined;
   }
   setExecution(names: string[]): void {
-    this.execution = filterDesktopToolNames(names);
+    this.execution = filterDesktopToolNames(names, this.platform);
     this.mcpExecution = undefined;
   }
   getExecution(): string[] | undefined {
     return this.execution ? [...this.execution] : undefined;
   }
   isAllowed(name: string): boolean {
-    if (!this.session || this.requested?.length === 0 || EXCLUDED_PI_TOOLS.includes(name)) return false;
+    if (this.resourceReady && !this.resourceReady()) return false;
+    if (!this.session || this.requested?.length === 0 || excludedPiTools(this.platform).includes(name)) return false;
+    if (name === "powershell" && !this.requested?.includes(name)) return false;
     const source = getAgentSessionSource(this.manager);
     if (source === "unknown") return false;
     if (source === "channel" && (isHerdrToolName(name) || isManagedProcessToolName(name))) return false;
@@ -107,6 +120,7 @@ export class SessionToolPolicy {
         // SDK metadata also contains functions and private extension paths. Only project the wire contract.
         name: tool.name,
         description: tool.description,
+        ...(this.availability ? { available: this.availability(tool.name) } : {}),
         exposure: tool.exposure,
         ...(tool.namespace
           ? {

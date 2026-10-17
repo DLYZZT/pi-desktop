@@ -55,6 +55,7 @@ const { useAgentSession, testApi, SessionPresentationStore } = await importTestB
             return await result;
           }
           export const newAgent = (params) => sendAgentCommand(null, params);
+          export const call = async () => ({codingTools: []});
           export let historyReads = 0;
           export function resetCommands() { pendingCommands.clear(); commands.length = connections.length = historyReads = 0; }
           let detail, page;

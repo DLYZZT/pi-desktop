@@ -93,7 +93,7 @@ test("Full access and entry toggles never grant MCP or deferred child permission
   );
   assert.throws(
     () => applySessionToolCommand(context, { type: "set_orchestration_tools", toolNames: ["powershell"] }),
-    /not supported/,
+    /not supported|Invalid orchestration/,
   );
   assert.equal(readFileSync(filename, "utf8"), before);
   applySessionToolCommand(context, { type: "set_tools", toolNames: [] });

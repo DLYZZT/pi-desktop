@@ -4,6 +4,13 @@ import { isBrowserToolName } from "./browser-tools";
 
 export const CODING_TOOL_NAMES = new Set(["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"]);
 
+export function filterUnapprovedShellTools(names: string[], requested?: string[]): string[] {
+  return filterDesktopToolNames(
+    names.filter((name) => name !== "powershell" || requested?.includes(name)),
+    process.platform,
+  );
+}
+
 /** Only default declarable extensions join a Desktop coding preset. */
 export function withExtensionTools(session: AgentSessionLike, toolNames: string[]): string[] {
   if (toolNames.length === 0) return [];
@@ -19,5 +26,5 @@ export function withExtensionTools(session: AgentSessionLike, toolNames: string[
       );
     })
     .map((tool) => tool.name);
-  return filterDesktopToolNames([...toolNames, ...extensionNames]);
+  return filterDesktopToolNames([...toolNames, ...extensionNames], process.platform);
 }

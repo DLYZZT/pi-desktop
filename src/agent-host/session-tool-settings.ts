@@ -18,8 +18,16 @@ export function applySessionToolCommand(
   },
   command: { type?: unknown; toolNames?: unknown },
 ) {
-  validateDesktopToolNames(command.toolNames);
-  const names = filterDesktopToolNames(command.toolNames);
+  validateDesktopToolNames(command.toolNames, process.platform);
+  const names = filterDesktopToolNames(command.toolNames, process.platform);
+  if (
+    names.includes("powershell") &&
+    context.policy?.describe().some((tool) => tool.name === "powershell" && tool.available === false)
+  )
+    throw new RpcError({
+      code: "TOOLCHAIN_CAPABILITY_REQUIRED",
+      message: "PowerShell is unavailable. Select a working PowerShell in Developer tools and reload the session.",
+    });
   const store = context.preferences ?? getDefaultStore();
   const persist = context.persist ?? ((id: string, names: string[]) => store.set(id, names));
   if (command.type === "set_tools") {
@@ -38,10 +46,13 @@ export function applySessionToolCommand(
     );
     if (names.some((name) => !isOrchestrationTool(name) || !available.has(name)))
       throw new RpcError({ code: "BAD_REQUEST", message: "Invalid orchestration tool selection" });
-    const current =
+    const current = store.filterActiveSelection(
+      context.sessionId,
       context.requested ??
-      store.get(context.sessionId) ??
-      context.session.getActiveToolNames().filter((name) => !isMcpManagedTool(name));
+        store.get(context.sessionId) ??
+        context.session.getActiveToolNames().filter((name) => !isMcpManagedTool(name)),
+      context.requested,
+    );
     if (!current.length)
       throw new RpcError({ code: "BAD_REQUEST", message: "Enable a tool preset before orchestration tools" });
     if (store.get(context.sessionId) === undefined) persist(context.sessionId, current);
@@ -49,7 +60,14 @@ export function applySessionToolCommand(
     context.apply(store.get(context.sessionId)!);
   } else {
     if (store.get(context.sessionId) === undefined)
-      persist(context.sessionId, context.requested ?? context.session.getActiveToolNames());
+      persist(
+        context.sessionId,
+        store.filterActiveSelection(
+          context.sessionId,
+          context.requested ?? context.session.getActiveToolNames(),
+          context.requested,
+        ),
+      );
     store.setExecution(context.sessionId, names);
     context.policy.setExecution(names);
   }

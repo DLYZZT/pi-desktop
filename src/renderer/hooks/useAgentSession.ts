@@ -8,9 +8,10 @@ export type { SlashCommandInfo } from "@contract/agent-commands";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { agentState, newAgent } from "@/lib/api-client";
-import { getToolNamesForPreset, getPresetFromTools } from "@/lib/tool-presets";
+import { getPresetFromTools } from "@/lib/tool-presets";
 import type { ToolPreset } from "@shared/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
+import { useSessionToolSelection } from "./useSessionToolSelection";
 import { useSessionEvents } from "./useSessionEvents";
 import { requestAutoSessionTitle, shouldAutoTitleMessage } from "../lib/auto-session-title";
 
@@ -198,7 +199,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       sid = sessionIdRef.current;
     return () => !signal.aborted && signal === getViewSignal() && (sid === null || sid === sessionIdRef.current);
   }, [getViewSignal]);
-  const toolsRequestGate = useRef(new LatestRequestGate()).current;
   const commandsRequestGate = useRef(new LatestRequestGate()).current;
   const modelRequestGate = useRef(new LatestRequestGate()).current;
 
@@ -260,6 +260,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const prependAnchorRef = useRef<ReturnType<typeof useChatViewport>["capturePrependAnchor"] | null>(null);
   const capturePrependAnchor = useCallback(() => prependAnchorRef.current?.(), []);
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
+  const { loadTools, initialToolNames, handleToolPresetChange, handleShellToolChange, loadShellTools, shellTools } =
+    useSessionToolSelection({
+      cwd: newSessionCwd ?? session?.cwd,
+      owner: session?.id ?? newSessionCwd,
+      sessionIdRef,
+      ensuringNewSessionRef,
+      preset: toolPreset,
+      setPreset: setToolPresetState,
+      isActive,
+      captureCommandView,
+    });
 
   const applyRuntimeSnapshot = useCallback(
     (snapshot: SessionDetail["agentState"], ticket: RuntimeSnapshotTicket) => {
@@ -287,7 +298,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     (d: SessionDetail, ticket = runtimeGate.capture()) => {
       setSessionStatsOverride(null);
       if (d.toolNames !== undefined) {
-        setToolPresetState(getPresetFromTools(d.toolNames.map((name) => ({ name, description: "", active: true }))));
+        setToolPresetState(
+          getPresetFromTools(
+            d.toolNames.map((name) => ({ name, description: "", active: true, executionAllowed: true })),
+          ),
+        );
       }
       setCurrentModelOverride(null);
       applyRuntimeSnapshot(d.agentState, ticket);
@@ -371,23 +386,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     contextUsage,
   });
 
-  const loadTools = useCallback(
-    async (sid: string) => {
-      const ownsView = captureCommandView(),
-        request = toolsRequestGate.begin();
-      if (!ownsView()) return;
-      try {
-        const tools = await sendAgentCommand(sid, { type: "get_tools" });
-        if (tools && ownsView() && toolsRequestGate.isCurrent(request) && sessionIdRef.current === sid) {
-          setToolPresetState(getPresetFromTools(tools));
-        }
-      } catch (e) {
-        console.error("Failed to load tools:", e);
-      }
-    },
-    [captureCommandView, setToolPresetState, toolsRequestGate],
-  );
-
   const promoteNewSession = useCallback(
     (messageCount = 0, firstMessage = "(no messages)") => {
       const sid = sessionIdRef.current;
@@ -415,7 +413,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const promise = (async () => {
       const selectedModel = newSessionModel ?? newSessionDefaultModel;
       if (selectedModel) setPendingModel(selectedModel);
-      const toolNames = getToolNamesForPreset(toolPreset);
+      const toolNames = await initialToolNames();
       const result = await newAgent({
         cwd: newSessionCwd,
         type: "ensure_session",
@@ -440,7 +438,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       ensuringNewSessionRef.current = null;
     }
-  }, [isNew, newSessionCwd, newSessionModel, newSessionDefaultModel, toolPreset, thinkingLevel]);
+  }, [isNew, newSessionCwd, newSessionModel, newSessionDefaultModel, initialToolNames, thinkingLevel]);
 
   const loadSlashCommands = useCallback(async () => {
     const ownsView = captureCommandView(),
@@ -1247,23 +1245,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     [isActive, runtimeGate],
   );
 
-  const handleToolPresetChange = useCallback(
-    async (preset: "none" | "default" | "full") => {
-      if (!isActive()) return;
-      toolsRequestGate.invalidate();
-      const toolNames = getToolNamesForPreset(preset);
-      setToolPresetState(preset);
-      const sid = sessionIdRef.current ?? (await ensuringNewSessionRef.current);
-      if (!sid) return;
-      try {
-        await sendAgentCommand(sid, { type: "set_tools", toolNames });
-      } catch (e) {
-        console.error("Failed to set tools:", e);
-      }
-    },
-    [isActive, setToolPresetState, toolsRequestGate],
-  );
-
   // Load session on mount
   useEffect(() => {
     let disposed = false;
@@ -1395,6 +1376,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleRecallQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange,
+    handleShellToolChange,
+    loadShellTools,
+    shellTools,
     handleThinkingLevelChange,
     loadTools,
     loadSlashCommands,

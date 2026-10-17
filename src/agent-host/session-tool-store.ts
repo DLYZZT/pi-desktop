@@ -1,6 +1,10 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { filterDesktopToolNames } from "../shared/pi-tool-policy.ts";
+import {
+  DESKTOP_TOOL_POLICY_REVISION,
+  filterDesktopToolNames,
+  filterStoredToolNames,
+} from "../shared/pi-tool-policy.ts";
 import { desktopDataRoot } from "./desktop-data-root";
 import { isOrchestrationTool, ORCHESTRATION_TOOL_NAMES } from "../shared/orchestration-tools";
 import { CODING_FULL_TOOLS } from "../shared/tool-presets";
@@ -8,6 +12,7 @@ import { mcpToolIdentity, validMcpToolIdentity, type NamedMcpTool } from "../sha
 
 type StoredSessionTools = {
   toolNames: string[];
+  policyRevision?: number;
   executionToolNames?: string[];
   mcpExecutionToolNames?: string[];
   mcpDeclarationToolNames?: string[];
@@ -23,12 +28,16 @@ type SessionToolStateFile = {
 
 const EMPTY_STATE: SessionToolStateFile = { version: 1, sessions: {} };
 
-function normalizeToolNames(value: unknown): string[] | undefined {
+function normalizeToolNames(
+  value: unknown,
+  platform: string,
+  revision: unknown = DESKTOP_TOOL_POLICY_REVISION,
+): string[] | undefined {
   if (!Array.isArray(value) || !value.every((name) => typeof name === "string")) return undefined;
-  return filterDesktopToolNames(value);
+  return filterStoredToolNames(value, revision, platform);
 }
 
-function normalizeState(value: unknown): SessionToolStateFile {
+function normalizeState(value: unknown, platform: string): SessionToolStateFile {
   if (!value || typeof value !== "object") return structuredClone(EMPTY_STATE);
   const candidate = value as Partial<SessionToolStateFile>;
   if (candidate.version !== 1 || !candidate.sessions || typeof candidate.sessions !== "object") {
@@ -39,26 +48,37 @@ function normalizeState(value: unknown): SessionToolStateFile {
     const sessionId = rawSessionId.trim();
     if (!sessionId || !rawEntry || typeof rawEntry !== "object") continue;
     const entry = rawEntry as Partial<StoredSessionTools>;
-    const toolNames = normalizeToolNames(entry.toolNames);
+    const toolNames = normalizeToolNames(entry.toolNames, platform, entry.policyRevision ?? 0);
     if (toolNames === undefined) continue;
     sessions[sessionId] = {
       toolNames,
+      ...(entry.policyRevision === DESKTOP_TOOL_POLICY_REVISION ? { policyRevision: entry.policyRevision } : {}),
       ...(entry.executionToolNames === undefined
         ? {}
-        : { executionToolNames: normalizeToolNames(entry.executionToolNames) ?? [] }),
+        : {
+            executionToolNames: normalizeToolNames(entry.executionToolNames, platform, entry.policyRevision ?? 0) ?? [],
+          }),
       ...(entry.mcpExecutionToolNames === undefined
         ? {}
-        : { mcpExecutionToolNames: normalizeToolNames(entry.mcpExecutionToolNames) ?? [] }),
+        : {
+            mcpExecutionToolNames:
+              normalizeToolNames(entry.mcpExecutionToolNames, platform, entry.policyRevision ?? 0) ?? [],
+          }),
       ...(entry.mcpDeclarationToolNames === undefined
         ? {}
-        : { mcpDeclarationToolNames: normalizeToolNames(entry.mcpDeclarationToolNames) ?? [] }),
+        : {
+            mcpDeclarationToolNames:
+              normalizeToolNames(entry.mcpDeclarationToolNames, platform, entry.policyRevision ?? 0) ?? [],
+          }),
       ...(entry.orchestrationToolNames === undefined
         ? {}
         : {
             orchestrationToolNames:
               entry.orchestrationToolNames === null
                 ? null
-                : (normalizeToolNames(entry.orchestrationToolNames) ?? []).filter(isOrchestrationTool),
+                : (normalizeToolNames(entry.orchestrationToolNames, platform, entry.policyRevision ?? 0) ?? []).filter(
+                    isOrchestrationTool,
+                  ),
           }),
       updatedAt: typeof entry.updatedAt === "string" && entry.updatedAt ? entry.updatedAt : new Date(0).toISOString(),
       ...(entry.mcpToolIdentities && typeof entry.mcpToolIdentities === "object"
@@ -100,7 +120,10 @@ export class DesktopSessionToolStore {
   private state: SessionToolStateFile | undefined;
   private readonly mcpCatalogs = new Map<string, Map<string, string>>();
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly platform = process.platform,
+  ) {}
 
   get(sessionId: string): string[] | undefined {
     const normalizedId = sessionId.trim();
@@ -113,9 +136,20 @@ export class DesktopSessionToolStore {
       : [...entry.toolNames.filter((name) => !isOrchestrationTool(name)), ...selected];
   }
 
+  /** SDK activation is not an explicit grant. Automatic snapshots may only retain previously approved shells. */
+  filterActiveSelection(sessionId: string, names: readonly string[], requested?: readonly string[]): string[] {
+    const authorized = requested ?? this.get(sessionId) ?? [];
+    return filterDesktopToolNames(names, this.platform).filter(
+      (name) => name !== "powershell" || authorized.includes(name),
+    );
+  }
+  setFromActive(sessionId: string, names: readonly string[], requested?: readonly string[]): void {
+    this.set(sessionId, this.filterActiveSelection(sessionId, names, requested));
+  }
+
   set(sessionId: string, toolNames: string[]): void {
     const normalizedId = sessionId.trim();
-    const normalizedToolNames = normalizeToolNames(toolNames);
+    const normalizedToolNames = normalizeToolNames(toolNames, this.platform);
     if (!normalizedId || normalizedToolNames === undefined) throw new Error("Invalid session tool state");
     const state = this.load();
     const previous = state.sessions[normalizedId];
@@ -130,6 +164,7 @@ export class DesktopSessionToolStore {
             : undefined;
     state.sessions[normalizedId] = {
       toolNames: normalizedToolNames,
+      policyRevision: DESKTOP_TOOL_POLICY_REVISION,
       ...(previous?.mcpToolIdentities ? { mcpToolIdentities: previous.mcpToolIdentities } : {}),
       ...(orchestration === undefined ? {} : { orchestrationToolNames: orchestration }),
       ...(normalizedToolNames.length === 0
@@ -248,7 +283,7 @@ export class DesktopSessionToolStore {
   private load(): SessionToolStateFile {
     if (this.state) return this.state;
     try {
-      this.state = normalizeState(JSON.parse(readFileSync(this.filePath, "utf8")));
+      this.state = normalizeState(JSON.parse(readFileSync(this.filePath, "utf8")), this.platform);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
       this.state = structuredClone(EMPTY_STATE);
@@ -286,7 +321,7 @@ export class DesktopSessionToolStore {
   setOrchestration(sessionId: string, names: string[]): void {
     const entry = this.load().sessions[sessionId.trim()];
     if (!entry || !entry.toolNames.length) throw new Error("Enable a session tool preset before orchestration tools");
-    const selected = normalizeToolNames(names);
+    const selected = normalizeToolNames(names, this.platform);
     if (!selected || selected.some((name) => !isOrchestrationTool(name)))
       throw new Error("Invalid orchestration tool selection");
     entry.orchestrationToolNames = selected;
@@ -306,7 +341,7 @@ export class DesktopSessionToolStore {
   setMcpExecution(sessionId: string, names: string[]): void {
     const entry = this.load().sessions[sessionId.trim()];
     if (!entry) throw new Error("Session tool selection must be saved before MCP grants");
-    entry.mcpExecutionToolNames = entry.toolNames.length === 0 ? [] : filterDesktopToolNames(names);
+    entry.mcpExecutionToolNames = entry.toolNames.length === 0 ? [] : filterDesktopToolNames(names, this.platform);
     this.bindMcpSelection(sessionId, names);
     entry.updatedAt = new Date().toISOString();
     atomicWrite(this.filePath, this.load());
@@ -314,7 +349,7 @@ export class DesktopSessionToolStore {
   setExecution(sessionId: string, names: string[]): void {
     const entry = this.load().sessions[sessionId.trim()];
     if (!entry) throw new Error("Session tool selection must be saved before execution grants");
-    entry.executionToolNames = entry.toolNames.length === 0 ? [] : filterDesktopToolNames(names);
+    entry.executionToolNames = entry.toolNames.length === 0 ? [] : filterDesktopToolNames(names, this.platform);
     this.bindMcpSelection(sessionId, names);
     delete entry.mcpExecutionToolNames;
     entry.updatedAt = new Date().toISOString();

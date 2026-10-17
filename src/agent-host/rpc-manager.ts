@@ -1,3 +1,4 @@
+import { SessionResourceReload } from "./session-resource-reload";
 import { buildLiveSessionStats } from "./session-stats";
 import { AUTO_ROUTING_PROVIDER } from "../contract/model-settings";
 import {
@@ -7,7 +8,7 @@ import {
   type AgentSessionRuntimeDiagnostic,
 } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "crypto";
-import { EXCLUDED_PI_TOOLS, filterDesktopToolNames, validateDesktopToolNames } from "../shared/pi-tool-policy.ts";
+import { excludedPiTools, filterDesktopToolNames, validateDesktopToolNames } from "../shared/pi-tool-policy.ts";
 import { assertSessionWritable } from "./session-readonly.ts";
 import { cacheSessionPath } from "./session-reader";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
@@ -30,7 +31,7 @@ import {
   setDesktopSessionExecutionTools,
   getDefaultStore,
 } from "./session-tool-store";
-import { withExtensionTools } from "./tool-activation";
+import { withExtensionTools, filterUnapprovedShellTools } from "./tool-activation";
 export { withExtensionTools } from "./tool-activation";
 import { SessionToolPolicy } from "./session-tool-policy";
 import { applySessionToolCommand } from "./session-tool-settings";
@@ -139,6 +140,8 @@ export class AgentSessionWrapper {
   private disposePromise: Promise<void> | null = null;
   private _alive = true;
   private requestedToolNames: string[] | undefined;
+  refreshToolchain?: () => Promise<void>;
+  private readonly resourceReload = new SessionResourceReload();
   private readonly persistToolNames: (sessionId: string, toolNames: string[]) => void;
 
   constructor(
@@ -152,8 +155,11 @@ export class AgentSessionWrapper {
     readonly modelSelection = new SessionModelSelection(),
   ) {
     this.inner = inner;
+    this.toolPolicy?.setResourceReady(() => this.resourceReload.executionReady());
     this.persistToolNames = persistToolNames;
-    this.requestedToolNames = requestedToolNames ? filterDesktopToolNames(requestedToolNames) : requestedToolNames;
+    this.requestedToolNames = requestedToolNames
+      ? filterDesktopToolNames(requestedToolNames, process.platform)
+      : requestedToolNames;
     this.forceEmptySystemPrompt = this.requestedToolNames?.length === 0;
     this.promptPolicy = promptPolicy ?? new SessionPromptPolicy(this.forceEmptySystemPrompt);
   }
@@ -216,7 +222,9 @@ export class AgentSessionWrapper {
     ).filter((name) => !isBrowserToolName(name) && !isHerdrToolName(name));
     const browserTools = browserToolNamesForSnapshot(browserCapabilityRuntime.getSnapshot());
     const herdrTools = herdrToolNamesForRuntime(peekHerdrBridge());
-    this.inner.setActiveToolsByName(filterDesktopToolNames([...current, ...browserTools, ...herdrTools]));
+    this.inner.setActiveToolsByName(
+      filterUnapprovedShellTools([...current, ...browserTools, ...herdrTools], this.requestedToolNames),
+    );
   }
 
   syncBrowserToolActivation(): void {
@@ -325,6 +333,7 @@ export class AgentSessionWrapper {
   }
 
   private async waitForExtensionsBound(): Promise<void> {
+    await this.resourceReload.ready();
     try {
       if (!this.extensionsBound) await this.ensureExtensionsBound();
     } catch (err) {
@@ -440,24 +449,31 @@ export class AgentSessionWrapper {
     });
   }
 
-  private async reloadSessionResources(): Promise<void> {
-    const recoverConfig = this.modelSelection.prepareConfigRecovery(this.inner);
-    if (this.extensionBindingPromise) {
-      try {
-        await this.extensionBindingPromise;
-      } catch {
-        // Reload is the explicit recovery path for a failed extension bind.
+  private reloadSessionResources(): Promise<void> {
+    return this.resourceReload.run(async () => {
+      const recoverConfig = this.modelSelection.prepareConfigRecovery(this.inner);
+      if (this.extensionBindingPromise) {
+        try {
+          await this.extensionBindingPromise;
+        } catch {
+          // Reload is the explicit recovery path for a failed extension bind.
+        }
       }
-    }
-    this.extensionsBound = false;
-    this.extensionBindingPromise = null;
-    this.extensionBindingError = null;
-    this.extensionStatuses.clear();
-    this.extensionWidgets.clear();
-    await this.inner.reload();
-    await this.ensureExtensionsBound();
-    if (this.requestedToolNames !== undefined) this.applyRequestedTools(this.requestedToolNames);
-    if (recoverConfig) await this.modelSelection.restoreAfterConfigRepair(this.inner);
+      this.extensionsBound = false;
+      this.extensionBindingError = null;
+      this.extensionStatuses.clear();
+      this.extensionWidgets.clear();
+      this.extensionsBound = await this.resourceReload.reloadSession(
+        this.inner,
+        this.refreshToolchain,
+        () => this.inner.extensionRunner.setUIContext?.(this.createExtensionUiContext(), "rpc"),
+        () => this._alive,
+      );
+      await this.ensureExtensionsBound();
+      if (this.requestedToolNames !== undefined) this.applyRequestedTools(this.requestedToolNames);
+      this.syncDesktopToolActivation();
+      return recoverConfig ? () => this.modelSelection.restoreAfterConfigRepair(this.inner) : undefined;
+    });
   }
 
   async runExternalCommand(params: { command: ExternalSessionCommand; customInstructions?: string }): Promise<void> {
@@ -631,7 +647,10 @@ export class AgentSessionWrapper {
         );
         this.persistToolNames(
           newSessionId,
-          filterDesktopToolNames(this.requestedToolNames ?? this.inner.getActiveToolNames()),
+          filterUnapprovedShellTools(
+            this.requestedToolNames ?? this.inner.getActiveToolNames(),
+            this.requestedToolNames,
+          ),
         );
         const execution = this.toolPolicy?.getExecution();
         if (execution) setDesktopSessionExecutionTools(newSessionId, execution);
@@ -765,11 +784,9 @@ export class AgentSessionWrapper {
           command,
         );
 
-      case "reload": {
+      case "reload":
         await this.enqueueTurn(() => this.reloadSessionResources());
-        this.syncDesktopToolActivation();
         return { success: true };
-      }
 
       case "abort_compaction": {
         this.inner.abortCompaction();
@@ -1286,15 +1303,7 @@ export class AgentSessionWrapper {
         this.reportUnsupportedExtensionFeature("extension-driven session switch");
         return { cancelled: true };
       },
-      reload: async () => {
-        this.extensionStatuses.clear();
-        this.extensionWidgets.clear();
-        await this.inner.reload({
-          beforeSessionStart: () => {
-            this.inner.extensionRunner.setUIContext?.(this.createExtensionUiContext(), "rpc");
-          },
-        });
-      },
+      reload: () => this.reloadSessionResources(),
     };
   }
 }
@@ -1417,7 +1426,7 @@ export async function startRpcSession(
   cwd: string,
   toolNames?: string[],
 ): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
-  if (toolNames !== undefined) validateDesktopToolNames(toolNames);
+  if (toolNames !== undefined) validateDesktopToolNames(toolNames, process.platform);
   const registry = getRegistry();
   const locks = getLocks();
 
@@ -1477,7 +1486,7 @@ export async function startRpcSession(
       },
       { project: true, sessionManager },
     );
-    const { executionContext, customTools } = await createDesktopSessionTools(
+    const desktopTools = await createDesktopSessionTools(
       cwd,
       sessionManager,
       services.settingsManager,
@@ -1487,8 +1496,8 @@ export async function startRpcSession(
     const { session: inner, modelFallbackMessage } = await createAgentSessionFromServices({
       services,
       sessionManager,
-      customTools,
-      excludeTools: [...EXCLUDED_PI_TOOLS],
+      customTools: desktopTools.customTools,
+      excludeTools: [...excludedPiTools(process.platform)],
       ...(model ? { model } : {}),
     });
     modelSelection.finish(inner, modelFallbackMessage);
@@ -1513,7 +1522,7 @@ export async function startRpcSession(
       modelSelection,
     );
     wrapper.setRuntimeDiagnostics(services.diagnostics);
-    wrapper.setToolchainSummary(executionContext.inventoryRevision, executionContext.summary);
+    desktopTools.attach(wrapper, toolPolicy);
     wrapper.start();
     wrapper.syncDesktopToolActivation();
 

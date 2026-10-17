@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, create } from "react-test-renderer";
 
 const { AccountCard, FEISHU_PERMISSION_IMPORT_JSON, FeishuCredentialDialog, LoginDialog, TelegramTokenDialog } =
   await importTestBundle("src/renderer/components/channels/channels-config", {
@@ -17,6 +18,66 @@ const { AccountCard, FEISHU_PERMISSION_IMPORT_JSON, FeishuCredentialDialog, Logi
     tsconfig: path.join(import.meta.dirname, "../../../../tsconfig.renderer.json"),
     external: ["react", "react-dom", "react-dom/*", "@rc-component/qrcode"],
   });
+
+test("a PowerShell-only channel grant requires the elevated-capability confirmation", async (t) => {
+  const savedWindow = Object.getOwnPropertyDescriptor(globalThis, "window"),
+    savedAct = Object.getOwnPropertyDescriptor(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  let confirmed = false,
+    confirmations = 0,
+    renderer;
+  const saved = [];
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  globalThis.window = {
+    confirm: () => {
+      confirmations++;
+      return confirmed;
+    },
+    piBridge: {
+      getToolchainState: async () => ({
+        platform: "win32",
+        capabilities: { "shell.powershell": { health: "healthy" } },
+      }),
+      onToolchainState: () => () => {},
+    },
+  };
+  const account = {
+    id: "ps",
+    channel: "telegram",
+    name: "PS",
+    enabled: true,
+    dmPolicy: "pairing",
+    allowFrom: [],
+    groupPolicy: "disabled",
+    groupIds: [],
+    groupAllowFrom: [],
+    requireMention: true,
+    commandsEnabled: false,
+    toolNames: ["powershell"],
+    configured: true,
+  };
+  await act(async () => {
+    renderer = create(createElement(AccountCard, { account, busy: false, onSave: (value) => saved.push(value) }));
+  });
+  t.after(async () => {
+    await act(async () => renderer.unmount());
+    for (const [name, descriptor] of [
+      ["window", savedWindow],
+      ["IS_REACT_ACT_ENVIRONMENT", savedAct],
+    ]) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete globalThis[name];
+    }
+  });
+  const text = (node) => (typeof node === "string" ? node : (node?.children?.map(text).join("") ?? ""));
+  const button = renderer.root.find((node) => node.type === "button" && text(node) === "Save");
+  await act(async () => button.props.onClick());
+  assert.equal(saved.length, 0);
+  assert.equal(confirmations, 1);
+  confirmed = true;
+  await act(async () => button.props.onClick());
+  assert.equal(confirmations, 2);
+  assert.deepEqual(saved[0].toolNames, ["powershell"]);
+});
 
 test("Telegram token dialog renders connection failures without closing", () => {
   const html = renderToStaticMarkup(

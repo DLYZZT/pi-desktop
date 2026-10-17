@@ -1,3 +1,4 @@
+import { codingToolAvailability } from "../../shared/tool-presets";
 import { readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DefaultResourceLoader, getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -65,6 +66,7 @@ export const resourceHandlers = {
     return {
       inventoryRevision: context.inventoryRevision,
       resolutionId: context.resolutionId,
+      codingTools: codingToolAvailability(process.platform, context.commands),
       capabilities: Object.fromEntries(
         Object.entries(context.commands).map(([capability, command]) => [
           capability,

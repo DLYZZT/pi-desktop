@@ -43,15 +43,17 @@ test("Desktop selections reject unsupported tools and preserve ordinary extensio
   );
   assert.throws(() => validateDesktopToolNames([1]), /array of strings/);
   assert.deepEqual(filterDesktopToolNames(["powershell", " read ", "read"]), ["read"]);
-  let persisted = false;
-  const wrapper = new AgentSessionWrapper({ agent: {}, sessionId: "fixture" }, undefined, () => {
-    persisted = true;
-  });
-  try {
-    await assert.rejects(wrapper.send({ type: "set_tools", toolNames: ["powershell"] }), /not supported/);
-    assert.equal(persisted, false);
-  } finally {
-    wrapper.destroy();
+  if (process.platform !== "win32") {
+    let persisted = false;
+    const wrapper = new AgentSessionWrapper({ agent: {}, sessionId: "fixture" }, undefined, () => {
+      persisted = true;
+    });
+    try {
+      await assert.rejects(wrapper.send({ type: "set_tools", toolNames: ["powershell"] }), /not supported/);
+      assert.equal(persisted, false);
+    } finally {
+      wrapper.destroy();
+    }
   }
 });
 
@@ -126,7 +128,7 @@ test("legacy Desktop and Channel permissions are filtered without rewriting thei
     sessions: { fixture: { toolNames: ["powershell", "read"], updatedAt: "fixture" } },
   });
   writeFileSync(file, raw);
-  const store = new DesktopSessionToolStore(file);
+  const store = new DesktopSessionToolStore(file, "darwin");
   assert.deepEqual(store.get("fixture"), ["read"]);
   assert.equal(readFileSync(file, "utf8"), raw);
   store.set("fixture", ["powershell", "read"]);
@@ -135,7 +137,7 @@ test("legacy Desktop and Channel permissions are filtered without rewriting thei
   const account = { id: "fixture", channel: "telegram", toolNames: ["powershell", "read"] };
   const channelRaw = JSON.stringify({ version: 1, accounts: [account], bindings: [] });
   writeFileSync(channelFile, channelRaw);
-  const channels = new ChannelConfigStore(channelFile);
+  const channels = new ChannelConfigStore(channelFile, "darwin");
   assert.deepEqual(channels.getAccount("fixture").toolNames, ["read"]);
   assert.equal(readFileSync(channelFile, "utf8"), channelRaw);
   assert.throws(() => channels.upsertAccount(account), /not supported/);

@@ -48,6 +48,15 @@ export function selectDefaultCandidates(
     const candidatesForCapability = candidates.filter(
       (candidate) => candidate.capability === capability && candidate.health === "healthy",
     );
+    if (capability === "shell.powershell" && preference === "auto") {
+      const preferred =
+        candidatesForCapability.find((candidate) => candidate.provider === "custom") ??
+        candidatesForCapability.find((candidate) => /(?:^|[\\/])pwsh\.exe$/iu.test(candidate.executable));
+      if (preferred) {
+        selected[capability] = preferred;
+        continue;
+      }
+    }
     const match = candidatesForCapability.find((candidate) => {
       if (preference === "auto") return true;
       return candidate.provider === preference;

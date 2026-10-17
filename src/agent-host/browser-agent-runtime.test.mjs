@@ -19,6 +19,29 @@ const transient = {
   },
 };
 
+test("PowerShell literal-URL heuristics cover common web clients without claiming a network boundary", async () => {
+  const runtime = new BrowserAgentRuntime();
+  runtime.beginTurn("powershell", "local");
+  const params = { url: "https://example.test/blocked" };
+  const attempt = runtime.beforeCall("powershell", "browser.open", params, 1);
+  runtime.afterError("powershell", attempt.attemptKey, params, blocked);
+  for (const command of [
+    "curl",
+    "wget",
+    "iwr",
+    "irm",
+    "Invoke-WebRequest",
+    "Invoke-RestMethod",
+    "Start-Process",
+    "[Net.WebClient]::new().DownloadString",
+    "[System.Net.Http.HttpClient]::new().GetStringAsync",
+  ])
+    await assert.rejects(runtime.guardBash("powershell", `${command} 'https://example.test/blocked'`));
+  await runtime.guardBash("powershell", "Write-Output 'hello'");
+  // Variable-built URLs remain a documented limitation, not an authorization guarantee.
+  await runtime.guardBash("powershell", "$url='https:'+'//example.test/blocked'; iwr $url");
+});
+
 test("attempt ledger blocks equivalent non-retryable navigation and allows only one transient retry", () => {
   const runtime = new BrowserAgentRuntime();
   runtime.beginTurn("session", "local");

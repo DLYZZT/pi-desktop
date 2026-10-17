@@ -133,6 +133,7 @@ export interface Api {
       inventoryRevision: number;
       resolutionId: string;
       capabilities: Partial<Record<ToolCapabilityId, { provider: ToolProvider; version: string }>>;
+      codingTools?: Array<{ name: string; available: boolean }>;
     };
   };
 
