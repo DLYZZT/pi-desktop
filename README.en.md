@@ -143,9 +143,7 @@ Managed background processes support macOS, Linux, and Windows 11 x64. Windows A
 
 ### Unified model and extension management
 
-- On the upgrade branch, Windows PowerShell requires an explicit tool grant. The default four tools and existing grants stay unchanged. Select the executable in Developer tools and reload the session; oversized scripts are rejected before execution. Model-facing PowerShell remains unavailable on macOS/Linux.
-- The upgrade branch bundles Pi Coding Agent 1.2.0. M2 adds Windows PowerShell integration; native 5.1/7 acceptance remains pending. Public v0.4.0 installers still use Pi 1.1.0.
-
+- On main, new Windows sessions default to PowerShell; choose Bash in Settings → General → Default Agent shell.
 - Prefer the local model directory when sessions start; explicitly refresh the remote directory when needed while preserving cached models across offline, timeout, or partial-provider failures
 - Use API keys, subscriptions, or OAuth as supported by each provider, with guided credential setup, confirmation before replacing existing credentials, and migration of older Azure configuration
 - Configure sampling parameters, sampling by thinking level, image/request input limits, and per-model overrides; select `max` reasoning on models that support it
