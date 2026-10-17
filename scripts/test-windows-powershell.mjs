@@ -6,50 +6,12 @@ import test from "node:test";
 import {
   createDesktopPowerShellTool,
   createToolchainPowerShellOptions,
-  powerShellArguments,
 } from "../src/agent-host/toolchain-powershell.ts";
 import { ToolchainManager } from "../src/main/toolchains/manager.ts";
 import { probeSucceeded, runProbeCommand } from "../src/main/toolchains/process-runner.ts";
-import { sanitizeToolEnvironment } from "../src/agent-host/tool-environment.ts";
 
 // Native shells can expand the runner's 8.3 TEMP aliases and normalize casing.
 const canonicalPath = (value) => realpathSync.native(value).toLowerCase();
-
-async function diagnoseProbe(t, command) {
-  const script = command.args.at(-1);
-  const prefix = command.args.slice(0, -2);
-  const fullEnv = sanitizeToolEnvironment({ ...process.env, PATH: command.env.PATH, Path: command.env.PATH });
-  const variants = [
-    ["original/full-environment", { ...command, env: fullEnv }],
-    [
-      "bypass/isolated-environment",
-      { ...command, args: [...prefix, "-ExecutionPolicy", "Bypass", "-Command", script] },
-    ],
-    [
-      "console/isolated-environment",
-      {
-        ...command,
-        args: [
-          ...prefix,
-          "-Command",
-          "[Console]::WriteLine('PROBE_READY');[Console]::WriteLine($PSVersionTable.PSVersion.ToString())",
-        ],
-      },
-    ],
-    ["explicit-exit/isolated-environment", { ...command, args: [...command.args.slice(0, -1), script + "; exit 0"] }],
-    ["exit-only/isolated-environment", { ...command, args: [...prefix, "-Command", "exit 0"] }],
-    [
-      "tool-bootstrap/isolated-environment",
-      { ...command, args: powerShellArguments({ executable: command.executable, argvPrefix: [] }, script) },
-    ],
-  ];
-  for (const [label, candidate] of variants) {
-    const result = await runProbeCommand(candidate);
-    t.diagnostic(
-      `PowerShell diagnostic ${label}: ${JSON.stringify({ exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut, durationMs: result.durationMs, stdout: result.stdout.slice(0, 2000), stderr: result.stderr.slice(0, 2000) })}`,
-    );
-  }
-}
 
 for (const edition of ["5.1", "7"])
   test(
@@ -226,12 +188,10 @@ test(
       executor: {
         async run(command) {
           const result = await runProbeCommand(command);
-          if (!probeSucceeded(result)) {
+          if (!probeSucceeded(result))
             t.diagnostic(
               `PowerShell probe failed: ${JSON.stringify({ ...result, stdout: result.stdout.slice(0, 2000), stderr: result.stderr.slice(0, 2000) })}`,
             );
-            await diagnoseProbe(t, command);
-          }
           return result;
         },
       },

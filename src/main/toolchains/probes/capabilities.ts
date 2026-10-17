@@ -113,12 +113,14 @@ async function probeBash(seed: ExecutableSeed, options: CapabilityProbeOptions):
 
 async function probePowerShell(seed: ExecutableSeed, options: CapabilityProbeOptions): Promise<ToolCandidate> {
   const sentinel = "PI_TOOLCHAIN_POWERSHELL_OK";
+  // Cmdlet discovery can stall Windows PowerShell 5.1 in an isolated environment.
+  // Read the engine version without loading modules or inheriting PSModulePath.
   const result = await run(seed, options, [
     "-NoLogo",
     "-NoProfile",
     "-NonInteractive",
     "-Command",
-    `Write-Output '${sentinel}'; $PSVersionTable.PSVersion.ToString()`,
+    `[Console]::WriteLine('${sentinel}'); [Console]::WriteLine($PSVersionTable.PSVersion.ToString())`,
   ]);
   if (!probeSucceeded(result) || !result.stdout.includes(sentinel)) return failedCandidate(seed, result);
   return versionCandidate(seed, result.stdout);
