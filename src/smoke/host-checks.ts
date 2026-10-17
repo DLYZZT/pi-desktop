@@ -430,29 +430,26 @@ export async function runSmokeHostChecks(
                   valueSetter?.call(select, value);
                   select.dispatchEvent(new Event("change", { bubbles: true }));
                 };
-                const cacheLabel = Array.from(document.querySelectorAll("label")).find((label) =>
-                  ["Prompt cache warming", "提示缓存预热", "提示快取預熱"].includes(label.textContent?.trim() || ""),
-                );
-                const cacheSelect = cacheLabel?.htmlFor ? document.getElementById(cacheLabel.htmlFor) : undefined;
-                if (!(cacheSelect instanceof HTMLSelectElement)) {
-                  throw new Error("Cache warming setting is unavailable or unlabeled");
-                }
+                const waitForCacheWarming = async (expected) => {
+                  const cacheDeadline = Date.now() + 10000;
+                  let select;
+                  while (Date.now() < cacheDeadline) {
+                    const label = Array.from(document.querySelectorAll("label")).find((entry) =>
+                      ["Prompt cache warming", "提示缓存预热", "提示快取預熱"].includes(entry.textContent?.trim() || ""),
+                    );
+                    select = label?.htmlFor ? document.getElementById(label.htmlFor) : undefined;
+                    if (select instanceof HTMLSelectElement && select.isConnected && !select.disabled && select.value === expected) return select;
+                    await new Promise((wait) => setTimeout(wait, 25));
+                  }
+                  throw new Error("Cache warming setting did not settle: " + JSON.stringify({ expected, value: select?.value, disabled: select?.disabled, connected: select?.isConnected }));
+                };
+                let cacheSelect = await waitForCacheWarming("off");
                 if (JSON.stringify(Array.from(cacheSelect.options, (option) => option.value)) !== JSON.stringify(["off", "streaming", "idle"])) {
                   throw new Error("Cache warming setting has the wrong modes");
                 }
-                const cacheDeadline = Date.now() + 3000;
-                while ((cacheSelect.disabled || cacheSelect.value !== "off") && Date.now() < cacheDeadline) {
-                  await new Promise((wait) => setTimeout(wait, 25));
-                }
-                if (cacheSelect.disabled || cacheSelect.value !== "off") {
-                  throw new Error("Cache warming setting did not load the isolated global value");
-                }
                 changeSelect(cacheSelect, "idle");
                 await new Promise((wait) => setTimeout(wait, 0));
-                const cacheSaveDeadline = Date.now() + 3000;
-                while ((cacheSelect.disabled || cacheSelect.value !== "idle") && Date.now() < cacheSaveDeadline) {
-                  await new Promise((wait) => setTimeout(wait, 25));
-                }
+                cacheSelect = await waitForCacheWarming("idle");
                 const cacheWarming = cacheSelect.value === "idle" && !cacheSelect.disabled;
                 if (!cacheWarming) throw new Error("Cache warming setting did not finish its UI save");
                 const waitForAppearance = async (fontSize, layout, assistantWidth = chatAssistantWidthSelect.value) => {
