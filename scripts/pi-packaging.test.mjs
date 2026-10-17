@@ -74,9 +74,13 @@ test("ASAR package validation handles hoisting but rejects stale, unknown and co
   assert.throws(() => assertLockedPackage(lock, directory, manifest), /lockfile/);
 });
 
-test("the actual electron-builder loader resolves the inherited Pi configuration for every package entrypoint", async () => {
+test("the actual electron-builder loader resolves the inherited Pi configuration for every package entrypoint", async (t) => {
   const require = createRequire(import.meta.url);
   const builderRequire = createRequire(require.resolve("electron-builder/package.json"));
+  // Route the builder's multi-write stdout logging through the test reporter.
+  // Under a busy Windows Node 22 runner it can otherwise corrupt child IPC output.
+  const { log } = builderRequire("builder-util");
+  t.mock.method(log, "info", (fields, message) => t.diagnostic(`${message}: ${fields.file}`));
   const { getConfig } = builderRequire("app-builder-lib/out/util/config/config.js");
   const config = await getConfig(root);
   const { graph, files } = installedPiPackaging(root);

@@ -5,6 +5,7 @@ import { filterDesktopToolNames, validateDesktopToolNames } from "../shared/pi-t
 import { RpcError } from "../contract/types";
 import type { SessionToolPolicy } from "./session-tool-policy";
 import { getDefaultStore, type DesktopSessionToolStore } from "./session-tool-store";
+import { useAgentShell } from "../shared/agent-shell";
 
 export function applySessionToolCommand(
   context: {
@@ -19,7 +20,11 @@ export function applySessionToolCommand(
   command: { type?: unknown; toolNames?: unknown },
 ) {
   validateDesktopToolNames(command.toolNames, process.platform);
-  const names = filterDesktopToolNames(command.toolNames, process.platform);
+  const store = context.preferences ?? getDefaultStore();
+  const names = useAgentShell(
+    filterDesktopToolNames(command.toolNames, process.platform),
+    store.getShell(context.sessionId),
+  );
   if (
     names.includes("powershell") &&
     context.policy?.describe().some((tool) => tool.name === "powershell" && tool.available === false)
@@ -28,7 +33,6 @@ export function applySessionToolCommand(
       code: "TOOLCHAIN_CAPABILITY_REQUIRED",
       message: "PowerShell is unavailable. Select a working PowerShell in Developer tools and reload the session.",
     });
-  const store = context.preferences ?? getDefaultStore();
   const persist = context.persist ?? ((id: string, names: string[]) => store.set(id, names));
   if (command.type === "set_tools") {
     persist(context.sessionId, names);

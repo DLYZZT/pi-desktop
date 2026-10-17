@@ -48,7 +48,12 @@ async function checkBeforeExecution(
 
 /** Use a conservative CreateProcessW budget including quoting, argv[0], separators and the terminator. */
 export function powerShellArguments(descriptor: CommandDescriptor, command: string): string[] {
-  const encoded = Buffer.from(UTF8_OUTPUT_PREFIX + command, "utf16le").toString("base64");
+  // Windows PowerShell 5.1 forces redirected stderr to CLIXML for -EncodedCommand,
+  // even with -OutputFormat Text. Keep the payload encoded, but use a fixed ASCII
+  // bootstrap. Capture the final status inside the script block: invoking a block
+  // alone would turn a failing native command into a successful shell exit.
+  const encoded = Buffer.from(UTF8_OUTPUT_PREFIX + command + "\nexit ([int](-not $?))", "utf16le").toString("base64");
+  const bootstrap = `& ([scriptblock]::Create([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encoded}'))))`;
   const args = [
     ...descriptor.argvPrefix,
     "-NoLogo",
@@ -58,8 +63,8 @@ export function powerShellArguments(descriptor: CommandDescriptor, command: stri
     "Bypass",
     "-OutputFormat",
     "Text",
-    "-EncodedCommand",
-    encoded,
+    "-Command",
+    bootstrap,
   ];
   const budget = [descriptor.executable, ...args].reduce(
     (size, value) => size + value.length + (value.match(/[\\"]/gu)?.length ?? 0) + 3,

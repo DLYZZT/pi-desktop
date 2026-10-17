@@ -297,6 +297,8 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
     "files.index": guard(fileHandlers.index),
 
+    "settings.getAgentShell": guard(resourceHandlers.getAgentShell),
+    "settings.setAgentShell": guard(resourceHandlers.setAgentShell),
     "settings.getCacheWarming": guard(resourceHandlers.getCacheWarming),
 
     "settings.setCacheWarming": guard(resourceHandlers.setCacheWarming),

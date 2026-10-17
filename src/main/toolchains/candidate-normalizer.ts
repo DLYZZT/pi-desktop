@@ -90,7 +90,9 @@ export function candidateIdentity(candidate: ToolCandidate, options: CandidateNo
   const resolved = safeRealPath(candidate.executable, options.resolveRealPath);
   const executableKey = toolPathComparisonKey(resolved, platform);
   const prefixKey = (candidate.argvPrefix ?? []).map((entry) => toolPathComparisonKey(entry, platform)).join("\0");
-  return [candidate.capability, executableKey, prefixKey].join("\0");
+  // A custom selection can point at a system executable. Keep both provenances
+  // so switching back to the system provider does not make that tool disappear.
+  return [candidate.capability, candidate.provider, executableKey, prefixKey].join("\0");
 }
 
 export function compareToolCandidates(a: ToolCandidate, b: ToolCandidate): number {

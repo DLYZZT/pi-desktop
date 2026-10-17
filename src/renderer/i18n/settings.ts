@@ -1,5 +1,10 @@
 // Translation entries owned by the settings domain.
 export const enUS: Record<string, string> = {
+  agentShell: "Default Agent shell",
+  agentShellHint: "Used by new sessions when command execution is allowed. Existing sessions keep their shell.",
+  agentShellUnavailable: "The selected shell is unavailable. Configure its executable in Developer tools.",
+  agentShellLoadFailed: "The default shell could not be loaded.",
+  agentShellSaveFailed: "The default shell could not be saved.",
   about: "About",
   aboutDescription: "App, Pi, and project information.",
   herdr: "Herdr",
@@ -214,6 +219,11 @@ export const enUS: Record<string, string> = {
 };
 
 export const zhCN: Record<string, string> = {
+  agentShell: "Agent 默认 Shell",
+  agentShellHint: "新会话获准执行命令时使用此 Shell，已有会话保持原有选择。",
+  agentShellUnavailable: "所选 Shell 当前不可用，请在开发工具中配置其可执行文件。",
+  agentShellLoadFailed: "无法读取默认 Shell 设置。",
+  agentShellSaveFailed: "无法保存默认 Shell 设置。",
   about: "关于",
   aboutDescription: "了解应用版本、Pi 版本和项目信息。",
   herdr: "Herdr",
@@ -417,6 +427,11 @@ export const zhCN: Record<string, string> = {
 };
 
 export const zhTW: Record<string, string> = {
+  agentShell: "Agent 預設 Shell",
+  agentShellHint: "新工作階段獲准執行命令時使用此 Shell，既有工作階段保留原有選擇。",
+  agentShellUnavailable: "所選 Shell 目前無法使用，請在開發工具中設定其執行檔。",
+  agentShellLoadFailed: "無法讀取預設 Shell 設定。",
+  agentShellSaveFailed: "無法儲存預設 Shell 設定。",
   about: "關於",
   aboutDescription: "了解應用程式版本、Pi 版本與專案資訊。",
   herdr: "Herdr",

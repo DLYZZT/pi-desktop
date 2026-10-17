@@ -35,7 +35,7 @@ const { useSessionToolSelection, api } = await importTestBundle("session-shell-c
   ],
 });
 
-test("shell selection preserves default tools, resolves full from Host capabilities and saves an explicit custom subset", async (t) => {
+test("permission presets use the configured shell and retain no-tools after a failed save", async (t) => {
   const saved = Object.getOwnPropertyDescriptor(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   api.state.requests.length = 0;
@@ -75,28 +75,29 @@ test("shell selection preserves default tools, resolves full from Host capabilit
     else delete globalThis.IS_REACT_ACT_ENVIRONMENT;
   });
   assert.deepEqual(await current.initialToolNames(), ["read", "bash", "edit", "write"]);
-  assert.equal(api.state.requests.length, 0, "the unchanged default does not add a capability round trip");
+  assert.equal(api.state.requests.length, 0, "the Host resolves the executor when creating the session");
   await act(async () => current.handleToolPresetChange("full"));
   assert.equal(preset, "full");
   const selected = await current.initialToolNames();
   assert.ok(selected.includes("powershell"));
   assert.ok(!selected.includes("bash"));
-  await act(async () => current.handleShellToolChange("powershell", false));
-  assert.ok(!(await current.initialToolNames()).includes("powershell"));
-  assert.equal(preset, "custom");
   await act(async () => current.handleToolPresetChange("none"));
-  await act(async () => current.handleShellToolChange("powershell", true));
-  assert.deepEqual(await current.initialToolNames(), ["powershell"]);
+  assert.deepEqual(await current.initialToolNames(), []);
   sessionIdRef.current = "session";
-  await act(async () => current.handleShellToolChange("powershell", false));
+  api.state.tools = api.state.choices;
+  await act(async () => current.handleToolPresetChange("none"));
   assert.deepEqual(api.state.requests.at(-1), { id: "session", type: "set_tools", toolNames: [] });
   api.state.failure = true;
-  await act(async () => current.handleShellToolChange("powershell", true));
+  await act(async () => current.handleToolPresetChange("full"));
   assert.deepEqual(await current.initialToolNames(), []);
-  assert.match(current.shellTools.error, /save failed/);
+  assert.match(current.toolSelectionError, /save failed/);
   owner = "second";
   preset = "default";
   sessionIdRef.current = null;
+  api.state.choices = [
+    { name: "bash", available: true },
+    { name: "powershell", available: false },
+  ];
   await act(async () => renderer.update(createElement(Fixture)));
   assert.deepEqual(await current.initialToolNames(), ["read", "bash", "edit", "write"]);
 });

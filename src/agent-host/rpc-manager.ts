@@ -1,4 +1,5 @@
 import { SessionResourceReload } from "./session-resource-reload";
+import { loadSessionToolSelection } from "./session-shell";
 import { buildLiveSessionStats } from "./session-stats";
 import { AUTO_ROUTING_PROVIDER } from "../contract/model-settings";
 import {
@@ -25,7 +26,6 @@ import { browserCapabilityRuntime } from "./browser-capability-runtime";
 import { browserAgentRuntime } from "./browser-agent-runtime";
 import { projectExtensionDiagnostics } from "./extension-diagnostics";
 import {
-  getDesktopSessionToolNames,
   setDesktopSessionToolNames,
   getDesktopSessionExecutionTools,
   setDesktopSessionExecutionTools,
@@ -36,7 +36,6 @@ export { withExtensionTools } from "./tool-activation";
 import { SessionToolPolicy } from "./session-tool-policy";
 import { applySessionToolCommand } from "./session-tool-settings";
 import { withSessionOrchestration } from "./session-orchestration";
-import { getLegacySessionToolNames } from "./legacy-session-tools";
 export { getLegacySessionToolNames } from "./legacy-session-tools";
 import { peekHerdrBridge } from "./herdr/runtime";
 import { herdrToolNamesForRuntime, isHerdrToolName } from "./herdr/tools";
@@ -1450,13 +1449,12 @@ export async function startRpcSession(
     const executionHistory = new SessionExecutionHistory(sessionManager);
     await executionHistory.recover();
 
-    // Desktop-owned session choices live outside Pi's shared JSONL so the CLI
-    // remains unaffected. Read the old custom entry only for one-way migration.
     const managerSessionId = sessionManager.getSessionId();
-    const desktopToolNames = getDesktopSessionToolNames(managerSessionId);
-    const legacyToolNames = desktopToolNames === undefined ? getLegacySessionToolNames(sessionManager) : undefined;
-    const persistedToolNames = desktopToolNames ?? legacyToolNames;
-    const sessionToolNames = persistedToolNames ?? toolNames;
+    const {
+      shell,
+      toolNames: sessionToolNames,
+      hasStoredTools,
+    } = loadSessionToolSelection(sessionManager, !sessionFile, toolNames);
     const toolPolicy = new SessionToolPolicy(
       sessionManager,
       sessionToolNames,
@@ -1491,6 +1489,7 @@ export async function startRpcSession(
       sessionManager,
       services.settingsManager,
       executionHistory,
+      { shell },
     );
     const model = modelSelection.prepare(services, sessionManager);
     const { session: inner, modelFallbackMessage } = await createAgentSessionFromServices({
@@ -1508,7 +1507,7 @@ export async function startRpcSession(
     // them later. Narrow only the active set, never the registry allow-list.
     if (sessionToolNames !== undefined) {
       inner.setActiveToolsByName(withExtensionTools(inner, sessionToolNames));
-      if (desktopToolNames === undefined) setDesktopSessionToolNames(realSessionId, sessionToolNames);
+      if (!hasStoredTools) setDesktopSessionToolNames(realSessionId, sessionToolNames, shell);
     }
 
     const wrapper = new AgentSessionWrapper(

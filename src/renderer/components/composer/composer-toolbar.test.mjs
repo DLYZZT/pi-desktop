@@ -150,30 +150,15 @@ async function mount(t) {
   };
 }
 
-test("Windows shell choices expose PowerShell, disable a missing Bash and allow revoking an unavailable grant", async (t) => {
+test("the permission menu contains presets and errors without shell configuration controls", async (t) => {
   const f = await mount(t);
   await f.update({
-    shellTools: {
-      tools: [
-        { name: "bash", available: false, active: false },
-        { name: "powershell", available: true, active: false },
-      ],
-    },
-    onLoadShellTools: () => f.actions.push(["load-shells"]),
-    onShellToolChange: (name, enabled) => f.actions.push([name, enabled]),
+    toolSelectionError: "save failed",
   });
   await f.clickLabel("Change permission settings");
-  assert.ok(f.actions.some(([type]) => type === "load-shells"));
-  const inputs = f.root.findAllByType("input");
-  const powershell = inputs.find((input) => text(input.parent).includes("PowerShell"));
-  const bash = inputs.find((input) => text(input.parent).includes("Bash"));
-  assert.equal(bash.props.disabled, true);
-  assert.equal(powershell.props.disabled, false);
-  await act(async () => powershell.props.onChange({ target: { checked: true } }));
-  assert.deepEqual(f.actions.at(-1), ["powershell", true]);
-  await f.update({ shellTools: { tools: [{ name: "powershell", available: false, active: true }] } });
-  assert.equal(f.root.findByType("input").props.disabled, false);
-  assert.match(text(f.root), /configure Developer tools and reload/);
+  assert.equal(f.root.findAllByType("input").length, 0);
+  assert.doesNotMatch(text(f.root), /PowerShell|Bash/);
+  assert.match(text(f.root), /save failed/);
 });
 
 test("choosing the displayed no-tools preset still sends a fresh revocation intent", async (t) => {

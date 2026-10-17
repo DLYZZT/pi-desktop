@@ -20,6 +20,7 @@ import { peekManagedProcessService } from "./managed-process/runtime";
 import { createManagedProcessToolDefinitions } from "./managed-process/tools";
 import type { SessionExecutionHistory } from "./session-execution-history";
 import type { ToolExecutionContext } from "../shared/toolchains/types";
+import type { AgentShell } from "../shared/agent-shell";
 
 export async function createDesktopSessionTools(
   cwd: string,
@@ -29,7 +30,8 @@ export async function createDesktopSessionTools(
   {
     runtime = toolchainRuntime,
     platform = process.platform,
-  }: { runtime?: ToolchainRuntime; platform?: NodeJS.Platform } = {},
+    shell,
+  }: { runtime?: ToolchainRuntime; platform?: NodeJS.Platform; shell?: AgentShell } = {},
 ) {
   const resolve = () =>
     runtime.createExecutionContext({
@@ -84,7 +86,7 @@ export async function createDesktopSessionTools(
         wrapper.setToolchainSummary(executionContext.inventoryRevision, executionContext.summary);
         executionPolicy.setAvailability(
           (name) =>
-            codingToolAvailability(platform, executionContext.commands).find((tool) => tool.name === name)
+            codingToolAvailability(platform, executionContext.commands, shell).find((tool) => tool.name === name)
               ?.available !== false,
         );
       };

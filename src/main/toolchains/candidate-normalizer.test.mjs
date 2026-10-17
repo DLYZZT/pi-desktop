@@ -97,6 +97,20 @@ test("deduplicates symlinked candidates by resolved executable while retaining t
   );
 });
 
+test("an explicit custom path does not erase the system candidate for the same executable", () => {
+  const executable = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+  const system = candidate({ id: "system", capability: "shell.powershell", executable });
+  const custom = { ...system, id: "custom", provider: "custom" };
+  const duplicate = { ...system, id: "duplicate", rank: 10 };
+  assert.deepEqual(
+    normalizeAndDedupeCandidates([system, custom, duplicate], {
+      platform: "win32",
+      resolveRealPath: (value) => value,
+    }).map((entry) => entry.id),
+    ["custom", "system"],
+  );
+});
+
 test("sorts healthy project, custom, system, bundled, managed, and legacy candidates stably", () => {
   const result = stableSortToolCandidates([
     candidate({ id: "legacy", provider: "legacy-upstream-managed" }),

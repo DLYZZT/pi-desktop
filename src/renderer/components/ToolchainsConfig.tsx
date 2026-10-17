@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type {
   ManagedComponentId,
   PublicCapabilityState,
@@ -100,80 +100,6 @@ function toolCategoryTitle(category: (typeof TOOL_CATEGORIES)[number]["id"], t: 
     case "cli":
       return t("toolGroupCli", "CLI essentials");
   }
-}
-
-export function ToolchainsConfig({ cwd }: { cwd?: string | null }) {
-  const { t } = useI18n();
-  const [state, setState] = useState<PublicToolchainState | null>(null);
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let disposed = false;
-    const unsubscribe = window.piBridge.onToolchainState((nextState) => {
-      if (disposed) return;
-      if (!cwd) {
-        setState(nextState);
-        setFailed(false);
-        return;
-      }
-      void window.piBridge
-        .getToolchainState(cwd)
-        .then((projectState) => {
-          if (!disposed) {
-            setState(projectState);
-            setFailed(false);
-          }
-        })
-        .catch(() => {
-          if (!disposed) setFailed(true);
-        });
-    });
-    void window.piBridge
-      .rescanToolchains(cwd ?? undefined)
-      .then((nextState) => {
-        if (!disposed) setState(nextState);
-      })
-      .catch(() => {
-        if (!disposed) setFailed(true);
-      });
-    return () => {
-      disposed = true;
-      unsubscribe();
-    };
-  }, [cwd]);
-
-  const performAction = async (request: ToolchainActionRequest): Promise<void> => {
-    const actionId = actionKey(request);
-    setPendingAction(actionId);
-    setActionError(null);
-    setFailed(false);
-    try {
-      const actionState =
-        request.action === "rescan"
-          ? await window.piBridge.rescanToolchains(cwd ?? undefined)
-          : await window.piBridge.performToolchainAction(request);
-      const nextState = cwd && request.action !== "rescan" ? await window.piBridge.getToolchainState(cwd) : actionState;
-      setState(nextState);
-    } catch (error) {
-      if (!String(error).includes("TOOLCHAIN_CANCELLED")) setActionError(friendlyToolchainError(error, t));
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
-  return (
-    <ToolchainStateView
-      state={state}
-      failed={failed}
-      rescanPending={pendingAction === "rescan"}
-      pendingAction={pendingAction}
-      actionError={actionError}
-      onRescan={() => void performAction({ action: "rescan" })}
-      onAction={(request) => void performAction(request)}
-    />
-  );
 }
 
 export function ToolchainStateView({
@@ -1195,7 +1121,7 @@ function latestOperation(
   return [...operations].reverse().find((operation) => operation.componentId === componentId);
 }
 
-function actionKey(request: ToolchainActionRequest): string {
+export function actionKey(request: ToolchainActionRequest): string {
   switch (request.action) {
     case "rescan":
       return "rescan";
@@ -1218,7 +1144,7 @@ function actionKey(request: ToolchainActionRequest): string {
   }
 }
 
-function friendlyToolchainError(error: unknown, t: Translate): string {
+export function friendlyToolchainError(error: unknown, t: Translate): string {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const code = message.match(/TOOLCHAIN_[A-Z_]+/)?.[0];
   if (code) return friendlyErrorCode(code, t);

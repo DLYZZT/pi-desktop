@@ -86,12 +86,12 @@ test("PowerShell record authorization is explicit, version 1 survives legacy sav
   assert.equal(JSON.parse(readFileSync(channelsFile, "utf8")).version, 1);
 });
 
-test("full presets follow available shell capabilities and never reinterpret PowerShell as a default grant", () => {
+test("permission presets follow the configured available shell while declarations alone remain ungranted", () => {
   const choices = codingToolAvailability("win32", { "shell.powershell": {}, "search.rg": {}, "search.fd": {} });
   const full = getToolNamesForPreset("full", choices);
   assert.ok(full.includes("powershell"));
   assert.ok(!full.includes("bash"));
-  assert.deepEqual(getToolNamesForPreset("default", choices), ["read", "bash", "edit", "write"]);
+  assert.deepEqual(getToolNamesForPreset("default", choices), ["read", "powershell", "edit", "write"]);
   const tools = [
     ...choices.map((tool) => ({
       ...tool,

@@ -34,7 +34,7 @@ function fixture(t, mode = "report") {
     `const {spawn} = require('node:child_process');
     const mode = process.env.FIXTURE_MODE;
     const report = () => console.log(JSON.stringify({cwd:process.cwd(), args:process.argv.slice(2),
-      command:Buffer.from(process.argv.at(-1),'base64').toString('utf16le'), env:process.env}));
+      command:Buffer.from(process.argv.at(-1).split("'")[1],'base64').toString('utf16le'), env:process.env}));
     if(mode==='flood' || mode==='flood-block') { process.stdout.write('输出\\n'.repeat(12000)); process.stderr.write('错误尾部'); if(mode==='flood-block')setInterval(()=>{},1000);else process.exitCode=7; }
     else if(mode==='tree') {
       const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
@@ -93,7 +93,7 @@ test("PowerShell pins the resolved executable, preserves quoted Unicode scripts 
   assert.equal(result.exitCode, 0);
   const report = JSON.parse(output);
   assert.equal(realpathSync(report.cwd), realpathSync(root));
-  assert.ok(report.command.endsWith(command));
+  assert.ok(report.command.endsWith(command + "\nexit ([int](-not $?))"));
   assert.match(report.command, /\[Console\]::OutputEncoding/);
   assert.deepEqual(report.args.slice(0, -1), [
     "-NoLogo",
@@ -103,7 +103,7 @@ test("PowerShell pins the resolved executable, preserves quoted Unicode scripts 
     "Bypass",
     "-OutputFormat",
     "Text",
-    "-EncodedCommand",
+    "-Command",
   ]);
   assert.equal(report.env.PATH, root);
   assert.equal(report.env.PI_MODEL, "current");
@@ -252,17 +252,25 @@ for (const cancel of [true, false])
     },
   );
 
-test("PowerShell drains output still arriving through descendant pipes after the shell exits", async (t) => {
-  const { root, context } = fixture(t, "tail");
-  let output = "";
-  await createToolchainPowerShellOptions(context).operations.exec("fixture tail", root, {
-    timeout: 5,
-    onData: (chunk) => {
-      output += chunk;
-    },
-  });
-  assert.match(output, /TAIL:1000/);
-});
+test(
+  "PowerShell drains output still arriving through descendant pipes after the shell exits",
+  {
+    // A Node parent disconnects its Windows named pipe on exit, even when a child
+    // inherited it. powershell-windows.test.mjs covers this with real native shells.
+    skip: process.platform === "win32",
+  },
+  async (t) => {
+    const { root, context } = fixture(t, "tail");
+    let output = "";
+    await createToolchainPowerShellOptions(context).operations.exec("fixture tail", root, {
+      timeout: 5,
+      onData: (chunk) => {
+        output += chunk;
+      },
+    });
+    assert.match(output, /TAIL:1000/);
+  },
+);
 
 test("cancelled PowerShell output keeps the SDK spill path for durable history", async (t) => {
   const { root, context } = fixture(t, "flood-block");

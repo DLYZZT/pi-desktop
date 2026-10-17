@@ -2,7 +2,6 @@ import { useI18n } from "@/i18n";
 import { useCodingToolChoices } from "@/hooks/useCodingToolChoices";
 import { getToolNamesForPreset } from "@shared/tool-presets";
 import { isOrchestrationTool } from "@shared/orchestration-tools";
-import { ShellToolChoices } from "../composer/ShellToolChoices";
 
 export function ChannelToolSelection({
   toolNames,
@@ -44,16 +43,6 @@ export function ChannelToolSelection({
         <option value="read">{t("toolPresetRead", "Read-only tools")}</option>
         <option value="full">{t("toolPresetFull", "Full coding tools")}</option>
       </select>
-      <ShellToolChoices
-        state={{
-          tools: codingTools
-            .filter((tool) => ["bash", "powershell"].includes(tool.name))
-            .map((tool) => ({ ...tool, active: toolNames.includes(tool.name) })),
-        }}
-        onChange={(name, enabled) =>
-          onChange([...toolNames.filter((tool) => tool !== name), ...(enabled ? [name] : [])])
-        }
-      />
       <span style={{ color: "var(--text-dim)", fontSize: 10, lineHeight: 1.5 }}>
         {t(
           "defaultToolsHint",

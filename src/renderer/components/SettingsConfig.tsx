@@ -12,7 +12,8 @@ import { useI18n, type AppLanguage } from "@/i18n";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig, type SkillsConfigHandle } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
-import { ToolchainsConfig } from "./ToolchainsConfig";
+import { ToolchainsConfig } from "./ToolchainsSettings";
+import { WindowsAgentShellSetting } from "./AgentShellSetting";
 import { BrowserSettings } from "./browser/BrowserSettings";
 import { ChannelsConfig } from "./channels/ChannelsConfig";
 import type { ChannelsSnapshot } from "@shared/channel-types";
@@ -1131,6 +1132,8 @@ function GeneralSettings({
       </section>
 
       <div style={{ height: 1, background: "var(--border)", maxWidth: 620, margin: "28px 0" }} />
+
+      <WindowsAgentShellSetting />
 
       <section style={{ maxWidth: 620 }}>
         <h2 style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>{t("managedProcesses", "Managed processes")}</h2>

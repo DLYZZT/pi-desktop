@@ -100,33 +100,28 @@ test("a late full-preset capability result cannot override a newer no-tools choi
   assert.deepEqual(await f.current.initialToolNames(), []);
 });
 
-test("opening the shell menu reconciles the preset with current authorized tools", async (t) => {
+test("loading session tools reconciles the preset with current authorized tools", async (t) => {
   const f = await fixture(t);
   await act(async () => f.current.handleToolPresetChange("none"));
   api.state.tools = api.state.tools.filter((tool) => tool.name === "powershell");
-  await act(async () => f.current.loadShellTools());
+  await act(async () => f.current.loadTools("session"));
   assert.equal(f.preset, "custom");
   assert.deepEqual(await f.current.initialToolNames(), ["powershell"]);
 });
 
-test("rapid shell revocations compose with pending intent and ignore stale acknowledgements", async (t) => {
+test("a delayed permission grant cannot overwrite a later revocation", async (t) => {
   const f = await fixture(t),
     hold = createDeferred();
   t.after(() => hold.resolve());
-  await act(async () => f.current.loadShellTools());
+  await act(async () => f.current.loadTools("session"));
   assert.deepEqual(await f.current.initialToolNames(), ["powershell", "bash"]);
-  api.state.beforeReply = (command) =>
-    command.toolNames.length === 1 && command.toolNames[0] === "bash" ? hold.promise : undefined;
+  api.state.beforeReply = (command) => (command.toolNames.length ? hold.promise : undefined);
   let first;
   await act(async () => {
-    first = f.current.handleShellToolChange("powershell", false);
+    first = f.current.handleToolPresetChange("full");
   });
-  await act(async () => f.current.handleShellToolChange("bash", false));
-  assert.deepEqual(
-    api.state.requests.at(-1).toolNames,
-    [],
-    "revoking Bash must not re-grant the just-revoked PowerShell",
-  );
+  await act(async () => f.current.handleToolPresetChange("none"));
+  assert.deepEqual(api.state.requests.at(-1).toolNames, [], "revocation must remove every command executor");
   await act(async () => {
     hold.resolve();
     await first;
@@ -141,7 +136,7 @@ test("a late shell snapshot cannot restore grants revoked while it was loading",
   api.state.readHold = hold.promise;
   let reading;
   await act(async () => {
-    reading = f.current.loadShellTools();
+    reading = f.current.loadTools("session");
   });
   await act(async () => f.current.handleToolPresetChange("none"));
   await act(async () => {
@@ -151,13 +146,11 @@ test("a late shell snapshot cannot restore grants revoked while it was loading",
   assert.deepEqual(await f.current.initialToolNames(), []);
 });
 
-test("SDK-only PowerShell activation is not carried into a user edit of another shell", async (t) => {
+test("SDK-only PowerShell activation is not carried into the saved session selection", async (t) => {
   const f = await fixture(t);
   api.state.tools = api.state.tools.map((tool) => ({ ...tool, executionAllowed: tool.name !== "powershell" }));
-  await act(async () => f.current.loadShellTools());
-  assert.equal(f.current.shellTools.tools.find((tool) => tool.name === "powershell").active, false);
-  await act(async () => f.current.handleShellToolChange("bash", false));
+  await act(async () => f.current.loadTools("session"));
+  assert.deepEqual(await f.current.initialToolNames(), ["bash"]);
+  await act(async () => f.current.handleToolPresetChange("none"));
   assert.deepEqual(api.state.requests.at(-1).toolNames, []);
-  await act(async () => f.current.handleShellToolChange("powershell", true));
-  assert.deepEqual(api.state.requests.at(-1).toolNames, ["powershell"], "explicit user choice still grants it");
 });

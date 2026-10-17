@@ -1,4 +1,3 @@
-import { ShellToolChoices, type ShellToolChoicesState } from "./ShellToolChoices";
 import { type ReactNode, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ModelCatalogStatus } from "@contract/types";
@@ -36,9 +35,7 @@ export interface ComposerToolbarOptions {
   compactError?: string | null;
   toolPreset?: ToolPreset;
   onToolPresetChange?: (preset: SelectableToolPreset) => void;
-  shellTools?: ShellToolChoicesState;
-  onShellToolChange?: (name: string, enabled: boolean) => void;
-  onLoadShellTools?: () => void;
+  toolSelectionError?: string;
   thinkingLevel?: ThinkingLevelOption;
   onThinkingLevelChange?: (level: ThinkingLevelOption) => void;
   availableThinkingLevels?: string[] | null;
@@ -97,9 +94,7 @@ function ComposerToolbarView({
     compactError,
     toolPreset,
     onToolPresetChange,
-    shellTools,
-    onShellToolChange,
-    onLoadShellTools,
+    toolSelectionError,
     thinkingLevel,
     onThinkingLevelChange,
     availableThinkingLevels,
@@ -799,7 +794,6 @@ function ComposerToolbarView({
                   setModelDropdownOpen(false);
                   setThinkingDropdownOpen(false);
                   setToolDropdownOpen((v) => !v);
-                  if (!toolDropdownOpen) onLoadShellTools?.();
                 }}
                 disabled={isStreaming}
                 title={`${t("changePermission", "Change permission settings")}: ${toolPresetLabel}`}
@@ -931,7 +925,11 @@ function ComposerToolbarView({
                       </button>
                     );
                   })}
-                  <ShellToolChoices state={shellTools} onChange={onShellToolChange} />
+                  {toolSelectionError && (
+                    <div role="alert" style={{ color: "var(--danger)", fontSize: scaledChatFont(12), padding: 8 }}>
+                      {toolSelectionError}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

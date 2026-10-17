@@ -1,13 +1,7 @@
 import { useCallback, useRef, useState, type RefObject } from "react";
 import { call } from "@/lib/api-client";
 import { sendAgentCommand } from "@/lib/agent-client";
-import {
-  getPresetFromTools,
-  getToolNamesForPreset,
-  getSelectedToolNames,
-  type ToolEntry,
-  type ToolPreset,
-} from "@shared/tool-presets";
+import { getPresetFromTools, getToolNamesForPreset, getSelectedToolNames, type ToolPreset } from "@shared/tool-presets";
 import { LatestRequestGate } from "@/lib/latest-request-gate";
 
 export function useSessionToolSelection({
@@ -29,7 +23,6 @@ export function useSessionToolSelection({
   isActive: () => boolean;
   captureCommandView: () => () => boolean;
 }) {
-  const [choices, setChoices] = useState<Array<Pick<ToolEntry, "name" | "available">>>([]);
   const key = owner ?? cwd;
   const [selection, setSelection] = useState<{ owner?: string | null; names: string[] } | null>(null);
   const selected = selection && selection.owner === key ? selection.names : null;
@@ -46,7 +39,6 @@ export function useSessionToolSelection({
       try {
         const tools = await sendAgentCommand(sid, { type: "get_tools" });
         if (tools && owns() && gate.isCurrent(request) && sessionIdRef.current === sid) {
-          setChoices(tools);
           if (!pending.current || pending.current.owner !== key) {
             const names = getSelectedToolNames(tools);
             desired.current = { owner: key, names };
@@ -66,28 +58,10 @@ export function useSessionToolSelection({
     if (sid) return (await sendAgentCommand(sid, { type: "get_tools" })) ?? [];
     return cwd ? ((await call("host.toolchain", { cwd }))?.codingTools ?? []) : [];
   }, [cwd, sessionIdRef]);
-  const loadShellTools = useCallback(async () => {
-    const owns = captureCommandView(),
-      request = gate.begin(),
-      sid = sessionIdRef.current;
-    try {
-      const tools = await available();
-      if (!owns() || !gate.isCurrent(request)) return;
-      setChoices(tools);
-      setError("");
-      if (sid && sid === sessionIdRef.current && (!pending.current || pending.current.owner !== key)) {
-        const names = getSelectedToolNames(tools as ToolEntry[]);
-        desired.current = { owner: key, names };
-        setSelected(names);
-        setPreset(getPresetFromTools(tools as ToolEntry[]));
-      }
-    } catch (error) {
-      if (owns() && gate.isCurrent(request)) setError(String(error));
-    }
-  }, [available, captureCommandView, sessionIdRef, setSelected, setPreset, gate, key]);
   const initialToolNames = useCallback(
     async () =>
       (desired.current && desired.current.owner === key ? desired.current.names : selected) ??
+      // The Host captures the default executor when it creates the session.
       getToolNamesForPreset(preset, preset === "full" ? await available() : undefined),
     [available, preset, selected, key],
   );
@@ -126,9 +100,8 @@ export function useSessionToolSelection({
       gate.invalidate();
       pending.current = { owner: key, request };
       try {
-        const tools = next === "full" ? await available() : choices;
+        const tools = next !== "none" ? await available() : undefined;
         if (owns() && intents.isCurrent(request)) {
-          setChoices(tools);
           await apply(getToolNamesForPreset(next, tools), next, request);
         }
       } catch (error) {
@@ -140,35 +113,12 @@ export function useSessionToolSelection({
         if (pending.current?.request === request) pending.current = null;
       }
     },
-    [apply, available, captureCommandView, choices, gate, intents, isActive, key],
+    [apply, available, captureCommandView, gate, intents, isActive, key],
   );
-  const handleShellToolChange = useCallback(
-    async (name: string, enabled: boolean) => {
-      if (!["bash", "powershell"].includes(name)) return;
-      if (enabled && !choices.some((tool) => tool.name === name && tool.available !== false)) return;
-      if (!isActive()) return;
-      const request = intents.begin();
-      gate.invalidate();
-      pending.current = { owner: key, request };
-      const current =
-        (desired.current && desired.current.owner === key ? desired.current.names : selected) ??
-        getToolNamesForPreset(preset, choices);
-      await apply([...current.filter((tool) => tool !== name), ...(enabled ? [name] : [])], "custom", request);
-    },
-    [apply, choices, preset, selected, gate, intents, isActive, key],
-  );
-  const active = selected ?? getToolNamesForPreset(preset, choices);
   return {
     loadTools,
     initialToolNames,
     handleToolPresetChange,
-    handleShellToolChange,
-    loadShellTools,
-    shellTools: {
-      error,
-      tools: choices
-        .filter((tool) => ["bash", "powershell"].includes(tool.name))
-        .map((tool) => ({ ...tool, active: active.includes(tool.name) })),
-    },
+    toolSelectionError: error,
   };
 }

@@ -30,6 +30,10 @@ if (!smokeUserData || !path.isAbsolute(smokeUserData)) {
   throw new Error("PI_DESKTOP_SMOKE_USER_DATA must be an absolute temporary directory");
 }
 app.setPath("userData", smokeUserData);
+app.on("window-all-closed", () => {
+  // The checks close their window in finally. Only finish() may choose the exit
+  // status; Electron's default quit here would turn a failed check into exit 0.
+});
 
 registerAppProtocol();
 crashReporter.start({

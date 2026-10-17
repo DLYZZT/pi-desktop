@@ -1,5 +1,6 @@
 import { ORCHESTRATION_TOOL_NAMES } from "./orchestration-tools.ts";
 import { isMcpManagedTool } from "./mcp-tool-policy.ts";
+import { isAgentShell, type AgentShell } from "./agent-shell.ts";
 
 export interface ToolEntry {
   name: string;
@@ -19,7 +20,11 @@ export const PRESET_FULL: string[] = [...CODING_FULL_TOOLS, ...ORCHESTRATION_TOO
 
 const BUILTIN_TOOL_NAMES = new Set([...CODING_FULL_TOOLS, "powershell"]);
 
-export function codingToolAvailability(platform: string, capabilities: Readonly<Record<string, unknown>>) {
+export function codingToolAvailability(
+  platform: string,
+  capabilities: Readonly<Record<string, unknown>>,
+  shell?: AgentShell,
+) {
   const required: Record<string, string> = {
     bash: "shell.bash",
     powershell: "shell.powershell",
@@ -28,7 +33,8 @@ export function codingToolAvailability(platform: string, capabilities: Readonly<
   };
   return [...CODING_FULL_TOOLS, ...(platform === "win32" ? ["powershell"] : [])].map((name) => ({
     name,
-    available: !required[name] || Boolean(capabilities[required[name]]),
+    available:
+      (!shell || !isAgentShell(name) || name === shell) && (!required[name] || Boolean(capabilities[required[name]])),
   }));
 }
 
@@ -41,7 +47,14 @@ export function getPresetFromTools(tools: ToolEntry[]): ToolPreset {
     .sort()
     .join(",");
 
-  if (active === [...PRESET_DEFAULT].sort().join(",")) return "default";
+  if (
+    active === [...PRESET_DEFAULT].sort().join(",") ||
+    active ===
+      PRESET_DEFAULT.map((name) => (name === "bash" ? "powershell" : name))
+        .sort()
+        .join(",")
+  )
+    return "default";
   if (
     active ===
     getToolNamesForPreset("full", tools)
@@ -79,5 +92,10 @@ export function getToolNamesForPreset(
       ...PRESET_FULL,
       ...(tools?.some((tool) => tool.name === "powershell" && tool.available !== false) ? ["powershell"] : []),
     ].filter((name) => !tools?.some((tool) => tool.name === name && tool.available === false));
-  return [...PRESET_DEFAULT];
+  const shell =
+    tools?.some((tool) => tool.name === "bash" && tool.available === false) &&
+    tools.some((tool) => tool.name === "powershell" && tool.available !== false)
+      ? "powershell"
+      : "bash";
+  return PRESET_DEFAULT.map((name) => (name === "bash" ? shell : name));
 }

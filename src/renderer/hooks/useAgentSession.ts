@@ -260,17 +260,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const prependAnchorRef = useRef<ReturnType<typeof useChatViewport>["capturePrependAnchor"] | null>(null);
   const capturePrependAnchor = useCallback(() => prependAnchorRef.current?.(), []);
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
-  const { loadTools, initialToolNames, handleToolPresetChange, handleShellToolChange, loadShellTools, shellTools } =
-    useSessionToolSelection({
-      cwd: newSessionCwd ?? session?.cwd,
-      owner: session?.id ?? newSessionCwd,
-      sessionIdRef,
-      ensuringNewSessionRef,
-      preset: toolPreset,
-      setPreset: setToolPresetState,
-      isActive,
-      captureCommandView,
-    });
+  const { loadTools, initialToolNames, handleToolPresetChange, toolSelectionError } = useSessionToolSelection({
+    cwd: newSessionCwd ?? session?.cwd,
+    owner: session?.id ?? newSessionCwd,
+    sessionIdRef,
+    ensuringNewSessionRef,
+    preset: toolPreset,
+    setPreset: setToolPresetState,
+    isActive,
+    captureCommandView,
+  });
 
   const applyRuntimeSnapshot = useCallback(
     (snapshot: SessionDetail["agentState"], ticket: RuntimeSnapshotTicket) => {
@@ -1376,9 +1375,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleRecallQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange,
-    handleShellToolChange,
-    loadShellTools,
-    shellTools,
+    toolSelectionError,
     handleThinkingLevelChange,
     loadTools,
     loadSlashCommands,

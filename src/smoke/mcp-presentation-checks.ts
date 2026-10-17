@@ -43,9 +43,18 @@ export async function runMcpPresentationChecks(window: BrowserWindow): Promise<v
     }
     const save=Array.from(editor.querySelectorAll('button')).find(button=>['Save configuration','保存配置','儲存設定'].includes(button.textContent?.trim()));
     save.scrollIntoView({block:'center'});
-    await new Promise(resolve=>requestAnimationFrame(resolve));
-    const rect=save.getBoundingClientRect();
-    if(rect.top<0 || rect.bottom>window.innerHeight || document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)!==save) throw new Error('MCP save button cannot be reached by scrolling');
+    // A theme view-transition can still cover the page after its animation is
+    // reported finished. Wait for actual hit testing, retaining the same bounds.
+    try {
+      await until(()=>{
+        const rect=save.getBoundingClientRect();
+        return rect.top>=0 && rect.bottom<=window.innerHeight && document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===save;
+      });
+    } catch {
+      const rect=save.getBoundingClientRect();
+      const hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
+      throw new Error('MCP save button cannot be reached by scrolling: '+JSON.stringify({language,theme,rect:rect.toJSON(),viewport:[window.innerWidth,window.innerHeight],hit:hit?.outerHTML.slice(0,250)}));
+    }
     (container.querySelector('.mcp-detail-pane') ?? container).scrollTop=0;
     await new Promise(resolve=>requestAnimationFrame(resolve));
     return {previous,title:container.querySelector('h3').textContent,width:container.clientWidth};

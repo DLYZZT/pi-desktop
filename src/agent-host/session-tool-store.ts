@@ -6,11 +6,13 @@ import {
   filterStoredToolNames,
 } from "../shared/pi-tool-policy.ts";
 import { desktopDataRoot } from "./desktop-data-root";
+import { isAgentShell, useAgentShell, type AgentShell } from "../shared/agent-shell.ts";
 import { isOrchestrationTool, ORCHESTRATION_TOOL_NAMES } from "../shared/orchestration-tools";
 import { CODING_FULL_TOOLS } from "../shared/tool-presets";
 import { mcpToolIdentity, validMcpToolIdentity, type NamedMcpTool } from "../shared/mcp-tool-identity";
 
 type StoredSessionTools = {
+  shell?: AgentShell;
   toolNames: string[];
   policyRevision?: number;
   executionToolNames?: string[];
@@ -52,6 +54,7 @@ function normalizeState(value: unknown, platform: string): SessionToolStateFile 
     if (toolNames === undefined) continue;
     sessions[sessionId] = {
       toolNames,
+      ...(platform === "win32" && isAgentShell(entry.shell) ? { shell: entry.shell } : {}),
       ...(entry.policyRevision === DESKTOP_TOOL_POLICY_REVISION ? { policyRevision: entry.policyRevision } : {}),
       ...(entry.executionToolNames === undefined
         ? {}
@@ -147,9 +150,14 @@ export class DesktopSessionToolStore {
     this.set(sessionId, this.filterActiveSelection(sessionId, names, requested));
   }
 
-  set(sessionId: string, toolNames: string[]): void {
+  getShell(sessionId: string): AgentShell | undefined {
+    return this.platform === "win32" ? this.load().sessions[sessionId.trim()]?.shell : undefined;
+  }
+
+  set(sessionId: string, toolNames: string[], shell?: AgentShell): void {
     const normalizedId = sessionId.trim();
-    const normalizedToolNames = normalizeToolNames(toolNames, this.platform);
+    const selectedShell = this.platform === "win32" ? (shell ?? this.getShell(sessionId)) : undefined;
+    const normalizedToolNames = normalizeToolNames(useAgentShell(toolNames, selectedShell), this.platform);
     if (!normalizedId || normalizedToolNames === undefined) throw new Error("Invalid session tool state");
     const state = this.load();
     const previous = state.sessions[normalizedId];
@@ -164,6 +172,7 @@ export class DesktopSessionToolStore {
             : undefined;
     state.sessions[normalizedId] = {
       toolNames: normalizedToolNames,
+      ...(selectedShell ? { shell: selectedShell } : {}),
       policyRevision: DESKTOP_TOOL_POLICY_REVISION,
       ...(previous?.mcpToolIdentities ? { mcpToolIdentities: previous.mcpToolIdentities } : {}),
       ...(orchestration === undefined ? {} : { orchestrationToolNames: orchestration }),
@@ -368,8 +377,8 @@ export function getDesktopSessionToolNames(sessionId: string): string[] | undefi
   return getDefaultStore().get(sessionId);
 }
 
-export function setDesktopSessionToolNames(sessionId: string, toolNames: string[]): void {
-  getDefaultStore().set(sessionId, toolNames);
+export function setDesktopSessionToolNames(sessionId: string, toolNames: string[], shell?: AgentShell): void {
+  getDefaultStore().set(sessionId, toolNames, shell);
 }
 
 export function getDesktopSessionExecutionTools(sessionId: string): string[] | undefined {
@@ -391,6 +400,8 @@ export function setDesktopSessionMcpDeclarations(sessionId: string, names: strin
   getDefaultStore().setMcpDeclaration(sessionId, names);
 }
 export function copyDesktopMcpTools(sourceId: string, targetId: string): void {
+  const shell = getDefaultStore().getShell(sourceId);
+  if (shell) getDefaultStore().set(targetId, getDefaultStore().get(targetId) ?? [], shell);
   const grants = getDesktopSessionMcpExecutionTools(sourceId),
     declarations = getDesktopSessionMcpDeclarations(sourceId);
   if (grants) setDesktopSessionMcpExecutionTools(targetId, grants);

@@ -1,9 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { BrowserWindow } from "electron";
+import { runShellSettingsChecks } from "./shell-settings-checks";
 type Call = <T = unknown>(method: string, params?: unknown) => Promise<T>;
 
 export async function runSessionToolsUiChecks(window: BrowserWindow, call: Call, sessionId: string): Promise<void> {
+  const details = await call<{ info: { cwd: string } }>("sessions.get", { id: sessionId });
+  await runShellSettingsChecks(call, details.info.cwd);
   const until = async (names: string[], enabled: boolean) => {
     const deadline = Date.now() + 10000;
     while (Date.now() < deadline) {
