@@ -71,6 +71,10 @@ jobs:
           npm run prepare:bundled-tools -- --target win32-x64
           npm run smoke
 
+      - name: Validate native PowerShell 5.1 and 7
+        if: runner.os == 'Windows'
+        run: npm run test:windows-powershell
+
       - name: Install pinned Windows cross toolchain (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -168,10 +172,6 @@ jobs:
         run: |
           npm run test:herdr-e2e
           xvfb-run --auto-servernum npm run test:herdr-desktop-e2e
-
-      - name: Validate native PowerShell 5.1 and 7
-        if: runner.os == 'Windows'
-        run: npm run test:windows-powershell
 
       - name: Run cross-platform quality checks (Windows)
         if: runner.os == 'Windows'

@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createDesktopPowerShellTool, createToolchainPowerShellOptions } from "./toolchain-powershell.ts";
-import { ToolchainManager } from "../main/toolchains/manager.ts";
+import {
+  createDesktopPowerShellTool,
+  createToolchainPowerShellOptions,
+} from "../src/agent-host/toolchain-powershell.ts";
+import { ToolchainManager } from "../src/main/toolchains/manager.ts";
+import { probeSucceeded, runProbeCommand } from "../src/main/toolchains/process-runner.ts";
+
+// Native shells can expand the runner's 8.3 TEMP aliases and normalize casing.
+const canonicalPath = (value) => realpathSync.native(value).toLowerCase();
 
 for (const edition of ["5.1", "7"])
   test(
@@ -54,8 +61,8 @@ for (const edition of ["5.1", "7"])
       );
       const data = JSON.parse(report.structuredContent.output);
       assert.ok(data.version.startsWith(edition + ".") || data.version === edition);
-      assert.equal(data.exe.toLowerCase(), executable.toLowerCase());
-      assert.equal(data.cwd, root);
+      assert.equal(canonicalPath(data.exe), canonicalPath(executable));
+      assert.equal(canonicalPath(data.cwd), canonicalPath(root));
       t.diagnostic(`PowerShell ${data.version}, selected executable verified`);
       const unicode = await run(
         `$s='中文 "双引号" 和 ''单引号''';[Console]::WriteLine($s)\n[Console]::Error.WriteLine('错误流中文')`,
@@ -178,6 +185,16 @@ test(
     const manager = new ToolchainManager({
       userDataRoot: root,
       env: { ...process.env, Path: root, PATH: root },
+      executor: {
+        async run(command) {
+          const result = await runProbeCommand(command);
+          if (!probeSucceeded(result))
+            t.diagnostic(
+              `PowerShell probe failed: ${JSON.stringify({ ...result, stdout: result.stdout.slice(0, 2000), stderr: result.stderr.slice(0, 2000) })}`,
+            );
+          return result;
+        },
+      },
       registry: {
         collect: async () =>
           executables.map((executable) => ({
@@ -195,7 +212,10 @@ test(
       const resolution = await manager.resolveForProject(root);
       assert.equal(resolution.commands["shell.bash"], undefined);
       const selected = resolution.commands["shell.powershell"];
-      assert.equal(selected?.executable.toLowerCase(), expected?.toLowerCase());
+      assert.equal(
+        selected ? canonicalPath(selected.executable) : undefined,
+        expected ? canonicalPath(expected) : undefined,
+      );
       if (selected) {
         const tool = createDesktopPowerShellTool(root, {
           ...resolution,
@@ -205,7 +225,7 @@ test(
           command: "[Diagnostics.Process]::GetCurrentProcess().MainModule.FileName",
           timeout: 15,
         });
-        assert.equal(result.structuredContent.output.trim().toLowerCase(), expected.toLowerCase());
+        assert.equal(canonicalPath(result.structuredContent.output.trim()), canonicalPath(expected));
       }
       return resolution;
     };
@@ -214,7 +234,7 @@ test(
     executables = [inbox, seven];
     await manager.rescan();
     await verify(seven);
-    assert.equal(first.commands["shell.powershell"].executable.toLowerCase(), inbox.toLowerCase());
+    assert.equal(canonicalPath(first.commands["shell.powershell"].executable), canonicalPath(inbox));
     await manager.registerCustomTool("shell.powershell", inbox);
     await verify(inbox);
     executables = [seven];

@@ -66,7 +66,7 @@
     "dist": "node scripts/package-desktop.mjs --release",
     "dist:mac:signed": "node scripts/build-mac-release.mjs",
     "dist:mac:notarized": "node scripts/build-mac-release.mjs --notarize",
-    "test:windows-powershell": "node --test src/agent-host/powershell-windows.test.mjs"
+    "test:windows-powershell": "node --test scripts/test-windows-powershell.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.2.0",

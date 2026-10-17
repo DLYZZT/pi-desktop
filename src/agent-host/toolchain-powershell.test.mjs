@@ -256,7 +256,7 @@ test(
   "PowerShell drains output still arriving through descendant pipes after the shell exits",
   {
     // A Node parent disconnects its Windows named pipe on exit, even when a child
-    // inherited it. powershell-windows.test.mjs covers this with real native shells.
+    // inherited it. test-windows-powershell.mjs covers this with real native shells.
     skip: process.platform === "win32",
   },
   async (t) => {
