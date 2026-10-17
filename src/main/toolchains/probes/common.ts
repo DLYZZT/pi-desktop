@@ -24,6 +24,17 @@ const PRESERVED_ENV_KEYS = [
   "ALL_PROXY",
 ] as const;
 
+// .NET/PowerShell use these standard locations for startup caches and default module directories.
+// Keep them separate from tool-specific load paths and startup hooks, which must remain excluded.
+const WINDOWS_DIRECTORY_ENV_KEYS = [
+  "APPDATA",
+  "LOCALAPPDATA",
+  "ProgramData",
+  "ProgramFiles",
+  "ProgramFiles(x86)",
+  "ProgramW6432",
+] as const;
+
 function environmentValue(env: NodeJS.ProcessEnv, key: string, platform: NodeJS.Platform): string | undefined {
   if (platform !== "win32") return env[key];
   const actualKey = Object.keys(env).find((candidate) => candidate.toLowerCase() === key.toLowerCase());
@@ -37,7 +48,7 @@ export function buildProbeEnvironment(
   extra: NodeJS.ProcessEnv = {},
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
-  for (const key of PRESERVED_ENV_KEYS) {
+  for (const key of [...PRESERVED_ENV_KEYS, ...(platform === "win32" ? WINDOWS_DIRECTORY_ENV_KEYS : [])]) {
     const value = environmentValue(baseEnv, key, platform);
     if (value !== undefined) env[key] = value;
   }

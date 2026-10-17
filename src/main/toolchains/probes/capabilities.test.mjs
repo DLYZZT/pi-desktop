@@ -2,8 +2,66 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { probeExecutableSeed } from "./capabilities.ts";
+import { buildProbeEnvironment } from "./common.ts";
 import { commandDescriptorFromCandidate, selectDefaultCandidates } from "../public-state.ts";
 import { ToolchainRuntime } from "../../../agent-host/toolchain-runtime.ts";
+
+test("Windows probes retain case-insensitive known folders without inheriting module paths, hooks or secrets", () => {
+  const directories = {
+    AppData: "C:\\Users\\fixture\\AppData\\Roaming",
+    localappdata: "C:\\Users\\fixture\\AppData\\Local",
+    PROGRAMDATA: "C:\\ProgramData",
+    programfiles: "C:\\Program Files",
+    "PROGRAMFILES(X86)": "C:\\Program Files (x86)",
+    programw6432: "C:\\Program Files",
+  };
+  const env = buildProbeEnvironment(
+    {
+      ...directories,
+      Path: "C:\\empty-path",
+      NODE_OPTIONS: "--require untrusted.cjs",
+      ELECTRON_RUN_AS_NODE: "1",
+      DOTNET_STARTUP_HOOKS: "untrusted.dll",
+      PSModulePath: "C:\\incompatible-pwsh-modules",
+      PRIVATE_API_KEY: "not-for-probes",
+    },
+    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0",
+    "win32",
+  );
+  for (const [name, value] of Object.entries(directories)) {
+    const keys = Object.keys(env).filter((key) => key.toLowerCase() === name.toLowerCase());
+    assert.equal(keys.length, 1, name);
+    assert.equal(env[keys[0]], value, name);
+  }
+  for (const name of [
+    "NODE_OPTIONS",
+    "ELECTRON_RUN_AS_NODE",
+    "DOTNET_STARTUP_HOOKS",
+    "PSModulePath",
+    "PRIVATE_API_KEY",
+  ])
+    assert.equal(env[name], undefined, name);
+  assert.equal(env.PATH, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\empty-path");
+});
+
+test("Windows known-folder inheritance does not expand POSIX probe environments", () => {
+  for (const platform of ["darwin", "linux"]) {
+    const env = buildProbeEnvironment(
+      {
+        HOME: "/home/fixture",
+        PATH: "/usr/bin",
+        APPDATA: "not-posix",
+        LOCALAPPDATA: "not-posix",
+        ProgramFiles: "not-posix",
+      },
+      "/tools",
+      platform,
+    );
+    assert.equal(env.HOME, "/home/fixture");
+    assert.equal(env.PATH, "/tools:/usr/bin");
+    for (const name of ["APPDATA", "LOCALAPPDATA", "ProgramFiles"]) assert.equal(env[name], undefined);
+  }
+});
 
 const capabilities = [
   "shell.bash",
