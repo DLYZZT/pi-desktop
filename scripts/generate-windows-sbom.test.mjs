@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 
 import { createWindowsSbom } from "./generate-windows-sbom.mjs";
+import { assertWindowsSbomDocument } from "./verify-windows-sbom.mjs";
 
 function facts() {
   return {
@@ -153,6 +154,7 @@ test("current production lock includes the complete pinned Pi graph in the Windo
   ];
   input.packageLock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
   const sbom = createWindowsSbom(input);
+  assert.doesNotThrow(() => assertWindowsSbomDocument(sbom, input));
   for (const name of ["pi-ai", "pi-coding-agent", "pi-agent-core", "pi-telemetry", "pi-tui", "pi-codemode", "pi-mcp"]) {
     const matches = sbom.components.filter((entry) => entry.name === `@earendil-works/${name}`);
     assert.ok(matches.length > 0, name);
@@ -168,6 +170,40 @@ test("current production lock includes the complete pinned Pi graph in the Windo
     assert.equal(
       sbom.components.some((entry) => entry.name === "@earendil-works/" + name),
       false,
+    );
+  }
+});
+
+test("SBOM verification accepts smaller complete graphs but rejects missing or altered release inputs", () => {
+  const input = facts();
+  const complete = createWindowsSbom(input);
+  assert.doesNotThrow(() => assertWindowsSbomDocument(complete, input));
+  for (const mutate of [
+    (sbom) =>
+      sbom.components.splice(
+        sbom.components.findIndex((entry) => entry.name === "beta"),
+        1,
+      ),
+    (sbom) => {
+      sbom.components.find((entry) => entry.name === "alpha").version = "9.9.9";
+    },
+    (sbom) => {
+      sbom.dependencies.find((entry) => entry.ref === sbom.metadata.component["bom-ref"]).dependsOn.pop();
+    },
+    (sbom) => {
+      sbom.components.find((entry) => entry.name === "pi-windows-managed-process-helper").hashes[0].content =
+        "f".repeat(64);
+    },
+    (sbom) => {
+      sbom.metadata.component.hashes[0].content = "e".repeat(64);
+    },
+    (sbom) => sbom.components.push(structuredClone(sbom.components[0])),
+  ]) {
+    const corrupted = structuredClone(complete);
+    mutate(corrupted);
+    assert.throws(
+      () => assertWindowsSbomDocument(corrupted, input),
+      /does not exactly match the locked release inputs/,
     );
   }
 });
