@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -162,4 +162,53 @@ test("models.json save validates advanced model fields before replacing the file
     (error) => error.code === "BAD_REQUEST",
   );
   assert.equal(readFileSync(file, "utf8"), original);
+});
+
+test("invalid model configuration remains editable and recovers all providers and overrides after repair", async () => {
+  const file = path.join(directory, "models.json");
+  const original =
+    "// retained until an explicit save\n" +
+    JSON.stringify({
+      $schema: "https://pi.dev/schemas/models.schema.json",
+      future: { retained: true },
+      providers: {
+        bad: {
+          api: "openai-completions",
+          baseUrl: "http://fixture.invalid",
+          models: [{ id: "bad", contextWindow: 0 }],
+        },
+        good: {
+          api: "openai-completions",
+          baseUrl: "http://fixture.invalid",
+          models: [{ id: "good" }],
+          modelOverrides: { other: { maxTokens: 100 } },
+        },
+      },
+    });
+  writeFileSync(file, original);
+  const snapshot = await modelConfigHandlers.get();
+  assert.equal(snapshot.issues[0].path, "/providers/bad/models/0/contextWindow");
+  assert.equal(snapshot.azureUpgrade, undefined, "invalid schema is inspected before any migration");
+  assert.equal(readFileSync(file, "utf8"), original);
+  assert.ok(snapshot.config.providers.good);
+  snapshot.config.providers.bad.models[0].contextWindow = 4096;
+  await modelConfigHandlers.set({ config: snapshot.config, expectedVersion: snapshot.version });
+  const repaired = await modelConfigHandlers.get();
+  assert.equal(repaired.issues, undefined);
+  assert.equal(repaired.azureUpgrade.status, "unchanged");
+  assert.deepEqual(repaired.config.future, { retained: true });
+  assert.equal(repaired.config.providers.good.modelOverrides.other.maxTokens, 100);
+  assert.equal(readFileSync(file + ".bak", "utf8"), original);
+});
+
+test("configuration diagnostics describe the returned version after a concurrent disk edit", async () => {
+  const filename = path.join(directory, "models.json");
+  writeFileSync(filename, '{"providers":{}}');
+  const pending = modelConfigHandlers.get();
+  const replacement = '{"providers":{"fixture":{"models":[{"id":"bad","maxTokens":0}]}}}';
+  writeFileSync(filename, replacement);
+  const snapshot = await pending;
+  assert.equal(snapshot.config.providers.fixture.models[0].maxTokens, 0);
+  assert.equal(snapshot.issues[0].path, "/providers/fixture/models/0/maxTokens");
+  assert.equal(readFileSync(filename, "utf8"), replacement);
 });

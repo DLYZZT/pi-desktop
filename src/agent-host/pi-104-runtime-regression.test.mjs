@@ -140,6 +140,60 @@ async function run(f, code, id) {
     .at(-1)?.message;
 }
 
+test(
+  "1.2.0 Codemode preserves many text outputs and distinguishes structured failures from rejected calls",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t, {
+      persist: true,
+      tools: ["codemode", "structured_failure", "plain_failure"],
+      customTools: [
+        {
+          name: "structured_failure",
+          label: "structured",
+          description: "structured error",
+          parameters: Type.Object({}),
+          exposure: "deferred",
+          outputSchema: Type.Object({ exit_code: Type.Integer(), output: Type.String() }),
+          execute: async () => ({
+            isError: true,
+            structuredContent: { exit_code: 7, output: "EXPECTED_FAILURE" },
+            content: [{ type: "text", text: "EXPECTED_FAILURE" }],
+          }),
+        },
+        {
+          name: "plain_failure",
+          label: "plain",
+          description: "plain error",
+          parameters: Type.Object({}),
+          exposure: "deferred",
+          execute: async () => ({ isError: true, content: [{ type: "text", text: "PLAIN_FAILURE" }] }),
+        },
+      ],
+    });
+    f.policy.setExecution(["structured_failure", "plain_failure"]);
+    const result = await run(
+      f,
+      `// @options: {"max_output_tokens": 128, "timeout_ms": 10000}
+const failed=await tools.structured_failure({});
+text("STRUCTURED_EXIT_"+failed.exit_code);
+let rejected=false;try{await tools.plain_failure({});}catch(error){rejected=error.message.includes("PLAIN_FAILURE");}
+text("PLAIN_REJECTED_"+rejected);
+for(let i=0;i<10000;i++)text("ROW_"+i+"_END");`,
+      "many-output",
+    );
+    assert.equal(result.isError, false);
+    const history = await f.history.query({ includeContent: true, maxContentBytes: 2097152 });
+    const parent = history.records.find((entry) => entry.toolName === "codemode");
+    assert.equal(parent.output.complete, true);
+    assert.match(parent.output.value, /STRUCTURED_EXIT_7/);
+    assert.match(parent.output.value, /PLAIN_REJECTED_true/);
+    assert.equal(parent.output.value.match(/ROW_\d+_END/g).length, 10000);
+    assert.equal(history.records.find((entry) => entry.toolName === "structured_failure").status, "failed");
+    assert.equal(history.records.find((entry) => entry.toolName === "plain_failure").status, "failed");
+  },
+);
+
 test("SDK wildcard selection retains MCP discovery without granting execution, and exclusions/empty selection remain effective", async (t) => {
   const customTools = ["mcp__fixture__echo", "mcp__other__echo"].map((name) => ({
     name,

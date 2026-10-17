@@ -36,6 +36,7 @@ test("UI prompts and messaging-channel turns share one serial session scheduler"
     modelRuntime: { getModel: () => undefined },
     sessionManager: {
       getHeader: () => ({ cwd: "/tmp/shared-workspace" }),
+      getBranch: () => [],
       appendCustomEntry(customType, data) {
         customEntries.push({ customType, data });
       },
@@ -126,6 +127,7 @@ test("UI prompts and messaging-channel turns share one serial session scheduler"
         customType: "pi-desktop-channel-attachment-context",
         content: "Attachment 1 is available at /tmp/file.txt",
         display: false,
+        details: { channelRunId: "run-one" },
       },
       options: { deliverAs: "nextTurn" },
     },
@@ -218,6 +220,7 @@ test("a transient extension binding failure is retried by the next prompt", asyn
   const prompts = [];
   const inner = {
     sessionId: "extension-retry-session",
+    modelRuntime: { getModel: () => undefined, getError: () => undefined },
     sessionManager: { getHeader: () => ({ cwd: "/tmp" }) },
     agent: { state: { messages: [] } },
     extensionRunner: {},

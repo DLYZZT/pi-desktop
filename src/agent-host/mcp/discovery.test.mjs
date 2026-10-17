@@ -51,6 +51,34 @@ test("MCP connection waits end on readiness, timeout and cancellation without mi
   assert.match(mcpAvailabilityNotice([b]), /needs-auth/);
 });
 
+test("SDK reachesTools metadata controls readiness for replacement callers without granting tools", () => {
+  const one = server("one-server"),
+    two = server("two");
+  assert.deepEqual(
+    neededMcpServers([one, two], "custom_caller", {}, () => ["mcp__one_server__echo"]),
+    [one],
+  );
+  assert.deepEqual(
+    neededMcpServers([one, two], "custom_caller", {}, () => "all"),
+    [one, two],
+  );
+  assert.deepEqual(
+    neededMcpServers([one, two], "codemode", { code: "text(1)" }, () => []),
+    [],
+  );
+  assert.deepEqual(
+    neededMcpServers([one, two], "codemode", { code: "tools[name]({})" }, () => []),
+    [one, two],
+  );
+  assert.deepEqual(
+    neededMcpServers([one, two], "custom_caller", {}, () => {
+      throw new Error("old extension");
+    }),
+    [one, two],
+  );
+  assert.equal(one.snapshot.state, "connecting");
+});
+
 test("server summaries respect caller visibility, exclude long instructions and remain bounded data", () => {
   const a = server("one"),
     b = server("two", "deferred"),

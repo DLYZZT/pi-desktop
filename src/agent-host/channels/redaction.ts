@@ -42,5 +42,7 @@ export function redactChannelText(raw: unknown): string {
 
 export function safeChannelError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
+  if (error instanceof Error && "code" in error && error.code === "MODEL_CONFIG_INVALID")
+    return "桌面端模型配置无效，已暂停本次请求，避免使用错误的服务商或地址。请在 Pi Agent Desktop 修复 models.json，并重新加载会话后重试。";
   return redactChannelText(raw).slice(0, 500);
 }

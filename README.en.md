@@ -143,7 +143,8 @@ Managed background processes support macOS, Linux, and Windows 11 x64. Windows A
 
 ### Unified model and extension management
 
-- Bundle Pi Coding Agent 1.1.0 and manage model providers and model configurations
+- The upgrade branch bundles Pi Coding Agent 1.2.0 (M1); public v0.4.0 installers still use 1.1.0. PowerShell remains disabled.
+
 - Prefer the local model directory when sessions start; explicitly refresh the remote directory when needed while preserving cached models across offline, timeout, or partial-provider failures
 - Use API keys, subscriptions, or OAuth as supported by each provider, with guided credential setup, confirmation before replacing existing credentials, and migration of older Azure configuration
 - Configure sampling parameters, sampling by thinking level, image/request input limits, and per-model overrides; select `max` reasoning on models that support it
@@ -151,6 +152,8 @@ Managed background processes support macOS, Linux, and Windows 11 x64. Windows A
 - Detect external configuration changes when saving model and advanced settings to avoid overwriting edits made through the CLI or an editor
 - Search for, install, and configure Skills; normal installs keep npm's default concurrency, with one isolated-cache retry for network, timeout, or cache-lock failures
 - Manage Plugins while continuing to use the Pi Agent extension ecosystem
+
+On the development branch, run `npm run check:models-config` for a read-only configuration preflight. Invalid fields disable the whole custom configuration; Models settings preserve its content for repair. OpenRouter's personalized catalog shares the Pi CLI cache without credential or endpoint partitioning. With different credentials, especially offline, the list may reflect another runtime; it is not proof of authorization for the current key.
 
 ### Auto virtual model and routing
 

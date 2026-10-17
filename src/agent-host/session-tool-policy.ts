@@ -104,7 +104,30 @@ export class SessionToolPolicy {
       .getAllTools()
       .filter((tool) => tool.exposure !== "hidden")
       .map((tool) => ({
-        ...tool,
+        // SDK metadata also contains functions and private extension paths. Only project the wire contract.
+        name: tool.name,
+        description: tool.description,
+        exposure: tool.exposure,
+        ...(tool.namespace
+          ? {
+              namespace: {
+                name: tool.namespace.name,
+                aliases: tool.namespace.aliases ? [...tool.namespace.aliases] : undefined,
+                description: tool.namespace.description,
+                instructions: tool.namespace.instructions,
+              },
+            }
+          : {}),
+        ...(tool.annotations
+          ? {
+              annotations: {
+                readOnlyHint: tool.annotations.readOnlyHint,
+                destructiveHint: tool.annotations.destructiveHint,
+                idempotentHint: tool.annotations.idempotentHint,
+                openWorldHint: tool.annotations.openWorldHint,
+              },
+            }
+          : {}),
         active: active.has(tool.name),
         callable: callable.has(tool.name),
         executionAllowed: this.isAllowed(tool.name),

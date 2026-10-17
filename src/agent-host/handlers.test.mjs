@@ -791,8 +791,27 @@ test("session, model configuration, and auth handlers isolate state and preserve
   };
   const editorOne = await handlers["modelsConfig.get"]();
   const editorTwo = await handlers["modelsConfig.get"]();
+  await assert.rejects(
+    handlers["modelsConfig.set"]({ config: v087Config, expectedVersion: editorOne.version }),
+    (error) => error.code === "BAD_REQUEST" && error.detail.issues.some((issue) => issue.path.endsWith("/X-Remove-Me")),
+  );
+  assert.deepEqual(
+    await handlers["modelsConfig.get"](),
+    editorOne,
+    "invalid legacy null headers must not overwrite configuration",
+  );
+  delete v087Config.providers.custom.headers["X-Remove-Me"];
   const winningSave = await handlers["modelsConfig.set"]({
-    config: v087Config,
+    config: {
+      ...v087Config,
+      providers: {
+        ...v087Config.providers,
+        custom: {
+          ...v087Config.providers.custom,
+          headers: { ...v087Config.providers.custom.headers, "X-Remove-Me": undefined },
+        },
+      },
+    },
     expectedVersion: editorOne.version,
   });
   assert.equal(winningSave.ok, true);

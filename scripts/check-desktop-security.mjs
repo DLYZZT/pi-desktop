@@ -26,6 +26,7 @@ const rpcManager = read("src/agent-host/rpc-manager.ts");
 const desktopSessionTools = read("src/agent-host/desktop-session-tools.ts");
 const sessionExtensions = read("src/agent-host/desktop-session-extensions.ts");
 const legacyChannelContext = read("src/agent-host/legacy-channel-context.ts");
+const channelAttachmentContext = read("src/agent-host/channel-attachment-context.ts");
 const weixinMedia = read("src/agent-host/channels/adapters/weixin/media.ts");
 const channelContract = read("src/contract/api.ts");
 const desktopContract = read("src/contract/desktop.ts");
@@ -547,7 +548,9 @@ const checks = [
     "channel user prompts must contain the user's text without transport metadata wrappers",
   ],
   [
-    rpcManager.includes("expandPromptTemplates: false") &&
+    rpcManager.includes("promptChannelTurn(this.inner, params)") &&
+      channelAttachmentContext.includes("expandPromptTemplates: false") &&
+      !channelAttachmentContext.includes("agent.state!.messages =") &&
       rpcManager.includes("desktopSessionExtensions(") &&
       sessionExtensions.includes("createLegacyChannelContextExtension()") &&
       legacyChannelContext.includes('pi.on("context"') &&

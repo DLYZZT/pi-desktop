@@ -168,6 +168,12 @@ export interface ModelsConfigSnapshot {
   config: ModelsConfig;
   version: string;
   azureUpgrade?: AzureUpgradeReport;
+  issues?: ModelsConfigIssue[];
+}
+
+export interface ModelsConfigIssue {
+  path: string;
+  message: string;
 }
 
 export interface AzureUpgradeReport {
@@ -179,7 +185,7 @@ export interface AzureUpgradeReport {
 
 export interface ModelSelectionNotice {
   requiresChoice: boolean;
-  reason: "azure-renamed" | "restore-fallback" | "azure-review";
+  reason: "azure-renamed" | "restore-fallback" | "azure-review" | "config-invalid";
   requested?: { provider: string; modelId: string };
   actual?: { provider: string; modelId: string };
 }

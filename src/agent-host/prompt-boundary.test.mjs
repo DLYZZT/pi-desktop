@@ -3,20 +3,353 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
+import { createDeferred } from "#test-timing";
 import { Type } from "typebox";
 import {
   SessionManager,
   SettingsManager,
   createAgentSessionServices,
   createAgentSessionFromServices,
+  createCodemodeExtension,
 } from "@earendil-works/pi-coding-agent";
 import { importTestBundle } from "#test-bundle";
-import { setAgentSessionSource } from "./session-source.ts";
 
-const { AgentSessionWrapper } = await importTestBundle("pi-prompt-boundary", {
+const { AgentSessionWrapper, SessionToolPolicy, setAgentSessionSource, getAgentSessionSource } = await importTestBundle(
+  "pi-prompt-boundary",
+  {
+    packages: "external",
+    stdin: {
+      resolveDir: import.meta.dirname,
+      loader: "ts",
+      contents:
+        'export {AgentSessionWrapper} from "./rpc-manager.ts"; export {SessionToolPolicy} from "./session-tool-policy.ts"; export {setAgentSessionSource,getAgentSessionSource} from "./session-source.ts";',
+    },
+  },
+);
+const { createLegacyChannelContextExtension } = await importTestBundle("pi-channel-context", {
   packages: "external",
-  entryPoints: [path.join(import.meta.dirname, "rpc-manager.ts")],
+  entryPoints: [path.join(import.meta.dirname, "legacy-channel-context.ts")],
+});
+
+for (const handled of [true, false])
+  test(`an extension run keeps channel permissions until idle when prompt is ${handled ? "handled" : "rejected"}`, async (t) => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "pi-channel-owned-run-")),
+      manager = SessionManager.inMemory(cwd);
+    const policy = new SessionToolPolicy(manager, ["codemode"], undefined, []);
+    const entered = createDeferred(),
+      release = createDeferred(),
+      localEntered = createDeferred(),
+      releaseLocal = createDeferred();
+    const services = await createAgentSessionServices({
+      cwd,
+      agentDir: cwd,
+      settingsManager: SettingsManager.inMemory({
+        defaultTools: ["codemode"],
+        cacheWarming: "off",
+        compaction: { enabled: false },
+      }),
+      resourceLoaderOptions: {
+        noSkills: true,
+        noThemes: true,
+        noContextFiles: true,
+        noPromptTemplates: true,
+        extensionFactories: [
+          { name: "codemode", builtin: true, factory: createCodemodeExtension({ models: false }) },
+          policy.extension(),
+          {
+            name: "interceptor",
+            factory(pi) {
+              pi.on("input", () => {
+                pi.sendMessage({ customType: "owned", content: "continue", display: false }, { triggerTurn: true });
+                if (handled) return { action: "handled" };
+              });
+            },
+          },
+        ],
+      },
+    });
+    await services.modelRuntime.setRuntimeApiKey("anthropic", "offline-fixture");
+    const { session } = await createAgentSessionFromServices({
+      services,
+      sessionManager: manager,
+      model: services.modelRuntime.getModel("anthropic", "claude-sonnet-4-5"),
+      tools: ["codemode"],
+    });
+    policy.bind(session);
+    await session.bindExtensions({ mode: "rpc" });
+    const wrapper = new AgentSessionWrapper(session, ["codemode"], () => {}, undefined, undefined, policy);
+    wrapper.start();
+    t.after(async () => {
+      releaseLocal.resolve();
+      release.resolve();
+      await wrapper.dispose({ abort: true });
+      rmSync(cwd, { recursive: true, force: true });
+    });
+    let calls = 0,
+      finished = false;
+    session.agent.streamFunction = async (model) => {
+      if (++calls === 1) {
+        localEntered.resolve();
+        await releaseLocal.promise;
+        return completedStream(model, [{ type: "text", text: "local reply" }]);
+      }
+      if (calls === 2) {
+        entered.resolve();
+        await release.promise;
+        return completedStream(model, [
+          { type: "toolCall", id: "restricted", name: "codemode", arguments: { code: 'text("UNAUTHORIZED")' } },
+        ]);
+      }
+      return completedStream(model, [{ type: "text", text: "fresh reply" }]);
+    };
+    setAgentSessionSource(manager, "local");
+    const localRun = session.sendCustomMessage(
+      { customType: "local", content: "local background run", display: false },
+      { triggerTurn: true },
+    );
+    await localEntered.promise;
+    const pending = wrapper.runExternalTurn({ runId: "owned", channel: "telegram", message: "intercept me" }).then(
+      (result) => {
+        finished = true;
+        return { result };
+      },
+      (error) => {
+        finished = true;
+        return { error };
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(finished, false);
+    assert.equal(getAgentSessionSource(manager), "local", "a channel must wait before taking over a local run");
+    releaseLocal.resolve();
+    await localRun;
+    await entered.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(finished, false, "the outer channel turn must not finish while its extension run is active");
+    assert.equal(getAgentSessionSource(manager), "channel");
+    assert.equal(policy.isAllowed("codemode"), false);
+    release.resolve();
+    const outcome = await pending;
+    if (handled) assert.equal(outcome.result.finalText, "fresh reply");
+    else assert.match(outcome.error.message, /already processing/);
+    assert.equal(
+      session.messages.find((message) => message.role === "toolResult" && message.toolCallId === "restricted").isError,
+      true,
+    );
+    assert.equal(getAgentSessionSource(manager), "local");
+  });
+
+test("channel attachment context belongs to its turn across handled and failed prompt preparation", async (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "pi-120-channel-boundary-"));
+  let sessionForHook;
+  const services = await createAgentSessionServices({
+    cwd,
+    agentDir: cwd,
+    settingsManager: SettingsManager.inMemory({
+      defaultTools: [],
+      cacheWarming: "off",
+      compaction: { enabled: false },
+    }),
+    resourceLoaderOptions: {
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      extensionFactories: [
+        createLegacyChannelContextExtension(),
+        {
+          name: "handle-fixture",
+          factory(pi) {
+            pi.on("input", async (event) => {
+              if (event.text === "handled") return { action: "handled" };
+              if (event.text === "handled-with-reply") {
+                await sessionForHook.sendCustomMessage(
+                  { customType: "reply-fixture", content: "Fresh response", display: false },
+                  { triggerTurn: true },
+                );
+                return { action: "handled" };
+              }
+            });
+          },
+        },
+      ],
+    },
+  });
+  await services.modelRuntime.setRuntimeApiKey("anthropic", "offline-fixture");
+  const { session } = await createAgentSessionFromServices({
+    services,
+    sessionManager: SessionManager.inMemory(cwd),
+    model: services.modelRuntime.getModel("anthropic", "claude-sonnet-4-5"),
+    tools: [],
+  });
+  const wrapper = new AgentSessionWrapper(session, [], () => {});
+  sessionForHook = session;
+  wrapper.start();
+  t.after(async () => {
+    await wrapper.dispose();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  await session.bindExtensions({ mode: "rpc" });
+  const requests = [];
+  session.agent.streamFunction = (model, context) => {
+    requests.push(context.messages);
+    return completedStream(model);
+  };
+  const previous = await wrapper.runExternalTurn({ runId: "previous", channel: "telegram", message: "previous" });
+  assert.equal(previous.finalText, "done");
+  const handled = await wrapper.runExternalTurn({
+    runId: "handled",
+    channel: "telegram",
+    message: "handled",
+    attachmentContext: "HANDLED_ATTACHMENT",
+  });
+  assert.equal(handled.finalText, "", "a handled input must not resend the preceding reply");
+  const hasAuth = t.mock.method(services.modelRuntime, "hasConfiguredAuth", () => false);
+  const checkAuth = t.mock.method(services.modelRuntime, "checkAuth", async () => undefined);
+  await assert.rejects(
+    wrapper.runExternalTurn({
+      runId: "failed",
+      channel: "telegram",
+      message: "fail",
+      attachmentContext: "FAILED_ATTACHMENT",
+    }),
+  );
+  hasAuth.mock.restore();
+  checkAuth.mock.restore();
+  await wrapper.runExternalTurn({
+    runId: "good",
+    channel: "telegram",
+    message: "read this",
+    attachmentContext: "GOOD_ATTACHMENT",
+  });
+  assert.equal(requests.length, 2);
+  const request = JSON.stringify(requests[1]);
+  assert.ok(request.includes("GOOD_ATTACHMENT"));
+  assert.ok(!request.includes("HANDLED_ATTACHMENT"));
+  assert.ok(!request.includes("FAILED_ATTACHMENT"));
+  assert.equal(request.split("GOOD_ATTACHMENT").length - 1, 1);
+  assert.ok(
+    JSON.stringify(session.sessionManager.buildSessionContext().messages).includes("HANDLED_ATTACHMENT"),
+    "documented CLI boundary: discarded nextTurn context can remain in the raw SDK transcript",
+  );
+  const fresh = await wrapper.runExternalTurn({ runId: "fresh", channel: "telegram", message: "handled-with-reply" });
+  assert.equal(fresh.finalText, "done", "a new response is retained even when its text equals the preceding reply");
+  assert.equal(requests.length, 3);
+});
+
+function completedStream(model, content = [{ type: "text", text: "done" }], aborted = false) {
+  const stream = createAssistantMessageEventStream();
+  const message = {
+    role: "assistant",
+    content,
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    stopReason: aborted ? "aborted" : content.some((block) => block.type === "toolCall") ? "toolUse" : "stop",
+    timestamp: Date.now(),
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  };
+  globalThis.queueMicrotask(() => {
+    stream.push(
+      aborted
+        ? { type: "error", reason: "aborted", error: message }
+        : { type: "done", reason: message.stopReason, message },
+    );
+    stream.end();
+  });
+  return stream;
+}
+
+test("1.2.0 custom runs preserve hook prompts after tools and abort during startup sends no model request", async (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "pi-120-startup-"));
+  let hold = false;
+  const entered = createDeferred(),
+    release = createDeferred(),
+    types = [];
+  const services = await createAgentSessionServices({
+    cwd,
+    agentDir: cwd,
+    settingsManager: SettingsManager.inMemory({ cacheWarming: "off", compaction: { enabled: false } }),
+    resourceLoaderOptions: {
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      extensionFactories: [
+        {
+          name: "startup-fixture",
+          factory(pi) {
+            pi.on("before_agent_start", async (event, ctx) => {
+              types.push(event.messageType);
+              assert.equal(ctx.isIdle(), false);
+              if (hold) {
+                entered.resolve();
+                await release.promise;
+              }
+              return { systemPrompt: event.systemPrompt + "\nM1_STABLE_PROMPT" };
+            });
+          },
+        },
+      ],
+    },
+  });
+  await services.modelRuntime.setRuntimeApiKey("anthropic", "offline-fixture");
+  const { session } = await createAgentSessionFromServices({
+    services,
+    sessionManager: SessionManager.inMemory(cwd),
+    model: services.modelRuntime.getModel("anthropic", "claude-sonnet-4-5"),
+    customTools: [
+      {
+        name: "noop",
+        label: "noop",
+        description: "noop",
+        parameters: Type.Object({}),
+        execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+      },
+    ],
+  });
+  t.after(() => {
+    session.dispose();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  await session.bindExtensions({ mode: "rpc" });
+  const prompts = [];
+  let abortedRequests = 0;
+  session.agent.streamFunction = (model, context, options) => {
+    if (options.signal?.aborted) {
+      abortedRequests++;
+      return completedStream(model, [], true);
+    }
+    prompts.push(getCurrentSystemPrompt(context.messages));
+    return completedStream(
+      model,
+      prompts.length === 1 ? [{ type: "toolCall", id: "noop", name: "noop", arguments: {} }] : undefined,
+    );
+  };
+  await session.sendCustomMessage(
+    { customType: "fixture", content: "start custom", display: false },
+    { triggerTurn: true },
+  );
+  assert.deepEqual(types, ["custom"]);
+  assert.equal(prompts.length, 2);
+  assert.ok(prompts.every((prompt) => prompt.includes("M1_STABLE_PROMPT")));
+  hold = true;
+  const pending = session.prompt("cancel while starting");
+  await entered.promise;
+  const aborting = session.abort();
+  release.resolve();
+  await Promise.all([pending, aborting]);
+  assert.equal(prompts.length, 2);
+  assert.equal(abortedRequests, 1);
+  assert.deepEqual(types, ["custom", "user"]);
 });
 
 test("Desktop settles once after extension continuation, provider retry, and an IM turn", async (t) => {

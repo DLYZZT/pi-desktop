@@ -81,6 +81,67 @@ function scanAccountId(domain, appId) {
   return `feishu-${createHash("sha256").update(`${domain}\0${appId}`).digest("hex").slice(0, 24)}`;
 }
 
+test("an invalid model configuration sends one corrective notice through the fake adapter and never reports success", async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-config-error-")),
+    fake = createFakeAdapter(),
+    registry = new AdapterRegistry();
+  registry.register(fake.adapter);
+  const secrets = new Map([["wx-config", { token: "SYNTHETIC" }]]);
+  const manager = new ChannelManager({ handle() {}, attachPort() {}, detachPort() {}, emit() {} }, () => {}, {
+    dataDirectory: dir,
+    registry,
+    secretAccess: {
+      get: async (_channel, id) => secrets.get(id) ?? null,
+      set: async (_channel, id, value) => secrets.set(id, value),
+      delete: async (_channel, id) => secrets.delete(id),
+    },
+    bridge: {
+      runTurn: async () => {
+        throw Object.assign(new Error("MODEL_CONFIG_INVALID: PRIVATE_DETAIL"), { code: "MODEL_CONFIG_INVALID" });
+      },
+    },
+  });
+  t.after(async () => {
+    await manager.shutdown();
+    await rm(dir, { recursive: true, force: true });
+  });
+  const now = new Date().toISOString();
+  await manager.upsertAccount({
+    id: "wx-config",
+    channel: "weixin",
+    name: "fixture",
+    enabled: true,
+    dmPolicy: "pairing",
+    allowFrom: ["user"],
+    groupPolicy: "disabled",
+    groupIds: [],
+    groupAllowFrom: [],
+    requireMention: true,
+    defaultCwd: path.join(dir, "workspace"),
+    toolNames: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  await assert.rejects(
+    fake.emit({
+      id: "failed",
+      channel: "weixin",
+      accountId: "wx-config",
+      peer: { kind: "dm", id: "user" },
+      sender: { id: "user" },
+      text: "hello",
+      mentionsBot: false,
+      attachments: [],
+      timestamp: Date.now(),
+      providerContext: { contextToken: "SYNTHETIC_CONTEXT" },
+    }),
+    /MODEL_CONFIG_INVALID/,
+  );
+  assert.equal(fake.sent.length, 1);
+  assert.match(fake.sent[0].text, /修复 models.json.*重新加载会话/);
+  assert.doesNotMatch(fake.sent[0].text, /PRIVATE_DETAIL|MODEL_CONFIG_INVALID/);
+});
+
 test("concurrent starts create only one adapter runtime per account", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "pi-channel-manager-concurrent-start-"));
   const fake = createFakeAdapter();

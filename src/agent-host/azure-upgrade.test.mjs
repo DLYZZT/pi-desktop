@@ -44,6 +44,29 @@ function fixture(t) {
   const write = (file, value) => writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
   return { root, agent, cwd, write };
 }
+
+test("commented models.json does not produce an Azure warning and real migration backs up its exact JSONC bytes", async (t) => {
+  const f = fixture(t),
+    filename = path.join(f.agent, "models.json");
+  const raw =
+    '\ufeff{ // azure-openai-responses appears only in this comment\n"providers": {"fixture": {"baseUrl":"https://fixture.invalid/a,//keep",},},}';
+  writeFileSync(filename, raw);
+  const result = await ensureAzureUpgrade({ agentDir: f.agent });
+  assert.deepEqual(result, { status: "unchanged", files: [], backups: [], issues: [] });
+  assert.equal(readFileSync(filename, "utf8"), raw);
+  assert.deepEqual(readdirSync(f.agent), ["models.json"]);
+  const legacy =
+    '\ufeff{ // original comment\n"providers": {"azure-openai-responses": {"api":"azure-openai-responses","baseUrl":"https://fixture.invalid",},},}';
+  writeFileSync(filename, legacy);
+  const migrated = await ensureAzureUpgrade({ agentDir: f.agent });
+  assert.equal(migrated.status, "migrated");
+  assert.deepEqual(migrated.files, [filename]);
+  assert.equal(readFileSync(migrated.backups[0], "utf8"), legacy);
+  assert.equal(JSON.parse(readFileSync(filename, "utf8")).providers.azure.api, old);
+  const after = readFileSync(filename, "utf8");
+  await ensureAzureUpgrade({ agentDir: f.agent });
+  assert.equal(readFileSync(filename, "utf8"), after);
+});
 test("Azure migration changes provider identities and typed references, preserving API IDs, secrets and sampling fields", () => {
   const model = {
     api: old,

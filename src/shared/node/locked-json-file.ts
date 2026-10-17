@@ -32,13 +32,15 @@ export async function withLockedJsonFile<T>(
     text: string | null,
   ) => Promise<T>,
   signal?: AbortSignal,
-  options: { allowEmpty?: boolean } = {},
+  options: { allowEmpty?: boolean; parse?: (text: string) => JsonRecord } = {},
 ): Promise<T> {
   await mkdir(path.dirname(filename), { recursive: true, mode: 0o700 });
   let compromised: Error | undefined;
   let committed = false;
   let release: (() => Promise<void>) | undefined;
   const deadline = Date.now() + 30_000;
+  let epermRetries = 0;
+  let retry = 0;
   while (!release) {
     signal?.throwIfAborted();
     try {
@@ -51,8 +53,16 @@ export async function withLockedJsonFile<T>(
         },
       });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ELOCKED" || Date.now() >= deadline) throw error;
-      await delay(20, undefined, { signal });
+      signal?.throwIfAborted();
+      const code = (error as NodeJS.ErrnoException).code;
+      const remaining = deadline - Date.now();
+      const retryableEperm = code === "EPERM" && process.platform === "win32";
+      if (remaining <= 0 || (code !== "ELOCKED" && !retryableEperm)) throw error;
+      // Windows can leave a deleted lock directory pending. Bound retries independently of ELOCKED waits.
+      if (retryableEperm && ++epermRetries > 5) throw error;
+      const baseDelayMs = Math.min(10 * 2 ** retry++, 1_000);
+      const delayMs = Math.min(Math.round(baseDelayMs * (1 + Math.random())), remaining);
+      await delay(delayMs, undefined, { signal });
     }
   }
   const assertOwned = () => {
@@ -65,7 +75,7 @@ export async function withLockedJsonFile<T>(
     let text: string | null = null;
     try {
       text = await readFile(filename, "utf8");
-      current = options.allowEmpty && !text.trim() ? {} : parseJsonRecord(text);
+      current = options.allowEmpty && !text.trim() ? {} : (options.parse ?? parseJsonRecord)(text);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       current = {};

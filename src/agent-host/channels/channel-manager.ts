@@ -1057,6 +1057,24 @@ export class ChannelManager {
       } catch (error) {
         await progressiveOutput?.cancel().catch(() => undefined);
         const message = safeChannelError(error);
+        if (error instanceof Error && "code" in error && error.code === "MODEL_CONFIG_INVALID") {
+          try {
+            this.state.addDelivery(
+              await adapter.send({
+                account,
+                secret,
+                peerId: envelope.peer.id,
+                contextToken: envelope.providerContext?.contextToken,
+                threadId: envelope.threadId,
+                replyToMessageId: envelope.providerContext?.replyToMessageId,
+                text: message,
+                runId: envelope.id,
+              }),
+            );
+          } catch (deliveryError) {
+            this.log(`[${account.id}] configuration notice failed: ${safeChannelError(deliveryError)}`);
+          }
+        }
         this.addActivity({
           channel: account.channel,
           accountId: account.id,

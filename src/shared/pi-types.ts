@@ -146,6 +146,7 @@ export interface AgentSessionLike {
   readonly modelRuntime: {
     getModel: (provider: string, modelId: string) => ModelLike | undefined;
     refresh?: (options: { allowNetwork: boolean }) => Promise<unknown>;
+    getError?: () => string | undefined;
   };
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
@@ -164,6 +165,7 @@ export interface AgentSessionLike {
       expandPromptTemplates?: boolean;
       streamingBehavior?: "steer" | "followUp";
       source?: "interactive" | "rpc";
+      preflightResult?: (result: "started" | "queued" | "handled") => void;
     },
   ): Promise<void>;
   sendCustomMessage(
@@ -176,6 +178,7 @@ export interface AgentSessionLike {
     options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
   ): Promise<void>;
   abort(): Promise<void>;
+  waitForIdle(): Promise<void>;
   setModel(model: ModelLike): Promise<void>;
   navigateTree(targetId: string, options?: { summarize?: boolean }): Promise<NavigateTreeResult>;
   setThinkingLevel(level: string): void;

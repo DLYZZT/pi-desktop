@@ -12,6 +12,7 @@ export function neededMcpServers(
   connections: readonly McpConnection[],
   toolName: string,
   input: unknown,
+  reachesTools?: (input: Record<string, unknown>) => "all" | readonly string[],
 ): McpConnection[] {
   const params = input && typeof input === "object" ? (input as { code?: unknown; server?: unknown }) : {};
   const enabled = connections.filter((connection) => connection.config.enabled !== false);
@@ -19,6 +20,21 @@ export function neededMcpServers(
     return enabled.filter(
       (connection) => typeof params.server !== "string" || params.server === connection.snapshot.name,
     );
+  // Preserve conservative discovery for computed calls, including older extension implementations.
+  if (toolName === "codemode" && typeof params.code === "string" && /\btools\s*\[/u.test(params.code)) return enabled;
+  if (reachesTools) {
+    let reach: "all" | readonly string[];
+    try {
+      reach = reachesTools(params);
+    } catch {
+      return enabled;
+    }
+    return reach === "all"
+      ? enabled
+      : enabled.filter((connection) =>
+          reach.some((word) => word.includes(mcpNamespace(connection.snapshot.name).slice(0, 55))),
+        );
+  }
   if (toolName === "tool_search") return enabled;
   if (toolName !== "codemode" || typeof params.code !== "string") return [];
   const code = params.code;

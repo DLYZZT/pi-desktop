@@ -33,15 +33,36 @@ export function stripLegacyChannelPrompts(messages: unknown[]): unknown[] {
   });
 }
 
+/** A failed/handled prompt can leave nextTurn messages queued in Pi. Omit only its tagged attachment context. */
+export function omitCancelledChannelAttachments(messages: unknown[], cancelledRuns: ReadonlySet<string>): unknown[] {
+  return messages.filter((message) => {
+    const value = message as { role?: unknown; customType?: unknown; details?: { channelRunId?: unknown } } | null;
+    return !(
+      value?.role === "custom" &&
+      value.customType === "pi-desktop-channel-attachment-context" &&
+      typeof value.details?.channelRunId === "string" &&
+      cancelledRuns.has(value.details.channelRunId)
+    );
+  });
+}
+
 /** Preserve the raw JSONL while omitting old channel transport wrappers from provider context. */
 export function createLegacyChannelContextExtension() {
   return {
     name: "pi-desktop-legacy-channel-context",
     hidden: true,
     factory(pi: ExtensionAPI) {
-      pi.on("context", (event) => ({
-        messages: stripLegacyChannelPrompts(event.messages) as typeof event.messages,
-      }));
+      pi.on("context", (event, ctx) => {
+        const cancelled = new Set(
+          ctx.sessionManager.getBranch().flatMap((entry) => {
+            if (entry.type !== "custom" || entry.customType !== "pi-desktop-channel-source-cancelled") return [];
+            const data = entry.data as { runId?: unknown; discardAttachmentContext?: unknown } | undefined;
+            return data?.discardAttachmentContext === true && typeof data.runId === "string" ? [data.runId] : [];
+          }),
+        );
+        const messages = stripLegacyChannelPrompts(event.messages);
+        return { messages: omitCancelledChannelAttachments(messages, cancelled) as typeof event.messages };
+      });
     },
   };
 }

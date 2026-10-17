@@ -61,7 +61,7 @@ async function fixture(t, options = {}) {
             else {
               executed++;
               calledNames.push(request.params.name);
-              result = {
+              result = options.toolResult ?? {
                 content: [{ type: "text", text: request.params.arguments.text }],
                 structuredContent: { original: request.params.arguments.text },
               };
@@ -160,6 +160,20 @@ test("sign-out reconnects only the named account even when another server uses t
   assert.equal(f.service.getConnection("session", "another"), other);
   assert.equal(await f.service.credentials.forServer("fixture", url).load(), undefined);
   assert.equal((await f.service.credentials.forServer("another", url).load()).tokens.access_token, "SECOND");
+});
+
+test("MCP namespaces retain server aliases and tool results preserve every JSON structured-content shape", async (t) => {
+  for (const structuredContent of [null, [1, "two"], false, 42, "plain", { nested: [true] }]) {
+    const result = { content: [], structuredContent, isError: false, _meta: { original: true } };
+    const f = await fixture(t, { resources: true, toolResult: result });
+    const definitions = [...f.definitions.values()];
+    assert.ok(definitions.length >= 2);
+    for (const tool of definitions.filter((tool) => tool.namespace))
+      assert.deepEqual(tool.namespace.aliases, ["fixture"]);
+    const tool = definitions.find((tool) => tool.name === "mcp__fixture__echo");
+    const actual = await tool.execute("fixture", { text: "echo" });
+    assert.deepEqual(actual.structuredContent, result);
+  }
 });
 
 test("OAuth sign-out leaves a header-authenticated project connection at the same name and URL running", async (t) => {

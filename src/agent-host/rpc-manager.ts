@@ -45,6 +45,7 @@ import { peekMcpService } from "./mcp/runtime";
 import { getDesktopSessionMcpExecutionTools, copyDesktopMcpTools } from "./session-tool-store";
 import { SessionExecutionHistory } from "./session-execution-history";
 import { createDesktopAgentSessionServices as createAgentSessionServices } from "./desktop-session-services";
+import { promptChannelTurn, cancelChannelAttachmentContext } from "./channel-attachment-context";
 import { createDesktopSessionTools } from "./desktop-session-tools";
 import { SessionModelSelection } from "./session-model-selection";
 
@@ -396,6 +397,8 @@ export class AgentSessionWrapper {
     onProgress?: (event: AgentEvent) => void;
   }): Promise<{ runId: string; finalText: string }> {
     return this.enqueueTurn(async () => {
+      // Extensions can start runs outside the wrapper queue; let their existing source finish first.
+      if (this.inner.isStreaming || this.inner.isCompacting) await this.inner.waitForIdle();
       this.modelSelection.assertReady(this.inner);
       this.emit({ type: "channel_turn_start", runId: params.runId });
       this.externalTurnActive = true;
@@ -410,27 +413,14 @@ export class AgentSessionWrapper {
           channel: params.channel,
           ...(params.channelAttachments?.length ? { attachments: params.channelAttachments } : {}),
         });
-        if (params.attachmentContext) {
-          await this.inner.sendCustomMessage(
-            {
-              customType: "pi-desktop-channel-attachment-context",
-              content: params.attachmentContext,
-              display: false,
-            },
-            { deliverAs: "nextTurn" },
-          );
-        }
-        await this.inner.prompt(params.message, {
-          ...(params.images?.length ? { images: params.images } : {}),
-          expandPromptTemplates: false,
-          source: "rpc",
-        });
-        const finalText = this.inner.getLastAssistantText()?.trim() ?? "";
+        const { preflight, finalText } = await promptChannelTurn(this.inner, params);
+        if (preflight === "handled" || this.agentSettled?.aborted)
+          cancelChannelAttachmentContext(this.inner.sessionManager, params.runId, Boolean(params.attachmentContext));
         this.emit({ type: "channel_turn_end", runId: params.runId, finalText });
         return { runId: params.runId, finalText };
       } catch (error) {
         try {
-          this.inner.sessionManager.appendCustomEntry("pi-desktop-channel-source-cancelled", { runId: params.runId });
+          cancelChannelAttachmentContext(this.inner.sessionManager, params.runId, Boolean(params.attachmentContext));
         } catch {
           // A best-effort UI marker must never hide the original turn failure.
         }
@@ -451,6 +441,7 @@ export class AgentSessionWrapper {
   }
 
   private async reloadSessionResources(): Promise<void> {
+    const recoverConfig = this.modelSelection.prepareConfigRecovery(this.inner);
     if (this.extensionBindingPromise) {
       try {
         await this.extensionBindingPromise;
@@ -466,6 +457,7 @@ export class AgentSessionWrapper {
     await this.inner.reload();
     await this.ensureExtensionsBound();
     if (this.requestedToolNames !== undefined) this.applyRequestedTools(this.requestedToolNames);
+    if (recoverConfig) await this.modelSelection.restoreAfterConfigRepair(this.inner);
   }
 
   async runExternalCommand(params: { command: ExternalSessionCommand; customInstructions?: string }): Promise<void> {

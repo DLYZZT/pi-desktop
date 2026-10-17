@@ -22,6 +22,32 @@ const { SessionModelSelection, createDesktopAgentSessionServices, AgentSessionWr
   });
 const old = "azure-openai-responses",
   modelId = "gpt-6.1-sol";
+
+test("invalid models.json blocks fallback requests until repaired but catalog refresh errors do not", () => {
+  const selection = new SessionModelSelection();
+  let error = "Invalid models.json schema:\n contextWindow must be > 0";
+  const inner = { model: { provider: "anthropic", id: "fixture" }, modelRuntime: { getError: () => error } };
+  assert.equal(selection.snapshot(inner).reason, "config-invalid");
+  assert.throws(() => selection.assertReady(inner), /MODEL_CONFIG_INVALID/);
+  selection.selected(inner.model);
+  assert.throws(() => selection.assertReady(inner), /MODEL_CONFIG_INVALID/);
+  let warming;
+  selection.extension().factory({
+    on(name, handler) {
+      if (name === "cache_warming_decision") warming = handler;
+    },
+  });
+  assert.deepEqual(warming({}, { modelRegistry: { getError: () => error } }), { action: "stop" });
+  error = "Availability refresh: temporary offline failure";
+  assert.throws(() => selection.assertReady(inner), /MODEL_SELECTION_REQUIRED/);
+  assert.deepEqual(warming({}, { modelRegistry: { getError: () => error } }), { action: "stop" });
+  assert.doesNotThrow(() => new SessionModelSelection().assertReady(inner), "catalog errors alone do not block");
+  selection.selected(inner.model);
+  assert.doesNotThrow(() => selection.assertReady(inner));
+  assert.equal(warming({}, { modelRegistry: { getError: () => error } }), undefined);
+  error = undefined;
+  assert.equal(selection.snapshot(inner), undefined);
+});
 const usage = {
   input: 1,
   output: 1,
@@ -30,6 +56,167 @@ const usage = {
   totalTokens: 2,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
+for (const custom of [false, true])
+  test(`repair and reload restore the configured endpoint for ${custom ? "a saved custom model" : "a builtin model override"}`, async (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), "pi-model-config-recovery-"));
+    const provider = custom ? "fixture" : "anthropic",
+      id = custom ? "saved-model" : "claude-sonnet-4-5";
+    const config = {
+      providers: {
+        broken: {
+          api: "openai-completions",
+          baseUrl: "https://broken.invalid/v1",
+          models: [{ id: "invalid", contextWindow: 0 }],
+        },
+        [provider]: {
+          baseUrl: "https://configured-endpoint.invalid/v1",
+          ...(custom
+            ? {
+                api: "openai-completions",
+                models: [{ id, contextWindow: 8192, maxTokens: 1024 }],
+              }
+            : { modelOverrides: { [id]: { maxTokens: 1024 } } }),
+        },
+      },
+    };
+    const filename = path.join(root, "models.json");
+    writeFileSync(filename, JSON.stringify(config));
+    writeFileSync(
+      path.join(root, "auth.json"),
+      JSON.stringify({
+        anthropic: { type: "api_key", key: "OFFLINE_FIXTURE" },
+        fixture: { type: "api_key", key: "OFFLINE_FIXTURE" },
+      }),
+    );
+    writeFileSync(
+      path.join(root, "settings.json"),
+      JSON.stringify({ defaultProvider: provider, defaultModel: id, defaultTools: [], cacheWarming: "off" }),
+    );
+    const manager = SessionManager.inMemory(root);
+    manager.appendModelChange(provider, id);
+    manager.appendMessage({ role: "user", content: "saved conversation", timestamp: 1 });
+    manager.appendMessage({
+      role: "assistant",
+      provider,
+      model: id,
+      api: custom ? "openai-completions" : "anthropic-messages",
+      content: [{ type: "text", text: "saved reply" }],
+      timestamp: 2,
+      stopReason: "stop",
+      usage,
+    });
+    const guard = new SessionModelSelection();
+    const services = await createDesktopAgentSessionServices({
+      cwd: root,
+      agentDir: root,
+      resourceLoaderOptions: {
+        noSkills: true,
+        noThemes: true,
+        noContextFiles: true,
+        noPromptTemplates: true,
+        extensionFactories: [guard.extension()],
+      },
+    });
+    guard.prepare(services, manager);
+    const { session, modelFallbackMessage } = await createAgentSessionFromServices({
+      services,
+      sessionManager: manager,
+      tools: [],
+    });
+    guard.finish(session, modelFallbackMessage);
+    const wrapper = new AgentSessionWrapper(session, [], () => {}, undefined, undefined, undefined, undefined, guard);
+    wrapper.start();
+    const requests = [];
+    session.agent.streamFunction = (model) => {
+      requests.push(model);
+      const stream = createAssistantMessageEventStream();
+      const message = {
+        role: "assistant",
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        content: [{ type: "text", text: "recovered" }],
+        timestamp: Date.now(),
+        stopReason: "stop",
+        usage,
+      };
+      globalThis.queueMicrotask(() => {
+        stream.push({ type: "done", reason: "stop", message });
+        stream.end();
+      });
+      return stream;
+    };
+    t.after(async () => {
+      await wrapper.dispose();
+      rmSync(root, { recursive: true, force: true });
+    });
+    assert.equal(guard.snapshot(session).reason, "config-invalid");
+    assert.throws(
+      () => guard.assertReady(session),
+      (error) => error.code === "MODEL_CONFIG_INVALID",
+    );
+    await assert.rejects(
+      wrapper.runExternalTurn({ runId: "invalid", channel: "telegram", message: "blocked" }),
+      (error) => error.code === "MODEL_CONFIG_INVALID",
+    );
+    assert.equal(requests.length, 0);
+    config.providers.broken.models[0].contextWindow = 4096;
+    writeFileSync(filename, JSON.stringify(config));
+    if (!custom) {
+      await services.modelRuntime.refresh({ allowNetwork: false });
+      assert.equal(services.modelRuntime.getError(), undefined);
+      assert.throws(
+        () => guard.assertReady(session),
+        /MODEL_SELECTION_REQUIRED/,
+        "catalog recovery cannot unlock stale endpoint objects",
+      );
+    }
+    await wrapper.send({ type: "reload" });
+    assert.equal(session.modelRuntime.getError(), undefined);
+    assert.deepEqual({ provider: session.model.provider, id: session.model.id }, { provider, id });
+    assert.equal(session.model.baseUrl, "https://configured-endpoint.invalid/v1");
+    assert.equal(session.model.maxTokens, 1024);
+    assert.doesNotThrow(() => guard.assertReady(session));
+    assert.equal(
+      (await wrapper.runExternalTurn({ runId: "repaired", channel: "telegram", message: "continue" })).finalText,
+      "recovered",
+    );
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].baseUrl, "https://configured-endpoint.invalid/v1");
+  });
+
+test("config recovery keeps sends and warming blocked when the original model is missing or cannot authenticate", async () => {
+  for (const failure of ["missing", "authentication"]) {
+    const guard = new SessionModelSelection();
+    let error = "Invalid models.json schema: contextWindow";
+    const model = { provider: "fixture", id: "original" };
+    const inner = {
+      model,
+      modelRuntime: {
+        getError: () => error,
+        getModel: () => (failure === "missing" ? undefined : model),
+        refresh: async () => {
+          error = undefined;
+        },
+      },
+      setModel: async () => {
+        throw new Error("authentication unavailable");
+      },
+    };
+    assert.equal(guard.prepareConfigRecovery(inner), true);
+    if (failure === "authentication") await assert.rejects(guard.restoreAfterConfigRepair(inner), /authentication/);
+    else await guard.restoreAfterConfigRepair(inner);
+    assert.throws(() => guard.assertReady(inner), /MODEL_SELECTION_REQUIRED/);
+    let warming;
+    guard.extension().factory({
+      on: (name, handler) => {
+        if (name === "cache_warming_decision") warming = handler;
+      },
+    });
+    assert.deepEqual(warming({}, { modelRegistry: inner.modelRuntime }), { action: "stop" });
+  }
+});
+
 async function fixture(t, { conflict = false, missing = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "pi-azure-restore-"));
   let wrapper;

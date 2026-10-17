@@ -4,6 +4,9 @@ import test from "node:test";
 import path from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { MessageChannel } from "node:worker_threads";
+import { createRpcClient, createRpcServer } from "../contract/rpc.ts";
+import { createDeferred } from "#test-timing";
 import {
   SessionManager,
   SettingsManager,
@@ -12,14 +15,117 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { getModel } from "@earendil-works/pi-ai/compat";
-const { SessionToolPolicy, withExtensionTools, setAgentSessionSource } = await importTestBundle("session-tool-policy", {
+const {
+  SessionToolPolicy,
+  withExtensionTools,
+  setAgentSessionSource,
+  sessionOrchestrationExtensions,
+  AgentSessionWrapper,
+  applySessionToolCommand,
+  DesktopSessionToolStore,
+} = await importTestBundle("session-tool-policy", {
   packages: "external",
   stdin: {
     contents:
-      'export {SessionToolPolicy} from "./session-tool-policy.ts"; export {withExtensionTools} from "./tool-activation.ts"; export {setAgentSessionSource} from "./session-source.ts";',
+      'export {SessionToolPolicy} from "./session-tool-policy.ts"; export {withExtensionTools} from "./tool-activation.ts"; export {setAgentSessionSource} from "./session-source.ts"; export {sessionOrchestrationExtensions} from "./session-orchestration.ts"; export {AgentSessionWrapper} from "./rpc-manager.ts"; export {applySessionToolCommand} from "./session-tool-settings.ts"; export {DesktopSessionToolStore} from "./session-tool-store.ts";',
     resolveDir: import.meta.dirname,
     loader: "ts",
   },
+});
+
+test("1.2.0 tools remain host-callable while tool-list and permission RPCs expose only cloneable metadata", async (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "pi-120-tool-wire-"));
+  const services = await createAgentSessionServices({
+    cwd,
+    agentDir: cwd,
+    settingsManager: SettingsManager.inMemory({ cacheWarming: "off" }),
+    resourceLoaderOptions: {
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      extensionFactories: sessionOrchestrationExtensions(() => undefined),
+    },
+  });
+  const manager = SessionManager.inMemory(cwd);
+  const { session } = await createAgentSessionFromServices({
+    services,
+    sessionManager: manager,
+    excludeTools: ["powershell"],
+  });
+  setAgentSessionSource(manager, "local");
+  const policy = new SessionToolPolicy(manager, ["read", "codemode", "tool_search"]);
+  policy.bind(session);
+  const wrapper = new AgentSessionWrapper(
+    session,
+    ["read", "codemode", "tool_search"],
+    () => {},
+    undefined,
+    undefined,
+    policy,
+  );
+  const store = new DesktopSessionToolStore(path.join(cwd, "session-tools.json"));
+  const { port1, port2 } = new MessageChannel();
+  const server = createRpcServer();
+  server.attachPort(port1);
+  const client = createRpcClient(port2);
+  server.handle({
+    "agent.command": ({ command }) =>
+      command.type === "get_tools"
+        ? wrapper.send(command)
+        : applySessionToolCommand(
+            {
+              sessionId: session.sessionId,
+              session,
+              policy,
+              preferences: store,
+              requested: ["read", "codemode", "tool_search"],
+              apply(names) {
+                policy.setRequested(names);
+                session.setActiveToolsByName(names);
+              },
+            },
+            command,
+          ),
+  });
+  t.after(() => {
+    client.close();
+    server.detachPort(port1);
+    port1.close();
+    port2.close();
+    wrapper.destroy();
+    session.dispose();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  for (const phase of ["new", "reload"]) {
+    if (phase === "reload") await session.reload();
+    const original = session.getAllTools.bind(session);
+    assert.equal(typeof original().find((tool) => tool.name === "codemode").reachesTools, "function");
+    const spy = t.mock.method(session, "getAllTools", () =>
+      original().map((tool) => ({
+        ...tool,
+        sourceInfo: { ...tool.sourceInfo, path: "/private/fixture-extension-do-not-send" },
+        promptGuidelines: ["/private/fixture-extension-do-not-send"],
+      })),
+    );
+    for (const active of [["read"], ["read", "codemode", "tool_search"]]) {
+      session.setActiveToolsByName(active);
+      for (const command of [
+        { type: "get_tools" },
+        { type: "set_execution_tools", toolNames: [] },
+        { type: "set_orchestration_tools", toolNames: ["codemode"] },
+      ]) {
+        const result = await client.call("agent.command", { sessionId: session.sessionId, command });
+        assert.ok(result.some((tool) => tool.name === "codemode"));
+        assert.ok(!result.some((tool) => tool.name === "powershell"));
+        assert.ok(!JSON.stringify(result).includes("fixture-extension-do-not-send"));
+        for (const tool of result)
+          for (const field of ["parameters", "sourceInfo", "promptGuidelines", "reachesTools"])
+            assert.equal(Object.hasOwn(tool, field), false, `${phase}: ${field}`);
+      }
+    }
+    spy.mock.restore();
+  }
 });
 
 test("default declaration respects exposure and defaultActive while explicit tools remain selectable", () => {
@@ -63,6 +169,76 @@ test("MCP scoped authorization does not persist or revoke other Desktop tool cap
   policy.setRequested([]);
   assert.equal(policy.isAllowed("ordinary"), false);
   assert.equal(policy.isAllowed("herdr_list"), false);
+});
+
+test("MCP readiness and aliases never grant permission, and revocation is rechecked after waiting", async () => {
+  const manager = {},
+    name = "mcp__fixture__echo",
+    entered = createDeferred(),
+    ready = createDeferred();
+  const tool = {
+    name,
+    description: "echo",
+    exposure: "deferred",
+    namespace: { name: "mcp__fixture", aliases: ["fixture"] },
+  };
+  const policy = new SessionToolPolicy(manager, ["read"]);
+  setAgentSessionSource(manager, "local");
+  policy.bind({
+    getAllTools: () => [tool],
+    getToolDefinition: () => tool,
+    getActiveToolNames: () => ["read"],
+    getCallableToolNames: () => [name],
+  });
+  assert.equal(policy.isAllowed(name), false);
+  policy.setMcpExecution([name]);
+  let hook;
+  policy.extension().factory({
+    on(event, callback) {
+      if (event === "tool_call") hook = callback;
+    },
+  });
+  policy.setMcpPreparation(async () => {
+    entered.resolve();
+    await ready.promise;
+  });
+  const pending = hook({ toolName: name, input: {}, toolCallId: "waiting" }, { hasUI: false });
+  await entered.promise;
+  policy.setMcpExecution([]);
+  ready.resolve();
+  assert.equal((await pending).block, true);
+  policy.setRequested([]);
+  policy.setMcpPreparation(async () => assert.fail("empty sessions must not prepare connections"));
+  assert.equal((await hook({ toolName: name, input: {}, toolCallId: "empty" }, { hasUI: true })).block, true);
+});
+
+test("MCP confirmation that outlives a switch to a channel cannot authorize the call", async () => {
+  const manager = {},
+    name = "mcp__fixture__echo",
+    entered = createDeferred(),
+    approve = createDeferred();
+  const tool = { name, description: "echo", exposure: "deferred" };
+  const policy = new SessionToolPolicy(manager, ["read"]);
+  setAgentSessionSource(manager, "local");
+  policy.bind({ getAllTools: () => [tool], getToolDefinition: () => tool, getActiveToolNames: () => ["read"] });
+  let hook;
+  policy.extension().factory({
+    on(event, callback) {
+      if (event === "tool_call") hook = callback;
+    },
+  });
+  policy.setMcpAuthorizer(async (_name, _input, _ctx, valid) => {
+    entered.resolve();
+    await approve.promise;
+    assert.equal(valid(), false);
+    return true;
+  });
+  const pending = hook({ toolName: name, input: {}, toolCallId: "approval" }, { hasUI: true });
+  await entered.promise;
+  setAgentSessionSource(manager, "channel");
+  approve.resolve();
+  assert.equal((await pending).block, true);
+  assert.equal(policy.isAllowed(name), false);
 });
 
 test("local MCP orchestration can reach first-use approval while headless and empty sessions stay blocked", () => {

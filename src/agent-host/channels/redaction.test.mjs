@@ -33,3 +33,17 @@ test("secret fingerprints reveal only the final four trimmed characters", () => 
   assert.equal(fingerprintSecret("  secret-value  "), "••••alue");
   assert.equal(fingerprintSecret("   "), undefined);
 });
+
+test("invalid model configuration gives channels a corrective message without internal details", () => {
+  const message = safeChannelError(
+    Object.assign(new Error("MODEL_CONFIG_INVALID: /private/fixture/models.json SECRET_VALUE"), {
+      code: "MODEL_CONFIG_INVALID",
+    }),
+  );
+  assert.match(message, /修复 models.json.*重新加载会话/);
+  assert.doesNotMatch(message, /MODEL_CONFIG_INVALID|private|SECRET_VALUE/);
+  assert.equal(
+    safeChannelError(Object.assign(new Error("MODEL_CONFIG_INVALID: remote error"), { code: -32000 })),
+    "MODEL_CONFIG_INVALID: remote error",
+  );
+});

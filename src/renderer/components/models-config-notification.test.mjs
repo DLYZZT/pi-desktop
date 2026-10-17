@@ -60,7 +60,7 @@ const { ModelsConfig, useSessionModels, testApi } = await importTestBundle("mode
           if(method === 'models.routing.get') return {config:{enabled:false,strategy:'thinking',fastThinking:'low',strongThinking:'high',retryFallback:false},version:'routing-v1'};
           if(method === 'settings.advanced.get') return {config:{retry:{maxRetries:3}},version:'advanced-v1'};
           if(method === 'models.catalog') return {models:[{provider:'fixture',modelId:'fast',name:'Fast',type:'chat',available:true,virtual:false},{provider:'fixture',modelId:'strong',name:'Strong',type:'chat',available:true,virtual:false},{provider:'typesafe',modelId:'jev-latest',name:'Jev',type:'classifier',available:true,virtual:false}]};
-          if(method === 'modelsConfig.get') {if(state.configError)throw state.configError;return {config:structuredClone(state.config),version:state.version};}
+          if(method === 'modelsConfig.get') {if(state.configError)throw state.configError;return {config:structuredClone(state.config),version:state.version,issues:state.issues};}
           if(method === 'auth.providers')return {providers:[{id:'oauth-fixture',name:'OAuth fixture',usesCallbackServer:false,loggedIn:true}]};
           if(method === 'auth.allProviders')return {providers:state.apiKeyProviders??[{id:'api-fixture',displayName:'API fixture',configured:true,modelCount:1}]};
           let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});
@@ -80,6 +80,7 @@ async function mount(t, options = {}) {
   if (options.config) testApi.state.config = options.config;
   if (options.apiKeyProviders) testApi.state.apiKeyProviders = options.apiKeyProviders;
   testApi.state.configError = options.configError ?? null;
+  testApi.state.issues = options.issues;
   const requests = testApi.state.requests,
     sources = testApi.state.sources,
     timers = [],
@@ -200,6 +201,54 @@ async function mount(t, options = {}) {
     },
   };
 }
+
+test("schema-invalid config opens with its providers intact and clears diagnostics after an explicit repair", async (t) => {
+  const config = {
+    future: { kept: true },
+    providers: {
+      fixture: {
+        api: "openai-completions",
+        models: [{ id: "broken", name: "Broken", contextWindow: 0 }],
+        modelOverrides: { existing: { maxTokens: 1024 } },
+      },
+    },
+  };
+  const fixture = await mount(t, {
+    config,
+    issues: [{ path: "/providers/fixture/models/0/contextWindow", message: "must be > 0" }],
+  });
+  assert.match(text(fixture.renderer.root), /All custom providers and overrides are inactive/);
+  assert.match(text(fixture.renderer.root), /contextWindow/);
+  await fixture.select("broken");
+  const detail = fixture.detail("ModelDetail");
+  await act(async () => detail.props.onChange({ ...detail.props.model, contextWindow: 4096 }));
+  await fixture.click("Save");
+  const request = fixture.requests.find((request) => request.method === "modelsConfig.set");
+  assert.equal(request.params.config.providers.fixture.models[0].contextWindow, 4096);
+  assert.deepEqual(request.params.config.future, { kept: true });
+  assert.equal(request.params.config.providers.fixture.modelOverrides.existing.maxTokens, 1024);
+  await act(async () => request.resolve({ ok: true, version: "repaired" }));
+  assert.ok(!text(fixture.renderer.root).includes("All custom providers and overrides are inactive"));
+});
+
+test("fields outside the editor have a manual-repair hint and a disk reload action", async (t) => {
+  const fixture = await mount(t, {
+    config: { providers: { fixture: { headers: { "X-Invalid": null }, models: [{ id: "kept" }] } } },
+    issues: [{ path: "/providers/fixture/headers/X-Invalid", message: "must be string" }],
+  });
+  assert.match(text(fixture.renderer.root), /edit models.json manually/);
+  assert.doesNotMatch(text(fixture.renderer.root), /Open Models settings to correct/);
+  testApi.state.config = { providers: { fixture: { headers: { "X-Invalid": "fixed" }, models: [{ id: "kept" }] } } };
+  testApi.state.issues = [];
+  testApi.state.version = "manual-repair";
+  await fixture.click("Reload disk version");
+  assert.doesNotMatch(text(fixture.renderer.root), /All custom providers and overrides are inactive/);
+  await fixture.click("Save");
+  const request = fixture.requests.find((request) => request.method === "modelsConfig.set");
+  assert.equal(request.params.config.providers.fixture.headers["X-Invalid"], "fixed");
+  assert.equal(request.params.expectedVersion, "manual-repair");
+  await act(async () => request.resolve({ ok: true, version: "saved" }));
+});
 
 test("Jev search finds TypeSafe and opens its existing API key settings with classifier details", async (t) => {
   const fixture = await mount(t, {

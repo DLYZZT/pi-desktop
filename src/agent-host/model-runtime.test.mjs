@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { createDeferred, createManualScheduler } from "#test-timing";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 const root = path.resolve(import.meta.dirname, "..", "..");
 let modulePromise;
@@ -114,6 +115,87 @@ test("catalog refresh times out and reports an aborted cache-preserving result",
   assert.equal(result.catalog.aborted, true);
   assert.equal(result.catalog.refreshed, false);
   assert.equal(result.catalog.warnings[0].code, "MODEL_REFRESH_TIMEOUT");
+});
+
+test("the Desktop 12s budget aborts the real OpenRouter refresh before its 15s deadline and retains the catalog", async (t) => {
+  const { ModelCatalogRefreshCoordinator, MODEL_CATALOG_REFRESH_TIMEOUT_MS } = await loadModelRuntimeModule();
+  assert.equal(MODEL_CATALOG_REFRESH_TIMEOUT_MS, 12000);
+  const previousOffline = process.env.PI_OFFLINE;
+  delete process.env.PI_OFFLINE;
+  t.after(() => {
+    if (previousOffline === undefined) delete process.env.PI_OFFLINE;
+    else process.env.PI_OFFLINE = previousOffline;
+  });
+  const runtime = await ModelRuntime.create({
+    modelsPath: null,
+    refreshOnCreate: false,
+    catalogBaseUrl: "https://catalog.fixture.invalid",
+    credentials: {
+      read: async () => undefined,
+      list: async () => [],
+      modify: async () => {
+        throw new Error("read only");
+      },
+      delete: async () => {},
+    },
+  });
+  await runtime.setRuntimeApiKey("openrouter", "SYNTHETIC_KEY");
+  const id = runtime.getModels().find((model) => model.provider === "openrouter").id;
+  const entered = createDeferred();
+  let hold = false,
+    requestSignal;
+  t.mock.method(globalThis, "fetch", async (input, options) => {
+    if (String(input).startsWith("https://catalog.fixture.invalid/"))
+      return new globalThis.Response(null, { status: 404 });
+    assert.equal(String(input), "https://openrouter.ai/api/v1/models/user");
+    if (!hold) return globalThis.Response.json({ data: [{ id, context_length: 4096 }] });
+    requestSignal = options.signal;
+    entered.resolve();
+    return new Promise((_, reject) =>
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true }),
+    );
+  });
+  await runtime.refresh({ allowNetwork: true, force: true, providers: ["openrouter"] });
+  const catalog = () =>
+    runtime
+      .getModels()
+      .filter((model) => model.provider === "openrouter")
+      .map((model) => ({ id: model.id, contextWindow: model.contextWindow }));
+  const before = catalog();
+  assert.deepEqual(before, [{ id, contextWindow: 4096 }]);
+  const scheduler = createManualScheduler();
+  let upstreamExpired = false,
+    timeoutCalls = 0;
+  const nativeTimeout = globalThis.AbortSignal.timeout;
+  t.mock.method(globalThis.AbortSignal, "timeout", (ms) => {
+    if (ms !== 15000) return nativeTimeout(ms);
+    timeoutCalls++;
+    const controller = new globalThis.AbortController();
+    scheduler.setTimeout(() => {
+      upstreamExpired = true;
+      controller.abort();
+    }, ms);
+    return controller.signal;
+  });
+  hold = true;
+  const coordinator = new ModelCatalogRefreshCoordinator(undefined, () => false, scheduler);
+  const pending = coordinator.refresh("fixture", "request", async () => ({
+    modelRuntime: { refresh: (options) => runtime.refresh({ ...options, providers: ["openrouter"] }) },
+  }));
+  await entered.promise;
+  assert.equal(timeoutCalls, 1);
+  assert.equal(requestSignal.aborted, false);
+  await scheduler.runNext();
+  const result = await pending;
+  assert.equal(result.catalog.aborted, true);
+  assert.equal(result.catalog.warnings[0].code, "MODEL_REFRESH_TIMEOUT");
+  assert.equal(upstreamExpired, false);
+  assert.equal(requestSignal.aborted, true);
+  await coordinator.settled();
+  assert.deepEqual(catalog(), before);
+  await scheduler.runNext();
+  assert.equal(upstreamExpired, true);
+  assert.deepEqual(catalog(), before);
 });
 
 test("the timeout bounds service creation even when an extension ignores cancellation", async () => {

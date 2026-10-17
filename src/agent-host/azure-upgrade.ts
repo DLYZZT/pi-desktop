@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { AzureUpgradeReport } from "../contract/types";
 import { parseJsonRecord, withLockedJsonFile, type JsonRecord } from "../shared/node/locked-json-file";
+import { parseModelsConfig } from "./models-config-validation";
 
 export const LEGACY_AZURE_PROVIDER = "azure-openai-responses";
 const CURRENT = "azure";
@@ -96,7 +97,7 @@ async function readDocument(filename: string, kind: Kind): Promise<Document | un
     throw error;
   }
   if (Buffer.byteLength(raw) > 8 * 1024 * 1024) throw new Error("Configuration exceeds the migration read budget");
-  return { filename, kind, raw, value: parseJsonRecord(raw) };
+  return { filename, kind, raw, value: (kind === "models" ? parseModelsConfig : parseJsonRecord)(raw) };
 }
 
 async function backupDocument(agentDir: string, document: Document): Promise<string> {
@@ -163,14 +164,19 @@ async function migrate(agentDir: string, cwd?: string, projectTrusted = true): P
     const lock = async (index: number): Promise<void> => {
       const snapshot = lockedFiles[index];
       if (snapshot) {
-        await withLockedJsonFile(snapshot.filename, async (value, save) => {
-          const fresh = await readDocument(snapshot.filename, snapshot.kind);
-          if (!isDeepStrictEqual(value, fresh?.value ?? {}))
-            throw new Error("Configuration changed during Azure migration");
-          current.push(fresh ?? { ...snapshot, raw: "", value: {} });
-          saves.push(save);
-          await lock(index + 1);
-        });
+        await withLockedJsonFile(
+          snapshot.filename,
+          async (value, save) => {
+            const fresh = await readDocument(snapshot.filename, snapshot.kind);
+            if (!isDeepStrictEqual(value, fresh?.value ?? {}))
+              throw new Error("Configuration changed during Azure migration");
+            current.push(fresh ?? { ...snapshot, raw: "", value: {} });
+            saves.push(save);
+            await lock(index + 1);
+          },
+          undefined,
+          { parse: snapshot.kind === "models" ? parseModelsConfig : parseJsonRecord },
+        );
         return;
       }
       const plans = current.map((document) => planAzureDocument(document.kind, document.value));

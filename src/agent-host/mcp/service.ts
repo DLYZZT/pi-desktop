@@ -337,7 +337,8 @@ export class McpService {
   ): Promise<void> {
     const binding = this.sessions.get(sessionId);
     if (!binding || binding.closed || binding.hooks.isEmpty()) return;
-    const needed = neededMcpServers([...binding.connections.values()], name, input);
+    const tool = binding.hooks.pi.getAllTools().find((entry) => entry.name === name);
+    const needed = neededMcpServers([...binding.connections.values()], name, input, tool?.reachesTools);
     await waitForMcpConnections(needed, 30000, signal);
     const notice = mcpAvailabilityNotice(needed);
     if (notice) {
@@ -843,6 +844,7 @@ export class McpService {
         exposure: exposure === "codemode" ? "deferred" : exposure,
         namespace: {
           name: mcpNamespace(connection.snapshot.name),
+          aliases: [connection.snapshot.name],
           description: connection.config.description,
           instructions: connection.client.instructions,
         },
@@ -919,6 +921,7 @@ export class McpService {
       exposure: "deferred",
       namespace: {
         name: mcpNamespace(connection.snapshot.name),
+        aliases: [connection.snapshot.name],
         description: connection.config.description,
         instructions: connection.client.instructions,
       },
