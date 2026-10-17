@@ -22,7 +22,7 @@ export function parseJsonRecord(text: string): JsonRecord {
 /**
  * Uses the same <file>.lock protocol and realpath:false policy as Pi 0.99.1.
  * `text` is the raw content `current` was parsed from (null when missing). `beforeCommit` runs synchronously
- * immediately before the rename, so callers can reject writers that ignore the lock (e.g. external editors).
+ * immediately before each rename attempt, so callers can reject writers that ignore the lock (e.g. external editors).
  */
 export async function withLockedJsonFile<T>(
   filename: string,
@@ -91,11 +91,23 @@ export async function withLockedJsonFile<T>(
         } finally {
           await handle.close();
         }
-        assertOwned();
-        // Keep the final cancellation/content checks and commit in one event-loop step.
-        beforeCommit?.();
-        renameSync(temporary, filename);
-        committed = true;
+        let renameRetries = 0;
+        while (true) {
+          assertOwned();
+          // Repeat guards after a sharing-violation wait, immediately before the atomic commit.
+          beforeCommit?.();
+          try {
+            renameSync(temporary, filename);
+            committed = true;
+            break;
+          } catch (error) {
+            if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EPERM" || renameRetries >= 5)
+              throw error;
+            // A Windows reader/scanner can briefly block replacement. Retry only rename, never the mutation.
+            const delayMs = Math.round(10 * 2 ** renameRetries++ * (1 + Math.random()));
+            await delay(delayMs, undefined, { signal: committed ? undefined : signal });
+          }
+        }
       } finally {
         await rm(temporary, { force: true });
       }
