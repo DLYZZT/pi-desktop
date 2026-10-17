@@ -36,6 +36,16 @@ function fixture(t, mode = "report") {
     const report = () => console.log(JSON.stringify({cwd:process.cwd(), args:process.argv.slice(2),
       command:Buffer.from(process.argv.at(-1).split("'")[1],'base64').toString('utf16le'), env:process.env}));
     if(mode==='flood' || mode==='flood-block') { process.stdout.write('输出\\n'.repeat(12000)); process.stderr.write('错误尾部'); if(mode==='flood-block')setInterval(()=>{},1000);else process.exitCode=7; }
+    else if(mode==='split-utf8') {
+      const out=Buffer.from('甲😀'), error=Buffer.from('乙🐈');
+      process.stdout.write(out.subarray(0,1));
+      setTimeout(()=>{process.stderr.write(error.subarray(0,2));
+        setTimeout(()=>{process.stdout.write(out.subarray(1));
+          setTimeout(()=>process.stderr.write(error.subarray(2)),30);
+        },30);
+      },30);
+    }
+    else if(mode==='incomplete-utf8') { process.stdout.write(Buffer.from('甲').subarray(0,1)); process.stderr.write(Buffer.from('乙').subarray(0,2)); }
     else if(mode==='tree') {
       const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
       console.log('CHILD:'+child.pid); setInterval(()=>{},1000);
@@ -184,6 +194,19 @@ test(
   },
 );
 
+test("PowerShell preserves split UTF-8 characters independently across stdout and stderr", async (t) => {
+  const { root, context } = fixture(t, "split-utf8");
+  const result = await createDesktopPowerShellTool(root, context).execute("split", { command: "fixture output" });
+  assert.equal(result.structuredContent.exit_code, 0);
+  assert.deepEqual([...result.structuredContent.output].sort(), [..."甲😀乙🐈"].sort());
+});
+
+test("PowerShell flushes each incomplete UTF-8 tail once when its pipes close", async (t) => {
+  const { root, context } = fixture(t, "incomplete-utf8");
+  const result = await createDesktopPowerShellTool(root, context).execute("incomplete", { command: "fixture output" });
+  assert.equal(result.structuredContent.output, "\uFFFD\uFFFD");
+});
+
 test("PowerShell SDK output streams, records nonzero status and persists the full output after truncation", async (t) => {
   const { root, context } = fixture(t, "flood");
   const updates = [];
@@ -199,7 +222,11 @@ test("PowerShell SDK output streams, records nonzero status and persists the ful
   const payload = await captureExecutionOutput(store, "powershell", result);
   const full = payload.value ?? (await store.readContent(payload.ref.hash, payload.ref.bytes));
   assert.match(typeof full === "string" ? full : JSON.stringify(full), /错误尾部/);
-  assert.equal((typeof full === "string" ? full : JSON.stringify(full)).match(/输出/g).length, 12000);
+  // Separate pipes have no total ordering; stderr may arrive between stdout characters.
+  assert.equal(
+    (typeof full === "string" ? full : JSON.stringify(full)).replace("错误尾部", "").match(/输出/g).length,
+    12000,
+  );
   assert.equal(full.split("\n").length, 12001, "the fixture emits real lines, not literal backslash-n sequences");
   rmSync(result.details.fullOutputPath, { force: true });
 });

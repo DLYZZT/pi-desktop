@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import {
   createPowerShellToolDefinition,
   type PowerShellToolOptions,
@@ -97,8 +98,14 @@ function waitForShellExit(
       clearTimeout(drain);
       child.off("exit", exit).off("close", close).off("error", fail);
       stopped.removeEventListener("abort", stop);
-      child.stdout?.off("data", data).destroy();
-      child.stderr?.off("data", data).destroy();
+      for (const output of outputs) output.stream?.off("data", output.listener).destroy();
+      if (!error) {
+        try {
+          for (const output of outputs) emit(output.decoder.end());
+        } catch (cause) {
+          error = cause as Error;
+        }
+      }
       if (error) reject(error);
       else resolve(exitCode);
     };
@@ -106,15 +113,24 @@ function waitForShellExit(
       clearTimeout(drain);
       drain = setTimeout(() => finish(), 100);
     };
-    const data = (chunk: Buffer) => {
+    const emit = (text: string) => {
+      if (text) onData(Buffer.from(text, "utf8"));
+    };
+    const data = (decoder: StringDecoder, chunk: Buffer) => {
       try {
-        onData(chunk);
+        emit(decoder.write(chunk));
       } catch (error) {
         finish(error as Error);
         return;
       }
       if (exited) armDrain();
     };
+    // The SDK sees one stream. Complete UTF-8 characters in each pipe before merging
+    // so stderr cannot be inserted between the bytes of a stdout character (or vice versa).
+    const outputs = [child.stdout, child.stderr].map((stream) => {
+      const decoder = new StringDecoder("utf8");
+      return { stream, decoder, listener: (chunk: Buffer) => data(decoder, chunk) };
+    });
     const exit = (code: number | null) => {
       exited = true;
       exitCode = code;
@@ -126,8 +142,7 @@ function waitForShellExit(
     };
     const fail = (error: Error) => finish(error);
     const stop = () => finish();
-    child.stdout?.on("data", data);
-    child.stderr?.on("data", data);
+    for (const output of outputs) output.stream?.on("data", output.listener);
     child.once("error", fail).once("exit", exit).once("close", close);
     stopped.addEventListener("abort", stop, { once: true });
     if (stopped.aborted) stop();
