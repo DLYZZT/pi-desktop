@@ -43,6 +43,8 @@ interface SettingsConfigProps {
   chatAppearance: ChatAppearancePreferences;
   chatAppearanceSaving: boolean;
   onChatAppearanceChange: (preferences: ChatAppearancePreferences) => Promise<void>;
+  /** Element to refocus on close; the deferred wrapper captures it before any loading frame takes focus. */
+  returnFocusTarget?: HTMLElement | null;
 }
 
 export function SettingsConfig({
@@ -57,6 +59,7 @@ export function SettingsConfig({
   chatAppearance,
   chatAppearanceSaving,
   onChatAppearanceChange,
+  returnFocusTarget,
 }: SettingsConfigProps) {
   const isMobile = useIsMobile();
   const { isDark, toggleTheme } = useTheme();
@@ -69,7 +72,11 @@ export function SettingsConfig({
   const skillsConfigRef = useRef<SkillsConfigHandle>(null);
   const mcpConfigRef = useRef<McpConfigHandle>(null);
   const returnFocusRef = useRef<HTMLElement | null>(
-    document.activeElement instanceof HTMLElement ? document.activeElement : null,
+    returnFocusTarget !== undefined
+      ? returnFocusTarget
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null,
   );
 
   const requestSettingsTransition = useCallback((action: () => void) => {

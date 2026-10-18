@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ComponentProps } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ComponentProps } from "react";
 import { useI18n } from "@/i18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 
@@ -43,10 +43,28 @@ function PanelLoading() {
   );
 }
 
-// Mirrors the SettingsConfig backdrop and dialog frame so a slow chunk load never covers the window opaquely.
-function SettingsLoading() {
+// Mirrors the SettingsConfig backdrop and dialog frame so a slow chunk load never covers the window opaquely, and
+// stays dismissible (close button, Escape, backdrop click) with focus held on its close button.
+function SettingsLoading({
+  onClose,
+  returnFocusTarget,
+}: {
+  onClose: () => void;
+  returnFocusTarget: HTMLElement | null;
+}) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+    // When the real dialog replaces this frame its own mount effect moves focus again, so restoring here only
+    // sticks when Settings closes before the chunk arrives.
+    return () => {
+      returnFocusTarget?.focus();
+    };
+  }, [returnFocusTarget]);
+
   return (
     <div
       role="presentation"
@@ -59,10 +77,27 @@ function SettingsLoading() {
         alignItems: "center",
         justifyContent: "center",
       }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
     >
       <div
-        role="status"
+        role="dialog"
+        aria-modal="true"
+        aria-busy="true"
         aria-label={t("settings", "Settings")}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onClose();
+            return;
+          }
+          if (event.key === "Tab") {
+            event.preventDefault();
+            closeButtonRef.current?.focus();
+          }
+        }}
+        tabIndex={-1}
         style={{
           width: isMobile ? "calc(100vw - 16px)" : 960,
           maxWidth: "calc(100vw - 16px)",
@@ -96,7 +131,29 @@ function SettingsLoading() {
               </div>
             )}
           </div>
-          <div style={{ width: 36, height: 36, flexShrink: 0 }} />
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={onClose}
+            aria-label={t("close", "Close")}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              fontSize: 20,
+              lineHeight: 1,
+              width: 36,
+              height: 36,
+              padding: 0,
+              borderRadius: 7,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            ×
+          </button>
         </div>
         <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
           <div
@@ -108,6 +165,7 @@ function SettingsLoading() {
             }}
           />
           <div
+            role="status"
             style={{
               flex: 1,
               display: "grid",
@@ -124,10 +182,14 @@ function SettingsLoading() {
   );
 }
 
-export function SettingsConfig(props: ComponentProps<typeof LazySettingsConfig>) {
+export function SettingsConfig(props: Omit<ComponentProps<typeof LazySettingsConfig>, "returnFocusTarget">) {
+  // Captured before the loading frame or the dialog takes focus, so closing returns to the original opener.
+  const [returnFocusTarget] = useState(() =>
+    document.activeElement instanceof HTMLElement ? document.activeElement : null,
+  );
   return (
-    <Suspense fallback={<SettingsLoading />}>
-      <LazySettingsConfig {...props} />
+    <Suspense fallback={<SettingsLoading onClose={props.onClose} returnFocusTarget={returnFocusTarget} />}>
+      <LazySettingsConfig {...props} returnFocusTarget={returnFocusTarget} />
     </Suspense>
   );
 }
