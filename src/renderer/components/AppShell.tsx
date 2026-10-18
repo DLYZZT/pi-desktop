@@ -24,7 +24,7 @@ import { FileExplorer } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
 import type { SettingsTab } from "./SettingsConfig";
-import { SettingsConfig, TerminalDock } from "./DeferredPanels";
+import { preloadSettingsConfig, scheduleSettingsConfigPreload, SettingsConfig, TerminalDock } from "./DeferredPanels";
 import { useMcpSettingsRequests } from "../hooks/useMcpSettingsRequests";
 import { QuickChannelBinding } from "./channels/QuickChannelBinding";
 import { BrowserDock } from "./browser/BrowserDock";
@@ -122,6 +122,8 @@ export function AppShell({
   useEffect(() => {
     setMobileSidebarReady(true);
   }, []);
+  // Warm the deferred Settings chunk once the UI is idle so the first open does not wait on it.
+  useEffect(() => scheduleSettingsConfigPreload(), []);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const thinkingExpansionRegistryRef = useRef(new ThinkingExpansionRegistry());
   const processDetailsExpansionRegistryRef = useRef(new ThinkingExpansionRegistry());
@@ -754,7 +756,11 @@ export function AppShell({
             fontSize: 12,
             transition: "background 0.12s, color 0.12s",
           }}
+          onFocus={() => {
+            void preloadSettingsConfig().catch(() => undefined);
+          }}
           onMouseEnter={(e) => {
+            void preloadSettingsConfig().catch(() => undefined);
             e.currentTarget.style.background = "var(--bg-hover)";
             e.currentTarget.style.color = "var(--text)";
           }}
