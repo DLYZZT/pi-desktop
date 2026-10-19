@@ -29,9 +29,17 @@ test("aggregated mode replaces the top-level controls with a project opener", ()
   assert.match(sidebar, /\) : \(\s*<>\s*<button[\s\S]{0,120}?onClick=\{handleNewSession\}/);
   assert.match(sidebar, /<WorktreePicker/);
   assert.match(picker, /openProjectEllipsis/);
-  // The compact trigger opens the same dropdown, so session-less projects stay reachable.
+  // The compact trigger keeps the actions that open a project without sessions.
   assert.match(picker, /compact \? \(/);
   assert.match(picker, /setDropdownOpen\(\(v\) => !v\)/);
+  // The project list itself is redundant in aggregated mode — the groups below
+  // already show every project — so the compact dropdown only offers the
+  // default-directory / browse / custom-path actions.
+  assert.match(picker, /const showProjectList = !compact;/);
+  assert.match(picker, /const showProjectFilter = showProjectList && recentProjects\.length > 8;/);
+  assert.match(picker, /\{showProjectList && \(/);
+  // Without the list there is no row above the actions, so no separator line.
+  assert.match(picker, /showProjectList && visibleProjects\.length > 0/);
 });
 
 test("a collapsed project group still expands when it holds the open session", () => {

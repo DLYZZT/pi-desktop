@@ -14,7 +14,10 @@ interface Props {
   restoringInitialSession: boolean;
   setSelectedCwd: (cwd: string | null) => void;
   /** Aggregated mode: render a compact "Open project…" trigger instead of the
-   *  selected-path display, because the project groups already show the path. */
+   *  selected-path display, because the project groups already show the path.
+   *  The dropdown then also drops the project list — switching between known
+   *  projects happens through the groups — and keeps only the actions that
+   *  open a project with no sessions yet. */
   compact?: boolean;
 }
 
@@ -111,7 +114,11 @@ export function ProjectPicker({
   }, []);
 
   const recentProjects = getRecentProjects(allSessions);
-  const showProjectFilter = recentProjects.length > 8;
+  // Aggregated mode (compact) already lists every project as a group in the
+  // sidebar, so the dropdown only offers the actions that open a project with
+  // no sessions yet; the project list would just duplicate the groups.
+  const showProjectList = !compact;
+  const showProjectFilter = showProjectList && recentProjects.length > 8;
   const visibleProjects = projectFilter.trim()
     ? recentProjects.filter((p) => p.toLowerCase().includes(projectFilter.trim().toLowerCase()))
     : recentProjects;
@@ -253,63 +260,65 @@ export function ProjectPicker({
             />
           </div>
         )}
-        <div style={{ maxHeight: "min(50vh, 380px)", overflowY: "auto" }}>
-          {visibleProjects.map((project) => (
-            <button
-              key={project}
-              onClick={() => {
-                setSelectedCwd(project);
-                setProjectFilter("");
-                setCustomPathOpen(false);
-                setCustomPathValue("");
-                setCustomPathError(null);
-                setDropdownOpen(false);
-              }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 7,
-                width: "100%",
-                padding: "8px 10px",
-                background: "var(--bg)",
-                border: "none",
-                borderBottom: "1px solid var(--border)",
-                color: project === selectedProject ? "var(--text)" : "var(--text-muted)",
-                cursor: "pointer",
-                textAlign: "left",
-                fontSize: 11,
-                fontFamily: "var(--font-mono)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-              title={project}
-            >
-              {project === selectedProject && (
-                <svg
-                  width="10"
-                  height="10"
-                  viewBox="0 0 10 10"
-                  fill="none"
-                  stroke="var(--accent)"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ flexShrink: 0 }}
-                >
-                  <polyline points="1.5 5 4 7.5 8.5 2.5" />
-                </svg>
-              )}
-              {project !== selectedProject && <span style={{ width: 10, flexShrink: 0 }} />}
-              <PathLabel text={abbreviateHomePath(project, homeDir)} style={{ flex: 1 }} />
-            </button>
-          ))}
-          {visibleProjects.length === 0 && projectFilter.trim() && (
-            <div style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-dim)" }}>
-              {t("noMatchingProjects", "No matching projects")}
-            </div>
-          )}
-        </div>
+        {showProjectList && (
+          <div style={{ maxHeight: "min(50vh, 380px)", overflowY: "auto" }}>
+            {visibleProjects.map((project) => (
+              <button
+                key={project}
+                onClick={() => {
+                  setSelectedCwd(project);
+                  setProjectFilter("");
+                  setCustomPathOpen(false);
+                  setCustomPathValue("");
+                  setCustomPathError(null);
+                  setDropdownOpen(false);
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  width: "100%",
+                  padding: "8px 10px",
+                  background: "var(--bg)",
+                  border: "none",
+                  borderBottom: "1px solid var(--border)",
+                  color: project === selectedProject ? "var(--text)" : "var(--text-muted)",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  fontSize: 11,
+                  fontFamily: "var(--font-mono)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={project}
+              >
+                {project === selectedProject && (
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 10 10"
+                    fill="none"
+                    stroke="var(--accent)"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ flexShrink: 0 }}
+                  >
+                    <polyline points="1.5 5 4 7.5 8.5 2.5" />
+                  </svg>
+                )}
+                {project !== selectedProject && <span style={{ width: 10, flexShrink: 0 }} />}
+                <PathLabel text={abbreviateHomePath(project, homeDir)} style={{ flex: 1 }} />
+              </button>
+            ))}
+            {visibleProjects.length === 0 && projectFilter.trim() && (
+              <div style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-dim)" }}>
+                {t("noMatchingProjects", "No matching projects")}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Default cwd shortcut */}
         {!customPathOpen && (
@@ -326,7 +335,7 @@ export function ProjectPicker({
               padding: "8px 10px",
               background: "none",
               border: "none",
-              borderTop: visibleProjects.length > 0 ? "1px solid var(--border)" : "none",
+              borderTop: showProjectList && visibleProjects.length > 0 ? "1px solid var(--border)" : "none",
               color: "var(--text-muted)",
               cursor: "pointer",
               textAlign: "left",
@@ -427,7 +436,12 @@ export function ProjectPicker({
             <span>{t("customPath", "Custom path…")}</span>
           </button>
         ) : (
-          <div style={{ padding: "6px 8px", borderTop: visibleProjects.length > 0 ? "none" : undefined }}>
+          <div
+            style={{
+              padding: "6px 8px",
+              borderTop: showProjectList && visibleProjects.length > 0 ? "none" : undefined,
+            }}
+          >
             <input
               ref={customPathInputRef}
               value={customPathValue}
