@@ -5,6 +5,7 @@ import type { AgentSessionLike, ModelLike } from "../shared/pi-types";
 import type { createDesktopAgentSessionServices } from "./desktop-session-services";
 import { LEGACY_AZURE_PROVIDER } from "./azure-upgrade";
 import { getBranchModelSelection } from "./branch-model-selection";
+import { readProviderRenames, renamedSessionProvider } from "./provider-renames";
 
 type Services = Awaited<ReturnType<typeof createDesktopAgentSessionServices>>;
 
@@ -20,8 +21,15 @@ export class SessionModelSelection {
   private trackBranch = false;
   private renamed = false;
   private configRecoveryPending = false;
+  private agentDir?: string;
+  private providerRenamed = false;
+
+  resolveProvider(provider: string, modelId: string, manager: SessionManager): string {
+    return renamedSessionProvider(provider, modelId, manager.getBranch(), readProviderRenames(this.agentDir));
+  }
 
   prepare(services: Services, manager: SessionManager) {
+    this.agentDir = services.agentDir;
     this.trackBranch = true;
     const saved = getBranchModelSelection(manager.getBranch(), (provider, id) =>
       services.modelRuntime.getModel(provider, id),
@@ -29,6 +37,14 @@ export class SessionModelSelection {
     const provider = services.settingsManager.getDefaultProvider(),
       modelId = services.settingsManager.getDefaultModel();
     this.requested = saved ?? (provider ? { provider, modelId: modelId ?? "" } : undefined);
+    if (saved) {
+      const renamed = this.resolveProvider(saved.provider, saved.modelId, manager);
+      if (renamed !== saved.provider) {
+        this.providerRenamed = true;
+        this.requested = { ...saved, provider: renamed };
+        return services.modelRuntime.getModel(renamed, saved.modelId);
+      }
+    }
     if (this.requested?.provider !== LEGACY_AZURE_PROVIDER) return;
     const model = services.modelRuntime.getModel("azure", this.requested.modelId);
     this.renamed =
@@ -44,6 +60,18 @@ export class SessionModelSelection {
     return this.renamed ? model : undefined;
   }
   finish(inner: AgentSessionLike, fallbackMessage?: string): void {
+    const model = inner.model;
+    if (
+      this.providerRenamed &&
+      model &&
+      model.provider === this.requested?.provider &&
+      model.id === this.requested?.modelId
+    ) {
+      const saved = getBranchModelSelection(inner.sessionManager.getBranch(), (provider, id) =>
+        inner.modelRuntime.getModel(provider, id),
+      );
+      if (saved?.provider !== model.provider) inner.sessionManager.appendModelChange(model.provider, model.id);
+    }
     if (
       this.renamed &&
       inner.model?.provider === "azure" &&

@@ -3,7 +3,9 @@ import type { InlineExtension, ModelRouteRequest, ExtensionContext, ModelRoute }
 import type { AutoRoutingConfig, ModelReference } from "../contract/model-settings";
 import { AUTO_ROUTING_MODEL, AUTO_ROUTING_PROVIDER } from "../contract/model-settings";
 import { THINKING_LEVELS } from "../shared/thinking-levels";
+import { getModelConfigRevision } from "./model-config-revision";
 import { readRoutingSettings } from "./model-settings-store";
+import { migrateRoutingSettings, readProviderRenames } from "./provider-renames";
 
 type UsageRecorder = (provider: string, model: string, usage: Usage) => void;
 
@@ -93,14 +95,26 @@ export function createAutoRoutingExtension(
     name: "pi-desktop:auto-routing",
     hidden: true,
     factory(pi) {
-      const { config } = readRoutingSettings(agentDir);
-      if (!config.enabled) return;
+      const { config: loaded } = readRoutingSettings(agentDir);
+      if (!loaded.enabled) return;
+      const loadedAt = Date.now();
+      let config = loaded;
+      let revision = getModelConfigRevision();
+      // A provider renamed after these resources loaded keeps routing to the same physical models.
+      const current = () => {
+        if (revision !== getModelConfigRevision()) {
+          revision = getModelConfigRevision();
+          const events = readProviderRenames(agentDir).filter((event) => event.at > loadedAt);
+          config = migrateRoutingSettings(loaded, events);
+        }
+        return config;
+      };
       pi.registerVirtualModel<RouteState>({
         provider: AUTO_ROUTING_PROVIDER,
         id: AUTO_ROUTING_MODEL,
         name: "Auto",
         thinkingLevels: [...THINKING_LEVELS],
-        route: (request, ctx) => routeDesktopModel(config, request, ctx, recordUsage),
+        route: (request, ctx) => routeDesktopModel(current(), request, ctx, recordUsage),
       });
     },
   };

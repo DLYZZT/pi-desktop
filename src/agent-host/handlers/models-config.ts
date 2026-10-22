@@ -16,12 +16,14 @@ import { createHash } from "node:crypto";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createDesktopModelRuntime } from "../model-credentials";
 import { probeChatModel } from "../model-chat-probe";
+import { discoverProviderModels } from "../model-discovery";
 import type { ApiHandler } from "../../contract/rpc";
 import { RpcError } from "../../contract/types";
 import { reloadSharedModelRuntimeConfig } from "../model-runtime";
 import { ensureAzureUpgrade } from "../azure-upgrade";
 import { withLockedJsonFile } from "../../shared/node/locked-json-file";
 import { inspectModelsConfig, parseModelsConfig } from "../models-config-validation";
+import { ensureProviderRenameSettings, withProviderRenames } from "../provider-renames";
 
 function getModelsPath(): string {
   return path.join(getAgentDir(), "models.json");
@@ -62,7 +64,11 @@ function modelsConfigConflict(expectedVersion: string, currentVersion: string): 
   });
 }
 
-async function writeModelsJson(data: Record<string, unknown>, expectedVersion: string): Promise<string> {
+async function writeModelsJson(
+  data: Record<string, unknown>,
+  expectedVersion: string,
+  providerRenames?: unknown,
+): Promise<string> {
   const p = getModelsPath();
   return withLockedJsonFile(
     p,
@@ -73,7 +79,15 @@ async function writeModelsJson(data: Record<string, unknown>, expectedVersion: s
       // ISSUE-009: atomic write via temp + rename; keep .bak of previous good file
       const tmp = `${p}.${process.pid}.tmp`;
       const bak = `${p}.bak`;
-      const serialized = JSON.stringify(data, null, 2);
+      const serialized = JSON.stringify(
+        withProviderRenames(
+          initial.raw === null ? { providers: {} } : parseModelsConfig(initial.raw),
+          data,
+          providerRenames,
+        ),
+        null,
+        2,
+      );
       writeFileSync(tmp, serialized, { encoding: "utf8", mode: 0o600 });
       try {
         const beforeCommit = readModelsFileSnapshot();
@@ -106,9 +120,11 @@ type ModelConfigHandlers = {
   get: NonNullable<ApiHandler["modelsConfig.get"]>;
   set: NonNullable<ApiHandler["modelsConfig.set"]>;
   test: NonNullable<ApiHandler["modelsConfig.test"]>;
+  discover: NonNullable<ApiHandler["modelsConfig.discover"]>;
 };
 
 export const modelConfigHandlers = {
+  discover: async (params) => discoverProviderModels(params?.provider),
   get: async () => {
     // Inspect before migrations. An invalid SDK configuration must remain editable and byte-for-byte intact.
     const original = readModelsJsonSnapshot();
@@ -121,7 +137,7 @@ export const modelConfigHandlers = {
   },
 
   set: async (params) => {
-    const body = params as { config?: unknown; expectedVersion?: unknown };
+    const body = params as { config?: unknown; expectedVersion?: unknown; providerRenames?: unknown };
     const config = body?.config as Record<string, unknown> | undefined;
     // ISSUE-009: refuse to persist empty overwrite without explicit providers key from a real load
     if (!config || typeof config !== "object" || !("providers" in config)) {
@@ -140,7 +156,9 @@ export const modelConfigHandlers = {
         message: `Invalid model configuration; no changes were saved: ${issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`,
         detail: { issues },
       });
-    const version = await writeModelsJson(persisted, body.expectedVersion);
+    const version = await writeModelsJson(persisted, body.expectedVersion, body.providerRenames);
+    // Migrate global references now, before other writers can make the settings look newer than the rename.
+    if (body.providerRenames !== undefined) await ensureProviderRenameSettings();
     await reloadSharedModelRuntimeConfig();
     return { ok: true as const, version };
   },

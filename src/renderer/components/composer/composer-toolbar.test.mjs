@@ -259,3 +259,26 @@ test("max can be selected independently of xhigh and disappears for unsupported 
     false,
   );
 });
+
+test("mapped reasoning labels retain the selected Pi level and show the raw provider value", async (t) => {
+  const f = await mount(t);
+  await f.update({
+    availableThinkingLevels: ["off", "minimal", "low", "medium", "high"],
+    thinkingLevel: "minimal",
+    thinkingLevelMap: { minimal: "max" },
+  });
+  assert.ok(f.root.find((node) => node.props["aria-label"] === "Change reasoning level: Minimal → max"));
+  await f.clickLabel("Change reasoning level:");
+  const choices = f.root.findAll((node) => node.props.role === "menuitemradio");
+  const mapped = choices.find((node) => text(node).startsWith("Minimal → max"));
+  assert.ok(mapped);
+  assert.match(text(mapped), /Provider value: max/);
+  assert.ok(!text(mapped).includes("Minimal reasoning"));
+  assert.ok(!choices.some((node) => text(node).startsWith("Maximum") || text(node).startsWith("Extra high")));
+  await f.update({ thinkingLevel: "high" });
+  const choice = f.root
+    .findAll((node) => node.props.role === "menuitemradio")
+    .find((node) => text(node).startsWith("Minimal → max"));
+  await act(async () => choice.props.onClick());
+  assert.deepEqual(f.actions.at(-1), ["thinking", "minimal"]);
+});

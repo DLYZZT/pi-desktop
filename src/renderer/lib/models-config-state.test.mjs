@@ -185,3 +185,47 @@ test("consecutive custom providers derive unique names from the reducer current 
     "new-provider": { api: "anthropic-messages", futureField: true },
   });
 });
+
+test("name drafts resolve together on Save and do not confuse ordinary names with object prototype fields", async () => {
+  const { applyProviderNameDrafts } = await loadModule();
+  const config = {
+    future: true,
+    providers: {
+      alpha: { models: [{ id: "first" }] },
+      beta: { models: [{ id: "second" }] },
+      toString: { api: "openai-completions" },
+    },
+  };
+  assert.deepEqual(applyProviderNameDrafts(config, {}).config, config);
+  const swapped = applyProviderNameDrafts(config, { alpha: " beta ", beta: "alpha" });
+  assert.equal(swapped.ok, true);
+  assert.deepEqual(swapped.renames, { alpha: "beta", beta: "alpha" });
+  assert.deepEqual(swapped.config.providers.beta, config.providers.alpha);
+  assert.deepEqual(swapped.config.providers.alpha, config.providers.beta);
+  assert.equal(swapped.config.future, true);
+  assert.deepEqual(applyProviderNameDrafts(config, { alpha: "beta" }), {
+    ok: false,
+    provider: "alpha",
+    name: "beta",
+    reason: "duplicate",
+  });
+});
+
+test("name drafts survive selection and new providers but disappear with deletion or disk reload", async () => {
+  const { modelsConfigEditorReducer } = await loadModule();
+  const original = {
+    config: { providers: { alpha: { api: "openai-completions" } } },
+    selection: { type: "provider", name: "alpha" },
+  };
+  const typed = modelsConfigEditorReducer(original, { type: "provider.name.set", name: "alpha", value: "gamma" });
+  const added = modelsConfigEditorReducer(typed, { type: "provider.addCustom" });
+  assert.deepEqual(added.providerNameDrafts, { alpha: "gamma" });
+  assert.deepEqual(added.config.providers.alpha, original.config.providers.alpha);
+  const deleted = modelsConfigEditorReducer(added, {
+    type: "config.update",
+    update: { providers: { "new-provider": { api: "openai-completions" } } },
+  });
+  assert.deepEqual(deleted.providerNameDrafts, {});
+  const reloaded = modelsConfigEditorReducer(typed, { type: "config.replace", ...original });
+  assert.equal(reloaded.providerNameDrafts, undefined);
+});

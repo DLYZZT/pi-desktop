@@ -160,6 +160,14 @@ export interface ModelPreferencesResult {
   enabledModels: string[] | null;
 }
 
+export interface DiscoveredModel {
+  id: string;
+  name?: string;
+}
+
+export type ModelDiscoveryResult =
+  { ok: true; models: DiscoveredModel[]; baseUrl: string } | { ok: false; error: string; status?: number };
+
 export interface ModelsConfig {
   [key: string]: unknown;
 }

@@ -76,6 +76,7 @@ export const enUS: Record<string, string> = {
   thinkingOffDescription: "Reasoning off",
   thinkingXHighDescription: "Extra-high reasoning",
   thinkingMaxDescription: "Maximum reasoning",
+  thinkingMappedDescription: "Provider value: {value}",
 };
 
 export const zhCN: Record<string, string> = {
@@ -153,6 +154,7 @@ export const zhCN: Record<string, string> = {
   thinkingOffDescription: "关闭推理",
   thinkingXHighDescription: "极高推理强度",
   thinkingMaxDescription: "最高推理强度",
+  thinkingMappedDescription: "发送给服务商：{value}",
 };
 
 export const zhTW: Record<string, string> = {
@@ -230,4 +232,5 @@ export const zhTW: Record<string, string> = {
   thinkingOffDescription: "關閉推理",
   thinkingXHighDescription: "極高推理強度",
   thinkingMaxDescription: "最高推理強度",
+  thinkingMappedDescription: "傳送給服務商：{value}",
 };

@@ -3,6 +3,7 @@ import type { ModelsRefreshResult } from "@earendil-works/pi-ai";
 import type { ModelCatalogStatus, ModelCatalogWarning } from "../contract/types";
 import { ensureAzureUpgrade, azureUpgradeRevision } from "./azure-upgrade";
 import { createDesktopModelRuntime } from "./model-credentials";
+import { markModelConfigChanged } from "./model-config-revision";
 
 export const MODEL_CATALOG_REFRESH_TIMEOUT_MS = 12_000;
 
@@ -217,6 +218,7 @@ export async function getSharedModelRuntime(): Promise<ModelRuntime> {
 
 /** Refresh local model configuration/cache only when the shared runtime already exists. */
 export async function reloadSharedModelRuntimeConfig(): Promise<void> {
+  markModelConfigChanged();
   if (!sharedRuntimePromise) return;
   const runtime = await sharedRuntimePromise;
   await runtime.refresh({ allowNetwork: false });

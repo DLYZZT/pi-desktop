@@ -1,3 +1,5 @@
+import type { DiscoveredModel } from "@contract/types";
+
 export interface ModelEntry {
   id: string;
   name?: string;
@@ -24,6 +26,24 @@ export interface ProviderEntry {
   [key: string]: unknown;
 }
 
+/** Add newly discovered IDs without replacing any manually configured model fields. */
+export function mergeDiscoveredModels(
+  provider: ProviderEntry,
+  discovered: DiscoveredModel[],
+  baseUrl: string,
+): { provider: ProviderEntry; added: number } {
+  const models = [...(provider.models ?? [])];
+  const ids = new Set(models.map((model) => model.id));
+  let added = 0;
+  for (const model of discovered) {
+    if (ids.has(model.id)) continue;
+    ids.add(model.id);
+    models.push({ id: model.id, ...(model.name ? { name: model.name } : {}) });
+    added++;
+  }
+  return { provider: { ...provider, baseUrl, models }, added };
+}
+
 export interface ModelsJson {
   providers?: Record<string, ProviderEntry>;
   [key: string]: unknown;
@@ -40,6 +60,7 @@ export type ModelsConfigSelection =
 export interface ModelsConfigEditorState {
   config: ModelsJson;
   selection: ModelsConfigSelection | null;
+  providerNameDrafts?: Record<string, string>;
 }
 
 export type ModelsConfigUpdate = ModelsJson | ((current: ModelsJson) => ModelsJson);
@@ -48,9 +69,37 @@ export type ModelsConfigEditorAction =
   | { type: "config.replace"; config: ModelsJson; selection: ModelsConfigSelection | null }
   | { type: "config.update"; update: ModelsConfigUpdate }
   | { type: "selection.set"; selection: ModelsConfigSelection | null }
+  | { type: "provider.name.set"; name: string; value: string }
   | { type: "provider.addCustom" };
 
 const RESERVED_PROVIDER_NAMES = new Set(["__proto__", "prototype", "constructor"]);
+
+export type ProviderNamesResult =
+  | { ok: true; config: ModelsJson; renames: Record<string, string> }
+  | { ok: false; provider: string; name: string; reason: "empty" | "reserved" | "duplicate" };
+
+/** Resolve name drafts together at Save, keeping provider identities stable while typing. */
+export function applyProviderNameDrafts(config: ModelsJson, drafts: Record<string, string>): ProviderNamesResult {
+  const used = new Map<string, string>();
+  const entries: [string, ProviderEntry][] = [];
+  const renames: Record<string, string> = {};
+  for (const [provider, value] of Object.entries(config.providers ?? {})) {
+    const name = Object.hasOwn(drafts, provider) ? drafts[provider].trim() : provider;
+    if (!name) return { ok: false, provider, name, reason: "empty" };
+    if (RESERVED_PROVIDER_NAMES.has(name)) return { ok: false, provider, name, reason: "reserved" };
+    const previous = used.get(name);
+    if (previous !== undefined)
+      return { ok: false, provider: Object.hasOwn(drafts, provider) ? provider : previous, name, reason: "duplicate" };
+    used.set(name, provider);
+    entries.push([name, value]);
+    if (name !== provider) renames[provider] = name;
+  }
+  return {
+    ok: true,
+    config: Object.keys(renames).length ? { ...config, providers: Object.fromEntries(entries) } : config,
+    renames,
+  };
+}
 
 export type RenameProviderResult =
   { ok: true; config: ModelsJson; name: string } | { ok: false; config: ModelsJson; error: string };
@@ -152,15 +201,29 @@ export function modelsConfigEditorReducer(
   switch (action.type) {
     case "config.replace":
       return { config: action.config, selection: action.selection };
-    case "config.update":
+    case "config.update": {
+      const config = typeof action.update === "function" ? action.update(state.config) : action.update;
       return {
         ...state,
-        config: typeof action.update === "function" ? action.update(state.config) : action.update,
+        config,
+        providerNameDrafts: Object.fromEntries(
+          Object.entries(state.providerNameDrafts ?? {}).filter(([name]) =>
+            Object.hasOwn(config.providers ?? {}, name),
+          ),
+        ),
       };
+    }
     case "selection.set":
       return { ...state, selection: action.selection };
+    case "provider.name.set": {
+      if (!Object.hasOwn(state.config.providers ?? {}, action.name)) return state;
+      const providerNameDrafts = { ...state.providerNameDrafts };
+      if (action.value === action.name) delete providerNameDrafts[action.name];
+      else providerNameDrafts[action.name] = action.value;
+      return { ...state, providerNameDrafts };
+    }
     case "provider.addCustom":
-      return addCustomProviderTransition(state.config);
+      return { ...state, ...addCustomProviderTransition(state.config) };
   }
 }
 

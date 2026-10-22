@@ -3,6 +3,7 @@ import path from "node:path";
 import { ensureAzureUpgrade } from "./azure-upgrade";
 import { createDesktopModelRuntime } from "./model-credentials";
 import { createAutoRoutingExtension } from "./auto-routing";
+import { ensureProviderRenameSettings } from "./provider-renames";
 
 export async function createDesktopAgentSessionServices(
   options: NonNullable<Parameters<typeof createAgentSessionServices>[0]>,
@@ -14,6 +15,7 @@ export async function createDesktopAgentSessionServices(
     projectTrusted: options.settingsManager?.isProjectTrusted() ?? true,
   });
   const agentDir = options.agentDir ?? getAgentDir();
+  await ensureProviderRenameSettings(agentDir);
   const modelRuntime =
     options.modelRuntime ??
     (await createDesktopModelRuntime({
@@ -40,5 +42,7 @@ export async function createDesktopAgentSessionServices(
       ],
     },
   });
-  return { ...services, azureUpgrade };
+  if (await ensureProviderRenameSettings(agentDir, options.cwd, services.settingsManager.isProjectTrusted()))
+    await services.settingsManager.reload();
+  return { ...services, azureUpgrade, agentDir };
 }

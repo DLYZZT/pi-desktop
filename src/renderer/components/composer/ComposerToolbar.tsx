@@ -4,11 +4,7 @@ import type { ModelCatalogStatus } from "@contract/types";
 import { useI18n } from "@/i18n";
 import { scaledChatFont } from "@/lib/chat-appearance";
 import type { ToolPreset, SelectableToolPreset } from "@shared/tool-presets";
-import {
-  THINKING_LEVELS as REASONING_LEVELS,
-  thinkingMenuLevels,
-  type ThinkingLevelOption,
-} from "@shared/thinking-levels";
+import { thinkingMenuLevels, type ThinkingLevelOption } from "@shared/thinking-levels";
 
 interface ModelOption {
   provider: string;
@@ -59,8 +55,6 @@ function compareModelOptions(a: ModelOption, b: ModelOption): number {
     MODEL_OPTION_COLLATOR.compare(a.modelId, b.modelId)
   );
 }
-
-const THINKING_LEVELS = ["auto", ...REASONING_LEVELS] as const;
 
 /** Local menu placement, dismissal and focus ownership for the composer controls. */
 function ComposerToolbarView({
@@ -141,7 +135,7 @@ function ComposerToolbarView({
     : null;
   const currentName = displayModelName;
 
-  const thinkingLabels: Record<(typeof THINKING_LEVELS)[number], string> = {
+  const thinkingLabels: Record<ThinkingLevelOption, string> = {
     auto: t("thinkingAuto", "Auto"),
     off: t("thinkingOff", "Off"),
     minimal: t("thinkingMinimal", "Minimal"),
@@ -151,7 +145,7 @@ function ComposerToolbarView({
     xhigh: t("thinkingXHigh", "Extra high"),
     max: t("thinkingMax", "Maximum"),
   };
-  const thinkingDescriptions: Record<(typeof THINKING_LEVELS)[number], string> = {
+  const thinkingDescriptions: Record<ThinkingLevelOption, string> = {
     auto: t("thinkingDefaultDescription", "Use Pi default"),
     off: t("thinkingOffDescription", "Reasoning off"),
     minimal: t("thinkingMinimalDescription", "Minimal reasoning"),
@@ -161,16 +155,11 @@ function ComposerToolbarView({
     xhigh: t("thinkingXHighDescription", "Extra-high reasoning"),
     max: t("thinkingMaxDescription", "Maximum reasoning"),
   };
-  const translateThinkingValue = (value: string): string => {
-    return (THINKING_LEVELS as readonly string[]).includes(value)
-      ? thinkingLabels[value as (typeof THINKING_LEVELS)[number]]
-      : value;
+  const thinkingChoiceLabel = (level: ThinkingLevelOption): string => {
+    const mapped = level === "auto" ? undefined : thinkingLevelMap?.[level];
+    return mapped != null && mapped !== level ? `${thinkingLabels[level]} → ${mapped}` : thinkingLabels[level];
   };
-  const thinkingDisplayLabel = (() => {
-    const lvl = thinkingLevel ?? "auto";
-    if (lvl === "auto" || !thinkingLevelMap) return thinkingLabels[lvl];
-    return translateThinkingValue(thinkingLevelMap[lvl] ?? lvl);
-  })();
+  const thinkingDisplayLabel = thinkingChoiceLabel(thinkingLevel ?? "auto");
   const toolPresetKey =
     toolPreset === "custom"
       ? "custom"
@@ -701,12 +690,12 @@ function ComposerToolbarView({
                 >
                   {thinkingMenuLevels(availableThinkingLevels).map((lvl) => {
                     const isActive = (thinkingLevel ?? "auto") === lvl;
-                    const desc = thinkingDescriptions[lvl];
                     const mappedVal = lvl !== "auto" && thinkingLevelMap ? thinkingLevelMap[lvl] : undefined;
-                    const displayLabel = translateThinkingValue(
-                      mappedVal != null && mappedVal !== lvl ? mappedVal : lvl,
-                    );
-                    const showOriginal = mappedVal != null && mappedVal !== lvl;
+                    const displayLabel = thinkingChoiceLabel(lvl);
+                    const desc =
+                      mappedVal != null && mappedVal !== lvl
+                        ? t("thinkingMappedDescription", "Provider value: {value}").replace("{value}", mappedVal)
+                        : thinkingDescriptions[lvl];
                     return (
                       <button
                         key={lvl}
@@ -757,21 +746,7 @@ function ComposerToolbarView({
                         ) : (
                           <span style={{ width: 10, flexShrink: 0 }} />
                         )}
-                        <span style={{ flex: 1 }}>
-                          {displayLabel}
-                          {showOriginal && (
-                            <span
-                              style={{
-                                fontSize: scaledChatFont(10),
-                                color: "var(--text-dim)",
-                                fontFamily: "var(--font-mono)",
-                                marginLeft: 5,
-                              }}
-                            >
-                              ({thinkingLabels[lvl]})
-                            </span>
-                          )}
-                        </span>
+                        <span style={{ flex: 1 }}>{displayLabel}</span>
                         <span style={{ fontSize: scaledChatFont(11), color: "var(--text-dim)", marginLeft: 8 }}>
                           {desc}
                         </span>

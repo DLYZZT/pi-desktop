@@ -45,7 +45,7 @@ const { ModelsConfig, useSessionModels, testApi } = await importTestBundle("mode
         export async function listModels() {state.catalogReads++;return {models:[{...model,name:'Catalog '+state.catalogReads}],catalog:{source:'cache',refreshed:false,aborted:false,warnings:[]}};}
         export async function cancelModelsRefresh() {}
         export async function refreshModels() {throw new Error('Unexpected remote catalog refresh');}
-        export async function getModelPreferences() {state.reads++;return {models:[model],enabledModels:null};}
+        export async function getModelPreferences() {state.reads++;return state.preferences??{models:[model],enabledModels:null};}
         export async function setModelPreferences(cwd, enabledModels) {state.writes.push({cwd,enabledModels});return await state.writeResult;}
         const take = (queue, fallback) => { const next=queue.shift(); return typeof next === 'function' ? next() : next ?? fallback; };
         export async function subscribeAuthLogin(provider,on) {
@@ -81,6 +81,7 @@ async function mount(t, options = {}) {
   if (options.apiKeyProviders) testApi.state.apiKeyProviders = options.apiKeyProviders;
   testApi.state.configError = options.configError ?? null;
   testApi.state.issues = options.issues;
+  testApi.state.preferences = options.preferences;
   const requests = testApi.state.requests,
     sources = testApi.state.sources,
     timers = [],
@@ -175,11 +176,23 @@ async function mount(t, options = {}) {
       return catalog;
     },
     async select(label) {
-      const item = renderer.root.find(
+      const items = renderer.root.findAll(
         (node) =>
           node.type === "span" && node.children.includes(label) && typeof node.parent.props.onClick === "function",
       );
-      await act(async () => item.parent.props.onClick());
+      if (items.length) {
+        await act(async () => items[0].parent.props.onClick());
+        return;
+      }
+      const search = renderer.root.find(
+        (node) => node.type === "input" && node.props["aria-label"] === "Search custom providers and models",
+      );
+      await act(async () => search.props.onChange({ target: { value: label } }));
+      const model = renderer.root.find(
+        (node) => node.type === "button" && node.props["aria-label"] === "Edit model " + label,
+      );
+      await act(async () => model.props.onClick());
+      await act(async () => search.props.onChange({ target: { value: "" } }));
     },
     async click(label, within = renderer.root) {
       const button = within.find((node) => node.type === "button" && text(node) === label);
@@ -807,4 +820,335 @@ test("explicit disk reload replaces an invalid JSON draft even when the stored o
     fixture.renderer.root.find((node) => node.type === "button" && text(node) === "Save").props.disabled,
     false,
   );
+});
+
+test("discovered models merge into the latest draft, retain custom settings and save only on request", async (t) => {
+  const existing = { id: "existing", reasoning: true, thinkingLevelMap: { max: "max" }, contextWindow: 32768 };
+  const fixture = await mount(t, {
+    config: {
+      providers: {
+        custom: {
+          api: "openai-completions",
+          baseUrl: "http://fixture.test/",
+          apiKey: "fixture-key",
+          models: [existing],
+        },
+      },
+    },
+  });
+  await fixture.click("Fetch model list");
+  assert.equal(fixture.requests[0].method, "modelsConfig.discover");
+  assert.equal(fixture.requests[0].params.provider.apiKey, "fixture-key");
+  const detail = fixture.detail("ProviderDetail");
+  await act(async () =>
+    detail.props.onChange({
+      ...detail.props.provider,
+      modelOverrides: { existing: { samplingParams: { temperature: 0.2 } } },
+    }),
+  );
+  const result = {
+    ok: true,
+    baseUrl: "http://fixture.test/v1",
+    models: [{ id: "existing", name: "Remote name" }, { id: "new", name: "New model" }, { id: "new" }],
+  };
+  await fixture.reply(0, result);
+  const draft = fixture.detail("ProviderDetail").props.provider;
+  assert.deepEqual(draft.models, [existing, { id: "new", name: "New model" }]);
+  assert.equal(draft.baseUrl, result.baseUrl);
+  assert.equal(draft.modelOverrides.existing.samplingParams.temperature, 0.2);
+  assert.equal(
+    testApi.state.calls.some((call) => call.method === "modelsConfig.set"),
+    false,
+  );
+  await fixture.click("Fetch model list");
+  await fixture.reply(1, result);
+  assert.match(text(fixture.renderer.toJSON()), /added 0/);
+  assert.equal(fixture.detail("ProviderDetail").props.provider.models.length, 2);
+  await fixture.click("Save");
+  assert.equal(fixture.requests[2].method, "modelsConfig.set");
+  assert.deepEqual(fixture.requests[2].params.config.providers.custom, draft);
+  await fixture.reply(2, { ok: true, version: "two" });
+});
+
+test("discovery ignores results from an edited connection or a deselected provider and permits retry after errors", async (t) => {
+  const fixture = await mount(t, {
+    config: {
+      providers: {
+        custom: { api: "openai-completions", baseUrl: "https://old.test/v1", models: [] },
+        other: { api: "openai-completions", baseUrl: "https://other.test/v1", models: [] },
+      },
+    },
+  });
+  await fixture.click("Fetch model list");
+  const detail = fixture.detail("ProviderDetail");
+  await act(async () => detail.props.onChange({ ...detail.props.provider, baseUrl: "https://new.test/v1" }));
+  await fixture.reply(0, { ok: true, baseUrl: "https://old.test/v1", models: [{ id: "stale" }] });
+  assert.equal(fixture.detail("ProviderDetail").props.provider.baseUrl, "https://new.test/v1");
+  assert.deepEqual(fixture.detail("ProviderDetail").props.provider.models, []);
+  await fixture.click("Fetch model list");
+  await fixture.reply(1, { ok: false, error: "Authentication failed", status: 401 });
+  assert.match(text(fixture.renderer.toJSON()), /Authentication failed/);
+  await fixture.click("Fetch model list");
+  await fixture.select("other");
+  await fixture.reply(2, { ok: true, baseUrl: "https://new.test/v1", models: [{ id: "stale" }] });
+  await fixture.select("custom");
+  assert.deepEqual(fixture.detail("ProviderDetail").props.provider.models, []);
+  await fixture.click("Fetch model list");
+  await fixture.reply(3, { ok: true, baseUrl: "https://new.test/v1", models: [] });
+  assert.match(text(fixture.renderer.toJSON()), /returned no models/);
+});
+
+test("thinking settings explain opt-in levels and update the supported-level preview when explicitly mapped", async (t) => {
+  const fixture = await mount(t, {
+    config: {
+      providers: { custom: { models: [{ id: "reasoner", reasoning: true, thinkingLevelMap: { minimal: "max" } }] } },
+    },
+  });
+  await fixture.select("reasoner");
+  const detail = () => fixture.detail("ModelDetail");
+  const preview = () => detail().find((node) => node.props.role === "status");
+  assert.match(text(detail()), /Mapping Minimal to max does not enable the Maximum option/);
+  assert.ok(!text(preview()).includes("Extra high") && !text(preview()).includes("Maximum"));
+  assert.equal(detail().findAll((node) => node.type === "option" && text(node) === "Not enabled").length, 2);
+  const maxInput = () =>
+    detail().find((node) => node.type === "input" && node.props["aria-label"] === "Maximum: provider value");
+  assert.equal(maxInput().props.disabled, true);
+  assert.equal(maxInput().props.onFocus, undefined, "focusing a field cannot enable a reasoning level");
+  const mode = () =>
+    detail().find((node) => node.type === "select" && node.props["aria-label"] === "Maximum: availability");
+  await act(async () => mode().props.onChange({ target: { value: "custom" } }));
+  assert.equal(maxInput().props.disabled, false);
+  assert.equal(detail().props.model.thinkingLevelMap.max, "max");
+  assert.match(text(preview()), /Maximum/);
+  await act(async () => maxInput().props.onChange({ target: { value: "" } }));
+  assert.equal(
+    fixture.renderer.root.find((node) => node.type === "button" && text(node) === "Save").props.disabled,
+    true,
+  );
+  await act(async () => maxInput().props.onBlur({ target: { value: "" } }));
+  assert.equal(detail().props.model.thinkingLevelMap.max, undefined);
+  assert.equal(
+    fixture.renderer.root.find((node) => node.type === "button" && text(node) === "Save").props.disabled,
+    false,
+  );
+  assert.ok(!text(preview()).includes("Maximum"));
+});
+
+test("custom provider visibility can enable all discovered models without enabling other hidden models", async (t) => {
+  const models = [
+    { provider: "openai", id: "gpt-6-luna", name: "GPT-6 Luna" },
+    { provider: "openai", id: "gpt-6-sol", name: "GPT-6 Sol" },
+    { provider: "cliproxy", id: "openai/gpt-6-luna", name: "Proxy Luna" },
+    { provider: "cliproxy", id: "kimi-k3", name: "Proxy Kimi" },
+  ];
+  const enabledModels = ["openai/gpt-6-luna", "offline/keep-this-choice"];
+  const fixture = await mount(t, {
+    config: { providers: { cliproxy: { api: "openai-responses", models: models.slice(2) } } },
+    preferences: { models, enabledModels },
+  });
+  const detail = fixture.detail("ProviderDetail");
+  assert.match(text(detail), /Save newly added models first/);
+  assert.match(text(detail), /1 of 2 enabled/);
+  const expected = ["cliproxy/kimi-k3", "cliproxy/openai/gpt-6-luna", "offline/keep-this-choice", "openai/gpt-6-luna"];
+  testApi.state.writeResult = { models, enabledModels: expected };
+  await fixture.click("Enable all", detail);
+  assert.deepEqual(testApi.state.writes, [{ cwd: "/project", enabledModels: expected }]);
+  assert.match(text(fixture.detail("ProviderDetail")), /2 of 2 enabled/);
+  assert.equal(fixture.changed, 1);
+  assert.equal(
+    testApi.state.calls.some((entry) => entry.method === "modelsConfig.set"),
+    false,
+  );
+});
+
+test("custom model search selects the original model index and keeps unrelated definitions when saving", async (t) => {
+  const fixture = await mount(t, {
+    config: {
+      providers: {
+        alpha: { models: [{ id: "untouched", reasoning: true }, { id: "vendor/needed" }] },
+        beta: { models: [{ id: "other" }] },
+      },
+    },
+  });
+  const search = () =>
+    fixture.renderer.root.find(
+      (node) => node.type === "input" && node.props["aria-label"] === "Search custom providers and models",
+    );
+  assert.equal(
+    fixture.renderer.root.findAll(
+      (node) => node.type === "button" && node.props["aria-label"] === "Edit model vendor/needed",
+    ).length,
+    0,
+  );
+  await act(async () => search().props.onChange({ target: { value: "vendor/needed" } }));
+  const result = fixture.renderer.root.find(
+    (node) => node.type === "button" && node.props["aria-label"] === "Edit model vendor/needed",
+  );
+  assert.equal(result.props.title, "alpha/vendor/needed");
+  await act(async () => result.props.onClick());
+  const detail = fixture.detail("ModelDetail");
+  assert.equal(detail.props.model.id, "vendor/needed");
+  await act(async () => detail.props.onChange({ ...detail.props.model, name: "Edited" }));
+  await act(async () => search().props.onChange({ target: { value: "" } }));
+  await fixture.click("Save");
+  assert.deepEqual(fixture.requests[0].params.config.providers.alpha.models, [
+    { id: "untouched", reasoning: true },
+    { id: "vendor/needed", name: "Edited" },
+  ]);
+  assert.deepEqual(fixture.requests[0].params.config.providers.beta.models, [{ id: "other" }]);
+  await fixture.reply(0, { ok: true, version: "saved" });
+});
+
+test("custom provider sections preserve draft fields and invalid advanced JSON across navigation", async (t) => {
+  const fixture = await mount(t, {
+    config: { providers: { custom: { api: "openai-completions", baseUrl: "https://old.test/v1" } } },
+  });
+  const detail = () => fixture.detail("ProviderDetail");
+  const url = () =>
+    detail().find((node) => node.type === "input" && node.props.placeholder === "https://api.example.com/v1");
+  await act(async () => url().props.onChange({ target: { value: "https://new.test/v1" } }));
+  await fixture.click("Advanced", detail());
+  const advanced = () => detail().findByType("textarea");
+  await act(async () => advanced().props.onChange({ target: { value: "{invalid" } }));
+  await fixture.click("Connection & discovery", detail());
+  assert.equal(url().props.value, "https://new.test/v1");
+  assert.equal(
+    fixture.renderer.root.find((node) => node.type === "button" && text(node) === "Save").props.disabled,
+    true,
+  );
+  await fixture.click("Advanced", detail());
+  assert.equal(advanced().props.value, "{invalid");
+  await act(async () => advanced().props.onChange({ target: { value: "{}" } }));
+  await fixture.click("Save");
+  assert.equal(fixture.requests[0].params.config.providers.custom.baseUrl, "https://new.test/v1");
+  await fixture.reply(0, { ok: true, version: "saved" });
+});
+
+test("an invalid stored thinking mapping remains editable and clearing it restores save validity", async (t) => {
+  const fixture = await mount(t, {
+    config: {
+      providers: { custom: { models: [{ id: "invalid-map", reasoning: true, thinkingLevelMap: { max: 42 } }] } },
+    },
+  });
+  await fixture.select("invalid-map");
+  const save = () => fixture.renderer.root.find((node) => node.type === "button" && text(node) === "Save");
+  assert.equal(save().props.disabled, true);
+  await fixture.click("Clear all", fixture.detail("ModelDetail"));
+  assert.equal(save().props.disabled, false);
+  assert.equal(fixture.detail("ModelDetail").props.model.thinkingLevelMap, undefined);
+});
+
+test("provider name edits stay in the draft across navigation and commit with the single Save action", async (t) => {
+  const provider = {
+    api: "openai-completions",
+    baseUrl: "https://old.test/v1",
+    apiKey: "fixture",
+    models: [{ id: "model", thinkingLevelMap: { max: "max" } }],
+    future: { keep: true },
+  };
+  const fixture = await mount(t, { config: { providers: { alpha: provider, beta: { api: "openai-completions" } } } });
+  const detail = () => fixture.detail("ProviderDetail");
+  const nameInput = () => detail().find((node) => node.type === "input" && node.props.placeholder === "provider-name");
+  const mountedDetail = detail();
+  for (const value of ["g", "ga", "gamma"]) {
+    await act(async () => nameInput().props.onChange({ target: { value } }));
+    assert.equal(detail(), mountedDetail, "typing must not remount the editor and lose input focus");
+  }
+  assert.equal(detail().props.name, "alpha", "provider identity stays stable until Save");
+  assert.equal(fixture.renderer.root.findAll((node) => node.type === "button" && text(node) === "Rename").length, 0);
+  assert.match(text(fixture.renderer.toJSON()), /Connection or model changes are not saved/);
+  await fixture.select("beta");
+  await fixture.select("alpha");
+  assert.equal(nameInput().props.value, "gamma");
+  const url = detail().find((node) => node.type === "input" && node.props.placeholder === "https://api.example.com/v1");
+  await act(async () => url.props.onChange({ target: { value: "https://edited.test/v1" } }));
+  assert.equal(fixture.requests.length, 0);
+  await fixture.click("Save");
+  assert.deepEqual(Object.keys(fixture.requests[0].params.config.providers), ["gamma", "beta"]);
+  assert.deepEqual(fixture.requests[0].params.providerRenames, { alpha: "gamma" });
+  assert.deepEqual(fixture.requests[0].params.config.providers.gamma, {
+    ...provider,
+    baseUrl: "https://edited.test/v1",
+  });
+  await fixture.reply(0, { ok: true, version: "renamed" });
+  assert.equal(detail().props.name, "gamma");
+  assert.equal(nameInput().props.value, "gamma");
+  assert.match(text(fixture.renderer.toJSON()), /Connection and model definitions are saved/);
+  assert.equal(fixture.changed, 1);
+});
+
+test("invalid provider names block Save without dropping the typed name or overwriting another provider", async (t) => {
+  const fixture = await mount(t, {
+    config: { providers: { alpha: { api: "openai-completions" }, beta: { api: "openai-completions" } } },
+  });
+  const input = () =>
+    fixture
+      .detail("ProviderDetail")
+      .find((node) => node.type === "input" && node.props.placeholder === "provider-name");
+  const save = () => fixture.renderer.root.find((node) => node.type === "button" && text(node) === "Save");
+  for (const [value, message] of [
+    ["", /cannot be empty/],
+    [" beta ", /already exists/],
+    ["constructor", /reserved/],
+  ]) {
+    await act(async () => input().props.onChange({ target: { value } }));
+    assert.equal(input().props.value, value);
+    assert.equal(save().props.disabled, true);
+    assert.match(text(fixture.detail("ProviderDetail")), message);
+    assert.equal(fixture.requests.length, 0);
+  }
+  await act(async () => input().props.onChange({ target: { value: "alpha" } }));
+  assert.equal(save().props.disabled, false);
+  assert.match(text(fixture.renderer.toJSON()), /Connection and model definitions are saved/);
+});
+
+test("a failed rename save retains the renamed draft for a normal save retry", async (t) => {
+  const fixture = await mount(t, {
+    config: { providers: { alpha: { api: "openai-completions", models: [{ id: "retained" }] } } },
+  });
+  const input = () =>
+    fixture
+      .detail("ProviderDetail")
+      .find((node) => node.type === "input" && node.props.placeholder === "provider-name");
+  await act(async () => input().props.onChange({ target: { value: " gamma " } }));
+  await fixture.click("Save");
+  await fixture.fail(0, "UNAVAILABLE", "Host unavailable");
+  assert.equal(input().props.value, "gamma");
+  assert.equal(fixture.changed, 0);
+  await fixture.click("Save");
+  assert.deepEqual(fixture.requests[1].params.config, fixture.requests[0].params.config);
+  assert.deepEqual(fixture.requests[1].params.providerRenames, { alpha: "gamma" });
+  assert.equal(fixture.requests[1].params.expectedVersion, "one");
+  await fixture.reply(1, { ok: true, version: "renamed" });
+  assert.equal(fixture.changed, 1);
+});
+
+test("editing a failed rename again keeps the original persisted provider identity", async (t) => {
+  const fixture = await mount(t, { config: { providers: { alpha: { api: "openai-completions" } } } });
+  const input = () =>
+    fixture
+      .detail("ProviderDetail")
+      .find((node) => node.type === "input" && node.props.placeholder === "provider-name");
+  await act(async () => input().props.onChange({ target: { value: "beta" } }));
+  await fixture.click("Save");
+  await fixture.fail(0, "UNAVAILABLE", "Host unavailable");
+  await act(async () => input().props.onChange({ target: { value: "gamma" } }));
+  await fixture.click("Save");
+  assert.deepEqual(fixture.requests[1].params.providerRenames, { alpha: "gamma" });
+});
+
+test("naming a newly added provider does not request a migration for an unsaved identity", async (t) => {
+  const fixture = await mount(t, { config: { providers: {} } });
+  await fixture.click("+ Add provider");
+  const custom = fixture
+    .detail("AddProviderPicker")
+    .find((node) => node.type === "button" && text(node).includes("OpenAI / Anthropic compatible"));
+  await act(async () => custom.props.onClick());
+  const input = fixture
+    .detail("ProviderDetail")
+    .find((node) => node.type === "input" && node.props.placeholder === "provider-name");
+  await act(async () => input.props.onChange({ target: { value: "new-provider" } }));
+  await fixture.click("Save");
+  assert.deepEqual(Object.keys(fixture.requests[0].params.config.providers), ["new-provider"]);
+  assert.equal(fixture.requests[0].params.providerRenames, undefined);
 });

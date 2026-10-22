@@ -5,9 +5,9 @@ import { useI18n } from "@/i18n";
 import { oauthProviderName } from "./models/provider-display";
 import {
   addModelTransition,
+  applyProviderNameDrafts,
   deleteProviderTransition,
   modelsConfigEditorReducer,
-  renameProviderEntry,
   replaceModelEntry,
   selectionAfterProviderRename,
   setProviderBaseUrl,
@@ -27,6 +27,8 @@ import type {
 } from "@contract/types";
 import { ProviderDetail, ModelDetail, ModelOverridesField } from "./models/ModelForms";
 import { ProviderIcon } from "./models/ProviderIcon";
+import { CustomProviderTree } from "./models/CustomProviderTree";
+import "./models/custom-model-settings.css";
 import { OAuthDetail } from "./models/OAuthDetail";
 import { ApiKeyDetail } from "./models/ApiKeyDetail";
 import { AddProviderPicker } from "./models/AddProviderPicker";
@@ -47,16 +49,19 @@ export function ModelsConfig({
 }) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
-  const [{ config, selection }, dispatchEditor] = useReducer(modelsConfigEditorReducer, {
+  const [{ config, selection, providerNameDrafts = {} }, dispatchEditor] = useReducer(modelsConfigEditorReducer, {
     config: { providers: {} },
     selection: null,
   });
+  const [modelFormValid, setModelFormValid] = useState(true);
   const setConfig = useCallback((update: ModelsConfigUpdate) => dispatchEditor({ type: "config.update", update }), []);
-  const setSelection = useCallback(
-    (nextSelection: Selection | null) => dispatchEditor({ type: "selection.set", selection: nextSelection }),
-    [],
-  );
+  const setSelection = useCallback((nextSelection: Selection | null) => {
+    setModelFormValid(true);
+    dispatchEditor({ type: "selection.set", selection: nextSelection });
+  }, []);
   const [configVersion, setConfigVersion] = useState<string | null>(null);
+  const [savedConfigJson, setSavedConfigJson] = useState<string | null>(null);
+  const pendingProviderRenames = useRef<Record<string, string>>({});
   const [azureUpgrade, setAzureUpgrade] = useState<AzureUpgradeReport>();
   const [configIssues, setConfigIssues] = useState<ModelsConfigIssue[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,8 +69,6 @@ export function ModelsConfig({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
-  const [modelFormValid, setModelFormValid] = useState(true);
-  useEffect(() => setModelFormValid(true), [selection]);
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
   const [modelPreferences, setModelPreferencesState] = useState<ModelPreferencesResult | null>(null);
@@ -149,12 +152,15 @@ export function ModelsConfig({
       const editorConfig = snapshot.config as ModelsJson;
       const normalized = editorConfig.providers ? editorConfig : { ...editorConfig, providers: {} };
       const keys = Object.keys(normalized.providers ?? {});
+      setModelFormValid(true);
       dispatchEditor({
         type: "config.replace",
         config: normalized,
         selection: keys.length > 0 ? { type: "provider", name: keys[0] } : null,
       });
       setConfigVersion(snapshot.version);
+      setSavedConfigJson(JSON.stringify(normalized));
+      pendingProviderRenames.current = {};
       setAzureUpgrade(snapshot.azureUpgrade);
       setConfigIssues(snapshot.issues ?? []);
       setConfigLoaded(true);
@@ -180,6 +186,7 @@ export function ModelsConfig({
   }, [loadModelPreferences]);
 
   const addCustomProvider = useCallback(() => {
+    setModelFormValid(true);
     dispatchEditor({ type: "provider.addCustom" });
   }, []);
 
@@ -188,20 +195,6 @@ export function ModelsConfig({
       setConfig((prev) => ({ ...prev, providers: { ...(prev.providers ?? {}), [name]: p } }));
     },
     [setConfig],
-  );
-
-  const renameProvider = useCallback(
-    (oldName: string, newName: string) => {
-      const result = renameProviderEntry(config, oldName, newName);
-      if (!result.ok) {
-        setSaveError(result.error);
-        return;
-      }
-      setSaveError(null);
-      setConfig(result.config);
-      setSelection(selectionAfterProviderRename(selection, oldName, result.name));
-    },
-    [config, selection, setConfig, setSelection],
   );
 
   const deleteProvider = useCallback(
@@ -248,17 +241,63 @@ export function ModelsConfig({
     [setConfig, setSelection],
   );
 
-  const handleSave = useCallback(async () => {
-    if (!configVersion) return;
+  const preparedNames = applyProviderNameDrafts(config, providerNameDrafts);
+  const nameError = preparedNames.ok
+    ? undefined
+    : preparedNames.reason === "empty"
+      ? t("modelProviderNameRequired", "Provider name cannot be empty.")
+      : preparedNames.reason === "reserved"
+        ? t("modelProviderNameReserved", "Provider name “{name}” is reserved.").replace("{name}", preparedNames.name)
+        : t("modelProviderNameTaken", "Provider name “{name}” already exists.").replace("{name}", preparedNames.name);
+
+  const handleSave = async () => {
+    if (!configVersion || !modelFormValid || !preparedNames.ok) return;
+    const nextConfig = preparedNames.config;
+    const pending = pendingProviderRenames.current;
+    const renames = Object.fromEntries(
+      Object.entries(pending).map(([from, to]) => [
+        from,
+        Object.hasOwn(preparedNames.renames, to) ? preparedNames.renames[to] : to,
+      ]),
+    );
+    for (const [from, to] of Object.entries(preparedNames.renames))
+      if (!Object.values(pending).includes(from)) renames[from] = to;
+    const savedProviders = savedConfigJson ? ((JSON.parse(savedConfigJson) as ModelsJson).providers ?? {}) : {};
+    for (const from of Object.keys(renames))
+      if (
+        renames[from] === from ||
+        !Object.hasOwn(savedProviders, from) ||
+        !Object.hasOwn(nextConfig.providers ?? {}, renames[from])
+      )
+        delete renames[from];
+    pendingProviderRenames.current = renames;
+    const selectedProvider =
+      selection?.type === "provider"
+        ? selection.name
+        : selection?.type === "model"
+          ? selection.providerName
+          : undefined;
+    const nextSelection =
+      selectedProvider && Object.hasOwn(preparedNames.renames, selectedProvider)
+        ? selectionAfterProviderRename(selection, selectedProvider, preparedNames.renames[selectedProvider])
+        : selection;
+    // Apply to the editor draft first. Failed writes retain the rename for a normal Save retry.
+    dispatchEditor({ type: "config.replace", config: nextConfig, selection: nextSelection });
     setSaving(true);
     setSaveError(null);
     setSavedOk(false);
     try {
-      const result = await call("modelsConfig.set", { config, expectedVersion: configVersion });
+      const result = await call("modelsConfig.set", {
+        config: nextConfig,
+        expectedVersion: configVersion,
+        ...(Object.keys(renames).length ? { providerRenames: renames } : {}),
+      });
       if (typeof result.version !== "string") {
         setSaveError("Invalid models config save response");
       } else {
         setConfigVersion(result.version);
+        pendingProviderRenames.current = {};
+        setSavedConfigJson(JSON.stringify(nextConfig));
         setConfigIssues([]);
         setSaveConflict(false);
         setSavedOk(true);
@@ -282,9 +321,25 @@ export function ModelsConfig({
     } finally {
       setSaving(false);
     }
-  }, [config, configVersion, loadModelPreferences, onChanged, t]);
+  };
 
   const providers = Object.entries(config.providers ?? {});
+  const configDirty =
+    savedConfigJson !== null &&
+    (JSON.stringify(config) !== savedConfigJson || Object.keys(providerNameDrafts).length > 0);
+  const saveDisabled =
+    !modelFormValid ||
+    !preparedNames.ok ||
+    saving ||
+    savedOk ||
+    loading ||
+    loadFailed ||
+    saveConflict ||
+    !configLoaded ||
+    !configVersion;
+  useEffect(() => {
+    if (configDirty && savedOk) setSavedOk(false);
+  }, [configDirty, savedOk]);
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
   const activeApiKey = apiKeyProviders.filter((p) => p.configured);
 
@@ -362,9 +417,21 @@ export function ModelsConfig({
           name={selection.name}
           provider={provider}
           onChange={(p) => updateProvider(selection.name, p)}
-          onRename={(n) => renameProvider(selection.name, n)}
+          nameDraft={
+            Object.hasOwn(providerNameDrafts, selection.name) ? providerNameDrafts[selection.name] : selection.name
+          }
+          onNameChange={(value) => dispatchEditor({ type: "provider.name.set", name: selection.name, value })}
+          nameError={!preparedNames.ok && preparedNames.provider === selection.name ? nameError : undefined}
           onDelete={() => deleteProvider(selection.name)}
+          onAddModel={() => addModel(selection.name)}
           onValidityChange={setModelFormValid}
+          modelSelection={{
+            preferences: modelPreferences,
+            loading: modelPreferencesLoading,
+            saving: modelPreferencesSaving,
+            error: modelPreferencesError,
+            onChange: updateModelPreferences,
+          }}
         />
       );
     }
@@ -623,152 +690,12 @@ export function ModelsConfig({
                     {t("loading", "Loading…")}
                   </div>
                 ) : (
-                  providers.map(([pName, pData]) => {
-                    const isProviderSelected = selection?.type === "provider" && selection.name === pName;
-                    const models = pData.models ?? [];
-                    return (
-                      <div key={pName} style={{ marginBottom: 2 }}>
-                        {/* Provider row */}
-                        <div
-                          onClick={() => setSelection({ type: "provider", name: pName })}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            padding: "7px 8px",
-                            borderRadius: 5,
-                            cursor: "pointer",
-                            background: isProviderSelected ? "var(--bg-selected)" : "none",
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!isProviderSelected) e.currentTarget.style.background = "var(--bg-hover)";
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isProviderSelected) e.currentTarget.style.background = "none";
-                          }}
-                        >
-                          <svg
-                            width="11"
-                            height="11"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            style={{ color: "var(--text-dim)", flexShrink: 0 }}
-                          >
-                            <rect x="4" y="4" width="16" height="16" rx="2" />
-                            <rect x="9" y="9" width="6" height="6" />
-                            <line x1="9" y1="1" x2="9" y2="4" />
-                            <line x1="15" y1="1" x2="15" y2="4" />
-                            <line x1="9" y1="20" x2="9" y2="23" />
-                            <line x1="15" y1="20" x2="15" y2="23" />
-                            <line x1="20" y1="9" x2="23" y2="9" />
-                            <line x1="20" y1="14" x2="23" y2="14" />
-                            <line x1="1" y1="9" x2="4" y2="9" />
-                            <line x1="1" y1="14" x2="4" y2="14" />
-                          </svg>
-                          <span
-                            style={{
-                              fontSize: 12,
-                              fontWeight: isProviderSelected ? 600 : 400,
-                              color: "var(--text)",
-                              fontFamily: "var(--font-mono)",
-                              flex: 1,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {pName}
-                          </span>
-                        </div>
-
-                        {/* Model rows */}
-                        {models.map((m, i) => {
-                          const isModelSelected =
-                            selection?.type === "model" && selection.providerName === pName && selection.index === i;
-                          return (
-                            <div
-                              key={i}
-                              onClick={() => setSelection({ type: "model", providerName: pName, index: i })}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 6,
-                                padding: "5px 8px 5px 26px",
-                                borderRadius: 5,
-                                cursor: "pointer",
-                                background: isModelSelected ? "var(--bg-selected)" : "none",
-                              }}
-                              onMouseEnter={(e) => {
-                                if (!isModelSelected) e.currentTarget.style.background = "var(--bg-hover)";
-                              }}
-                              onMouseLeave={(e) => {
-                                if (!isModelSelected) e.currentTarget.style.background = "none";
-                              }}
-                            >
-                              <span
-                                style={{
-                                  fontSize: 11,
-                                  fontFamily: "var(--font-mono)",
-                                  color: m.id ? "var(--text-muted)" : "var(--text-dim)",
-                                  flex: 1,
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {m.id || t("modelNewModel", "new model")}
-                              </span>
-                              {m.reasoning && (
-                                <span
-                                  style={{
-                                    fontSize: 9,
-                                    padding: "1px 4px",
-                                    background: "rgba(99,102,241,0.12)",
-                                    color: "rgba(99,102,241,0.8)",
-                                    borderRadius: 3,
-                                    flexShrink: 0,
-                                  }}
-                                >
-                                  T
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
-
-                        {/* Add model button */}
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            addModel(pName);
-                          }}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 4,
-                            padding: "4px 8px 4px 26px",
-                            borderRadius: 5,
-                            cursor: "pointer",
-                            color: "var(--text-dim)",
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.color = "var(--accent)";
-                            e.currentTarget.style.background = "var(--bg-hover)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.color = "var(--text-dim)";
-                            e.currentTarget.style.background = "none";
-                          }}
-                        >
-                          <span style={{ fontSize: 11 }}>+ {t("modelAddModel", "model")}</span>
-                        </div>
-                      </div>
-                    );
-                  })
+                  <CustomProviderTree
+                    providers={providers}
+                    selection={selection}
+                    onSelect={setSelection}
+                    onAddModel={addModel}
+                  />
                 )}
               </div>
 
@@ -807,7 +734,7 @@ export function ModelsConfig({
             </div>
 
             {/* Right: detail */}
-            <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+            <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: 20 }}>
               {loading
                 ? null
                 : (detailContent ?? (
@@ -840,7 +767,25 @@ export function ModelsConfig({
                 flexShrink: 0,
               }}
             >
+              {!saveError &&
+                !nameError &&
+                configLoaded &&
+                (selection?.type === "provider" || selection?.type === "model") && (
+                  <span
+                    role="status"
+                    style={{ fontSize: 11, color: configDirty ? "var(--accent)" : "var(--text-dim)", flex: 1 }}
+                  >
+                    {configDirty
+                      ? t("modelDraftUnsaved", "Connection or model changes are not saved")
+                      : t("modelDraftSaved", "Connection and model definitions are saved")}
+                  </span>
+                )}
               {saveError && <span style={{ fontSize: 12, color: "#f87171", flex: 1 }}>{saveError}</span>}
+              {!saveError && nameError && !preparedNames.ok && (
+                <span role="alert" style={{ color: "var(--danger)", fontSize: 12, flex: 1 }}>
+                  {preparedNames.provider + ": " + nameError}
+                </span>
+              )}
               {(saveConflict || configIssues.length > 0) && (
                 <button
                   type="button"
@@ -878,38 +823,22 @@ export function ModelsConfig({
               )}
               <button
                 onClick={handleSave}
-                disabled={
-                  !modelFormValid ||
-                  saving ||
-                  savedOk ||
-                  loading ||
-                  loadFailed ||
-                  saveConflict ||
-                  !configLoaded ||
-                  !configVersion
-                }
+                disabled={saveDisabled}
                 title={
-                  loadFailed ? t("modelCannotSaveBeforeLoad", "Cannot save until config loads successfully") : undefined
+                  nameError ??
+                  (loadFailed
+                    ? t("modelCannotSaveBeforeLoad", "Cannot save until config loads successfully")
+                    : undefined)
                 }
                 style={{
                   position: "relative",
                   padding: "6px 16px",
                   minWidth: 92,
-                  background: savedOk
-                    ? "#16a34a"
-                    : saving || loadFailed || saveConflict || !configLoaded || !configVersion
-                      ? "var(--bg-panel)"
-                      : "var(--accent)",
+                  background: savedOk ? "#16a34a" : saveDisabled ? "var(--bg-panel)" : "var(--accent)",
                   border: "none",
                   borderRadius: 6,
-                  color:
-                    savedOk || !(saving || loadFailed || saveConflict || !configLoaded || !configVersion)
-                      ? "#fff"
-                      : "var(--text-muted)",
-                  cursor:
-                    saving || savedOk || loading || loadFailed || saveConflict || !configLoaded || !configVersion
-                      ? "default"
-                      : "pointer",
+                  color: savedOk || !saveDisabled ? "#fff" : "var(--text-muted)",
+                  cursor: saveDisabled ? "default" : "pointer",
                   fontSize: 13,
                   fontWeight: 600,
                   display: "inline-flex",

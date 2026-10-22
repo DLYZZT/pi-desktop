@@ -1,4 +1,5 @@
 import { SessionResourceReload } from "./session-resource-reload";
+import { SessionModelConfig } from "./session-model-config";
 import { loadSessionToolSelection } from "./session-shell";
 import { buildLiveSessionStats } from "./session-stats";
 import { AUTO_ROUTING_PROVIDER } from "../contract/model-settings";
@@ -141,6 +142,7 @@ export class AgentSessionWrapper {
   private requestedToolNames: string[] | undefined;
   refreshToolchain?: () => Promise<void>;
   private readonly resourceReload = new SessionResourceReload();
+  private readonly modelConfig = new SessionModelConfig();
   private readonly persistToolNames: (sessionId: string, toolNames: string[]) => void;
 
   constructor(
@@ -407,6 +409,7 @@ export class AgentSessionWrapper {
     return this.enqueueTurn(async () => {
       // Extensions can start runs outside the wrapper queue; let their existing source finish first.
       if (this.inner.isStreaming || this.inner.isCompacting) await this.inner.waitForIdle();
+      await this.modelConfig.sync(this.inner, this.modelSelection);
       this.modelSelection.assertReady(this.inner);
       this.emit({ type: "channel_turn_start", runId: params.runId });
       this.externalTurnActive = true;
@@ -478,6 +481,7 @@ export class AgentSessionWrapper {
   async runExternalCommand(params: { command: ExternalSessionCommand; customInstructions?: string }): Promise<void> {
     await this.enqueueTurn(async () => {
       if (params.command === "compact") {
+        await this.modelConfig.sync(this.inner, this.modelSelection);
         this.modelSelection.assertReady(this.inner);
         await this.inner.compact(params.customInstructions);
         return;
@@ -536,7 +540,8 @@ export class AgentSessionWrapper {
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
         if (!streamingBehavior) browserAgentRuntime.beginTurn(this.sessionId, "local");
-        const invokePrompt = () => {
+        const invokePrompt = async () => {
+          if (!streamingBehavior) await this.modelConfig.sync(this.inner, this.modelSelection);
           this.modelSelection.assertReady(this.inner);
           return this.inner.prompt(command.message as string, {
             ...(promptImages?.length ? { images: promptImages } : {}),
@@ -666,24 +671,15 @@ export class AgentSessionWrapper {
 
       case "set_thinking_level": {
         const level = command.level as string;
+        await this.modelConfig.sync(this.inner, this.modelSelection);
         this.inner.setThinkingLevel(level);
-        // setThinkingLevel clamps xhigh→high for models where supportsXhigh()===false.
-        // If the model has DeepSeek thinking compat (reasoningEffortMap maps xhigh→max),
-        // force the state back so the compat layer can use it correctly.
-        if (
-          level === "xhigh" &&
-          (this.inner.model as { compat?: { thinkingFormat?: string } } | null)?.compat?.thinkingFormat ===
-            "deepseek" &&
-          this.inner.agent?.state
-        ) {
-          this.inner.agent.state.thinkingLevel = "xhigh";
-        }
         return null;
       }
 
       case "compact": {
         const result = await this.withFinalRunningNotification(() =>
-          this.enqueueTurn(() => {
+          this.enqueueTurn(async () => {
+            await this.modelConfig.sync(this.inner, this.modelSelection);
             this.modelSelection.assertReady(this.inner);
             return this.inner.compact(command.customInstructions as string | undefined);
           }),
