@@ -16,7 +16,7 @@ Local-first · No internal server · Cross-platform
 
 **English** · [简体中文](./README.md)
 
-[Download v0.4.1](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.4.1) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
+[Download v0.4.2](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.4.2) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
 
 </div>
 
@@ -205,9 +205,9 @@ Generated images appear in final replies and remain viewable when session histor
 
 ### Use a desktop build
 
-The latest stable version is [v0.4.1](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.4.1), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
+The latest stable version is [v0.4.2](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.4.2), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
 
-Version 0.4.1 bundles Pi Coding Agent 1.2.0, adds Windows PowerShell support and a default Agent shell setting, improves model configuration recovery, tool permissions, and channel attachment handling, and makes startup and Settings loading smoother. You can also [run from source](#run-locally) using the steps below.
+Version 0.4.2 bundles Pi Coding Agent 1.2.0, adds custom provider model discovery, improves model settings and reasoning-level mappings, and preserves model enablement, Auto routing, and existing sessions when providers are renamed. You can also [run from source](#run-locally) using the steps below.
 
 Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
 
