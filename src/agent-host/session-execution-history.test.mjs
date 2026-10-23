@@ -326,3 +326,32 @@ test("execution RPC branch selection excludes original results from a sibling br
   assert.doesNotMatch(JSON.stringify(old), /SIBLING_RAW/);
   assert.match(JSON.stringify(old), /ORIGINAL_CHILD_RESULT_PRIVATE_ORIGINAL/);
 });
+
+test("malformed final arguments keep the model's raw text instead of looking like an empty call", async (t) => {
+  const f = await fixture(t);
+  let calls = 0;
+  f.session.agent.streamFunction = (model) =>
+    ++calls === 1
+      ? assistant(
+          model,
+          [
+            {
+              type: "toolCall",
+              id: "malformed-call",
+              name: "caller",
+              arguments: {},
+              argumentsError: 'Expected a JSON object; received: {"text": "RAW_MALFORMED',
+            },
+          ],
+          "toolUse",
+        )
+      : assistant(model, [{ type: "text", text: "done" }], "stop");
+  await f.session.prompt("Malformed fixture input", { source: "rpc" });
+  assert.equal(f.executed, 0);
+  const attempt = (await f.history.query({ includeContent: true })).records[0];
+  assert.equal(attempt.toolCallId, "malformed-call");
+  assert.equal(attempt.status, "failed");
+  assert.deepEqual(attempt.arguments.value, {});
+  assert.match(attempt.argumentsError, /RAW_MALFORMED/);
+  assert.match(attempt.error, /Invalid arguments for tool "caller".*RAW_MALFORMED/s);
+});

@@ -60,7 +60,7 @@ const { ModelsConfig, useSessionModels, testApi } = await importTestBundle("mode
           if(method === 'models.routing.get') return {config:{enabled:false,strategy:'thinking',fastThinking:'low',strongThinking:'high',retryFallback:false},version:'routing-v1'};
           if(method === 'settings.advanced.get') return {config:{retry:{maxRetries:3}},version:'advanced-v1'};
           if(method === 'models.catalog') return {models:[{provider:'fixture',modelId:'fast',name:'Fast',type:'chat',available:true,virtual:false},{provider:'fixture',modelId:'strong',name:'Strong',type:'chat',available:true,virtual:false},{provider:'typesafe',modelId:'jev-latest',name:'Jev',type:'classifier',available:true,virtual:false}]};
-          if(method === 'modelsConfig.get') {if(state.configError)throw state.configError;return {config:structuredClone(state.config),version:state.version,issues:state.issues};}
+          if(method === 'modelsConfig.get') {if(state.configError)throw state.configError;return {config:structuredClone(state.config),version:state.version,issues:state.issues,warnings:state.warnings};}
           if(method === 'auth.providers')return {providers:[{id:'oauth-fixture',name:'OAuth fixture',usesCallbackServer:false,loggedIn:true}]};
           if(method === 'auth.allProviders')return {providers:state.apiKeyProviders??[{id:'api-fixture',displayName:'API fixture',configured:true,modelCount:1}]};
           let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});
@@ -81,6 +81,7 @@ async function mount(t, options = {}) {
   if (options.apiKeyProviders) testApi.state.apiKeyProviders = options.apiKeyProviders;
   testApi.state.configError = options.configError ?? null;
   testApi.state.issues = options.issues;
+  testApi.state.warnings = options.warnings;
   testApi.state.preferences = options.preferences;
   const requests = testApi.state.requests,
     sources = testApi.state.sources,
@@ -244,6 +245,37 @@ test("schema-invalid config opens with its providers intact and clears diagnosti
   assert.ok(!text(fixture.renderer.root).includes("All custom providers and overrides are inactive"));
 });
 
+test("compatibility warnings never claim an invalid configuration is active and follow the saved result", async (t) => {
+  const warning = { path: "/providers/kimi-coding/baseUrl", message: "must end with /v1" };
+  const fixture = await mount(t, {
+    config: { providers: { fixture: { api: "openai-completions", models: [{ id: "broken", contextWindow: 0 }] } } },
+    issues: [{ path: "/providers/fixture/models/0/contextWindow", message: "must be > 0" }],
+    warnings: [warning],
+  });
+  const page = () => text(fixture.renderer.root);
+  assert.match(page(), /All custom providers and overrides are inactive/);
+  assert.match(page(), /After repairing the configuration above, also review these settings/);
+  assert.doesNotMatch(page(), /valid and remain active/);
+  assert.match(page(), /kimi-coding\/baseUrl/);
+
+  await fixture.select("broken");
+  const detail = fixture.detail("ModelDetail");
+  await act(async () => detail.props.onChange({ ...detail.props.model, contextWindow: 4096 }));
+  await fixture.click("Save");
+  let request = fixture.requests.find((entry) => entry.method === "modelsConfig.set");
+  await act(async () => request.resolve({ ok: true, version: "repaired", warnings: [warning] }));
+  assert.doesNotMatch(page(), /All custom providers and overrides are inactive/);
+  assert.match(page(), /valid and remain active/);
+  assert.match(page(), /kimi-coding\/baseUrl/);
+
+  const repaired = fixture.detail("ModelDetail");
+  await act(async () => repaired.props.onChange({ ...repaired.props.model, contextWindow: 8192 }));
+  await fixture.click("Save");
+  request = fixture.requests.filter((entry) => entry.method === "modelsConfig.set").at(-1);
+  await act(async () => request.resolve({ ok: true, version: "clean" }));
+  assert.doesNotMatch(page(), /kimi-coding\/baseUrl|valid and remain active/);
+});
+
 test("fields outside the editor have a manual-repair hint and a disk reload action", async (t) => {
   const fixture = await mount(t, {
     config: { providers: { fixture: { headers: { "X-Invalid": null }, models: [{ id: "kept" }] } } },
@@ -380,6 +412,7 @@ test("API key save and removal notify the parent once after each committed chang
   assert.equal(fixture.changed, 0);
   assert.equal(testApi.state.catalogReads, 1);
   await fixture.select("API fixture");
+  assert.doesNotMatch(text(fixture.detail("ApiKeyDetail")), /Guided API key setup/);
   const input = fixture.detail("ApiKeyDetail").find((node) => node.type === "input" && node.props.type === "password");
   await act(async () => input.props.onChange({ target: { value: "nonsecret-fixture-key" } }));
   await fixture.click("Save", fixture.detail("ApiKeyDetail"));
@@ -769,6 +802,76 @@ test("advanced configuration blocks malformed JSON and saves per-model overrides
   assert.equal(fixture.requests[0].params.expectedVersion, "advanced-v1");
   await fixture.reply(0, { config: fixture.requests[0].params.config, version: "advanced-v2" });
   assert.equal(fixture.changed, 1);
+});
+
+test("providers with account fields or auth choices use guided setup without adding a second entry to ordinary keys", async (t) => {
+  const providers = ["cloudflare-workers-ai", "cloudflare-ai-gateway", "google-vertex", "amazon-bedrock"];
+  const fixture = await mount(t, {
+    apiKeyProviders: ["api-fixture", ...providers].map((id) => ({
+      id,
+      displayName: id,
+      configured: true,
+      storedAuthType: "api_key",
+      credentialVersion: "key-v1",
+      modelCount: 1,
+    })),
+  });
+  for (const provider of providers) {
+    await fixture.select(provider);
+    const detail = fixture.detail("ApiKeyDetail");
+    assert.match(text(detail), /Guided API key setup/);
+    assert.equal(detail.findAll((node) => node.type === "input" && node.props.type === "password").length, 0);
+    await fixture.click("Configure credentials", fixture.detail("OAuthDetail"));
+    assert.deepEqual(testApi.state.calls.findLast((call) => call.method === "auth.loginStart").params, {
+      provider,
+      authType: "api_key",
+      expectedVersion: "key-v1",
+    });
+    await fixture.click("Cancel", fixture.detail("OAuthDetail"));
+    await fixture.select("api-fixture");
+    assert.doesNotMatch(text(fixture.detail("ApiKeyDetail")), /Guided API key setup/);
+    assert.equal(
+      fixture.detail("ApiKeyDetail").findAll((node) => node.type === "input" && node.props.type === "password").length,
+      1,
+    );
+  }
+  assert.equal(fixture.changed, 0, "opening or cancelling setup must not publish a credential change");
+  assert.equal(
+    testApi.state.calls.some((call) => call.method === "auth.setApiKey"),
+    false,
+  );
+});
+
+test("guided providers configured through ambient credentials retain model selection without a disconnect action", async (t) => {
+  const providers = ["google-vertex", "amazon-bedrock"];
+  const fixture = await mount(t, {
+    apiKeyProviders: providers.map((id) => ({
+      id,
+      displayName: id,
+      configured: true,
+      storedAuthType: null,
+      source: "ambient credentials",
+      modelCount: 1,
+    })),
+    preferences: {
+      models: providers.map((provider) => ({ id: "fixture", name: provider + " model", provider })),
+      enabledModels: null,
+    },
+  });
+  for (const provider of providers) {
+    await fixture.select(provider);
+    const detail = fixture.detail("ApiKeyDetail");
+    assert.match(text(detail), new RegExp(provider + " model"));
+    assert.doesNotMatch(text(detail), /Disconnect/);
+    const choices = detail.findAll((node) => node.type === "input" && node.props.type === "checkbox");
+    assert.equal(choices.length, 1);
+    assert.equal(choices[0].props.checked, true);
+    assert.equal(choices[0].props.disabled, false);
+  }
+  assert.equal(
+    testApi.state.calls.some((call) => call.method === "auth.loginStart"),
+    false,
+  );
 });
 
 test("guided API-key setup masks secrets and clears them before displaying the next field", async (t) => {

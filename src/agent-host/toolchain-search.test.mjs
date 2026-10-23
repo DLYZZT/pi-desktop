@@ -84,3 +84,48 @@ test("missing injected search capabilities fail closed instead of invoking upstr
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("Desktop grep ignores RIPGREP_CONFIG_PATH so regex and literal searches keep their meaning", async (t) => {
+  const bundled = path.join(
+    import.meta.dirname,
+    "..",
+    "..",
+    "build",
+    "toolchains",
+    "core",
+    `${process.platform}-${process.arch}`,
+    process.platform === "win32" ? "rg.exe" : "rg",
+  );
+  if (!fs.existsSync(bundled)) return t.skip("bundled ripgrep is not prepared");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-search-rgconfig-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "sample.txt"), "alpha123\nalpha[0-9]+\n");
+  const config = path.join(root, "ripgreprc");
+  fs.writeFileSync(config, "--fixed-strings\n");
+  const rg = {
+    capability: "search.rg",
+    provider: "bundled",
+    executable: bundled,
+    argvPrefix: [],
+    binDir: path.dirname(bundled),
+    version: "test",
+    cwdSemantics: process.platform === "win32" ? "native" : "posix",
+    envPatch: {},
+  };
+  const executionContext = context({ "search.rg": rg, "search.fd": command("search.fd", "") });
+  executionContext.nativeEnv.RIPGREP_CONFIG_PATH = config;
+  executionContext.shellEnv.RIPGREP_CONFIG_PATH = config;
+  const runtime = new ToolchainRuntime({
+    platform: process.platform,
+    baseEnv: { ...process.env, RIPGREP_CONFIG_PATH: config },
+  });
+  const [grep] = createDesktopSearchToolDefinitions(root, executionContext, runtime);
+  const text = async (input) =>
+    (await grep.execute("grep", { path: ".", ...input }, undefined, undefined, {})).content[0].text;
+
+  assert.match(await text({ pattern: "alpha[0-9]+" }), /sample\.txt:1: alpha123/);
+  assert.doesNotMatch(await text({ pattern: "alpha[0-9]+" }), /sample\.txt:2:/);
+  const literal = await text({ pattern: "alpha[0-9]+", literal: true });
+  assert.match(literal, /sample\.txt:2: alpha\[0-9\]\+/);
+  assert.doesNotMatch(literal, /sample\.txt:1:/);
+});

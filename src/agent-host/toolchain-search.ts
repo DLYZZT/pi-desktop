@@ -193,7 +193,8 @@ export function createDesktopSearchToolDefinitions(
       throw new Error(`Path not found: ${searchPath}`);
     }
     const effectiveLimit = Math.max(1, input.limit ?? DEFAULT_RESULT_LIMIT);
-    const args = ["--json", "--line-number", "--color=never", "--hidden", "--max-columns", "2000"];
+    // --no-config: RIPGREP_CONFIG_PATH must not change the tool contract (regex vs literal, globs, limits).
+    const args = ["--no-config", "--json", "--line-number", "--color=never", "--hidden", "--max-columns", "2000"];
     if (input.ignoreCase) args.push("--ignore-case");
     if (input.literal) args.push("--fixed-strings");
     if (input.glob) args.push("--glob", input.glob);

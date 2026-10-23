@@ -22,7 +22,7 @@ import { RpcError } from "../../contract/types";
 import { reloadSharedModelRuntimeConfig } from "../model-runtime";
 import { ensureAzureUpgrade } from "../azure-upgrade";
 import { withLockedJsonFile } from "../../shared/node/locked-json-file";
-import { inspectModelsConfig, parseModelsConfig } from "../models-config-validation";
+import { inspectModelsConfig, inspectModelsConfigCompatibility, parseModelsConfig } from "../models-config-validation";
 import { ensureProviderRenameSettings, withProviderRenames } from "../provider-renames";
 
 function getModelsPath(): string {
@@ -116,6 +116,11 @@ async function writeModelsJson(
   );
 }
 
+function compatibilityWarnings(config: unknown) {
+  const warnings = inspectModelsConfigCompatibility(config);
+  return warnings.length ? { warnings } : {};
+}
+
 type ModelConfigHandlers = {
   get: NonNullable<ApiHandler["modelsConfig.get"]>;
   set: NonNullable<ApiHandler["modelsConfig.set"]>;
@@ -129,11 +134,16 @@ export const modelConfigHandlers = {
     // Inspect before migrations. An invalid SDK configuration must remain editable and byte-for-byte intact.
     const original = readModelsJsonSnapshot();
     const issues = inspectModelsConfig(original.config);
-    if (issues.length) return { ...original, issues };
+    if (issues.length) return { ...original, issues, ...compatibilityWarnings(original.config) };
     const azureUpgrade = await ensureAzureUpgrade();
     const snapshot = readModelsJsonSnapshot();
     const currentIssues = inspectModelsConfig(snapshot.config);
-    return { ...snapshot, azureUpgrade, ...(currentIssues.length ? { issues: currentIssues } : {}) };
+    return {
+      ...snapshot,
+      azureUpgrade,
+      ...(currentIssues.length ? { issues: currentIssues } : {}),
+      ...compatibilityWarnings(snapshot.config),
+    };
   },
 
   set: async (params) => {
@@ -160,7 +170,7 @@ export const modelConfigHandlers = {
     // Migrate global references now, before other writers can make the settings look newer than the rename.
     if (body.providerRenames !== undefined) await ensureProviderRenameSettings();
     await reloadSharedModelRuntimeConfig();
-    return { ok: true as const, version };
+    return { ok: true as const, version, ...compatibilityWarnings(persisted) };
   },
 
   test: async (params) => {

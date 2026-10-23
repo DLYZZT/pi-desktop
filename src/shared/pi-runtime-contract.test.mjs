@@ -143,3 +143,20 @@ test("0.99.1 asset validation resolves WASM through the importing package and re
   f.packages.get(`${wasmRoot}/package.json`).version = "3.5.0";
   assert.throws(check, /QuickJS WASI version mismatch/);
 });
+
+test("asset validation requires the published models schema independent of the SDK version", () => {
+  for (const version of ["1.2.0", "1.4.0"]) {
+    const root = "node_modules/@earendil-works/pi-coding-agent";
+    const schema = `${root}/schemas/models.schema.json`;
+    const files = new Set([schema]);
+    const check = () =>
+      validatePiRuntimeAssets({
+        graph: new Map([[root, version]]),
+        readPackage: () => ({ name: "@earendil-works/pi-coding-agent", version }),
+        exists: (p) => files.has(p),
+      });
+    assert.deepEqual([...check()], [schema]);
+    files.delete(schema);
+    assert.throws(check, /runtime asset is missing: .*models\.schema\.json/);
+  }
+});

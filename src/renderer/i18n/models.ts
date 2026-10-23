@@ -35,6 +35,10 @@ export const enUS: Record<string, string> = {
     "The saved models.json is invalid. All custom providers and overrides are inactive. Correct the editable fields here; for other fields, edit models.json manually and reload the disk version. Reload the session after repairing the configuration.",
   modelConfigInvalid:
     "models.json is invalid. All custom providers and overrides are inactive. Open Models settings to correct the configuration.",
+  modelConfigCompatibilityWarnings:
+    "These settings are valid and remain active, but may not work with the current Pi runtime. Review them before relying on these providers.",
+  modelConfigCompatibilityWarningsAfterRepair:
+    "After repairing the configuration above, also review these settings; they may not work with the current Pi runtime.",
   modelAuxiliaryModels: "Image and decision models",
   modelAuxiliaryDescription:
     "These catalog models are used through Codemode with supported provider credentials. Enable Codemode in the session tools menu. They do not appear in the chat model picker.",
@@ -204,6 +208,8 @@ export const zhCN: Record<string, string> = {
   modelConfigInvalidInSettings:
     "已保存的 models.json 配置无效，所有自定义提供商和模型覆盖配置均未生效。可编辑的字段请在此修正；其它字段需手动编辑 models.json，再重新加载磁盘版本。修复后请重新加载会话。",
   modelConfigInvalid: "models.json 配置无效，所有自定义提供商和模型覆盖配置均未生效。请在模型设置中修正配置。",
+  modelConfigCompatibilityWarnings: "以下配置有效且仍会生效，但可能与当前 Pi 运行时不兼容。依赖这些提供商前请先核对。",
+  modelConfigCompatibilityWarningsAfterRepair: "修复上方配置问题后，还需核对以下设置；它们可能与当前 Pi 运行时不兼容。",
   modelAuxiliaryModels: "图片与决策模型",
   modelAuxiliaryDescription:
     "这些目录模型通过 Codemode 使用，需要服务商支持的认证方式。在会话工具菜单中启用 Codemode 后即可调用，不会出现在聊天主模型选择器中。",
@@ -367,6 +373,10 @@ export const zhTW: Record<string, string> = {
   modelConfigInvalidInSettings:
     "已儲存的 models.json 設定無效，所有自訂供應商和模型覆寫設定均未生效。可編輯的欄位請在此修正；其他欄位需手動編輯 models.json，再重新載入磁碟版本。修復後請重新載入會話。",
   modelConfigInvalid: "models.json 設定無效，所有自訂供應商和模型覆寫設定均未生效。請在模型設定中修正設定。",
+  modelConfigCompatibilityWarnings:
+    "以下設定有效且仍會生效，但可能與目前 Pi 執行環境不相容。依賴這些供應商前請先核對。",
+  modelConfigCompatibilityWarningsAfterRepair:
+    "修復上方設定問題後，還需核對以下設定；它們可能與目前 Pi 執行環境不相容。",
   modelAuxiliaryModels: "圖片與決策模型",
   modelAuxiliaryDescription:
     "這些目錄模型透過 Codemode 使用，需要服務商支援的驗證方式。在對話工具選單中啟用 Codemode 後即可呼叫，不會出現在聊天主模型選擇器中。",

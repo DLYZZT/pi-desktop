@@ -61,8 +61,8 @@ export function validatePiRuntimeAssets({ graph, readPackage, exists }) {
   for (const root of graph.keys()) {
     const manifest = readPackage(`${root}/package.json`);
     if (manifest.name === "@earendil-works/pi-ai") required.add(`${root}/dist/auth/oauth/openai-chatgpt.js`);
-    if (manifest.name === "@earendil-works/pi-coding-agent" && manifest.version === "1.2.0")
-      required.add(`${root}/schemas/models.schema.json`);
+    // models-config-validation reads the published schema for every supported SDK version.
+    if (manifest.name === "@earendil-works/pi-coding-agent") required.add(`${root}/schemas/models.schema.json`);
     if (manifest.name === "@earendil-works/pi-mcp") required.add(`${root}/dist/oauth/index.js`);
     if (manifest.name === "@earendil-works/pi-codemode") {
       required.add(`${root}/dist/runtime/worker.js`);

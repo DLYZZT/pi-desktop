@@ -32,7 +32,7 @@ import {
   setDesktopSessionExecutionTools,
   getDefaultStore,
 } from "./session-tool-store";
-import { withExtensionTools, filterUnapprovedShellTools } from "./tool-activation";
+import { withExtensionTools, filterUnapprovedShellTools, dropPendingRestoredTools } from "./tool-activation";
 export { withExtensionTools } from "./tool-activation";
 import { SessionToolPolicy } from "./session-tool-policy";
 import { applySessionToolCommand } from "./session-tool-settings";
@@ -226,6 +226,7 @@ export class AgentSessionWrapper {
     this.inner.setActiveToolsByName(
       filterUnapprovedShellTools([...current, ...browserTools, ...herdrTools], this.requestedToolNames),
     );
+    if (this.requestedToolNames !== undefined) dropPendingRestoredTools(this.inner);
   }
 
   syncBrowserToolActivation(): void {
@@ -357,6 +358,15 @@ export class AgentSessionWrapper {
     } finally {
       notifyRunningChange();
     }
+  }
+
+  /** The SDK restores the target branch's recorded loadout; a Desktop selection stays authoritative (see sync). */
+  private async navigateTree(targetId: string, summarize?: boolean): Promise<{ cancelled: boolean }> {
+    const { cancelled } = await this.inner.navigateTree(targetId, { summarize });
+    if (cancelled) return { cancelled };
+    if (this.requestedToolNames === undefined) this.syncDesktopToolActivation();
+    else this.applyRequestedTools(this.requestedToolNames);
+    return { cancelled };
   }
 
   private applyRequestedTools(toolNames: string[]): void {
@@ -664,10 +674,8 @@ export class AgentSessionWrapper {
         return { cancelled: false, newSessionId };
       }
 
-      case "navigate_tree": {
-        const result = await this.inner.navigateTree(command.targetId as string, {});
-        return { cancelled: result.cancelled };
-      }
+      case "navigate_tree":
+        return this.navigateTree(command.targetId as string);
 
       case "set_thinking_level": {
         const level = command.level as string;
@@ -1290,10 +1298,7 @@ export class AgentSessionWrapper {
         this.reportUnsupportedExtensionFeature("extension-driven session fork");
         return { cancelled: true };
       },
-      navigateTree: async (targetId, options) => {
-        const result = await this.inner.navigateTree(targetId, { summarize: options?.summarize });
-        return { cancelled: result.cancelled };
-      },
+      navigateTree: (targetId, options) => this.navigateTree(targetId, options?.summarize),
       switchSession: async () => {
         this.reportUnsupportedExtensionFeature("extension-driven session switch");
         return { cancelled: true };

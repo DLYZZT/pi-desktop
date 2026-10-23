@@ -64,6 +64,7 @@ export function ModelsConfig({
   const pendingProviderRenames = useRef<Record<string, string>>({});
   const [azureUpgrade, setAzureUpgrade] = useState<AzureUpgradeReport>();
   const [configIssues, setConfigIssues] = useState<ModelsConfigIssue[]>([]);
+  const [configWarnings, setConfigWarnings] = useState<ModelsConfigIssue[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -163,6 +164,7 @@ export function ModelsConfig({
       pendingProviderRenames.current = {};
       setAzureUpgrade(snapshot.azureUpgrade);
       setConfigIssues(snapshot.issues ?? []);
+      setConfigWarnings(snapshot.warnings ?? []);
       setConfigLoaded(true);
       setSaveConflict(false);
       setSaveError(null);
@@ -299,6 +301,7 @@ export function ModelsConfig({
         pendingProviderRenames.current = {};
         setSavedConfigJson(JSON.stringify(nextConfig));
         setConfigIssues([]);
+        setConfigWarnings(result.warnings ?? []);
         setSaveConflict(false);
         setSavedOk(true);
         onChanged?.();
@@ -554,6 +557,31 @@ export function ModelsConfig({
                 {configIssues.map((issue, index) => (
                   <li key={`${issue.path}:${index}`}>
                     <code>{issue.path}</code>: {issue.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {configWarnings.length > 0 && (
+            <div
+              role="status"
+              style={{ padding: "10px 18px", color: "var(--warning)", maxHeight: 180, overflow: "auto" }}
+            >
+              <p>
+                {configIssues.length > 0
+                  ? t(
+                      "modelConfigCompatibilityWarningsAfterRepair",
+                      "After repairing the configuration above, also review these settings; they may not work with the current Pi runtime.",
+                    )
+                  : t(
+                      "modelConfigCompatibilityWarnings",
+                      "These settings are valid and remain active, but may not work with the current Pi runtime. Review them before relying on these providers.",
+                    )}
+              </p>
+              <ul>
+                {configWarnings.map((warning, index) => (
+                  <li key={`${warning.path}:${index}`}>
+                    <code>{warning.path}</code>: {warning.message}
                   </li>
                 ))}
               </ul>

@@ -44,3 +44,38 @@ export function preflightModelsConfig(filename: string): ModelsConfigIssue[] {
   }
   return inspectModelsConfig(parseModelsConfig(raw));
 }
+
+const KIMI_CODING_DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1";
+
+/**
+ * Schema-valid settings that the installed SDK no longer interprets as before. These are warnings only:
+ * proxies may use other path conventions, so the configuration is neither blocked nor rewritten.
+ */
+export function inspectModelsConfigCompatibility(config: unknown): ModelsConfigIssue[] {
+  const providers = (config as { providers?: unknown } | null)?.providers;
+  const kimi =
+    providers && typeof providers === "object" ? (providers as Record<string, unknown>)["kimi-coding"] : undefined;
+  if (!kimi || typeof kimi !== "object") return [];
+  const warnings: ModelsConfigIssue[] = [];
+  const { baseUrl, api } = kimi as { baseUrl?: unknown; api?: unknown };
+  if (typeof baseUrl === "string") {
+    let pathname: string | undefined;
+    try {
+      pathname = new URL(baseUrl).pathname.replace(/\/+$/u, "");
+    } catch {
+      /* Schema validation reports malformed URLs. */
+    }
+    if (pathname !== undefined && !pathname.endsWith("/v1"))
+      warnings.push({
+        path: "/providers/kimi-coding/baseUrl",
+        message: `Kimi Code now uses OpenAI Chat Completions; a base URL override must end with /v1 (default ${KIMI_CODING_DEFAULT_BASE_URL})`,
+      });
+  }
+  if (api === "anthropic-messages")
+    warnings.push({
+      path: "/providers/kimi-coding/api",
+      message:
+        "This override keeps the previous Anthropic Messages protocol; Kimi Code now defaults to openai-completions",
+    });
+  return warnings;
+}

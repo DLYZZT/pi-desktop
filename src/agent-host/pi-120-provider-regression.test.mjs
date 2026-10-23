@@ -10,9 +10,14 @@ import { getModel } from "@earendil-works/pi-ai/compat";
 import { stream } from "@earendil-works/pi-ai/api/openai-responses";
 import { getSupportedThinkingLevels, envApiKeyAuth } from "@earendil-works/pi-ai";
 
-test("1.2.0 catalogs keep chat selection separate from images and classifiers", async () => {
-  for (const provider of ["openai", "azure", "openai-codex"]) {
-    assert.equal(getModel(provider, "gpt-6.1-sol")?.contextWindow, 272_000);
+test("catalogs keep chat selection separate from images and classifiers", async () => {
+  // Since 1.3.0 Codex serves a 500K window; the API-key providers keep 272K.
+  for (const [provider, contextWindow] of [
+    ["openai", 272_000],
+    ["azure", 272_000],
+    ["openai-codex", 500_000],
+  ]) {
+    assert.equal(getModel(provider, "gpt-6.1-sol")?.contextWindow, contextWindow);
   }
   assert.equal(getModel("azure", "gpt-6.1-sol")?.api, "azure-openai-responses");
   assert.equal(getModel("azure", "deepseek-v4-pro")?.api, "openai-completions");
@@ -210,7 +215,10 @@ test("runtime probe executes OpenAI OAuth and MCP lazy imports without user stor
     absWorkingDir: root,
     entryPoints: ["src/agent-host/pi-runtime-probe.ts"],
   });
-  assert.deepEqual(await probePiRuntimeModules(), { piVersion: "1.2.0", openaiOAuthLoaded: true, mcpLoaded: true });
+  const piVersion = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).dependencies[
+    "@earendil-works/pi-coding-agent"
+  ];
+  assert.deepEqual(await probePiRuntimeModules(), { piVersion, openaiOAuthLoaded: true, mcpLoaded: true });
 });
 
 test("Haiku 5.5 supports max while OpenAI decision availability follows the credential type", async () => {

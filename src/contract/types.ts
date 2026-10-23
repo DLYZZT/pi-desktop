@@ -177,6 +177,8 @@ export interface ModelsConfigSnapshot {
   version: string;
   azureUpgrade?: AzureUpgradeReport;
   issues?: ModelsConfigIssue[];
+  /** Non-blocking compatibility notes for schema-valid settings; the configuration stays active. */
+  warnings?: ModelsConfigIssue[];
 }
 
 export interface ModelsConfigIssue {

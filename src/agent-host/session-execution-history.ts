@@ -44,6 +44,18 @@ export class SessionExecutionHistory {
       .reverse()
       .find((entry) => entry.type === "message" && entry.message.role === "assistant")?.id;
   }
+  /** Pi rejects malformed final arguments and reports `{}` as the call's input; keep the raw text with the attempt. */
+  private argumentsError(event: ToolEvent): string | undefined {
+    if (event.parentToolCallId) return undefined;
+    for (const entry of [...this.manager.getBranch()].reverse()) {
+      if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+      const call = entry.message.content.find((block) => block.type === "toolCall" && block.id === event.toolCallId);
+      return call?.type === "toolCall" && typeof call.argumentsError === "string"
+        ? call.argumentsError.slice(0, 8192)
+        : undefined;
+    }
+    return undefined;
+  }
   private key(callId: string): string {
     return `${this.runId}:${callId}`;
   }
@@ -65,6 +77,8 @@ export class SessionExecutionHistory {
       requestedAt: Date.now(),
       arguments: await this.store.payload(event.args ?? {}),
     };
+    const argumentsError = this.argumentsError(event);
+    if (argumentsError) entry.argumentsError = argumentsError;
     await this.store.append(entry);
     this.active.set(key, entry);
     await executionRecoveryCheckpoint("requested", entry);

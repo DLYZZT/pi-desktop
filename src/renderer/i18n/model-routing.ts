@@ -31,7 +31,9 @@ export const enUS = {
   modelAdvancedHelp:
     "Global Pi settings, shared with the CLI. Empty values use Pi defaults. Trusted project settings may override them. Reload existing sessions to apply changes.",
   modelAutoCompaction: "Automatic context compaction",
-  modelReserveTokens: "Response token reserve",
+  modelReserveTokens: "Compaction trigger reserve (tokens)",
+  modelReserveTokensHint:
+    "Compaction starts when the context exceeds the model window minus this reserve. It does not limit summary length.",
   modelKeepRecentTokens: "Recent tokens to keep",
   modelCompactionOverrides: "Compaction overrides by provider/modelId (JSON)",
   modelAutoRetry: "Automatic retries",
@@ -88,7 +90,8 @@ export const zhCN = {
   modelAdvancedHelp:
     "Pi 全局设置，与 CLI 共享。留空使用 Pi 默认值；已信任项目的设置可覆盖全局值。现有会话需重新加载后生效。",
   modelAutoCompaction: "自动压缩上下文",
-  modelReserveTokens: "回复预留 Token 数",
+  modelReserveTokens: "压缩触发预留 Token 数",
+  modelReserveTokensHint: "上下文超过模型窗口减去此预留量时开始压缩；不限制摘要输出长度。",
   modelKeepRecentTokens: "保留最近内容的 Token 数",
   modelCompactionOverrides: "按 provider/modelId 覆盖压缩参数（JSON）",
   modelAutoRetry: "自动重试",
@@ -144,7 +147,8 @@ export const zhTW = {
   modelAdvancedHelp:
     "Pi 全域設定，與 CLI 共用。留空使用 Pi 預設值；已信任專案的設定可覆寫全域值。現有對話需重新載入後生效。",
   modelAutoCompaction: "自動壓縮上下文",
-  modelReserveTokens: "回覆預留 Token 數",
+  modelReserveTokens: "壓縮觸發預留 Token 數",
+  modelReserveTokensHint: "上下文超過模型視窗減去此預留量時開始壓縮；不限制摘要輸出長度。",
   modelKeepRecentTokens: "保留最近內容的 Token 數",
   modelCompactionOverrides: "依 provider/modelId 覆寫壓縮參數（JSON）",
   modelAutoRetry: "自動重試",

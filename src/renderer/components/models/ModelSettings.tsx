@@ -258,6 +258,7 @@ export function AdvancedSettings({ onChanged }: { onChanged?: () => void }) {
     value: number | undefined,
     placeholder: number,
     update: (value: number | undefined) => void,
+    hint?: string,
   ) => (
     <Field label={label}>
       <NumInput
@@ -265,6 +266,7 @@ export function AdvancedSettings({ onChanged }: { onChanged?: () => void }) {
         placeholder={String(placeholder)}
         onChange={(next) => update(next === "" ? undefined : Number(next))}
       />
+      {hint && <p style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5, margin: 0 }}>{hint}</p>}
     </Field>
   );
   return (
@@ -284,10 +286,14 @@ export function AdvancedSettings({ onChanged }: { onChanged?: () => void }) {
             label={t("modelAutoCompaction", "Automatic context compaction")}
           />
           {number(
-            t("modelReserveTokens", "Response token reserve"),
+            t("modelReserveTokens", "Compaction trigger reserve (tokens)"),
             config.compaction?.reserveTokens,
             16384,
             (reserveTokens) => change({ ...config, compaction: { ...config.compaction, reserveTokens } }),
+            t(
+              "modelReserveTokensHint",
+              "Compaction starts when the context exceeds the model window minus this reserve. It does not limit summary length.",
+            ),
           )}
           {number(
             t("modelKeepRecentTokens", "Recent tokens to keep"),

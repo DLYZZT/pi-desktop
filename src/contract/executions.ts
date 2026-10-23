@@ -36,6 +36,8 @@ export interface ToolExecutionRecord {
   endedAt?: number;
   durationMs?: number;
   arguments?: ExecutionPayload;
+  /** Why the model's final arguments were not valid JSON; `arguments` is then `{}` (bounded raw text included). */
+  argumentsError?: string;
   result?: ExecutionPayload;
   output?: ExecutionPayload;
   error?: string;

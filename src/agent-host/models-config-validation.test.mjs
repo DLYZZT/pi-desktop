@@ -5,7 +5,12 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { inspectModelsConfig, parseModelsConfig, preflightModelsConfig } from "./models-config-validation.ts";
+import {
+  inspectModelsConfig,
+  inspectModelsConfigCompatibility,
+  parseModelsConfig,
+  preflightModelsConfig,
+} from "./models-config-validation.ts";
 
 test("target schema preflight lists every invalid field without changing config or creating runtime files", async (t) => {
   const root = mkdtempSync(path.join(tmpdir(), "pi-120-config-preflight-"));
@@ -86,4 +91,26 @@ test("model config parsing matches SDK line comments, trailing commas and string
       () => parseModelsConfig(text),
       (error) => error.code === "PARSE_ERROR" && !error.message.includes("SECRET_DO_NOT_ECHO"),
     );
+});
+
+test("Kimi Code overrides from before Chat Completions are reported as non-blocking warnings", () => {
+  const provider = (fields) => ({ providers: { "kimi-coding": { ...fields } } });
+  assert.deepEqual(inspectModelsConfigCompatibility(provider({ baseUrl: "https://api.kimi.com/coding/v1/" })), []);
+  assert.deepEqual(inspectModelsConfigCompatibility(provider({ baseUrl: "https://proxy.example/kimi/v1" })), []);
+  assert.deepEqual(inspectModelsConfigCompatibility({ providers: {} }), []);
+  assert.deepEqual(inspectModelsConfigCompatibility(provider({})), []);
+
+  const legacy = provider({ baseUrl: "https://api.kimi.com/coding", apiKey: "PRIVATE_KIMI_KEY" });
+  const warnings = inspectModelsConfigCompatibility(legacy);
+  assert.deepEqual(
+    warnings.map((warning) => warning.path),
+    ["/providers/kimi-coding/baseUrl"],
+  );
+  assert.doesNotMatch(JSON.stringify(warnings), /PRIVATE_KIMI_KEY|api\.kimi\.com\/coding"/);
+  // Warnings never make the configuration invalid.
+  assert.deepEqual(inspectModelsConfig(legacy), []);
+  assert.deepEqual(
+    inspectModelsConfigCompatibility(provider({ api: "anthropic-messages" })).map((warning) => warning.path),
+    ["/providers/kimi-coding/api"],
+  );
 });
