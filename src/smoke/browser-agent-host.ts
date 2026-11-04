@@ -7,7 +7,7 @@ import { browserCapabilityRuntime } from "../agent-host/browser-capability-runti
 import { registerHandlers } from "../agent-host/handlers";
 import { applyManagedProcessOwnerIdentity } from "../agent-host/managed-process/owner-identity";
 import { installToolchainGitRunner } from "../agent-host/toolchain-git";
-import { getRpcSession, syncBrowserToolsForAllSessions } from "../agent-host/rpc-manager";
+import { getRpcSession, syncDesktopToolsForAllSessions } from "../agent-host/rpc-manager";
 import { startSessionWatcher } from "../agent-host/session-watcher";
 import { toolchainRuntime } from "../agent-host/toolchain-runtime";
 import type { ToolchainSnapshot } from "../shared/toolchains/types";
@@ -482,7 +482,7 @@ parentPort.on("message", (event) => {
   if (message.type === "browser:init" || message.type === "browser:changed") {
     if (!message.snapshot) throw new Error("Browser Agent E2E Host received an empty Browser snapshot");
     browserCapabilityRuntime.apply(message.snapshot as BrowserCapabilitySnapshot);
-    syncBrowserToolsForAllSessions();
+    syncDesktopToolsForAllSessions();
     parentPort.postMessage({ type: "browser:ack", revision: message.snapshot.revision });
     return;
   }

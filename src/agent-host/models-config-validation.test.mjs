@@ -94,7 +94,7 @@ test("model config parsing matches SDK line comments, trailing commas and string
 });
 
 test("Kimi Code overrides from before Chat Completions are reported as non-blocking warnings", () => {
-  const provider = (fields) => ({ providers: { "kimi-coding": { ...fields } } });
+  const provider = (fields) => ({ providers: { "kimi-coding": fields } });
   assert.deepEqual(inspectModelsConfigCompatibility(provider({ baseUrl: "https://api.kimi.com/coding/v1/" })), []);
   assert.deepEqual(inspectModelsConfigCompatibility(provider({ baseUrl: "https://proxy.example/kimi/v1" })), []);
   assert.deepEqual(inspectModelsConfigCompatibility({ providers: {} }), []);

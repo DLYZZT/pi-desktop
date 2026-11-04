@@ -58,19 +58,16 @@ export function inspectModelsConfigCompatibility(config: unknown): ModelsConfigI
   if (!kimi || typeof kimi !== "object") return [];
   const warnings: ModelsConfigIssue[] = [];
   const { baseUrl, api } = kimi as { baseUrl?: unknown; api?: unknown };
-  if (typeof baseUrl === "string") {
-    let pathname: string | undefined;
-    try {
-      pathname = new URL(baseUrl).pathname.replace(/\/+$/u, "");
-    } catch {
-      /* Schema validation reports malformed URLs. */
-    }
-    if (pathname !== undefined && !pathname.endsWith("/v1"))
-      warnings.push({
-        path: "/providers/kimi-coding/baseUrl",
-        message: `Kimi Code now uses OpenAI Chat Completions; a base URL override must end with /v1 (default ${KIMI_CODING_DEFAULT_BASE_URL})`,
-      });
-  }
+  // Schema validation reports malformed URLs.
+  if (
+    typeof baseUrl === "string" &&
+    URL.canParse(baseUrl) &&
+    !new URL(baseUrl).pathname.replace(/\/+$/u, "").endsWith("/v1")
+  )
+    warnings.push({
+      path: "/providers/kimi-coding/baseUrl",
+      message: `Kimi Code now uses OpenAI Chat Completions; a base URL override must end with /v1 (default ${KIMI_CODING_DEFAULT_BASE_URL})`,
+    });
   if (api === "anthropic-messages")
     warnings.push({
       path: "/providers/kimi-coding/api",

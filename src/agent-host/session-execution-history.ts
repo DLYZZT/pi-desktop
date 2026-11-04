@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ExtensionAPI, SessionManager } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SessionManager, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { ExecutionHistoryPage, ExecutionQuery, ToolExecutionRecord } from "../contract/executions";
 import { validateExecutionQuery } from "../contract/executions";
@@ -18,7 +18,9 @@ type ToolEvent = {
   durationMs?: number;
 };
 type StoredExecution = Omit<ToolExecutionRecord, "schemaVersion" | "sessionId" | "sequence">;
-type HistoryManager = Pick<SessionManager, "getSessionId" | "getBranch">;
+type HistoryManager = Pick<SessionManager, "getSessionId" | "getBranch" | "getLeafEntry" | "getEntry">;
+type AssistantEntry = SessionMessageEntry & { message: Extract<SessionMessageEntry["message"], { role: "assistant" }> };
+const MAX_TEXT_LENGTH = 8192;
 
 /** Durable history of tool effects; has no tool execution or automatic replay capability. */
 export class SessionExecutionHistory {
@@ -39,22 +41,19 @@ export class SessionExecutionHistory {
   async flush(): Promise<void> {
     await this.store.flush();
   }
-  private anchor(): string | undefined {
-    return [...this.manager.getBranch()]
-      .reverse()
-      .find((entry) => entry.type === "message" && entry.message.role === "assistant")?.id;
+  /** Walks from the leaf, so the cost is the distance to the latest assistant message, not the branch length. */
+  private latestAssistant(): AssistantEntry | undefined {
+    let entry = this.manager.getLeafEntry();
+    while (entry && !(entry.type === "message" && entry.message.role === "assistant"))
+      entry = entry.parentId ? this.manager.getEntry(entry.parentId) : undefined;
+    return entry as AssistantEntry | undefined;
   }
   /** Pi rejects malformed final arguments and reports `{}` as the call's input; keep the raw text with the attempt. */
-  private argumentsError(event: ToolEvent): string | undefined {
-    if (event.parentToolCallId) return undefined;
-    for (const entry of [...this.manager.getBranch()].reverse()) {
-      if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-      const call = entry.message.content.find((block) => block.type === "toolCall" && block.id === event.toolCallId);
-      return call?.type === "toolCall" && typeof call.argumentsError === "string"
-        ? call.argumentsError.slice(0, 8192)
-        : undefined;
-    }
-    return undefined;
+  private static argumentsError(anchor: AssistantEntry | undefined, toolCallId: string): string | undefined {
+    const call = anchor?.message.content.find((block) => block.type === "toolCall" && block.id === toolCallId);
+    return call?.type === "toolCall" && typeof call.argumentsError === "string"
+      ? call.argumentsError.slice(0, MAX_TEXT_LENGTH)
+      : undefined;
   }
   private key(callId: string): string {
     return `${this.runId}:${callId}`;
@@ -64,21 +63,24 @@ export class SessionExecutionHistory {
       previous = this.active.get(key);
     if (previous) return previous;
     const parent = event.parentToolCallId ? this.active.get(this.key(event.parentToolCallId)) : undefined;
+    const anchor = parent?.anchorEntryId === undefined ? this.latestAssistant() : undefined;
+    const argumentsError = event.parentToolCallId
+      ? undefined
+      : SessionExecutionHistory.argumentsError(anchor, event.toolCallId);
     const entry: StoredExecution = {
       executionId: randomUUID(),
       runId: this.runId,
       toolCallId: event.toolCallId,
       ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
       rootToolCallId: parent?.rootToolCallId ?? event.parentToolCallId ?? event.toolCallId,
-      anchorEntryId: parent?.anchorEntryId ?? this.anchor(),
+      anchorEntryId: parent?.anchorEntryId ?? anchor?.id,
       source: getAgentSessionSource(this.manager),
       toolName: event.toolName,
       status: "requested",
       requestedAt: Date.now(),
       arguments: await this.store.payload(event.args ?? {}),
+      ...(argumentsError ? { argumentsError } : {}),
     };
-    const argumentsError = this.argumentsError(event);
-    if (argumentsError) entry.argumentsError = argumentsError;
     await this.store.append(entry);
     this.active.set(key, entry);
     await executionRecoveryCheckpoint("requested", entry);
@@ -121,7 +123,7 @@ export class SessionExecutionHistory {
             ? event.durationMs
             : Math.max(0, endedAt - (entry.startedAt ?? entry.requestedAt)),
         isError: Boolean(error),
-        ...(error ? { error: text.slice(0, 8192) } : {}),
+        ...(error ? { error: text.slice(0, MAX_TEXT_LENGTH) } : {}),
         result: await this.store.payload(event.result),
       };
     next.output = await captureExecutionOutput(this.store, event.toolName, event.result);
@@ -183,8 +185,8 @@ export class SessionExecutionHistory {
     const record = this.active.get(key);
     if (Array.isArray(result.content))
       result.content = result.content.map((block: Record<string, unknown>) =>
-        block.type === "text" && typeof block.text === "string" && block.text.length > 8192
-          ? { ...block, text: block.text.slice(0, 8192), contentOmitted: true }
+        block.type === "text" && typeof block.text === "string" && block.text.length > MAX_TEXT_LENGTH
+          ? { ...block, text: block.text.slice(0, MAX_TEXT_LENGTH), contentOmitted: true }
           : block,
       );
     try {

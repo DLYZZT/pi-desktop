@@ -21,6 +21,8 @@ const buttonStyle = {
   cursor: "pointer",
 };
 
+const mutedHintStyle = { color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6, margin: 0 } as const;
+
 /** Load / edit / save state for a revision-checked settings file. */
 function useVersionedSettings<T>(
   fetch: () => Promise<ModelSettingsSnapshot<T>>,
@@ -163,7 +165,7 @@ export function RoutingSettings({ cwd, onChanged }: { cwd?: string | null; onCha
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <SectionTitle>{t("modelAutoRouting", "Auto routing")}</SectionTitle>
-      <p style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6, margin: 0 }}>
+      <p style={mutedHintStyle}>
         {t(
           "modelRoutingHelp",
           "Choose Auto in the chat model picker after saving. Each new user turn selects a model; tool continuations keep it. Changes apply to new or reloaded sessions, or when Auto is selected again.",
@@ -266,13 +268,13 @@ export function AdvancedSettings({ onChanged }: { onChanged?: () => void }) {
         placeholder={String(placeholder)}
         onChange={(next) => update(next === "" ? undefined : Number(next))}
       />
-      {hint && <p style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5, margin: 0 }}>{hint}</p>}
+      {hint && <p style={mutedHintStyle}>{hint}</p>}
     </Field>
   );
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <SectionTitle>{t("modelAdvancedSettings", "Advanced model settings")}</SectionTitle>
-      <p style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6, margin: 0 }}>
+      <p style={mutedHintStyle}>
         {t(
           "modelAdvancedHelp",
           "Global Pi settings, shared with the CLI. Empty values use Pi defaults. Trusted project settings may override them. Reload existing sessions to apply changes.",

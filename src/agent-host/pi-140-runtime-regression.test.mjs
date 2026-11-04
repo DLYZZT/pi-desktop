@@ -33,9 +33,12 @@ const {
   },
 });
 
-function offlineStream(requests) {
-  return (requestModel, context) => {
-    requests.push(context);
+function firstUserEntry(session) {
+  return session.sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "user");
+}
+
+function offlineStream() {
+  return (requestModel) => {
     const message = {
       role: "assistant",
       content: [{ type: "text", text: "offline answer" }],
@@ -84,8 +87,7 @@ test("branch navigation reapplies the Desktop tool selection over the SDK-restor
     sessionManager: SessionManager.inMemory(directory),
     model,
   });
-  const requests = [];
-  session.agent.streamFunction = offlineStream(requests);
+  session.agent.streamFunction = offlineStream();
   await session.bindExtensions({ mode: "rpc" });
 
   // An earlier part of the branch ran with a wider loadout than the current Desktop choice.
@@ -100,9 +102,7 @@ test("branch navigation reapplies the Desktop tool selection over the SDK-restor
   await session.prompt("second", { source: "rpc" });
   assert.deepEqual(session.getActiveToolNames(), ["read"]);
 
-  const firstUser = session.sessionManager
-    .getEntries()
-    .find((entry) => entry.type === "message" && entry.message.role === "user");
+  const firstUser = firstUserEntry(session);
   const navigation = await wrapper.send({ type: "navigate_tree", targetId: firstUser.id });
   assert.equal(navigation.cancelled, false);
   assert.deepEqual(session.getActiveToolNames(), ["read"]);
@@ -143,7 +143,7 @@ async function openSession(directory, sessionManager, extensionFactories) {
   const model = services.modelRuntime.getModel("anthropic", "claude-sonnet-4-5");
   // Desktop never passes `tools`, so the SDK restores the recorded loadout like a CLI resume.
   const { session } = await createAgentSessionFromServices({ services, sessionManager, model });
-  session.agent.streamFunction = offlineStream([]);
+  session.agent.streamFunction = offlineStream();
   await session.bindExtensions({ mode: "rpc" });
   return session;
 }
@@ -217,7 +217,7 @@ test("manual compaction through Desktop sends no reserve-derived output cap and 
     model,
   });
   const calls = [];
-  const respond = offlineStream([]);
+  const respond = offlineStream();
   session.agent.streamFunction = (requestModel, context, options) => {
     calls.push({ context, options });
     return respond(requestModel, context);
@@ -272,9 +272,7 @@ test("branch navigation drops restored tools that register later outside the Des
   t.after(() => wrapper.dispose());
   session.setActiveToolsByName(["read"]);
 
-  const firstUser = session.sessionManager
-    .getEntries()
-    .find((entry) => entry.type === "message" && entry.message.role === "user");
+  const firstUser = firstUserEntry(session);
   assert.equal((await wrapper.send({ type: "navigate_tree", targetId: firstUser.id })).cancelled, false);
   assert.deepEqual(session.getActiveToolNames(), ["read"]);
   registerLater();
@@ -340,9 +338,7 @@ test("the public no-tools guard hides a recorded tool that registers after navig
   const wrapper = new AgentSessionWrapper(session, [], () => undefined, new SessionPromptPolicy(true));
   t.after(() => wrapper.dispose());
   session.setActiveToolsByName([]);
-  const firstUser = session.sessionManager
-    .getEntries()
-    .find((entry) => entry.type === "message" && entry.message.role === "user");
+  const firstUser = firstUserEntry(session);
   assert.equal((await wrapper.send({ type: "navigate_tree", targetId: firstUser.id })).cancelled, false);
   registerLater();
   // The empty active set cannot clear SDK pending names; get_tools and prompts reapply no-tools first.

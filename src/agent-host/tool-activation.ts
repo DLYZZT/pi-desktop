@@ -33,10 +33,12 @@ export function withExtensionTools(session: AgentSessionLike, toolNames: string[
  * Keep the current active set but drop names the SDK restored from the branch and has not registered yet.
  * setActiveToolsByName keeps those pending names unless a call deactivates a tool, so they would otherwise
  * activate on registration (for example a connecting MCP server) outside the Desktop selection.
+ * Returns false when nothing could be dropped because the active set is empty.
  */
-export function dropPendingRestoredTools(session: AgentSessionLike): void {
+export function dropPendingRestoredTools(session: AgentSessionLike): boolean {
   const active = session.getActiveToolNames();
-  if (active.length === 0) return;
+  if (active.length === 0) return false;
   session.setActiveToolsByName([]);
   session.setActiveToolsByName(active);
+  return true;
 }

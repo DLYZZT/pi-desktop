@@ -140,6 +140,8 @@ export class AgentSessionWrapper {
   private disposePromise: Promise<void> | null = null;
   private _alive = true;
   private requestedToolNames: string[] | undefined;
+  /** The SDK fills its pending restored-tool set only at construction, navigation and reload. */
+  private mayHavePendingRestoredTools = true;
   refreshToolchain?: () => Promise<void>;
   private readonly resourceReload = new SessionResourceReload();
   private readonly modelConfig = new SessionModelConfig();
@@ -226,11 +228,8 @@ export class AgentSessionWrapper {
     this.inner.setActiveToolsByName(
       filterUnapprovedShellTools([...current, ...browserTools, ...herdrTools], this.requestedToolNames),
     );
-    if (this.requestedToolNames !== undefined) dropPendingRestoredTools(this.inner);
-  }
-
-  syncBrowserToolActivation(): void {
-    this.syncDesktopToolActivation();
+    if (this.requestedToolNames !== undefined && this.mayHavePendingRestoredTools)
+      this.mayHavePendingRestoredTools = !dropPendingRestoredTools(this.inner);
   }
 
   private withExternalChannelSource(event: AgentEvent): AgentEvent {
@@ -361,12 +360,17 @@ export class AgentSessionWrapper {
   }
 
   /** The SDK restores the target branch's recorded loadout; a Desktop selection stays authoritative (see sync). */
-  private async navigateTree(targetId: string, summarize?: boolean): Promise<{ cancelled: boolean }> {
+  private async navigateTreeKeepingTools(targetId: string, summarize?: boolean): Promise<{ cancelled: boolean }> {
     const { cancelled } = await this.inner.navigateTree(targetId, { summarize });
-    if (cancelled) return { cancelled };
+    if (!cancelled) this.reapplyToolSelection();
+    return { cancelled };
+  }
+
+  /** After the SDK restored or re-pended tools (navigation, reload), reassert the Desktop selection if there is one. */
+  private reapplyToolSelection(): void {
+    this.mayHavePendingRestoredTools = true;
     if (this.requestedToolNames === undefined) this.syncDesktopToolActivation();
     else this.applyRequestedTools(this.requestedToolNames);
-    return { cancelled };
   }
 
   private applyRequestedTools(toolNames: string[]): void {
@@ -482,8 +486,7 @@ export class AgentSessionWrapper {
         () => this._alive,
       );
       await this.ensureExtensionsBound();
-      if (this.requestedToolNames !== undefined) this.applyRequestedTools(this.requestedToolNames);
-      this.syncDesktopToolActivation();
+      this.reapplyToolSelection();
       return recoverConfig ? () => this.modelSelection.restoreAfterConfigRepair(this.inner) : undefined;
     });
   }
@@ -675,7 +678,7 @@ export class AgentSessionWrapper {
       }
 
       case "navigate_tree":
-        return this.navigateTree(command.targetId as string);
+        return this.navigateTreeKeepingTools(command.targetId as string);
 
       case "set_thinking_level": {
         const level = command.level as string;
@@ -1298,7 +1301,7 @@ export class AgentSessionWrapper {
         this.reportUnsupportedExtensionFeature("extension-driven session fork");
         return { cancelled: true };
       },
-      navigateTree: (targetId, options) => this.navigateTree(targetId, options?.summarize),
+      navigateTree: (targetId, options) => this.navigateTreeKeepingTools(targetId, options?.summarize),
       switchSession: async () => {
         this.reportUnsupportedExtensionFeature("extension-driven session switch");
         return { cancelled: true };
@@ -1338,10 +1341,6 @@ export function getRpcSession(sessionId: string): AgentSessionWrapper | undefine
 
 export async function disposeAllRpcSessions(reason = "host-shutdown"): Promise<void> {
   await Promise.all([...getRegistry().values()].map((session) => session.dispose({ abort: true, reason })));
-}
-
-export function syncBrowserToolsForAllSessions(): void {
-  syncDesktopToolsForAllSessions();
 }
 
 export function syncDesktopToolsForAllSessions(): void {

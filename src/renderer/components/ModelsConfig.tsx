@@ -543,32 +543,22 @@ export function ModelsConfig({
 
           <AzureUpgradeNotice report={azureUpgrade} />
           {configIssues.length > 0 && (
-            <div
+            <ConfigIssueList
               role="alert"
-              style={{ padding: "10px 18px", color: "var(--error, #f87171)", maxHeight: 180, overflow: "auto" }}
-            >
-              <p>
-                {t(
-                  "modelConfigInvalidInSettings",
-                  "The saved models.json is invalid. All custom providers and overrides are inactive. Correct the editable fields here; for other fields, edit models.json manually and reload the disk version. Reload the session after repairing the configuration.",
-                )}
-              </p>
-              <ul>
-                {configIssues.map((issue, index) => (
-                  <li key={`${issue.path}:${index}`}>
-                    <code>{issue.path}</code>: {issue.message}
-                  </li>
-                ))}
-              </ul>
-            </div>
+              color="var(--error, #f87171)"
+              intro={t(
+                "modelConfigInvalidInSettings",
+                "The saved models.json is invalid. All custom providers and overrides are inactive. Correct the editable fields here; for other fields, edit models.json manually and reload the disk version. Reload the session after repairing the configuration.",
+              )}
+              items={configIssues}
+            />
           )}
           {configWarnings.length > 0 && (
-            <div
+            <ConfigIssueList
               role="status"
-              style={{ padding: "10px 18px", color: "var(--warning)", maxHeight: 180, overflow: "auto" }}
-            >
-              <p>
-                {configIssues.length > 0
+              color="var(--warning)"
+              intro={
+                configIssues.length > 0
                   ? t(
                       "modelConfigCompatibilityWarningsAfterRepair",
                       "After repairing the configuration above, also review these settings; they may not work with the current Pi runtime.",
@@ -576,16 +566,10 @@ export function ModelsConfig({
                   : t(
                       "modelConfigCompatibilityWarnings",
                       "These settings are valid and remain active, but may not work with the current Pi runtime. Review them before relying on these providers.",
-                    )}
-              </p>
-              <ul>
-                {configWarnings.map((warning, index) => (
-                  <li key={`${warning.path}:${index}`}>
-                    <code>{warning.path}</code>: {warning.message}
-                  </li>
-                ))}
-              </ul>
-            </div>
+                    )
+              }
+              items={configWarnings}
+            />
           )}
           {/* Body */}
           <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: "hidden" }}>
@@ -912,5 +896,30 @@ export function ModelsConfig({
         />
       )}
     </>
+  );
+}
+
+function ConfigIssueList({
+  role,
+  color,
+  intro,
+  items,
+}: {
+  role: "alert" | "status";
+  color: string;
+  intro: string;
+  items: ModelsConfigIssue[];
+}) {
+  return (
+    <div role={role} style={{ padding: "10px 18px", color, maxHeight: 180, overflow: "auto" }}>
+      <p>{intro}</p>
+      <ul>
+        {items.map((item, index) => (
+          <li key={`${item.path}:${index}`}>
+            <code>{item.path}</code>: {item.message}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

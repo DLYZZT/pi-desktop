@@ -121,6 +121,12 @@ function compatibilityWarnings(config: unknown) {
   return warnings.length ? { warnings } : {};
 }
 
+/** Blocking schema issues and non-blocking compatibility warnings, each omitted when empty. */
+function configDiagnostics(config: unknown) {
+  const issues = inspectModelsConfig(config);
+  return { ...(issues.length ? { issues } : {}), ...compatibilityWarnings(config) };
+}
+
 type ModelConfigHandlers = {
   get: NonNullable<ApiHandler["modelsConfig.get"]>;
   set: NonNullable<ApiHandler["modelsConfig.set"]>;
@@ -133,17 +139,11 @@ export const modelConfigHandlers = {
   get: async () => {
     // Inspect before migrations. An invalid SDK configuration must remain editable and byte-for-byte intact.
     const original = readModelsJsonSnapshot();
-    const issues = inspectModelsConfig(original.config);
-    if (issues.length) return { ...original, issues, ...compatibilityWarnings(original.config) };
+    const originalDiagnostics = configDiagnostics(original.config);
+    if (originalDiagnostics.issues) return { ...original, ...originalDiagnostics };
     const azureUpgrade = await ensureAzureUpgrade();
     const snapshot = readModelsJsonSnapshot();
-    const currentIssues = inspectModelsConfig(snapshot.config);
-    return {
-      ...snapshot,
-      azureUpgrade,
-      ...(currentIssues.length ? { issues: currentIssues } : {}),
-      ...compatibilityWarnings(snapshot.config),
-    };
+    return { ...snapshot, azureUpgrade, ...configDiagnostics(snapshot.config) };
   },
 
   set: async (params) => {
