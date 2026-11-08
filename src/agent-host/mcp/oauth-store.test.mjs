@@ -4,6 +4,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { McpOAuthAuthorizationRequiredError } from "@earendil-works/pi-mcp/oauth";
 import { importTestBundle } from "#test-bundle";
 const { McpOAuthStore } = await importTestBundle("mcp-oauth-store", {
   packages: "external",
@@ -201,6 +202,41 @@ test("a stale provider state cannot overwrite another CLI flow or resurrect a si
   assert.equal(await store.forServer("fixture", url).load(), undefined);
 });
 
+test("authorization replaces its grant without overwriting newer unrelated shared-state fields", async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-commit-fields-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const store = new McpOAuthStore(root),
+    url = "https://fixture.invalid/mcp";
+  await store.forServer("fixture", url).save({
+    serverUrl: url,
+    oauthState: "flow",
+    future: "updated-by-cli",
+    clientInformation: { client_id: "old-client" },
+    tokens: { access_token: "old-token", token_type: "Bearer" },
+    tokensExpireAt: 1,
+    codeVerifier: "old-verifier",
+  });
+  await store.commitAuthorization(
+    "fixture",
+    url,
+    { access_token: "new-token", token_type: "Bearer" },
+    "flow",
+    new globalThis.AbortController().signal,
+    {
+      serverUrl: url,
+      oauthState: "flow",
+      future: "stale-snapshot",
+      codeVerifier: "new-verifier",
+    },
+  );
+  const saved = await store.forServer("fixture", url).load();
+  assert.equal(saved.future, "updated-by-cli");
+  assert.equal(saved.clientInformation, undefined);
+  assert.equal(saved.tokensExpireAt, undefined);
+  assert.equal(saved.codeVerifier, "new-verifier");
+  assert.equal(saved.tokens.access_token, "new-token");
+});
+
 test("late challenges cannot cross logout or retired connections and concurrent scopes are retained", async (t) => {
   const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-late-challenge-")),
     store = new McpOAuthStore(root),
@@ -292,4 +328,228 @@ test("MCP OAuth saves are serialized with CLI-compatible refresh lock names and 
   assert.equal(order.indexOf("first-end"), order.indexOf("first") + 1);
   assert.equal(order.indexOf("second-end"), order.indexOf("second") + 1);
   assert.doesNotMatch(readFileSync(store.filename, "utf8"), /CANCELLED/);
+});
+
+function refreshFixture(t) {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-refresh-only-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const store = new McpOAuthStore(root),
+    base = "https://oauth.fixture.invalid",
+    url = base + "/mcp";
+  const state = {
+    serverUrl: url,
+    clientInformation: { client_id: "original-client", redirect_uris: ["http://127.0.0.1/callback"] },
+    tokens: { access_token: "OLD", refresh_token: "OLD_REFRESH", token_type: "Bearer", scope: "read" },
+    tokensExpireAt: 0,
+    oauthState: "interactive-flow",
+    codeVerifier: "interactive-verifier",
+    future: "keep",
+    discovery: {
+      authorizationServerUrl: base,
+      authorizationServerMetadata: {
+        issuer: base,
+        authorization_endpoint: base + "/authorize",
+        registration_endpoint: base + "/register",
+        token_endpoint: base + "/token",
+        response_types_supported: ["code"],
+        token_endpoint_auth_methods_supported: ["none"],
+      },
+      resourceMetadata: { resource: url },
+    },
+  };
+  const unauthorized = (auth, fetch) =>
+    auth.onUnauthorized({
+      serverUrl: url,
+      token: "OLD",
+      fetch,
+      response: new globalThis.Response("", { status: 401 }),
+    });
+  return { root, store, base, url, state, unauthorized };
+}
+
+for (const failure of ["network", "server_error"]) {
+  test(`refresh ${failure} preserves the grant and cannot start background authorization`, async (t) => {
+    const f = refreshFixture(t);
+    await f.store.forServer("fixture", f.url).save(f.state);
+    const before = readFileSync(f.store.filename, "utf8");
+    const requests = [];
+    const fetch = async (input, init) => {
+      requests.push(String(input));
+      assert.equal(String(input), f.base + "/token");
+      assert.equal(new globalThis.URLSearchParams(init.body).get("grant_type"), "refresh_token");
+      if (failure === "network") throw new TypeError("fixture network failure");
+      return globalThis.Response.json({ error: "server_error" }, { status: 503 });
+    };
+    const auth = f.store.authProvider("fixture", f.url, {}, fetch);
+    await assert.rejects(
+      f.unauthorized(auth, fetch),
+      failure === "network" ? /fixture network failure/ : /server_error/,
+    );
+    assert.deepEqual(requests, [f.base + "/token"]);
+    assert.equal(readFileSync(f.store.filename, "utf8"), before);
+  });
+}
+
+for (const error of ["invalid_client", "unauthorized_client", "invalid_grant"]) {
+  test(`a retired connection's ${error} response cannot invalidate the shared grant`, async (t) => {
+    const f = refreshFixture(t);
+    await f.store.forServer("fixture", f.url).save(f.state);
+    const before = readFileSync(f.store.filename, "utf8");
+    const connection = new globalThis.AbortController();
+    const fetch = async (input, init) => {
+      assert.equal(String(input), f.base + "/token");
+      connection.abort();
+      assert.equal(init.signal.aborted, false, "the in-flight request keeps its independent deadline");
+      return globalThis.Response.json({ error }, { status: 400 });
+    };
+    const auth = f.store.authProvider(
+      "fixture",
+      f.url,
+      {},
+      fetch,
+      undefined,
+      () => !connection.signal.aborted,
+      connection.signal,
+    );
+    await assert.rejects(f.unauthorized(auth, fetch), McpOAuthAuthorizationRequiredError);
+    assert.equal(readFileSync(f.store.filename, "utf8"), before);
+  });
+}
+
+for (const outcome of ["success", "invalid_client", "invalid_grant"]) {
+  for (const external of ["sign-in", "logout"]) {
+    test(`late refresh ${outcome} cannot overwrite CLI ${external}`, async (t) => {
+      const f = refreshFixture(t);
+      await f.store.forServer("fixture", f.url).save(f.state);
+      const sdk = path.resolve(import.meta.dirname, "../../../node_modules/@earendil-works/pi-coding-agent/dist");
+      const { FileAuthStorageBackend } = await import(pathToFileURL(path.join(sdk, "core/auth-storage.js")));
+      const { McpOAuthCredentialStore } = await import(pathToFileURL(path.join(sdk, "extensions/mcp/oauth.js")));
+      const cli = new McpOAuthCredentialStore(new FileAuthStorageBackend(f.store.filename), f.root);
+      let entered, release;
+      const started = new Promise((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      const fetch = async (input) => {
+        assert.equal(String(input), f.base + "/token");
+        entered();
+        await gate;
+        return outcome === "success"
+          ? globalThis.Response.json({
+              access_token: "STALE_RESULT",
+              refresh_token: "STALE_ROTATION",
+              token_type: "Bearer",
+            })
+          : globalThis.Response.json({ error: outcome }, { status: 400 });
+      };
+      const auth = f.store.authProvider("fixture", f.url, {}, fetch);
+      const pending = f.unauthorized(auth, fetch);
+      const finished = external === "logout" ? assert.rejects(pending, McpOAuthAuthorizationRequiredError) : pending;
+      await started;
+      const replacement = {
+        ...f.state,
+        clientInformation: { client_id: "replacement-client" },
+        tokens: { access_token: "REPLACEMENT", refresh_token: "REPLACEMENT_REFRESH", token_type: "Bearer" },
+        tokensExpireAt: Date.now() + 3600000,
+        oauthState: "replacement-flow",
+      };
+      try {
+        if (external === "logout") cli.remove("fixture", f.url);
+        else await cli.forServer("fixture", f.url).save(replacement);
+      } finally {
+        release();
+      }
+      await finished;
+      assert.deepEqual(await cli.forServer("fixture", f.url).load(), external === "logout" ? undefined : replacement);
+    });
+  }
+}
+
+test("successful refresh updates only its grant while a CLI login changes flow metadata", async (t) => {
+  const f = refreshFixture(t);
+  await f.store.forServer("fixture", f.url).save(f.state);
+  const fetch = async (input) => {
+    assert.equal(String(input), f.base + "/token");
+    // Independent writer, as with a CLI login that reserves a new nonce while the token rotates.
+    await new McpOAuthStore(f.root).forServer("fixture", f.url).save({
+      ...f.state,
+      oauthState: "new-interactive-flow",
+      codeVerifier: "new-verifier",
+      future: "new-value",
+    });
+    return globalThis.Response.json({ access_token: "ROTATED", token_type: "Bearer", expires_in: 3600 });
+  };
+  await f.unauthorized(f.store.authProvider("fixture", f.url, {}, fetch), fetch);
+  const saved = await f.store.forServer("fixture", f.url).load();
+  assert.equal(saved.oauthState, "new-interactive-flow");
+  assert.equal(saved.codeVerifier, "new-verifier");
+  assert.equal(saved.future, "new-value");
+  assert.equal(saved.tokens.access_token, "ROTATED");
+  assert.equal(saved.tokens.refresh_token, "OLD_REFRESH");
+  assert.equal(saved.tokens.scope, "read");
+  assert.ok(saved.tokensExpireAt > Date.now());
+});
+
+test("refresh honors configured metadata and client authentication without replacing the discovery cache", async (t) => {
+  const f = refreshFixture(t);
+  delete f.state.clientInformation;
+  await f.store.forServer("fixture", f.url).save(f.state);
+  const metadataUrl = "https://configured.fixture.invalid/metadata",
+    tokenUrl = "https://configured.fixture.invalid/token";
+  const urls = [];
+  const fetch = async (input, init) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.includes("oauth-protected-resource"))
+      return globalThis.Response.json({ resource: f.url, authorization_servers: [f.base] });
+    if (url === metadataUrl)
+      return globalThis.Response.json({
+        ...f.state.discovery.authorizationServerMetadata,
+        issuer: "https://configured.fixture.invalid",
+        token_endpoint: tokenUrl,
+        token_endpoint_auth_methods_supported: ["client_secret_post"],
+      });
+    assert.equal(url, tokenUrl);
+    const body = new globalThis.URLSearchParams(init.body);
+    assert.equal(body.get("grant_type"), "refresh_token");
+    assert.equal(body.get("client_id"), "static-client");
+    assert.equal(body.get("client_secret"), "fixture-secret");
+    assert.equal(body.get("resource"), f.url);
+    return globalThis.Response.json({ access_token: "NEW", token_type: "Bearer" });
+  };
+  const auth = f.store.authProvider(
+    "fixture",
+    f.url,
+    { clientId: "static-client", clientSecret: "fixture-secret", authServerMetadataUrl: metadataUrl },
+    fetch,
+  );
+  await f.unauthorized(auth, fetch);
+  assert.ok(urls.includes(metadataUrl));
+  assert.ok(!urls.includes(f.base + "/token"));
+  const saved = await f.store.forServer("fixture", f.url).load();
+  assert.deepEqual(saved.discovery, f.state.discovery);
+  assert.equal(saved.tokens.scope, "read");
+  assert.equal(saved.tokens.refresh_token, "OLD_REFRESH");
+  assert.equal(saved.tokensExpireAt, undefined);
+});
+
+test("refresh rejects an insecure configured metadata URL before making requests", async (t) => {
+  const f = refreshFixture(t);
+  await f.store.forServer("fixture", f.url).save(f.state);
+  let requests = 0;
+  const fetch = async () => {
+    requests++;
+    throw new Error("unexpected request");
+  };
+  const auth = f.store.authProvider(
+    "fixture",
+    f.url,
+    { authServerMetadataUrl: "http://remote.fixture.invalid/metadata" },
+    fetch,
+  );
+  await assert.rejects(f.unauthorized(auth, fetch), /https|insecure/i);
+  assert.equal(requests, 0);
+  assert.equal((await f.store.forServer("fixture", f.url).load()).oauthState, f.state.oauthState);
 });

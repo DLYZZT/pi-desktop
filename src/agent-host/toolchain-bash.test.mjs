@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { createToolchainBashOptions } from "./toolchain-bash.ts";
 
 function context(commands) {
@@ -78,3 +81,28 @@ test("reports structured Bash absence and never falls back to PATH", async () =>
   const options = createToolchainBashOptions(context({}), runtime);
   await assert.rejects(options.operations.exec("echo test", { cwd: "/workspace" }), missing);
 });
+
+test(
+  "aborting Desktop Bash does not run the next command in the list",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), "pi-150-bash-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const options = createToolchainBashOptions(context({ "shell.bash": { executable: "/bin/bash" } }));
+    const controller = new globalThis.AbortController();
+    let output = "";
+    await assert.rejects(
+      options.operations.exec("printf 'ready\\n'; /bin/sleep 30; printf 'must-not-run\\n'", root, {
+        signal: controller.signal,
+        timeout: 5,
+        onData: (chunk) => {
+          output += chunk.toString();
+          if (output.includes("ready")) controller.abort();
+        },
+      }),
+      /abort/i,
+    );
+    assert.match(output, /ready/);
+    assert.doesNotMatch(output, /must-not-run/);
+  },
+);

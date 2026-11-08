@@ -46,7 +46,7 @@ function fixture(t, options = {}) {
           issuer: base,
           authorization_response_iss_parameter_supported: options.issuerRequired ?? false,
           client_id_metadata_document_supported: options.cimd ?? false,
-          registration_endpoint: options.cimd ? undefined : base + "/register",
+          registration_endpoint: options.cimd && !options.allowRegistration ? undefined : base + "/register",
           authorization_endpoint: base + "/authorize",
           token_endpoint: base + "/token",
           response_types_supported: ["code"],
@@ -62,7 +62,8 @@ function fixture(t, options = {}) {
           client_name: metadata.client_name,
         };
       } else if (url.endsWith("/token")) {
-        await options.onToken?.(init);
+        const response = await options.onToken?.(init);
+        if (response instanceof globalThis.Response) return response;
         value = {
           access_token: "PRIVATE_MCP_TOKEN",
           token_type: "Bearer",
@@ -432,3 +433,214 @@ test("service logout cancels the target login and preserves another account at t
     "OTHER_ACCOUNT",
   );
 });
+
+async function waitForLogin(manager, requestId, predicate) {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    const snapshot = manager.get(requestId);
+    if (predicate(snapshot)) return snapshot;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail("MCP login did not reach its expected state");
+}
+
+for (const mode of [undefined, "auto", "dcr"]) {
+  test(`Desktop ${mode ?? "default"} registers its own brand even when CIMD is available`, async (t) => {
+    const f = fixture(t, { cimd: true, allowRegistration: true, oauth: mode ? { clientRegistration: mode } : {} });
+    const request = f.start(),
+      auth = new URL(await f.opened);
+    assert.equal(auth.searchParams.get("client_id"), "registered-client");
+    assert.equal(
+      JSON.parse(f.requests.find((entry) => entry.url.endsWith("/register")).body).client_name,
+      "Pi Desktop",
+    );
+    assert.equal((await f.manager.submit(request.requestId, callbackUrl(auth).href)).state, "succeeded");
+    const saved = await f.store.forServer("fixture", f.config.url).load();
+    assert.equal(saved.clientInformation.client_id, "registered-client");
+    assert.equal(saved.tokens.access_token, "PRIVATE_MCP_TOKEN");
+  });
+}
+
+for (const target of ["auto", "cimd"]) {
+  for (const outcome of ["cancel", "failure", "success"]) {
+    test(`switching an existing grant to ${target} commits client and tokens only on ${outcome}`, async (t) => {
+      const f = fixture(t, {
+        cimd: true,
+        allowRegistration: true,
+        issuerRequired: true,
+        oauth: { clientRegistration: target },
+      });
+      const previous = {
+        serverUrl: f.config.url,
+        ...(target === "cimd"
+          ? { clientInformation: { client_id: "previous-dcr", redirect_uris: ["http://127.0.0.1/callback"] } }
+          : {}),
+        tokens: { access_token: "PREVIOUS", refresh_token: "PREVIOUS_REFRESH", token_type: "Bearer" },
+        tokensExpireAt: Date.now() + 3600000,
+        future: "preserve",
+      };
+      await f.store.forServer("fixture", f.config.url).save(previous);
+      const request = f.start(),
+        auth = new URL(await f.opened);
+      const whileWaiting = await f.store.forServer("fixture", f.config.url).load();
+      assert.deepEqual(whileWaiting.tokens, previous.tokens);
+      assert.deepEqual(whileWaiting.clientInformation, previous.clientInformation);
+      assert.equal(whileWaiting.tokensExpireAt, previous.tokensExpireAt);
+      let result;
+      if (outcome === "cancel") result = await f.manager.cancel(request.requestId);
+      else
+        result = await f.manager.submit(
+          request.requestId,
+          callbackUrl(auth, outcome === "success" ? f.base : "https://wrong.invalid").href,
+        );
+      assert.equal(result.state, outcome === "success" ? "succeeded" : outcome === "failure" ? "failed" : "cancelled");
+      const saved = await f.store.forServer("fixture", f.config.url).load();
+      assert.equal(saved.future, "preserve");
+      if (outcome === "success") {
+        assert.equal(saved.tokens.access_token, "PRIVATE_MCP_TOKEN");
+        assert.equal(saved.clientInformation?.client_id, target === "cimd" ? undefined : "registered-client");
+      } else {
+        assert.deepEqual(saved.tokens, previous.tokens);
+        assert.deepEqual(saved.clientInformation, previous.clientInformation);
+        assert.equal(saved.tokensExpireAt, previous.tokensExpireAt);
+      }
+    });
+  }
+}
+
+test("auto reuses a matching DCR redirect but registers for a changed callback", async (t) => {
+  const f = fixture(t, { oauth: { clientRegistration: "auto" } });
+  const first = f.start(),
+    firstAuth = new URL(await f.opened);
+  assert.equal((await f.manager.submit(first.requestId, callbackUrl(firstAuth).href)).state, "succeeded");
+  const second = f.start();
+  const secondAuth = new URL((await waitForLogin(f.manager, second.requestId, (entry) => !!entry.authUrl)).authUrl);
+  assert.equal(secondAuth.searchParams.get("redirect_uri"), firstAuth.searchParams.get("redirect_uri"));
+  assert.equal(f.requests.filter((entry) => entry.url.endsWith("/register")).length, 1);
+  await f.manager.cancel(second.requestId);
+  const third = f.start({
+    config: { ...f.config, oauth: { clientRegistration: "auto", callbackUrl: "http://127.0.0.1/changed" } },
+  });
+  const thirdAuth = new URL((await waitForLogin(f.manager, third.requestId, (entry) => !!entry.authUrl)).authUrl);
+  assert.equal(new URL(thirdAuth.searchParams.get("redirect_uri")).pathname, "/changed");
+  assert.equal(f.requests.filter((entry) => entry.url.endsWith("/register")).length, 2);
+  await f.manager.cancel(third.requestId);
+  const saved = await f.store.forServer("fixture", f.config.url).load();
+  assert.deepEqual(saved.clientInformation.redirect_uris, [firstAuth.searchParams.get("redirect_uri")]);
+});
+
+test("cancelling a new DCR login retains a concurrently refreshed CLI CIMD grant", async (t) => {
+  const f = fixture(t, { cimd: true, allowRegistration: true, oauth: { clientRegistration: "auto" } });
+  await f.store.forServer("fixture", f.config.url).save({
+    serverUrl: f.config.url,
+    tokens: { access_token: "CLI_OLD", refresh_token: "CLI_REFRESH", token_type: "Bearer" },
+    tokensExpireAt: 0,
+  });
+  const request = f.start();
+  await f.opened;
+  const auth = f.store.authProvider("fixture", f.config.url, f.config.oauth, f.loginOptions.fetch);
+  assert.equal(await auth.token(), "PRIVATE_MCP_TOKEN");
+  const refresh = f.requests.find((entry) => entry.url.endsWith("/token"));
+  const body = new globalThis.URLSearchParams(refresh.body);
+  assert.equal(body.get("grant_type"), "refresh_token");
+  assert.match(body.get("client_id"), /^https:\/\/pi\.dev\/oauth\//);
+  await f.manager.cancel(request.requestId);
+  const saved = await f.store.forServer("fixture", f.config.url).load();
+  assert.equal(saved.tokens.access_token, "PRIVATE_MCP_TOKEN");
+  assert.equal(saved.clientInformation, undefined);
+});
+
+for (const previousClient of ["cimd", "dcr"]) {
+  for (const error of ["invalid_client", "unauthorized_client", "invalid_grant"]) {
+    test(`${previousClient} refresh ${error} cannot replace an interactive sign-in`, async (t) => {
+      const f = fixture(t, {
+        cimd: true,
+        allowRegistration: true,
+        oauth: { clientRegistration: "auto" },
+        onToken: async (init) => {
+          const body = new globalThis.URLSearchParams(init.body);
+          if (body.get("grant_type") !== "refresh_token") return;
+          if (previousClient === "cimd") assert.match(body.get("client_id"), /^https:\/\/pi\.dev\/oauth\//);
+          else assert.equal(body.get("client_id"), "old-client");
+          return globalThis.Response.json({ error }, { status: 400 });
+        },
+      });
+      const clientInformation =
+        previousClient === "dcr"
+          ? { client_id: "old-client", redirect_uris: ["http://127.0.0.1/callback"] }
+          : undefined;
+      await f.store.forServer("fixture", f.config.url).save({
+        serverUrl: f.config.url,
+        clientInformation,
+        tokens: { access_token: "OLD", refresh_token: "OLD_REFRESH", token_type: "Bearer" },
+        tokensExpireAt: 0,
+        codeVerifier: "previous-verifier",
+        future: "keep",
+      });
+      const request = f.start(),
+        url = new URL(await f.opened);
+      const pendingState = await f.store.forServer("fixture", f.config.url).load();
+      const auth = f.store.authProvider("fixture", f.config.url, f.config.oauth, f.loginOptions.fetch);
+      assert.equal(await auth.token(), undefined);
+      const afterRefresh = await f.store.forServer("fixture", f.config.url).load();
+      assert.equal(afterRefresh.oauthState, pendingState.oauthState);
+      assert.equal(afterRefresh.codeVerifier, "previous-verifier");
+      assert.equal(afterRefresh.future, "keep");
+      assert.equal(afterRefresh.tokens, undefined);
+      assert.equal(afterRefresh.tokensExpireAt, undefined);
+      assert.deepEqual(afterRefresh.clientInformation, error === "invalid_grant" ? clientInformation : undefined);
+      assert.equal(f.requests.filter((entry) => entry.url.endsWith("/register")).length, 1);
+      assert.equal(f.snapshots.filter((entry) => entry.authUrl).length, 1);
+      assert.equal((await f.manager.submit(request.requestId, callbackUrl(url).href)).state, "succeeded");
+      const saved = await f.store.forServer("fixture", f.config.url).load();
+      assert.equal(saved.tokens.access_token, "PRIVATE_MCP_TOKEN");
+      assert.equal(saved.clientInformation.client_id, "registered-client");
+    });
+  }
+}
+
+test("a configured client replaces old registration metadata only after its grant is issued", async (t) => {
+  const f = fixture(t, { oauth: { clientRegistration: "auto", clientId: "configured-client" } });
+  await f.store.forServer("fixture", f.config.url).save({
+    serverUrl: f.config.url,
+    clientInformation: { client_id: "previous-registration", redirect_uris: ["http://127.0.0.1/callback"] },
+    tokens: { access_token: "PREVIOUS", token_type: "Bearer" },
+  });
+  const request = f.start(),
+    auth = new URL(await f.opened);
+  assert.equal(auth.searchParams.get("client_id"), "configured-client");
+  assert.equal(
+    (await f.store.forServer("fixture", f.config.url).load()).clientInformation.client_id,
+    "previous-registration",
+  );
+  assert.equal((await f.manager.submit(request.requestId, callbackUrl(auth).href)).state, "succeeded");
+  const saved = await f.store.forServer("fixture", f.config.url).load();
+  assert.equal(saved.tokens.access_token, "PRIVATE_MCP_TOKEN");
+  assert.equal(saved.clientInformation, undefined);
+  assert.equal(f.requests.filter((entry) => entry.url.endsWith("/register")).length, 0);
+});
+
+for (const field of ["authorization_endpoint", "token_endpoint", "issuer", "registration_endpoint"]) {
+  test(`unsafe OAuth metadata ${field} fails before browser opening and preserves the prior grant`, async (t) => {
+    const f = fixture(t, { oauth: { clientRegistration: "auto" } });
+    await f.store.forServer("fixture", f.config.url).save({
+      serverUrl: f.config.url,
+      tokens: { access_token: "PRIOR", token_type: "Bearer" },
+    });
+    const fetch = f.loginOptions.fetch;
+    f.loginOptions.fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      if (String(input).includes("oauth-authorization-server") || String(input).includes("openid-configuration")) {
+        const metadata = await response.json();
+        metadata[field] = "file:///unsafe";
+        return new globalThis.Response(JSON.stringify(metadata));
+      }
+      return response;
+    };
+    const request = f.start();
+    const result = await waitForLogin(f.manager, request.requestId, (entry) => entry.state !== "waiting");
+    assert.equal(result.state, "failed");
+    assert.ok(f.snapshots.every((entry) => !entry.authUrl));
+    assert.equal((await f.store.forServer("fixture", f.config.url).load()).tokens.access_token, "PRIOR");
+  });
+}

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   PI_RUNTIME_ROOTS,
@@ -20,6 +21,10 @@ export function validatePiAuthoringAssets({ graph, readPackage, exists, platform
       for (const entry of authoringDocuments) required.add(`${root}/${entry}`);
     }
     if (manifest.name === "@earendil-works/pi-ai") required.add(`${root}/dist/providers/data/amazon-bedrock.json`);
+    if (manifest.name === "@earendil-works/pi-schema") {
+      for (const entry of ["README.md", "dist/formats/index.d.ts", "LICENSES/typebox-LICENSE"])
+        required.add(`${root}/${entry}`);
+    }
     if (manifest.name === "@earendil-works/pi-tui" && platform && arch) {
       const filename = {
         darwin: "darwin-platform.node",
@@ -50,7 +55,17 @@ export function createPiAuthoringFileSets({ graph, readPackage }) {
         "dist/**/*.d.cts",
         ...(manifest.name === "@earendil-works/pi-coding-agent" ? ["docs/**/*", "examples/**/*"] : []),
         // A nested declaration directory shadows the hoisted root package. It needs the complete runtime.
-        ...(nested ? ["package.json", "dist/**/*.js", "dist/**/*.mjs", "dist/**/*.json", "native/**/*"] : []),
+        ...(nested
+          ? [
+              "package.json",
+              "dist/**/*.js",
+              "dist/**/*.mjs",
+              "dist/**/*.json",
+              "native/**/*",
+              "LICENSE",
+              "LICENSES/**/*",
+            ]
+          : []),
       ],
     };
   });
@@ -73,6 +88,12 @@ export function installedPiPackaging(projectRoot) {
   const graph = validatePiPackageGraph({ readPackage, exists, version, rootPackages: PI_RUNTIME_ROOTS });
   validatePiRuntimeAssets({ graph, readPackage, exists });
   validatePiAuthoringAssets({ graph, readPackage, exists });
+  validatePiNotices({
+    graph,
+    readPackage,
+    readFile: (entry) => readFileSync(path.join(projectRoot, entry), "utf8"),
+    notice: readFileSync(path.join(projectRoot, "THIRD_PARTY_NOTICES.md"), "utf8"),
+  });
   const typeboxRoot = resolvePackage("", "typebox", exists);
   const files = [
     ...createPiAuthoringFileSets({ graph, readPackage }),
@@ -80,6 +101,37 @@ export function installedPiPackaging(projectRoot) {
   ];
   assertFileSetSources(projectRoot, files);
   return { graph, files };
+}
+
+/** Check both declared attribution and the complete vendored license in the actual resolved package. */
+export function validatePiNotices({ graph, readPackage, readFile, notice }) {
+  const rows = notice.split(/\r?\n/u).map((line) => line.split("|").map((cell) => cell.trim()));
+  for (const root of graph.keys()) {
+    const { name, version } = readPackage(`${root}/package.json`);
+    const row = rows.find((cells) => cells[1] === `\`${name}\``);
+    if (
+      !row ||
+      row[2] !== version ||
+      !row[4]?.includes(`https://github.com/earendil-works/pi/blob/v${version}/LICENSE`) ||
+      !row[5]?.includes(`https://github.com/earendil-works/pi/tree/v${version}`)
+    )
+      throw new Error(`Pi third-party notice is missing or stale: ${name} ${version}`);
+    if (name === "@earendil-works/pi-schema") {
+      const license = readFile(`${root}/LICENSES/typebox-LICENSE`).replace(/\r\n/gu, "\n").trim();
+      if (
+        createHash("sha256").update(license).digest("hex") !==
+        "e8a7cc256941a26ba8234f04390165243a4d42f74fd6491934140605bf7eae2d"
+      )
+        throw new Error("Pi schema TypeBox license text is missing or changed");
+      if (
+        !notice.includes("Copyright (c) 2017-2026 Haydn Paterson") ||
+        !notice.includes(
+          `https://github.com/earendil-works/pi/blob/v${version}/packages/schema/LICENSES/typebox-LICENSE`,
+        )
+      )
+        throw new Error("Pi schema TypeBox attribution is missing or stale");
+    }
+  }
 }
 
 /** Builder may hoist dependencies; accept only a version actually present in the audited lockfile. */

@@ -155,8 +155,8 @@ export function validateMcpConfig(
         fail("Invalid MCP OAuth metadata URL");
       }
     }
-    if (oauth.clientRegistration !== undefined && !["dcr", "cimd"].includes(String(oauth.clientRegistration)))
-      fail("MCP OAuth clientRegistration must be dcr or cimd");
+    if (oauth.clientRegistration !== undefined && !["auto", "dcr", "cimd"].includes(String(oauth.clientRegistration)))
+      fail("MCP OAuth clientRegistration must be auto, dcr or cimd");
     if (oauth.clientRegistration === "cimd" && (oauth.clientId !== undefined || oauth.clientName !== undefined))
       fail("MCP CIMD cannot be combined with clientId or clientName");
     if (

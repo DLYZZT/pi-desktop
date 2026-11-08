@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import {
   createPiAuthoringFileSets,
   installedPiPackaging,
   validatePiAuthoringAssets,
+  validatePiNotices,
 } from "./pi-packaging.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -20,13 +21,16 @@ for (const layout of ["hoisted", "nested"]) {
     const manifests = new Map();
     const graph = new Map();
     const files = new Set();
-    for (const name of ["pi-coding-agent", "pi-ai", "pi-tui", "pi-telemetry"]) {
+    for (const name of ["pi-coding-agent", "pi-ai", "pi-tui", "pi-telemetry", "pi-schema"]) {
       const directory = `${name === "pi-coding-agent" ? "" : prefix}node_modules/@earendil-works/${name}`;
       graph.set(directory, "1.0.4");
       manifests.set(`${directory}/package.json`, { name: `@earendil-works/${name}`, types: "./dist/index.d.ts" });
       files.add(`${directory}/dist/index.d.ts`);
       if (name === "pi-ai") files.add(`${directory}/dist/providers/data/amazon-bedrock.json`);
       if (name === "pi-tui") files.add(`${directory}/native/darwin/prebuilds/darwin-arm64/darwin-platform.node`);
+      if (name === "pi-schema")
+        for (const entry of ["README.md", "dist/formats/index.d.ts", "LICENSES/typebox-LICENSE"])
+          files.add(`${directory}/${entry}`);
     }
     for (const entry of ["README.md", "CHANGELOG.md", "docs/sdk.md", "docs/extensions.md", "docs/codemode.md"])
       files.add(`${coding}/${entry}`);
@@ -59,6 +63,33 @@ test("a missing FileSet source fails before electron-builder can silently omit i
     /FileSet source is missing/,
   );
   assert.doesNotThrow(() => assertFileSetSources(root, ["out/**/*", { from: "node_modules" }]));
+});
+
+test("Pi notices reject stale versions/links and incomplete TypeBox license text", () => {
+  const { graph } = installedPiPackaging(root);
+  const notice = readFileSync(path.join(root, "THIRD_PARTY_NOTICES.md"), "utf8");
+  const readFile = (entry) => readFileSync(path.join(root, entry), "utf8");
+  const options = { graph, readFile, readPackage: (entry) => JSON.parse(readFile(entry)), notice };
+  assert.doesNotThrow(() => validatePiNotices(options));
+  for (const directory of graph.keys()) {
+    const { name, version } = options.readPackage(`${directory}/package.json`);
+    const line = notice.split("\n").find((entry) => entry.includes(`\`${name}\``));
+    for (const broken of ["", line.replace(version, "0.0.0"), line.replace(`/blob/v${version}/`, "/blob/v0.0.0/")])
+      assert.throws(() => validatePiNotices({ ...options, notice: notice.replace(line, broken) }), /missing or stale/);
+  }
+  assert.throws(
+    () => validatePiNotices({ ...options, notice: notice.replace("Copyright (c) 2017-2026 Haydn Paterson", "") }),
+    /attribution/,
+  );
+  assert.throws(
+    () =>
+      validatePiNotices({
+        ...options,
+        readFile: (entry) =>
+          entry.endsWith("typebox-LICENSE") ? "Copyright (c) 2017-2026 Haydn Paterson" : readFile(entry),
+      }),
+    /license text/,
+  );
 });
 
 test("ASAR package validation handles hoisting but rejects stale, unknown and contradictory locked versions", () => {

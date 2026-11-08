@@ -145,18 +145,58 @@ test("0.99.1 asset validation resolves WASM through the importing package and re
 });
 
 test("asset validation requires the published models schema independent of the SDK version", () => {
-  for (const version of ["1.2.0", "1.4.0"]) {
+  for (const version of ["1.2.0", "1.4.0", "1.5.0"]) {
     const root = "node_modules/@earendil-works/pi-coding-agent";
     const schema = `${root}/schemas/models.schema.json`;
     const files = new Set([schema]);
+    if (version === "1.5.0") files.add(`${root}/dist/core/extensions/pi-ai-extension-view.js`);
     const check = () =>
       validatePiRuntimeAssets({
         graph: new Map([[root, version]]),
         readPackage: () => ({ name: "@earendil-works/pi-coding-agent", version }),
         exists: (p) => files.has(p),
       });
-    assert.deepEqual([...check()], [schema]);
+    assert.deepEqual(new Set(check()), files);
     files.delete(schema);
     assert.throws(check, /runtime asset is missing: .*models\.schema\.json/);
   }
+});
+
+for (const layout of ["hoisted", "nested"]) {
+  test(`1.5 schema dependency ${layout} checks its resolved version, runtime and formats entry`, () => {
+    const f = fixture("1.5.0");
+    const ai = "node_modules/@earendil-works/pi-ai";
+    f.packages.get(`${ai}/package.json`).dependencies = { "@earendil-works/pi-schema": "1.5.0" };
+    assert.throws(f.check, /missing: @earendil-works\/pi-schema/);
+    const schema = f.add("pi-schema", {}, layout === "nested" ? `${ai}/` : "");
+    assert.ok(f.check().has(schema));
+    f.packages.get(`${schema}/package.json`).version = "1.4.0";
+    assert.throws(f.check, /version mismatch/);
+    f.packages.get(`${schema}/package.json`).version = "1.5.0";
+    f.files.delete(`${schema}/dist/index.js`);
+    assert.throws(f.check, /entry is missing/);
+    f.files.add(`${schema}/dist/index.js`);
+    const checkAssets = () =>
+      validatePiRuntimeAssets({
+        graph: new Map([[schema, "1.5.0"]]),
+        readPackage: (p) => f.packages.get(p),
+        exists: (p) => f.files.has(p),
+      });
+    assert.throws(checkAssets, /formats\/index.js/);
+    f.files.add(`${schema}/dist/formats/index.js`);
+    assert.equal(checkAssets().size, 1);
+  });
+}
+
+test("1.5 asset validation refuses a missing extension TypeBox compatibility view", () => {
+  const root = "node_modules/@earendil-works/pi-coding-agent";
+  assert.throws(
+    () =>
+      validatePiRuntimeAssets({
+        graph: new Map([[root, "1.5.0"]]),
+        readPackage: () => ({ name: "@earendil-works/pi-coding-agent", version: "1.5.0" }),
+        exists: (p) => p.endsWith("models.schema.json"),
+      }),
+    /pi-ai-extension-view/,
+  );
 });

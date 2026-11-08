@@ -82,6 +82,8 @@ export interface AssistantMessage {
   content: AssistantContentBlock[];
   model: string;
   provider: string;
+  /** Concrete model reported by the provider; the requested model remains the selection identity. */
+  responseModel?: string;
   stopReason?: string;
   errorMessage?: string;
   timestamp?: number;
@@ -96,6 +98,7 @@ export interface AssistantMessage {
       cacheRead: number;
       cacheWrite: number;
       total: number;
+      totalFromProvider?: boolean;
     };
   };
 }
@@ -138,7 +141,14 @@ export interface Usage {
   cacheRead: number;
   cacheWrite: number;
   totalTokens?: number;
-  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+    totalFromProvider?: boolean;
+  };
 }
 
 export type ExtensionUiConfirmLocalization =

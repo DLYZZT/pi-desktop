@@ -17,7 +17,8 @@ export interface McpServerConfig {
     callbackUrl?: string;
     scope?: string;
     clientName?: string;
-    clientRegistration?: "dcr" | "cimd";
+    /** Desktop's auto mode registers as Pi Desktop; cimd explicitly uses Pi's identity. */
+    clientRegistration?: "auto" | "dcr" | "cimd";
     authServerMetadataUrl?: string;
     [key: string]: unknown;
   };

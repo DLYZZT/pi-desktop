@@ -1,5 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { authorizeMcp, type OAuthCallback, type OAuthCallbackServer } from "@earendil-works/pi-mcp/oauth";
+import {
+  authorizeMcp,
+  MemoryOAuthStateStore,
+  type OAuthCallback,
+  type OAuthCallbackServer,
+} from "@earendil-works/pi-mcp/oauth";
 import type { McpFetch } from "@earendil-works/pi-mcp";
 import type { McpOAuthSnapshot, McpServerConfig, McpTarget } from "../../contract/mcp";
 import { RpcError } from "../../contract/types";
@@ -9,7 +14,7 @@ import { resolveMcpValue } from "./connection";
 import { validateMcpConfig } from "./config-store";
 import { McpOAuthStore } from "./oauth-store";
 import { listenMcpCallback, registeredMcpRedirects } from "./oauth-callback";
-import { mcpCredentialKey, mergeMcpScopes } from "./oauth-identity";
+import { mcpClientRegistration, mcpCredentialKey, mergeMcpScopes } from "./oauth-identity";
 
 export interface McpLoginInput {
   name: string;
@@ -174,6 +179,7 @@ export class McpOAuthLoginManager {
       const challenge = this.store.challenge(name, config);
       let scope: string | undefined;
       const flowState = randomBytes(32).toString("hex");
+      const authorizationStore = new MemoryOAuthStateStore();
       pending.callback = await listenMcpCallback(serverUrl, oauth, stored);
       signal.throwIfAborted();
       await this.store.withRefreshLock(
@@ -186,16 +192,17 @@ export class McpOAuthLoginManager {
           const next = { ...(current ?? { serverUrl: String(new URL(serverUrl)) }), oauthState: flowState };
           delete next.codeVerifier;
           const keepClient =
-            oauth.clientId ||
-            (oauth.clientRegistration === "cimd"
-              ? !current?.clientInformation
-              : registeredMcpRedirects(current).includes(pending.callback!.redirectUrl));
-          if (!keepClient) {
-            delete next.clientInformation;
-            delete next.tokens;
-            delete next.tokensExpireAt;
-          }
-          await store.save(next);
+            !oauth.clientId &&
+            mcpClientRegistration(oauth) !== "cimd" &&
+            registeredMcpRedirects(current).includes(pending.callback!.redirectUrl);
+          if (!keepClient) delete next.clientInformation;
+          // This attempt must obtain a new grant, including when a configured client overrides a registration.
+          delete next.tokens;
+          delete next.tokensExpireAt;
+          // Discovery, registration and PKCE stay private to this attempt. Reserve only the flow
+          // identity on disk, retaining the previous client/tokens through cancellation or failure.
+          authorizationStore.save(next);
+          await store.save({ ...(current ?? { serverUrl: String(new URL(serverUrl)) }), oauthState: flowState });
         },
         signal,
       );
@@ -214,10 +221,18 @@ export class McpOAuthLoginManager {
         },
         signal,
         flowState,
+        authorizationStore,
       );
       // Once the code exchange starts, a cancelled UI must not discard a newly issued grant.
       provider.saveTokens = async (tokens) => {
-        await this.store.commitAuthorization(name, serverUrl, tokens, flowState, pending.commitController.signal);
+        await this.store.commitAuthorization(
+          name,
+          serverUrl,
+          tokens,
+          flowState,
+          pending.commitController.signal,
+          authorizationStore.load(),
+        );
         pending.committed = true;
       };
       const flow = {
@@ -272,6 +287,7 @@ export class McpOAuthLoginManager {
               undefined,
               pending.commitController.signal,
               flowState,
+              authorizationStore,
             );
             exchangeProvider.saveTokens = provider.saveTokens;
             const exchanged = await authorizeMcp(exchangeProvider, {

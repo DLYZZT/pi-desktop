@@ -15,7 +15,7 @@ import {
   validatePiPackageGraph,
   validatePiRuntimeAssets,
 } from "./pi-runtime-contract.mjs";
-import { assertLockedPackage, validatePiAuthoringAssets } from "./pi-packaging.mjs";
+import { assertLockedPackage, validatePiAuthoringAssets, validatePiNotices } from "./pi-packaging.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const expectedPiVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).dependencies?.[
@@ -272,6 +272,12 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
   });
   validatePiRuntimeAssets({ graph, readPackage, exists });
   validatePiAuthoringAssets({ graph, readPackage, exists, platform, arch });
+  validatePiNotices({
+    graph,
+    readPackage,
+    readFile: (entry) => extractAsarFile(asarPath, entry).toString("utf8"),
+    notice: fs.readFileSync(path.join(resources, "THIRD_PARTY_NOTICES.md"), "utf8"),
+  });
   const codingAgentRoot = resolvePackage("", "@earendil-works/pi-coding-agent", exists);
   const grokRoot = resolvePackage(codingAgentRoot, "grok-mermaid", exists);
   const typeboxRoot = resolvePackage("", "typebox", exists);

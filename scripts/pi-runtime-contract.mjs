@@ -2,9 +2,10 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import semver from "semver";
 
 const runtimePackages =
-  /^@earendil-works\/(?:pi-(?:ai|coding-agent|codemode|mcp|server|agent-core|client|protocol|telemetry|tui)|chord)$/;
+  /^@earendil-works\/(?:pi-(?:ai|coding-agent|codemode|mcp|schema|server|agent-core|client|protocol|telemetry|tui)|chord)$/;
 
 export const PI_RUNTIME_ROOTS = Object.freeze(["pi-ai", "pi-coding-agent", "pi-mcp", "pi-telemetry"]);
 
@@ -62,7 +63,11 @@ export function validatePiRuntimeAssets({ graph, readPackage, exists }) {
     const manifest = readPackage(`${root}/package.json`);
     if (manifest.name === "@earendil-works/pi-ai") required.add(`${root}/dist/auth/oauth/openai-chatgpt.js`);
     // models-config-validation reads the published schema for every supported SDK version.
-    if (manifest.name === "@earendil-works/pi-coding-agent") required.add(`${root}/schemas/models.schema.json`);
+    if (manifest.name === "@earendil-works/pi-coding-agent") {
+      required.add(`${root}/schemas/models.schema.json`);
+      if (semver.gte(manifest.version, "1.5.0")) required.add(`${root}/dist/core/extensions/pi-ai-extension-view.js`);
+    }
+    if (manifest.name === "@earendil-works/pi-schema") required.add(`${root}/dist/formats/index.js`);
     if (manifest.name === "@earendil-works/pi-mcp") required.add(`${root}/dist/oauth/index.js`);
     if (manifest.name === "@earendil-works/pi-codemode") {
       required.add(`${root}/dist/runtime/worker.js`);

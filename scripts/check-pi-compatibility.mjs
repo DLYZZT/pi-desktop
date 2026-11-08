@@ -8,6 +8,7 @@ import {
 } from "./pi-runtime-contract.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { validatePiNotices } from "./pi-packaging.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const directPackages = PI_RUNTIME_ROOTS.map((name) => `@earendil-works/${name}`);
@@ -37,6 +38,12 @@ const graph = validatePiPackageGraph({
   rootPackages: PI_RUNTIME_ROOTS,
 });
 validatePiRuntimeAssets({ graph, readPackage: readJson, exists: (entry) => existsSync(path.join(root, entry)) });
+validatePiNotices({
+  graph,
+  readPackage: readJson,
+  readFile: (entry) => readFileSync(path.join(root, entry), "utf8"),
+  notice: readFileSync(path.join(root, "THIRD_PARTY_NOTICES.md"), "utf8"),
+});
 for (const [entry, version] of graph) {
   if (lockfile.packages?.[entry]?.version !== version) fail(`installed Pi package differs from lockfile: ${entry}`);
 }
@@ -63,8 +70,9 @@ for (const packageName of directPackages) {
   const installed = readJson(`node_modules/${packageName}/package.json`).version;
   if (installed !== targetVersion) fail(`installed ${packageName} is ${installed}, expected ${targetVersion}`);
 }
-if (packageJson.overrides?.["@earendil-works/pi-telemetry"] !== targetVersion) {
-  fail(`@earendil-works/pi-telemetry override must be ${targetVersion}`);
+for (const name of ["pi-agent-core", "pi-codemode", "pi-schema", "pi-telemetry", "pi-tui"]) {
+  if (packageJson.overrides?.[`@earendil-works/${name}`] !== targetVersion)
+    fail(`@earendil-works/${name} override must be ${targetVersion}`);
 }
 if (packageJson.dependencies?.["@earendil-works/pi-telemetry"] !== targetVersion) {
   fail(`@earendil-works/pi-telemetry must be an exact root dependency at ${targetVersion}`);

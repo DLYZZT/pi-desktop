@@ -47,6 +47,17 @@ test("MCP OAuth and provider authentication reject unsafe or contradictory confi
   assert.doesNotThrow(() =>
     validateMcpConfig("fixture", { url: "http://127.0.0.1:1234", auth: { provider: "radius" } }, "extension"),
   );
+  for (const clientRegistration of ["auto", "dcr", "cimd"])
+    assert.doesNotThrow(() => validateMcpConfig("fixture", { url, oauth: { clientRegistration } }));
+});
+
+test("CLI auto registration round-trips through Desktop configuration", async (t) => {
+  const { store } = fixture(t);
+  const config = { url: "https://mcp.example.invalid", oauth: { clientRegistration: "auto" } };
+  await store.upsert("global", undefined, "auto-server", config, "missing");
+  const raw = JSON.parse(readFileSync(store.filename("global"), "utf8"));
+  assert.equal(raw.mcpServers["auto-server"].oauth.clientRegistration, "auto");
+  assert.deepEqual((await store.effective("/unused", false)).errors, []);
 });
 
 test("normalization collisions cannot be written or used to share one credential identity", async (t) => {

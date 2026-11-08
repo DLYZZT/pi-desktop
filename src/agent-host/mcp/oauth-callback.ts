@@ -1,6 +1,6 @@
 import { OAuthCallbackServer, type McpOAuthState } from "@earendil-works/pi-mcp/oauth";
 import type { McpServerConfig } from "../../contract/mcp";
-import { mcpCallbackId } from "./oauth-identity";
+import { mcpCallbackId, mcpClientRegistration } from "./oauth-identity";
 import { validateMcpConfig } from "./config-store";
 
 export function registeredMcpRedirects(state: McpOAuthState | undefined): string[] {
@@ -25,7 +25,7 @@ export async function listenMcpCallback(
     host: host === "localhost" ? "127.0.0.1" : host,
     redirectHost: host,
     path: configured.pathname,
-    extraPaths: oauth?.clientRegistration === "cimd" ? [`/callback/${mcpCallbackId(serverUrl)}`] : [],
+    extraPaths: mcpClientRegistration(oauth) === "cimd" ? [`/callback/${mcpCallbackId(serverUrl)}`] : [],
     timeoutMs: 300000,
   };
   try {

@@ -6,8 +6,8 @@ import lockfile from "proper-lockfile";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
   McpOAuthProvider,
-  authorizeMcp,
   McpOAuthAuthorizationRequiredError,
+  OAuthError,
   parseWwwAuthenticate,
   type McpOAuthState,
   type McpOAuthStateStore,
@@ -17,12 +17,20 @@ import {
 import type { AuthProvider, McpFetch } from "@earendil-works/pi-mcp";
 import type { McpServerConfig } from "../../contract/mcp";
 import { withLockedJsonFile } from "../../shared/node/locked-json-file";
-import { mcpAuthConfiguration, mcpClientDocument, mcpCredentialKey, mergeMcpScopes } from "./oauth-identity";
+import {
+  mcpAuthConfiguration,
+  mcpClientDocument,
+  mcpClientRegistration,
+  mcpCredentialKey,
+  mergeMcpScopes,
+} from "./oauth-identity";
+import { refreshMcpGrant, type McpRefreshResult } from "./oauth-refresh";
 
 type StoredChallenge = { configuration: string; challenge: OAuthChallenge; expiresAt: number };
 const stateRevision = Symbol("MCP OAuth state revision");
 const revision = (state: unknown) =>
   state === undefined ? "missing" : createHash("sha256").update(JSON.stringify(state)).digest("hex");
+const grantRevision = (state: McpOAuthState) => revision([state.clientInformation, state.tokens, state.tokensExpireAt]);
 
 /** Pi 1.x name/URL keys and refresh locks, shared with the CLI. */
 export class McpOAuthStore {
@@ -112,6 +120,7 @@ export class McpOAuthStore {
     tokens: OAuthTokens,
     state: string,
     signal: AbortSignal,
+    authorization?: McpOAuthState,
   ): Promise<void> {
     const key = mcpCredentialKey(name, serverUrl),
       url = String(new URL(serverUrl));
@@ -121,13 +130,62 @@ export class McpOAuthStore {
         const current = states[key] as McpOAuthState | undefined;
         if (!current || current.serverUrl !== url || current.oauthState !== state)
           throw new Error("MCP sign-in was replaced or signed out before its credentials could be saved");
+        if (authorization && (authorization.serverUrl !== url || authorization.oauthState !== state))
+          throw new Error("MCP authorization belongs to another sign-in");
+        // Client information and its tokens must change together. Until now, the prior grant stayed usable.
         const next = { ...current, tokens };
+        if (authorization) {
+          next.clientInformation = authorization.clientInformation;
+          next.codeVerifier = authorization.codeVerifier;
+          next.discovery = authorization.discovery;
+        }
         if (tokens.expires_in === undefined) delete next.tokensExpireAt;
         else next.tokensExpireAt = Date.now() + tokens.expires_in * 1000;
         states[key] = next;
         await save(states);
       },
       signal,
+      { allowEmpty: true },
+    );
+  }
+  /** Refresh owns only the grant, never an interactive flow's state or PKCE verifier. */
+  private async commitRefresh(
+    name: string,
+    serverUrl: string,
+    expected: McpOAuthState,
+    update: McpRefreshResult | { invalidClient: boolean },
+  ): Promise<boolean> {
+    const key = mcpCredentialKey(name, serverUrl),
+      url = String(new URL(serverUrl));
+    return withLockedJsonFile(
+      this.filename,
+      async (states, save) => {
+        const current = states[key] as McpOAuthState | undefined;
+        if (!current || current.serverUrl !== url || grantRevision(current) !== grantRevision(expected)) {
+          // A different process may sign in or out without taking our refresh lock.
+          // Reuse its newer token, but never resurrect a deleted or invalidated grant.
+          if (current?.serverUrl === url && current.tokens?.access_token) return false;
+          throw new McpOAuthAuthorizationRequiredError();
+        }
+        const next = { ...current };
+        if ("tokens" in update) {
+          next.tokens = update.tokens;
+          if (update.tokens.expires_in === undefined) delete next.tokensExpireAt;
+          else next.tokensExpireAt = Date.now() + update.tokens.expires_in * 1000;
+          if (update.discovery !== undefined) next.discovery = update.discovery;
+        } else {
+          delete next.tokens;
+          delete next.tokensExpireAt;
+          if (update.invalidClient) {
+            delete next.clientInformation;
+            delete next.discovery;
+          }
+        }
+        states[key] = next;
+        await save(states);
+        return true;
+      },
+      undefined,
       { allowEmpty: true },
     );
   }
@@ -217,18 +275,19 @@ export class McpOAuthStore {
     },
     signal?: AbortSignal,
     expectedState?: string,
+    authorizationStore?: McpOAuthStateStore,
   ) {
     return new McpOAuthProvider({
       serverUrl,
       redirectUrl,
       clientMetadata: { client_name: oauth.clientName ?? "Pi Desktop" },
       clientMetadataDocument:
-        oauth.clientRegistration === "cimd"
+        mcpClientRegistration(oauth) === "cimd"
           ? (metadata) => mcpClientDocument(serverUrl, redirectUrl, metadata)
           : undefined,
       clientId: oauth.clientId,
       clientSecret: oauth.clientSecret,
-      store: this.forServer(name, serverUrl, signal, expectedState),
+      store: authorizationStore ?? this.forServer(name, serverUrl, signal, expectedState),
       onRedirect,
     });
   }
@@ -248,12 +307,7 @@ export class McpOAuthStore {
       if (!isCurrent() || this.signedOut.get(key) !== generation) throw new McpOAuthAuthorizationRequiredError();
     };
     let refreshing: Promise<void> | undefined;
-    const refresh = (
-      staleToken?: string,
-      fetch: McpFetch = fetcher,
-      resourceMetadataUrl?: URL,
-      scope?: string,
-    ): Promise<void> =>
+    const refresh = (staleToken?: string, fetch: McpFetch = fetcher, resourceMetadataUrl?: URL): Promise<void> =>
       (refreshing ??= this.withRefreshLock(
         name,
         serverUrl,
@@ -262,23 +316,27 @@ export class McpOAuthStore {
           assertCurrent();
           if (state?.tokens?.access_token !== staleToken) return;
           if (!state?.tokens?.refresh_token) throw new McpOAuthAuthorizationRequiredError();
-          const registered = state.clientInformation as { redirect_uris?: string[] } | undefined;
-          const redirect = oauth.callbackUrl ?? registered?.redirect_uris?.[0] ?? "http://127.0.0.1/callback";
-          const provider = this.provider(name, serverUrl, oauth, redirect);
           const refreshSignal = AbortSignal.timeout(15000);
-          const result = await authorizeMcp(provider, {
-            serverUrl,
-            resourceMetadataUrl,
-            scope,
-            authorizationServerMetadataUrl: oauth.authServerMetadataUrl
-              ? new URL(oauth.authServerMetadataUrl)
-              : undefined,
-            // A started refresh may rotate the token; allow its response to be persisted before shutdown.
-            // The SDK also observes this deadline, so timeout cannot start a new authorization flow.
-            signal: refreshSignal,
-            fetch,
-          });
-          if (result !== "AUTHORIZED") throw new McpOAuthAuthorizationRequiredError();
+          let result: McpRefreshResult;
+          try {
+            result = await refreshMcpGrant(serverUrl, oauth, state, fetch, refreshSignal, resourceMetadataUrl);
+          } catch (error) {
+            if (
+              error instanceof OAuthError &&
+              ["invalid_client", "unauthorized_client", "invalid_grant"].includes(error.code)
+            ) {
+              assertCurrent();
+              const invalidated = await this.commitRefresh(name, serverUrl, state, {
+                invalidClient: error.code !== "invalid_grant",
+              });
+              if (!invalidated) return;
+              throw new McpOAuthAuthorizationRequiredError();
+            }
+            throw error;
+          }
+          // A started refresh may rotate the token. Closing the connection cannot discard it;
+          // the grant comparison still prevents a late response from overwriting a newer login.
+          await this.commitRefresh(name, serverUrl, state, result);
         },
         signal,
       ).finally(() => {
@@ -306,7 +364,7 @@ export class McpOAuthStore {
         if (current !== undefined && current !== context.token) return;
         this.rememberChallenge(name, serverUrl, configuration, challenge);
         if (challenge.error === "insufficient_scope") throw new McpOAuthAuthorizationRequiredError();
-        await refresh(context.token, context.fetch, challenge.resourceMetadataUrl, challenge.scope);
+        await refresh(context.token, context.fetch, challenge.resourceMetadataUrl);
       },
       settled: async () => {
         await refreshing?.catch(() => undefined);

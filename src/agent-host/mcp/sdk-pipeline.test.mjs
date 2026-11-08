@@ -35,6 +35,9 @@ for (const mode of ["nested", "codemode", "search"])
     setAgentSessionSource(manager, "local");
     const policy = new SessionToolPolicy(manager, undefined, ["caller", "codemode", "tool_search"]);
     let mcpCalls = 0;
+    const receivedArguments = [];
+    const originalArguments = { text: "原始参数", limit: 10.7, names: null, choice: 2.5 };
+    let toolArguments = originalArguments;
     const history = new SessionExecutionHistory(manager, path.join(root, "desktop"));
     await history.recover();
     const mcp = new McpService(
@@ -46,7 +49,10 @@ for (const mode of ["nested", "codemode", "search"])
             const { client, server } = createInMemoryTransportPair();
             server.onMessage((request) => {
               if (request.id === undefined) return;
-              if (request.method === "tools/call") mcpCalls++;
+              if (request.method === "tools/call") {
+                mcpCalls++;
+                receivedArguments.push(request.params.arguments);
+              }
               const result =
                 request.method === "initialize"
                   ? {
@@ -61,8 +67,13 @@ for (const mode of ["nested", "codemode", "search"])
                             name: "echo",
                             inputSchema: {
                               type: "object",
-                              properties: { text: { type: "string" } },
-                              required: ["text"],
+                              properties: {
+                                text: { type: "string" },
+                                limit: { type: "integer", maximum: 10 },
+                                names: { type: "array", items: { type: "string" } },
+                                choice: { anyOf: [{ type: "integer" }, { type: "string" }] },
+                              },
+                              required: ["text", "limit", "names", "choice"],
                             },
                           },
                         ],
@@ -136,7 +147,7 @@ for (const mode of ["nested", "codemode", "search"])
           description: "Nested MCP fixture",
           parameters: Type.Object({}),
           execute: async (_id, _params, _signal, _update, ctx) =>
-            (await ctx.executeTool("mcp__fixture__echo", { text: "原始参数" })).result,
+            (await ctx.executeTool("mcp__fixture__echo", toolArguments)).result,
         },
       ],
     });
@@ -180,12 +191,12 @@ for (const mode of ["nested", "codemode", "search"])
                     : mode === "search"
                       ? { query: "fixture echo" }
                       : {
-                          code: 'const result = await tools.mcp__fixture__echo({text: "原始参数"}); text(result.structuredContent.original); text("CODEMODE_FULL_" + "界".repeat(50000));',
+                          code: `const result = await tools.mcp__fixture__echo(${JSON.stringify(toolArguments)}); text(result.structuredContent.original); text("CODEMODE_FULL_" + "界".repeat(50000));`,
                         },
               },
             ]
           : secondSearch
-            ? [{ type: "toolCall", id: "direct-mcp", name: "mcp__fixture__echo", arguments: { text: "原始参数" } }]
+            ? [{ type: "toolCall", id: "direct-mcp", name: "mcp__fixture__echo", arguments: toolArguments }]
             : [{ type: "text", text: "done" }],
         api: model.api,
         provider: model.provider,
@@ -215,11 +226,12 @@ for (const mode of ["nested", "codemode", "search"])
     calls = 0;
     await session.prompt("Call the granted MCP fixture", { source: "rpc" });
     assert.equal(mcpCalls, 1);
+    assert.deepEqual(receivedArguments, [{ text: "原始参数", limit: 10, names: ["null"], choice: 2 }]);
     const page = await history.query({ includeContent: true, maxContentBytes: 2097152 }),
       child = page.records.find((record) => record.toolName === "mcp__fixture__echo");
     assert.equal(child.status, "succeeded", JSON.stringify(child.result));
     assert.equal(child.parentToolCallId, mode === "search" ? undefined : "parent");
-    assert.equal(child.arguments.value.text, "原始参数");
+    assert.deepEqual(child.arguments.value, originalArguments);
     assert.equal(child.result.value.structuredContent.structuredContent.original, "原始参数");
     assert.equal(child.result.value.structuredContent._meta.originalMeta, true);
     assert.ok(child.result.value.structuredContent.content[0].text.endsWith("界".repeat(12000)));
@@ -243,6 +255,16 @@ for (const mode of ["nested", "codemode", "search"])
       const exported = await history.store.exportBundle();
       assert.equal(exported.content[parent.output.ref.hash], parent.output.value);
     }
+    toolArguments = { ...originalArguments, limit: "not-a-number" };
+    calls = 0;
+    await session.prompt("Invalid arguments must never reach the MCP server", { source: "rpc" });
+    assert.equal(mcpCalls, 1);
+    const invalid = (await history.query({ includeContent: true })).records.find(
+      (record) => record.toolName === "mcp__fixture__echo",
+    );
+    assert.equal(invalid.status, "failed");
+    assert.equal(invalid.arguments.value.limit, "not-a-number");
+    toolArguments = originalArguments;
     mcp.grant(manager.getSessionId(), []);
     calls = 0;
     await session.prompt("Attempt MCP after revocation", { source: "rpc" });

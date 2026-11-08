@@ -195,6 +195,7 @@ export async function runSmokeHostChecks(
         "-c",
         "user.email=smoke@example.invalid",
         "commit",
+        "--no-gpg-sign",
         "-qm",
         "initial",
       ]);

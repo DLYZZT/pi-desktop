@@ -22,6 +22,11 @@ export function mcpCallbackId(serverUrl: string): string {
   return createHash("sha256").update(url.href).digest().subarray(0, 9).toString("base64url");
 }
 
+/** Auto uses the Desktop brand, not the embedded CLI's APP_NAME (pi). CIMD is an explicit choice. */
+export function mcpClientRegistration(oauth: McpServerConfig["oauth"]): "dcr" | "cimd" {
+  return oauth?.clientRegistration === "cimd" ? "cimd" : "dcr";
+}
+
 /** Same Pi CIMD documents and server-bound callback paths as the 1.0.4 CLI. */
 export function mcpClientDocument(
   serverUrl: string,
