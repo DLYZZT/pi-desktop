@@ -60,7 +60,15 @@ jobs:
         run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc
 
       - name: Install Electron binary
-        run: npx install-electron --no
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs electron
+
+      - name: Prepare verified bundled search tools (Windows)
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs tools win32-x64
 
       - name: Check Windows Electron and MCP integration early
         if: runner.os == 'Windows'
@@ -68,7 +76,6 @@ jobs:
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $true
           npm run build
-          npm run prepare:bundled-tools -- --target win32-x64
           npm run smoke
 
       - name: Validate native PowerShell 5.1 and 7
@@ -118,38 +125,9 @@ jobs:
 
       - name: Download pinned Herdr v0.8.2 fixture (macOS/Linux)
         if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "${{ runner.os }}-$(uname -m)" in
-            macOS-arm64)
-              asset="herdr-macos-aarch64"
-              expected="a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574"
-              ;;
-            macOS-x86_64)
-              asset="herdr-macos-x86_64"
-              expected="ab50262c8190cd7aa9056d249d255c08c328c3e8716de9cfa29db4f131b8e2c1"
-              ;;
-            Linux-x86_64)
-              asset="herdr-linux-x86_64"
-              expected="976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4"
-              ;;
-            *)
-              echo "Unsupported Herdr E2E runner: ${{ runner.os }}-$(uname -m)" >&2
-              exit 1
-              ;;
-          esac
-          fixture="$RUNNER_TEMP/herdr-v0.8.2"
-          curl --fail --location --retry 3 --output "$fixture" \
-            "https://github.com/herdrdev/herdr/releases/download/v0.8.2/$asset"
-          if command -v shasum >/dev/null 2>&1; then
-            actual="$(shasum -a 256 "$fixture" | awk '{print $1}')"
-          else
-            actual="$(sha256sum "$fixture" | awk '{print $1}')"
-          fi
-          test "$actual" = "$expected"
-          chmod 700 "$fixture"
-          echo "HERDR_E2E_BINARY=$fixture" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs herdr-fixture
 
       - name: Configure Electron sandbox for Herdr Desktop E2E (Linux)
         if: runner.os == 'Linux'
@@ -268,10 +246,14 @@ jobs:
         run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc
 
       - name: Install Electron binary
-        run: npx install-electron --no
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs electron
 
       - name: Prepare verified bundled search tools
-        run: npm run prepare:bundled-tools -- --target linux-x64
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs tools linux-x64
 
       - name: Configure Electron sandbox
         run: |
@@ -334,9 +316,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Electron runtime for Windows acceptance
-        if: runner.os == 'Windows'
-        run: npx install-electron --no
+      - name: Install verified Electron runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs electron
 
       - name: Install pinned Rust toolchain (Windows)
         if: runner.os == 'Windows'
@@ -359,7 +342,9 @@ jobs:
           npm run test:managed-process-workflows
 
       - name: Prepare verified bundled search tools
-        run: npm run prepare:bundled-tools -- --target ${{ matrix.tool_target }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs tools ${{ matrix.tool_target }}
 
       - name: Run native Windows Herdr integration
         if: runner.os == 'Windows'
@@ -371,8 +356,10 @@ jobs:
         run: npm run smoke
 
       - name: Package ${{ matrix.name }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
-        run: npx electron-builder --${{ matrix.platform }} ${{ matrix.targets }} --${{ matrix.arch }} --publish never
+        run: node scripts/ci-downloads.mjs builder --${{ matrix.platform }} ${{ matrix.targets }} --${{ matrix.arch }} --publish never
 
       - name: Generate and verify Windows SBOM
         if: runner.os == 'Windows'
@@ -398,13 +385,21 @@ jobs:
         if: runner.os == 'Windows'
         run: npm run check:packaged-toolchains -- ${{ matrix.tool_target }} --release-helper
 
+      - name: Download pinned previous Windows installer
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $previous = Join-Path $env:RUNNER_TEMP "Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe"
+          node scripts/ci-downloads.mjs asset "https://github.com/DLYZZT/pi-desktop/releases/download/v0.1.10/Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe" $previous "5d99744a18f7495c987146a44718dbb5ba7037cf279ada62669aefc9940313c5"
+          if ($LASTEXITCODE -ne 0) { throw "previous installer download exited $LASTEXITCODE" }
+
       - name: Run Windows NSIS upgrade and rollback E2E
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $previous = Join-Path $env:RUNNER_TEMP "Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe"
-          curl.exe --fail --location --retry 3 --output $previous "https://github.com/DLYZZT/pi-desktop/releases/download/v0.1.10/Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe"
-          if ($LASTEXITCODE -ne 0) { throw "previous installer download exited $LASTEXITCODE" }
           $expected = "5d99744a18f7495c987146a44718dbb5ba7037cf279ada62669aefc9940313c5"
           if ((Get-FileHash -Algorithm SHA256 -LiteralPath $previous).Hash.ToLowerInvariant() -ne $expected) { throw "previous installer hash mismatch" }
           $current = @(Get-ChildItem -LiteralPath dist -Filter "Pi-Agent-Desktop-Unsigned-Beta-Setup-*.exe" -File)
@@ -826,7 +821,9 @@ jobs:
         run: npm ci
 
       - name: Install Electron runtime for Windows acceptance
-        run: npx install-electron --no
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs electron
 
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.96.1-x86_64-pc-windows-msvc --profile minimal --target x86_64-pc-windows-msvc
@@ -845,7 +842,9 @@ jobs:
           npm run test:managed-process-workflows
 
       - name: Prepare verified bundled search tools
-        run: npm run prepare:bundled-tools -- --target win32-x64
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs tools win32-x64
 
       - name: Run native Windows Herdr integration
         run: npm run test:herdr-windows-e2e
@@ -1004,12 +1003,20 @@ jobs:
       - name: Run packaged toolchain E2E for Windows x64
         run: npm run check:packaged-toolchains -- win32-x64 --release-helper
 
+      - name: Download pinned previous Windows installer
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $previous = Join-Path $env:RUNNER_TEMP "Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe"
+          node scripts/ci-downloads.mjs asset "https://github.com/DLYZZT/pi-desktop/releases/download/v0.1.10/Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe" $previous "5d99744a18f7495c987146a44718dbb5ba7037cf279ada62669aefc9940313c5"
+          if ($LASTEXITCODE -ne 0) { throw "previous installer download exited $LASTEXITCODE" }
+
       - name: Run Windows NSIS upgrade and rollback E2E
         shell: pwsh
         run: |
           $previous = Join-Path $env:RUNNER_TEMP "Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe"
-          curl.exe --fail --location --retry 3 --output $previous "https://github.com/DLYZZT/pi-desktop/releases/download/v0.1.10/Pi-Agent-Desktop-Unsigned-Beta-Setup-0.1.10.exe"
-          if ($LASTEXITCODE -ne 0) { throw "previous installer download exited $LASTEXITCODE" }
           $expected = "5d99744a18f7495c987146a44718dbb5ba7037cf279ada62669aefc9940313c5"
           if ((Get-FileHash -Algorithm SHA256 -LiteralPath $previous).Hash.ToLowerInvariant() -ne $expected) { throw "previous installer hash mismatch" }
           $current = @(Get-ChildItem -LiteralPath dist -Filter "Pi-Agent-Desktop-Unsigned-Beta-Setup-*.exe" -File)
@@ -1054,7 +1061,9 @@ jobs:
         run: npm run build
 
       - name: Prepare verified bundled search tools
-        run: npm run prepare:bundled-tools -- --target linux-x64
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs tools linux-x64
 
       - name: Package Linux x64
         run: npx electron-builder --linux AppImage --x64 --publish never
