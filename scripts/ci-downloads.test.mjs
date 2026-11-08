@@ -137,3 +137,33 @@ test("CI uses the API route for installs and packaging without exposing its toke
   assert.ok(!packaging.run.includes("electronDist"));
   assert.ok(packaging.run.includes("--publish never"));
 });
+
+test("tag release downloads retain verification, forced macOS signing and notarization", () => {
+  const workflow = parse(readFileSync(path.join(root, ".github/workflows/build-desktop.yml"), "utf8"));
+  const mac = workflow.jobs["release-macos"];
+  const index = (name) => {
+    const found = mac.steps.findIndex((step) => step.name === name);
+    assert.ok(found >= 0, name);
+    return found;
+  };
+  const electron = index("Install verified Electron runtime");
+  const tools = index("Prepare verified macOS bundled tools");
+  const verify = index("Run full verification before signing");
+  const sign = index("Build, sign, and notarize macOS");
+  assert.ok(electron < tools && tools < verify && verify < sign);
+  assert.equal(mac.steps[electron].run, "node scripts/ci-downloads.mjs electron");
+  for (const arch of ["arm64", "x64"])
+    assert.ok(mac.steps[tools].run.includes(`ci-downloads.mjs tools darwin-${arch}`));
+  assert.equal(mac.steps[verify].run, "npm run verify");
+  assert.equal(mac.steps[verify].env, undefined);
+  assert.equal(mac.steps[sign].env.CSC_IDENTITY_AUTO_DISCOVERY, "true");
+  for (const flag of ["--mac dmg zip", "--arm64", "--x64", "-c.forceCodeSigning=true", "-c.mac.notarize=true"])
+    assert.ok(mac.steps[sign].run.includes(flag), flag);
+  for (const id of ["release-macos", "release-windows", "release-linux"]) {
+    const build = workflow.jobs[id].steps.find((step) => step.run?.includes("ci-downloads.mjs builder"));
+    assert.ok(build, id);
+    assert.ok(build.run.includes("--publish never"), id);
+    assert.ok(!build.run.includes("electronDist"), id);
+    assert.equal(build.env.GH_TOKEN, "${{ github.token }}");
+  }
+});

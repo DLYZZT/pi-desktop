@@ -10,11 +10,16 @@ const catalogs = ["runtime-catalog.json", "core-catalog.json"].map((name) =>
 );
 const components = catalogs.flatMap((catalog) => catalog.components);
 const githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-const headers = {
-  Accept: "application/vnd.github+json",
-  "User-Agent": "Pi-Agent-Desktop-Toolchain-Catalog-Release-Check",
-  ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
-};
+export function catalogRequestHeaders(url, token, overrides = {}) {
+  const headers = new globalThis.Headers({
+    Accept: "application/vnd.github+json",
+    "User-Agent": "Pi-Agent-Desktop-Toolchain-Catalog-Release-Check",
+    ...overrides,
+  });
+  headers.delete("authorization");
+  if (token && new URL(url).origin === "https://api.github.com") headers.set("authorization", `Bearer ${token}`);
+  return headers;
+}
 
 async function fetchChecked(url, init = {}) {
   const controller = new globalThis.AbortController();
@@ -22,7 +27,7 @@ async function fetchChecked(url, init = {}) {
   try {
     const response = await globalThis.fetch(url, {
       ...init,
-      headers: { ...headers, ...(init.headers ?? {}) },
+      headers: catalogRequestHeaders(url, githubToken, init.headers),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
@@ -96,10 +101,12 @@ async function verifyGithubComponents(components) {
   }
 }
 
-const nodeComponents = components.filter((component) => component.id === "node-lts");
-const githubComponents = components.filter((component) => component.id !== "node-lts");
-await verifyNodeComponents(nodeComponents);
-await verifyGithubComponents(githubComponents);
-console.log(
-  `OK: ${nodeComponents.length + githubComponents.length} catalog releases match upstream checksums, digests, and artifact sizes`,
-);
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const nodeComponents = components.filter((component) => component.id === "node-lts");
+  const githubComponents = components.filter((component) => component.id !== "node-lts");
+  await verifyNodeComponents(nodeComponents);
+  await verifyGithubComponents(githubComponents);
+  console.log(
+    `OK: ${nodeComponents.length + githubComponents.length} catalog releases match upstream checksums, digests, and artifact sizes`,
+  );
+}

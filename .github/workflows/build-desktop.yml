@@ -557,14 +557,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install verified Electron runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs electron
+
+      - name: Prepare verified macOS bundled tools
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/ci-downloads.mjs tools darwin-arm64
+          node scripts/ci-downloads.mjs tools darwin-x64
+
+      - name: Run full verification before signing
+        run: npm run verify
+
       - name: Build, sign, and notarize macOS
         env:
+          GH_TOKEN: ${{ github.token }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "true"
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run dist:mac:notarized -- --arm64 --x64
+        run: node scripts/ci-downloads.mjs builder --mac dmg zip --arm64 --x64 --publish never -c.forceCodeSigning=true -c.mac.notarize=true
 
       - name: Verify both signed and notarized apps
         env:
@@ -850,7 +867,9 @@ jobs:
         run: npm run test:herdr-windows-e2e
 
       - name: Package Windows x64
-        run: npx electron-builder --win nsis --x64 --publish never
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs builder --win nsis --x64 --publish never
 
       - name: Generate and verify Windows SBOM
         run: |
@@ -1066,7 +1085,9 @@ jobs:
         run: node scripts/ci-downloads.mjs tools linux-x64
 
       - name: Package Linux x64
-        run: npx electron-builder --linux AppImage --x64 --publish never
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-downloads.mjs builder --linux AppImage --x64 --publish never
 
       - name: Configure packaged Electron sandbox
         run: |
