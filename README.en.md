@@ -16,7 +16,7 @@ Local-first · No internal server · Cross-platform
 
 **English** · [简体中文](./README.md)
 
-[Download v0.5.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.5.0) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
+[Download v0.5.1](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.5.1) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
 
 </div>
 
@@ -205,9 +205,9 @@ Generated images appear in final replies and remain viewable when session histor
 
 ### Use a desktop build
 
-The latest stable version is [v0.5.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.5.0), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
+The latest stable version is [v0.5.1](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.5.1), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
 
-Version 0.5.0 bundles Pi Coding Agent 1.5.0, improves tool argument handling, long-session summaries, and provider compatibility, fixes races between MCP sign-in and background credential refresh, and strengthens extension resource and package validation. You can also [run from source](#run-locally) using the steps below.
+Version 0.5.1 bundles Pi Coding Agent 1.5.0, fixes oversized turns blocking long-session history restoration and pagination, improves content previews and on-demand loading of structured details, and displays tool details as soon as they load. You can also [run from source](#run-locally) using the steps below.
 
 Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
 
