@@ -64,7 +64,7 @@ const { useAgentSession, testApi, SessionPresentationStore } = await importTestB
           export async function getSessionContextPage() { if (!page) throw new Error("unexpected page read"); return page; }
           const unexpected = async () => { throw new Error("unexpected session IO"); };
           export { unexpected as getSessionContext,
-            unexpected as getSessionEntryContent, unexpected as refreshModels,
+            unexpected as getSessionEntryContent, unexpected as getSessionEntryDetails, unexpected as refreshModels,
             unexpected as cancelModelsRefresh };
         `,
         }));

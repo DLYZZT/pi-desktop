@@ -2,11 +2,16 @@ import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
-const { buildSessionHistoryPage, decodeHistoryCursor, readSessionEntryContent, StaleHistoryCursorError } =
-  await importTestBundle("src/agent-host/session-history", {
-    packages: "external",
-    entryPoints: [path.join(import.meta.dirname, "session-history.ts")],
-  });
+const {
+  buildSessionHistoryPage,
+  decodeHistoryCursor,
+  readSessionEntryContent,
+  readSessionEntryDetails,
+  StaleHistoryCursorError,
+} = await importTestBundle("src/agent-host/session-history", {
+  packages: "external",
+  entryPoints: [path.join(import.meta.dirname, "session-history.ts")],
+});
 
 const timestamp = "2026-08-06T00:00:00.000Z";
 
@@ -147,6 +152,229 @@ test("oversized thinking and tool inputs cannot empty the newest page", () => {
   assert.equal(Buffer.byteLength(JSON.stringify(page)) <= maxBytes, true);
   assert.deepEqual(readSessionEntryContent(entries, "entry-1", 0), thinking);
   assert.deepEqual(readSessionEntryContent(entries, "entry-1", 1), toolCall);
+});
+
+for (const latestBytes of [16, 28 * 1024]) {
+  test(`oversized turns paginate in order with a ${latestBytes}-byte latest answer`, () => {
+    const entries = oversizedTurnEntries(latestBytes);
+    const originalEntries = structuredClone(entries);
+    const historyRevision = "oversized-turn-revision";
+    const maxBytes = 32 * 1024;
+    const full = buildSessionHistoryPage({ entries, historyRevision });
+    const messages = [];
+    const entryIds = [];
+    const cursors = new Set();
+    let cursor;
+    let deferredBlocks = 0;
+    let pageCount = 0;
+    do {
+      const page = buildSessionHistoryPage({
+        entries,
+        historyRevision,
+        historyWindow: { maxBytes },
+        ...(cursor ? { cursor: decodeHistoryCursor(cursor) } : {}),
+      });
+      assert.ok(page.loadedMessages > 0, "every page must make progress through the oversized turn");
+      assert.equal(page.loadedMessages, page.messages.length);
+      assert.equal(page.totalMessages, full.messages.length);
+      assert.ok(Buffer.byteLength(JSON.stringify(page)) <= maxBytes);
+      assert.equal(page.truncatedBefore, Boolean(page.previousCursor));
+      if (pageCount === 0) {
+        assert.deepEqual(page.entryIds.slice(-2), full.entryIds.slice(-2));
+        if (latestBytes === 16) assert.ok(page.loadedMessages > 2, "use the remaining budget for the turn's tail");
+        else assert.equal(page.loadedMessages, 2, "leave the oversized turn for a fresh page when no message fits");
+      }
+      const restored = page.messages.map((message) => ({
+        ...message,
+        content:
+          typeof message.content === "string"
+            ? message.content
+            : message.content.map((block) => {
+                if (!block.deferredContent) return block;
+                deferredBlocks += 1;
+                const { entryId, blockIndex } = block.deferredContent;
+                return readSessionEntryContent(entries, entryId, blockIndex);
+              }),
+      }));
+      messages.unshift(...restored);
+      entryIds.unshift(...page.entryIds);
+      cursor = page.previousCursor;
+      if (cursor) {
+        assert.equal(decodeHistoryCursor(cursor).beforeEntryId, page.entryIds[0]);
+        assert.equal(cursors.has(cursor), false, "history cursors must advance");
+        cursors.add(cursor);
+      }
+      pageCount += 1;
+    } while (cursor);
+    assert.ok(pageCount > 2);
+    assert.equal(deferredBlocks, 0, "a split turn uses standard previews, which leave 8 KiB blocks intact");
+    assert.deepEqual(entryIds, full.entryIds);
+    assert.deepEqual(messages, full.messages);
+    assert.deepEqual(entries, originalEntries, "paging must not mutate stored messages");
+  });
+}
+
+function walkHistoryPages(entries, maxBytes) {
+  const historyRevision = "walk-revision";
+  const full = buildSessionHistoryPage({ entries, historyRevision });
+  const pages = [];
+  const entryIds = [];
+  const cursors = new Set();
+  let cursor;
+  do {
+    const page = buildSessionHistoryPage({
+      entries,
+      historyRevision,
+      historyWindow: { maxBytes },
+      ...(cursor ? { cursor: decodeHistoryCursor(cursor) } : {}),
+    });
+    assert.ok(page.loadedMessages > 0, "every page must make progress");
+    assert.equal(page.truncatedBefore, Boolean(page.previousCursor));
+    pages.push(page);
+    entryIds.unshift(...page.entryIds);
+    cursor = page.previousCursor;
+    if (cursor) {
+      assert.equal(cursors.has(cursor), false, "history cursors must advance");
+      cursors.add(cursor);
+    }
+  } while (cursor);
+  assert.deepEqual(entryIds, full.entryIds);
+  return { full, pages };
+}
+
+function oversizedTurnEntries(latestBytes) {
+  return chain([
+    user("older turn"),
+    assistant([{ type: "text", text: "older answer" }]),
+    user("long task"),
+    ...Array.from({ length: 24 }, (_, index) => [
+      assistant([
+        { type: "text", text: "a".repeat(8192) },
+        { type: "toolCall", toolCallId: `call-${index}`, toolName: "read", input: { path: `file-${index}` } },
+      ]),
+      toolResult(`call-${index}`, "r".repeat(4096)),
+    ]).flat(),
+    user("latest turn"),
+    assistant([{ type: "text", text: "z".repeat(latestBytes) }]),
+  ]);
+}
+
+for (const maxBytes of [32 * 1024, 64 * 1024, 96 * 1024]) {
+  test(`a turn split across ${maxBytes / 1024} KiB pages keeps standard previews, including its head`, () => {
+    const entries = oversizedTurnEntries(16);
+    const { full, pages } = walkHistoryPages(entries, maxBytes);
+    assert.ok(pages.length > 2);
+    for (const page of pages) {
+      assert.ok(Buffer.byteLength(JSON.stringify(page)) <= maxBytes);
+      const firstIndex = full.entryIds.indexOf(page.entryIds[0]);
+      // 8 KiB blocks stay below the standard threshold; only a complete turn may use aggressive previews.
+      assert.deepEqual(page.messages, full.messages.slice(firstIndex, firstIndex + page.messages.length));
+    }
+  });
+}
+
+test("oversized details are omitted with a loadable reference", () => {
+  const details = { diff: "d".repeat(200 * 1024) };
+  const customDetails = { report: "c".repeat(200 * 1024) };
+  const entries = chain([
+    user("edit"),
+    assistant([{ type: "toolCall", toolCallId: "call", toolName: "edit", input: { path: "file" } }]),
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: "call",
+        toolName: "edit",
+        content: [{ type: "text", text: "edited" }],
+        details,
+        timestamp: 2,
+      },
+    },
+    { type: "custom_message", customType: "report", content: "report", display: true, details: customDetails },
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: "small",
+        content: [{ type: "text", text: "small" }],
+        details: { diff: "small" },
+        timestamp: 3,
+      },
+    },
+  ]);
+  const originalEntries = structuredClone(entries);
+  const page = buildSessionHistoryPage({ entries, historyRevision: "details", historyWindow: {} });
+  const [, , result, custom, small] = page.messages;
+  assert.equal("details" in result, false);
+  assert.deepEqual(result.deferredDetails, {
+    entryId: "entry-2",
+    originalBytes: Buffer.byteLength(JSON.stringify(details)),
+    contentType: "details",
+  });
+  assert.deepEqual(result.content, [{ type: "text", text: "edited" }]);
+  assert.equal("details" in custom, false);
+  assert.equal(custom.deferredDetails.entryId, "entry-3");
+  assert.deepEqual(small.details, { diff: "small" });
+  assert.equal("deferredDetails" in small, false);
+  assert.deepEqual(readSessionEntryDetails(entries, "entry-2"), { details });
+  assert.deepEqual(readSessionEntryDetails(entries, "entry-3"), { details: customDetails });
+  assert.equal(readSessionEntryDetails(entries, "entry-1"), null);
+  assert.equal(readSessionEntryDetails(entries, "missing"), null);
+  assert.deepEqual(entries, originalEntries, "paging must not mutate stored messages");
+});
+
+test("a single message over budget after standard previews still advances pagination", async (t) => {
+  const maxBytes = 32 * 1024;
+  await t.test("many small blocks receive minimal previews", () => {
+    const blocks = Array.from({ length: 40 }, (_, index) => ({ type: "text", text: String(index).repeat(3000) }));
+    const entries = chain([
+      user("first"),
+      assistant([{ type: "text", text: "first answer" }]),
+      user("dump"),
+      assistant(blocks),
+    ]);
+    const { full, pages } = walkHistoryPages(entries, maxBytes);
+    const [newest] = pages;
+    assert.deepEqual(newest.entryIds, ["entry-3"]);
+    assert.ok(Buffer.byteLength(JSON.stringify(newest)) <= maxBytes);
+    newest.messages[0].content.forEach((block, blockIndex) => {
+      assert.equal(block.deferredContent?.blockIndex, blockIndex);
+      assert.deepEqual(readSessionEntryContent(entries, "entry-3", blockIndex), full.messages[3].content[blockIndex]);
+    });
+  });
+  await t.test("oversized details are deferred for the message alone", () => {
+    const entries = chain([
+      user("first"),
+      assistant([{ type: "toolCall", toolCallId: "call", toolName: "mcp", input: {} }]),
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "call",
+          content: [{ type: "text", text: "ok" }],
+          details: { structuredContent: Array.from({ length: 400 }, (_, index) => ({ index, text: "s".repeat(80) })) },
+          timestamp: 2,
+        },
+      },
+    ]);
+    const { pages } = walkHistoryPages(entries, maxBytes);
+    assert.deepEqual(pages[0].entryIds, ["entry-2"]);
+    assert.equal(pages[0].messages[0].deferredDetails.contentType, "details");
+    assert.ok(Buffer.byteLength(JSON.stringify(pages[0])) <= maxBytes);
+  });
+  await t.test("non-deferrable metadata is returned over budget instead of ending history", () => {
+    const blocks = Array.from({ length: 3000 }, () => ({ type: "text", text: "x" }));
+    const entries = chain([
+      user("first"),
+      assistant([{ type: "text", text: "first answer" }]),
+      user("dump"),
+      assistant(blocks),
+    ]);
+    const { full, pages } = walkHistoryPages(entries, maxBytes);
+    assert.deepEqual(pages[0].entryIds, ["entry-3"]);
+    assert.ok(Buffer.byteLength(JSON.stringify(pages[0])) > maxBytes);
+    assert.deepEqual(pages[0].messages[0], full.messages[3]);
+  });
 });
 
 test("channel markers cross page boundaries and settings match the active branch", () => {

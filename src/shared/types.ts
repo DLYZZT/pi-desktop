@@ -27,7 +27,7 @@ export interface DeferredContentRef {
   entryId: string;
   blockIndex?: number;
   originalBytes: number;
-  contentType?: "text" | "image" | "thinking" | "toolCall";
+  contentType?: "text" | "image" | "thinking" | "toolCall" | "details";
 }
 
 export interface ImageContent {
@@ -110,6 +110,8 @@ export interface ToolResultMessage {
   content: (TextContent | ImageContent)[];
   isError?: boolean;
   details?: unknown;
+  /** UI transport metadata for oversized `details` omitted from a history page. */
+  deferredDetails?: DeferredContentRef;
   usage?: Usage;
   timestamp?: number;
 }
@@ -120,6 +122,8 @@ export interface CustomMessage {
   content: string | (TextContent | ImageContent)[];
   display: boolean;
   details?: unknown;
+  /** UI transport metadata for oversized `details` omitted from a history page. */
+  deferredDetails?: DeferredContentRef;
   timestamp?: number;
 }
 

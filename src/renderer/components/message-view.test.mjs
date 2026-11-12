@@ -325,6 +325,58 @@ test("deferred generated images keep the tool entry reference for automatic hist
   assert.doesNotMatch(html, /Load full content/);
 });
 
+test("omitted tool result and custom message details offer a separate load action", () => {
+  const deferredDetails = { entryId: "result-entry", originalBytes: 300 * 1024, contentType: "details" };
+  const result = {
+    role: "toolResult",
+    toolCallId: "edit",
+    toolName: "edit",
+    content: [{ type: "text", text: "edited" }],
+    deferredDetails,
+  };
+  const html = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: assistant({ content: [{ type: "toolCall", toolCallId: "edit", toolName: "edit", input: {} }] }),
+      toolResults: new Map([["edit", result]]),
+      onLoadDeferredContent: async () => {},
+    }),
+  );
+  assert.match(html, /Load full details \(300(\.0)? KB\)/);
+  assert.doesNotMatch(html, /Load full content/);
+  assert.doesNotMatch(renderToolResult(result), /Load full details/, "no loader, no action");
+  const custom = renderToStaticMarkup(
+    createElement(MessageView, {
+      message: { role: "custom", customType: "report", content: "report", display: true, deferredDetails },
+      onLoadDeferredContent: async () => {},
+    }),
+  );
+  assert.match(custom, /Load full details/);
+});
+
+test("inline structured tool details start collapsed while diffs retain their dedicated view", () => {
+  const result = {
+    role: "toolResult",
+    toolCallId: "lookup",
+    toolName: "mcp_search",
+    content: [{ type: "text", text: "result summary" }],
+    details: { structuredContent: { status: "structured result content" } },
+  };
+  const html = renderToolResult(result);
+  assert.match(html, /Show details/);
+  assert.match(html, /aria-expanded="false"/);
+  assert.doesNotMatch(html, /structured result content/);
+  assert.match(html, /result summary/);
+
+  const diff = renderToolResult({
+    ...result,
+    toolName: "edit",
+    details: { diff: "@@ -1 +1 @@\n-before\n+after" },
+  });
+  assert.match(diff, /-before/);
+  assert.match(diff, /\+after/);
+  assert.doesNotMatch(diff, /Show details|Tool result details/);
+});
+
 test("persisted Herdr results show a neutral history notice without changing the stored message", () => {
   const result = persistedHerdrResult();
   const before = JSON.stringify(result);

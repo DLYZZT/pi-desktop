@@ -14,10 +14,10 @@ after(() => {
   else globalThis.IS_REACT_ACT_ENVIRONMENT = previousAct;
 });
 
-const { useSessionHistory, testApi, testPerf } = await importTestBundle("session-history-hook", {
+const { useSessionHistory, MessageView, testApi, testPerf } = await importTestBundle("session-history-hook", {
   stdin: {
     contents:
-      'export { useSessionHistory } from "./useSessionHistory.ts"; export * as testApi from "@/lib/api-client"; export * as testPerf from "@/lib/session-performance";',
+      'export { useSessionHistory } from "./useSessionHistory.ts"; export { MessageView } from "../components/MessageView.tsx"; export * as testApi from "@/lib/api-client"; export * as testPerf from "@/lib/session-performance";',
     resolveDir: import.meta.dirname,
     loader: "ts",
   },
@@ -27,6 +27,12 @@ const { useSessionHistory, testApi, testPerf } = await importTestBundle("session
     {
       name: "history-fixture",
       setup(build) {
+        build.onResolve({ filter: /^\.\/MarkdownBody$/ }, () => ({ path: "markdown", namespace: "history-markdown" }));
+        build.onLoad({ filter: /.*/, namespace: "history-markdown" }, () => ({
+          contents:
+            'import { createElement } from "react"; export function MarkdownBody({ children }) { return createElement("div", null, children); }',
+          loader: "js",
+        }));
         build.onResolve({ filter: /^@\/(i18n|lib\/(api-client|session-performance))$/ }, ({ path }) => ({
           path,
           namespace: "history-test",
@@ -65,6 +71,7 @@ const { useSessionHistory, testApi, testPerf } = await importTestBundle("session
           export const getSessionContext = (...args) => take("context", args);
           export const getSessionContextPage = (...args) => take("page", args);
           export const getSessionEntryContent = (...args) => take("content", args);
+          export const getSessionEntryDetails = (...args) => take("details", args);
           export function reset() { queues.clear(); calls.length = 0; }
         `,
         }));
@@ -93,7 +100,7 @@ const detail = (sid, revision, text, cursor) => ({
   agentState: { running: false },
 });
 
-async function mount(t) {
+async function mount(t, render = () => null) {
   testApi.reset();
   testPerf.reset();
   const previousRaf = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
@@ -123,7 +130,7 @@ async function mount(t) {
   let current, renderer;
   function Probe() {
     current = useSessionHistory(options);
-    return null;
+    return render(current);
   }
   const unmount = async () => {
     if (renderer) await act(async () => renderer.unmount());
@@ -142,6 +149,9 @@ async function mount(t) {
   return {
     get current() {
       return current;
+    },
+    get root() {
+      return renderer.root;
     },
     loaded,
     sessionIdRef,
@@ -396,6 +406,92 @@ test("a delayed content response cannot poison a new revision's cache or delete 
   });
   assert.equal(fixture.current.messages[0].content[0].text, "NEW");
 });
+
+test("loading deferred details restores them without touching content blocks", async (t) => {
+  const fixture = await mount(t);
+  const result = detail("a", "r1", "placeholder");
+  const deferredDetails = { entryId: "result", originalBytes: 300_000, contentType: "details" };
+  result.context.messages = [
+    { role: "toolResult", toolCallId: "call", content: [{ type: "text", text: "ok" }], deferredDetails },
+  ];
+  result.context.entryIds = ["result"];
+  await fixture.load(result);
+  testApi.enqueue("details", { details: { diff: "full diff" }, deferredContent: deferredDetails });
+  await act(async () => fixture.current.loadDeferredContent("result", undefined, "details"));
+  const loaded = fixture.current.messages[0];
+  assert.deepEqual(loaded.details, { diff: "full diff" });
+  assert.equal("deferredDetails" in loaded, false);
+  assert.deepEqual(loaded.content, [{ type: "text", text: "ok" }]);
+  assert.deepEqual(
+    testApi.calls.filter((call) => call.method === "details").map((call) => call.args),
+    [["a", "result"]],
+  );
+  // A cached reply is reused rather than requested again.
+  await act(async () => fixture.current.loadDeferredContent("result", undefined, "details"));
+  assert.equal(testApi.calls.filter((call) => call.method === "details").length, 1);
+});
+
+for (const initiallyExpanded of [false, true]) {
+  test(`loading structured tool details reveals their content with the tool initially ${initiallyExpanded ? "expanded" : "collapsed"}`, async (t) => {
+    const fixture = await mount(t, (history) => {
+      const message = history.messages.find((message) => message.role === "assistant");
+      const result = history.messages.find((message) => message.role === "toolResult");
+      return message
+        ? createElement(MessageView, {
+            message,
+            toolResults: new Map([["lookup", result]]),
+            onLoadDeferredContent: history.loadDeferredContent,
+          })
+        : null;
+    });
+    const response = detail("a", "r1", "structured result");
+    const deferredDetails = { entryId: "result", originalBytes: 200 * 1024, contentType: "details" };
+    const content = [{ type: "text", text: "Summary remains visible" }];
+    response.context.messages = [
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", toolCallId: "lookup", toolName: "mcp_search", input: { query: "fixture" } }],
+      },
+      { role: "toolResult", toolCallId: "lookup", toolName: "mcp_search", content, deferredDetails },
+    ];
+    response.context.entryIds = ["call", "result"];
+    await fixture.load(response);
+    const text = (node) => (typeof node === "string" ? node : (node?.children?.map(text).join("") ?? ""));
+    const button = (label) => fixture.root.findAllByType("button").find((node) => text(node).includes(label));
+    const detailsPanes = () => fixture.root.findAllByProps({ "aria-label": "Tool result details" });
+    if (initiallyExpanded) await act(async () => button("mcp_search").props.onClick());
+    assert.equal(detailsPanes().length, 0);
+
+    const request = createDeferred();
+    testApi.enqueue("details", request.promise);
+    await act(async () => button("Load full details").props.onClick());
+    assert.equal(button("Loading full details").props.disabled, true);
+    assert.equal(detailsPanes().length, 0, "unloaded details must not be displayed");
+    const details = {
+      structuredContent: { status: "STRUCTURED DETAILS VISIBLE", items: [{ name: "alpha", count: 0 }] },
+      padding: "p".repeat(200 * 1024),
+      end: "FULL DETAILS END",
+    };
+    await act(async () => request.resolve({ details, deferredContent: deferredDetails }));
+    assert.equal(button("Load full details"), undefined);
+    assert.equal(detailsPanes().length, 1, "loading must immediately reveal the actual structured result");
+    assert.equal(text(detailsPanes()[0]), JSON.stringify(details, null, 2));
+    assert.equal(button("Hide details").props["aria-expanded"], true);
+    assert.match(text(fixture.root), /Summary remains visible/);
+    assert.deepEqual(fixture.current.messages[1].content, content);
+
+    await act(async () => button("Hide details").props.onClick());
+    assert.equal(detailsPanes().length, 0);
+    assert.equal(button("Show details").props["aria-expanded"], false);
+    await act(async () => button("Show details").props.onClick());
+    assert.equal(text(detailsPanes()[0]), JSON.stringify(details, null, 2));
+    assert.deepEqual(
+      testApi.calls.filter((call) => call.method === "details").map((call) => call.args),
+      [["a", "result"]],
+      "collapsing and reopening loaded details must not fetch them again",
+    );
+  });
+}
 
 test("pagination restores its own viewport and leaves a replacement session's viewport untouched", async (t) => {
   const fixture = await mount(t);

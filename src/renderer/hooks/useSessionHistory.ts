@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type RefObject, type SetStateAction } from "react";
-import type { SessionDetail, EntryContentResult } from "@contract/types";
-import type { AgentMessage } from "@/lib/types";
-import { getSession, getSessionContext, getSessionContextPage, getSessionEntryContent } from "@/lib/api-client";
+import type { SessionDetail, EntryContentResult, EntryDetailsResult } from "@contract/types";
+import type { AgentMessage, DeferredContentPart } from "@/lib/types";
+import {
+  getSession,
+  getSessionContext,
+  getSessionContextPage,
+  getSessionEntryContent,
+  getSessionEntryDetails,
+} from "@/lib/api-client";
 import { LatestRequestGate } from "@/lib/latest-request-gate";
 import { mergeHistoryTail, prependHistoryPage } from "@/lib/session-pagination";
 import { normalizeSessionHistory, type SessionHistoryValue } from "@/lib/session-history-update";
@@ -21,7 +27,9 @@ const HISTORY_PAGE_MAX_BYTES = 1024 * 1024;
 const DEFERRED_CONTENT_CACHE_SIZE = 12;
 type HistoryScope = { sessionId: string; generation: number };
 type PageRequest = HistoryScope & { cursor: string; revision: string };
-type DeferredContent = EntryContentResult["content"];
+type DeferredContent =
+  | { part: "content"; content: EntryContentResult["content"] }
+  | { part: "details"; details: EntryDetailsResult["details"] };
 
 function hasRpcCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === code;
@@ -370,18 +378,21 @@ export function useSessionHistory({
   }, [capturePrependAnchor, commitHistory, isCurrent, loadSession, sessionIdRef, updatePagingState]);
 
   const loadDeferredContent = useCallback(
-    async (entryId: string, blockIndex = 0) => {
+    async (entryId: string, blockIndex = 0, part: DeferredContentPart = "content") => {
       const sid = sessionIdRef.current;
       if (!sid || !activeRef.current) return;
       const scope = { sessionId: sid, generation: historyGenerationRef.current };
       const revision = historyRevisionRef.current;
       const ownsContent = () => isCurrent(scope) && revision === historyRevisionRef.current;
-      const key = `${sid}:${entryId}:${blockIndex}`;
+      const key = part === "details" ? `${sid}:${entryId}:details` : `${sid}:${entryId}:${blockIndex}`;
       let content = deferredContentCacheRef.current.get(key);
       if (content === undefined) {
         let request = deferredContentRequestRef.current.get(key);
         if (!request) {
-          request = getSessionEntryContent(sid, entryId, blockIndex).then((result) => result.content);
+          request =
+            part === "details"
+              ? getSessionEntryDetails(sid, entryId).then((result) => ({ part, details: result.details }))
+              : getSessionEntryContent(sid, entryId, blockIndex).then((result) => ({ part, content: result.content }));
           deferredContentRequestRef.current.set(key, request);
         }
         try {
@@ -399,12 +410,19 @@ export function useSessionHistory({
         while (cache.size > DEFERRED_CONTENT_CACHE_SIZE) cache.delete(cache.keys().next().value!);
       }
       if (!ownsContent()) return;
+      const loaded = content;
       const nextMessages = loadedMessagesRef.current.map((message, index) => {
-        if (loadedEntryIdsRef.current[index] !== entryId || !Array.isArray(message.content)) return message;
+        if (loadedEntryIdsRef.current[index] !== entryId) return message;
+        if (loaded.part === "details") {
+          if ((message.role !== "toolResult" && message.role !== "custom") || !message.deferredDetails) return message;
+          const { deferredDetails: _omitted, ...rest } = message;
+          return { ...rest, details: loaded.details } as AgentMessage;
+        }
+        if (!Array.isArray(message.content)) return message;
         return {
           ...message,
           content: message.content.map((block, position) =>
-            position === blockIndex && "deferredContent" in block ? content : block,
+            position === blockIndex && "deferredContent" in block ? loaded.content : block,
           ),
         } as AgentMessage;
       });

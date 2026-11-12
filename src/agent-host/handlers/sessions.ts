@@ -31,6 +31,7 @@ import {
   buildSessionHistoryPage,
   decodeHistoryCursor,
   readSessionEntryContent,
+  readSessionEntryDetails,
   StaleHistoryCursorError,
 } from "../session-history";
 import { getSessionContentSnapshot, invalidateSessionContent } from "../session-content-cache";
@@ -48,6 +49,7 @@ type SessionHandlers = {
   context: NonNullable<ApiHandler["sessions.context"]>;
   contextPage: NonNullable<ApiHandler["sessions.contextPage"]>;
   entryContent: NonNullable<ApiHandler["sessions.entryContent"]>;
+  entryDetails: NonNullable<ApiHandler["sessions.entryDetails"]>;
   export: NonNullable<ApiHandler["sessions.export"]>;
   delete: NonNullable<ApiHandler["sessions.delete"]>;
   rename: NonNullable<ApiHandler["sessions.rename"]>;
@@ -283,6 +285,25 @@ export function createSessionHandlers({
           blockIndex,
           originalBytes: Buffer.byteLength(JSON.stringify(content), "utf8"),
           contentType: content.type,
+        },
+      };
+    },
+
+    entryDetails: async (params) => {
+      const { id, entryId } = params as { id: string; entryId: string };
+      const filePath = await resolveSessionPath(id);
+      if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
+      const { entries } = getSessionContentSnapshot(filePath);
+      const result = readSessionEntryDetails(entries, entryId);
+      if (result === null) {
+        throw new RpcError({ code: "NOT_FOUND", message: "Session entry details not found" });
+      }
+      return {
+        details: result.details,
+        deferredContent: {
+          entryId,
+          originalBytes: Buffer.byteLength(JSON.stringify(result.details), "utf8"),
+          contentType: "details",
         },
       };
     },

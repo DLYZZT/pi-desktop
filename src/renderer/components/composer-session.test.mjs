@@ -51,7 +51,7 @@ const { ChatInput, useAgentSession, api } = await importTestBundle("composer-ses
       export async function subscribeSessionsChanged(on) {const stream={key:'*',on,closed:0}; streams.push(stream); return()=>stream.closed++;}
       export const fileIndex = async () => ({files:[],truncated:false});
       const unexpected = async () => {throw new Error('Unexpected composer session IO');};
-      export {unexpected as call,unexpected as getSessionContext,unexpected as getSessionContextPage,unexpected as getSessionEntryContent,unexpected as refreshModels,unexpected as cancelModelsRefresh};
+      export {unexpected as call,unexpected as getSessionContext,unexpected as getSessionContextPage,unexpected as getSessionEntryContent,unexpected as getSessionEntryDetails,unexpected as refreshModels,unexpected as cancelModelsRefresh};
     `,
         }));
       },

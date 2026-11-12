@@ -1031,3 +1031,200 @@ test("sessions.get returns the contract shape without rescanning known session p
     (error) => error.code === "NOT_FOUND",
   );
 });
+
+function writeOversizedHistoryFixture(sessionId, includeNewerTurn = true) {
+  const entries = [];
+  const timestamp = "2026-08-06T00:00:00.000Z";
+  const append = (message) => {
+    entries.push({
+      type: "message",
+      id: `entry-${entries.length}`,
+      parentId: entries.at(-1)?.id ?? null,
+      timestamp,
+      message: { ...message, timestamp: Date.parse(timestamp) + entries.length },
+    });
+  };
+  const assistant = (content, stopReason = "stop") =>
+    append({
+      role: "assistant",
+      content,
+      api: "test",
+      provider: "test",
+      model: "test",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { total: 0 } },
+      stopReason,
+    });
+  for (const [turn, count] of [17, 17, 18].entries()) {
+    append({ role: "user", content: `older turn ${turn}` });
+    for (let index = 1; index < count; index += 1) {
+      assistant([{ type: "text", text: `older answer ${turn}-${index}` }]);
+    }
+  }
+  const oversizedStart = entries.length;
+  append({ role: "user", content: "run a long task" });
+  for (let index = 0; index < 100; index += 1) {
+    const calls = Array.from({ length: index < 75 ? 3 : 2 }, (_, callIndex) => ({
+      type: "toolCall",
+      id: `call-${index}-${callIndex}`,
+      name: "read",
+      arguments: { path: `fixture-${index}-${callIndex}.txt` },
+    }));
+    // One block exceeds the standard preview threshold, so a split page still defers content.
+    assistant([{ type: "text", text: "a".repeat(index === 90 ? 200 * 1024 : 8192) }, ...calls], "toolUse");
+    for (const call of calls) {
+      append({
+        role: "toolResult",
+        toolCallId: call.id,
+        toolName: "read",
+        // These 275 blocks alone exceed 1 MiB and are too small for aggressive deferral.
+        content: [{ type: "text", text: "r".repeat(4096) }],
+        isError: false,
+      });
+    }
+  }
+  const oversizedEnd = entries.length;
+  if (includeNewerTurn) {
+    append({ role: "user", content: "latest small turn" });
+    assistant([{ type: "text", text: "done" }]);
+  }
+  const directory = path.join(process.env.PI_CODING_AGENT_SESSION_DIR, sessionId);
+  mkdirSync(directory, { recursive: true });
+  const filePath = path.join(directory, `${sessionId}.jsonl`);
+  const header = { type: "session", version: 3, id: sessionId, timestamp, cwd: root };
+  writeFileSync(filePath, `${[header, ...entries].map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+  return { entries, filePath, oversizedStart, oversizedEnd };
+}
+
+test("sessions.get restores a bounded tail of a turn that remains over 1 MiB after previews", async (t) => {
+  const { handlers } = await captureHandlers();
+  for (const includeNewerTurn of [true, false]) {
+    await t.test(includeNewerTurn ? "followed by a small turn" : "as the newest turn", async () => {
+      const id = `oversized-initial-${includeNewerTurn}`;
+      const { entries, filePath, oversizedStart, oversizedEnd } = writeOversizedHistoryFixture(id, includeNewerTurn);
+      const source = readFileSync(filePath, "utf8");
+      const maxBytes = 1024 * 1024;
+      const listed = await handlers["sessions.list"]();
+      assert.equal(listed.sessions.find((session) => session.id === id).messageCount, entries.length);
+      const { context, info } = await handlers["sessions.get"]({ id, historyWindow: { maxTurns: 20, maxBytes } });
+      assert.equal(info.messageCount, entries.length);
+      assert.equal(context.totalMessages, entries.length);
+      assert.equal(context.loadedMessages, context.messages.length);
+      assert.ok(context.loadedMessages > (includeNewerTurn ? 2 : 0));
+      assert.ok(context.loadedMessages < entries.length);
+      assert.ok(Buffer.byteLength(JSON.stringify(context)) <= maxBytes);
+      assert.equal(context.truncatedBefore, true);
+      assert.ok(context.previousCursor);
+      const firstIndex = entries.findIndex((entry) => entry.id === context.entryIds[0]);
+      assert.ok(firstIndex > oversizedStart && firstIndex < oversizedEnd);
+      assert.deepEqual(
+        context.entryIds,
+        entries.slice(firstIndex).map((entry) => entry.id),
+      );
+      assert.equal(readFileSync(filePath, "utf8"), source);
+    });
+  }
+});
+
+test("sessions.contextPage crosses an oversized turn and recovers every earlier message", async () => {
+  const { handlers } = await captureHandlers();
+  const id = "oversized-history-pages";
+  const { entries, filePath } = writeOversizedHistoryFixture(id);
+  const source = readFileSync(filePath, "utf8");
+  const maxBytes = 1024 * 1024;
+  const full = await handlers["sessions.get"]({ id });
+  const initial = await handlers["sessions.get"]({ id, historyWindow: { maxTurns: 1, maxBytes } });
+  assert.equal(entries.length, 430);
+  assert.deepEqual(initial.context.entryIds, full.context.entryIds.slice(-2));
+  assert.ok(initial.context.previousCursor);
+  const entryIds = [...initial.context.entryIds];
+  const cursors = new Set();
+  let cursor = initial.context.previousCursor;
+  let endIndex = entries.length - entryIds.length;
+  let restoredDeferredContent = false;
+  while (cursor) {
+    assert.equal(cursors.has(cursor), false, "history cursors must advance");
+    cursors.add(cursor);
+    const { context } = await handlers["sessions.contextPage"]({ id, cursor });
+    assert.ok(context.loadedMessages > 0, "the oversized turn must not return an empty terminal page");
+    assert.equal(context.loadedMessages, context.messages.length);
+    assert.equal(context.totalMessages, entries.length);
+    assert.ok(Buffer.byteLength(JSON.stringify(context)) <= maxBytes);
+    assert.equal(context.truncatedBefore, Boolean(context.previousCursor));
+    assert.deepEqual(context.entryIds, full.context.entryIds.slice(endIndex - context.loadedMessages, endIndex));
+    endIndex -= context.loadedMessages;
+    entryIds.unshift(...context.entryIds);
+    const deferred = context.messages
+      .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+      .find((block) => block.deferredContent)?.deferredContent;
+    if (deferred && !restoredDeferredContent) {
+      const { content } = await handlers["sessions.entryContent"]({
+        id,
+        entryId: deferred.entryId,
+        blockIndex: deferred.blockIndex,
+      });
+      const originalMessage = full.context.messages[full.context.entryIds.indexOf(deferred.entryId)];
+      assert.deepEqual(content, originalMessage.content[deferred.blockIndex]);
+      restoredDeferredContent = true;
+    }
+    cursor = context.previousCursor;
+  }
+  assert.ok(cursors.size > 1, "split the oversized turn across multiple history requests");
+  assert.equal(restoredDeferredContent, true);
+  assert.equal(endIndex, 0);
+  assert.deepEqual(entryIds, full.context.entryIds);
+  assert.equal(readFileSync(filePath, "utf8"), source);
+});
+
+test("sessions.entryDetails returns omitted details from a history page", async () => {
+  const { handlers } = await captureHandlers();
+  const id = "deferred-details";
+  const timestamp = "2026-08-06T00:00:00.000Z";
+  const details = { diff: "d".repeat(200 * 1024) };
+  const messages = [
+    { role: "user", content: "edit", timestamp: 1 },
+    {
+      role: "toolResult",
+      toolCallId: "call",
+      toolName: "edit",
+      content: [{ type: "text", text: "edited" }],
+      details,
+      isError: false,
+      timestamp: 2,
+    },
+  ];
+  const entries = messages.map((message, index) => ({
+    type: "message",
+    id: `entry-${index}`,
+    parentId: index === 0 ? null : `entry-${index - 1}`,
+    timestamp,
+    message,
+  }));
+  const directory = path.join(process.env.PI_CODING_AGENT_SESSION_DIR, id);
+  mkdirSync(directory, { recursive: true });
+  const filePath = path.join(directory, `${id}.jsonl`);
+  const header = { type: "session", version: 3, id, timestamp, cwd: root };
+  writeFileSync(filePath, `${[header, ...entries].map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+  const source = readFileSync(filePath, "utf8");
+
+  const { context } = await handlers["sessions.get"]({ id, historyWindow: { maxTurns: 20 } });
+  const deferred = context.messages[1].deferredDetails;
+  assert.equal("details" in context.messages[1], false);
+  assert.deepEqual(deferred, {
+    entryId: "entry-1",
+    originalBytes: Buffer.byteLength(JSON.stringify(details)),
+    contentType: "details",
+  });
+  assert.deepEqual(await handlers["sessions.entryDetails"]({ id, entryId: deferred.entryId }), {
+    details,
+    deferredContent: deferred,
+  });
+  await assert.rejects(
+    handlers["sessions.entryDetails"]({ id, entryId: "entry-0" }),
+    (error) => error.code === "NOT_FOUND",
+  );
+  await assert.rejects(
+    handlers["sessions.entryDetails"]({ id: "missing-session", entryId: "entry-1" }),
+    (error) => error.code === "NOT_FOUND",
+  );
+  assert.equal(readFileSync(filePath, "utf8"), source);
+});

@@ -21,9 +21,22 @@ import {
 
 const DEFAULT_MAX_TURNS = 20;
 const DEFAULT_MAX_BYTES = 1024 * 1024;
-const DEFER_THRESHOLD_BYTES = 128 * 1024;
-const DEFER_PREVIEW_BYTES = 16 * 1024;
 const RESPONSE_OVERHEAD_BYTES = 2048;
+
+interface DeferStage {
+  /** Content strictly larger than this many bytes is replaced by a preview. */
+  thresholdBytes: number;
+  previewBytes: number;
+  /** Structured `details` have no textual preview, so only some stages omit them. */
+  includeDetails: boolean;
+}
+
+// Standard previews: used for every page and for each message of a turn split across pages.
+const STANDARD_STAGE: DeferStage = { thresholdBytes: 128 * 1024, previewBytes: 16 * 1024, includeDetails: true };
+// Only used to keep a complete turn together, or for a single message that still does not fit.
+const AGGRESSIVE_STAGE: DeferStage = { thresholdBytes: 4 * 1024, previewBytes: 2 * 1024, includeDetails: false };
+// Last resort for one message whose fixed metadata and many small blocks exceed the page budget.
+const MINIMAL_STAGE: DeferStage = { thresholdBytes: 512, previewBytes: 256, includeDetails: true };
 
 interface HistoryCursorPayload {
   version: 1;
@@ -41,7 +54,14 @@ interface ProjectedMessage {
 
 interface ContentCandidate {
   bytes: number;
+  details: boolean;
   defer: (previewBytes: number) => void;
+}
+
+interface CompactedMessages {
+  messages: AgentMessage[];
+  entryIds: string[];
+  candidates: ContentCandidate[];
 }
 
 export class StaleHistoryCursorError extends Error {
@@ -175,12 +195,25 @@ function collectContentCandidates(messages: AgentMessage[], entryIds: string[]):
   const candidates: ContentCandidate[] = [];
   messages.forEach((message, messageIndex) => {
     const entryId = entryIds[messageIndex];
+    if ((message.role === "toolResult" || message.role === "custom") && message.details !== undefined) {
+      const bytes = byteLength(message.details);
+      const deferredDetails: DeferredContentRef = { entryId, originalBytes: bytes, contentType: "details" };
+      candidates.push({
+        bytes,
+        details: true,
+        defer: () => {
+          delete message.details;
+          message.deferredDetails = deferredDetails;
+        },
+      });
+    }
     if (typeof message.content === "string") {
       const original = message.content;
       const bytes = Buffer.byteLength(original, "utf8");
       const deferredContent: DeferredContentRef = { entryId, blockIndex: 0, originalBytes: bytes, contentType: "text" };
       candidates.push({
         bytes,
+        details: false,
         defer: (previewBytes) => {
           message.content = [{ type: "text", text: utf8Preview(original, previewBytes), deferredContent }];
         },
@@ -199,6 +232,7 @@ function collectContentCandidates(messages: AgentMessage[], entryIds: string[]):
         };
         candidates.push({
           bytes,
+          details: false,
           defer: (previewBytes) => {
             (message.content as TextContent[])[blockIndex] = {
               ...block,
@@ -218,6 +252,7 @@ function collectContentCandidates(messages: AgentMessage[], entryIds: string[]):
         };
         candidates.push({
           bytes,
+          details: false,
           defer: (previewBytes) => {
             (message.content as ThinkingContent[])[blockIndex] = {
               ...block,
@@ -237,6 +272,7 @@ function collectContentCandidates(messages: AgentMessage[], entryIds: string[]):
         };
         candidates.push({
           bytes,
+          details: false,
           defer: (previewBytes) => {
             (message.content as ToolCallContent[])[blockIndex] = {
               ...block,
@@ -255,6 +291,7 @@ function collectContentCandidates(messages: AgentMessage[], entryIds: string[]):
         };
         candidates.push({
           bytes,
+          details: false,
           defer: () => {
             (message.content as ImageContent[])[blockIndex] = {
               type: "image",
@@ -269,21 +306,80 @@ function collectContentCandidates(messages: AgentMessage[], entryIds: string[]):
   return candidates.sort((a, b) => b.bytes - a.bytes);
 }
 
-function fitTurnToBudget(turn: ProjectedMessage[], maxBytes: number): ProjectedMessage[] | null {
-  const messages = cloneMessages(turn);
-  const entryIds = turn.map((item) => item.entryId);
-  const candidates = collectContentCandidates(messages, entryIds);
+function compactMessages(items: ProjectedMessage[]): CompactedMessages {
+  const messages = cloneMessages(items);
+  const entryIds = items.map((item) => item.entryId);
+  return { messages, entryIds, candidates: collectContentCandidates(messages, entryIds) };
+}
+
+function applyDeferStage(candidates: ContentCandidate[], stage: DeferStage): void {
   for (const candidate of candidates) {
-    if (candidate.bytes <= DEFER_THRESHOLD_BYTES) continue;
-    candidate.defer(DEFER_PREVIEW_BYTES);
+    if (candidate.bytes <= stage.thresholdBytes || (candidate.details && !stage.includeDetails)) continue;
+    candidate.defer(stage.previewBytes);
   }
-  if (byteLength({ messages, entryIds }) > maxBytes) {
-    for (const candidate of candidates) {
-      if (candidate.bytes > 4 * 1024) candidate.defer(2 * 1024);
+}
+
+function pageBytes({ messages, entryIds }: Pick<CompactedMessages, "messages" | "entryIds">): number {
+  return byteLength({ messages, entryIds });
+}
+
+function withMessages(items: ProjectedMessage[], messages: AgentMessage[]): ProjectedMessage[] {
+  return items.map((item, index) => ({ ...item, message: messages[index] }));
+}
+
+interface FitTurnOptions {
+  /** The page is still empty: return something even when nothing fits, so pagination always advances. */
+  force: boolean;
+  /** False for the remaining head of a turn that a newer page already split; it cannot be kept together. */
+  complete: boolean;
+}
+
+/**
+ * Fits a turn into `maxBytes`. A complete turn is preferred, using aggressive previews when needed to keep it
+ * together. Otherwise the newest contiguous suffix is returned with standard previews decided for those messages
+ * alone, so the entry-id cursor can continue inside the turn. If not even the newest message fits, an empty page
+ * (`force`) gives it progressively smaller previews and returns it even when fixed metadata keeps it over budget, so
+ * pagination always makes progress; otherwise null leaves the turn for a fresh page.
+ */
+function fitTurnToBudget(
+  turn: ProjectedMessage[],
+  maxBytes: number,
+  { force, complete }: FitTurnOptions,
+): ProjectedMessage[] | null {
+  const whole = compactMessages(turn);
+  applyDeferStage(whole.candidates, STANDARD_STAGE);
+  if (pageBytes(whole) <= maxBytes) return withMessages(turn, whole.messages);
+  if (complete) {
+    applyDeferStage(whole.candidates, AGGRESSIVE_STAGE);
+    if (pageBytes(whole) <= maxBytes) return withMessages(turn, whole.messages);
+  }
+
+  if (turn.length > 1) {
+    const standard = compactMessages(turn);
+    applyDeferStage(standard.candidates, STANDARD_STAGE);
+    let bytes = pageBytes({ messages: [], entryIds: [] });
+    let start = turn.length;
+    while (start > 0) {
+      const index = start - 1;
+      // Both serialized arrays need a comma between successive items.
+      const itemBytes =
+        byteLength(standard.messages[index]) + byteLength(standard.entryIds[index]) + (start < turn.length ? 2 : 0);
+      if (bytes + itemBytes > maxBytes) break;
+      bytes += itemBytes;
+      start = index;
     }
+    if (start < turn.length) return withMessages(turn.slice(start), standard.messages.slice(start));
   }
-  if (byteLength({ messages, entryIds }) > maxBytes) return null;
-  return turn.map((item, index) => ({ ...item, message: messages[index] }));
+
+  // Leftover space after newer turns is not worth smaller previews; the next page has the full budget.
+  if (!force) return null;
+  const newest = turn.slice(-1);
+  const single = compactMessages(newest);
+  for (const stage of [STANDARD_STAGE, AGGRESSIVE_STAGE, MINIMAL_STAGE]) {
+    applyDeferStage(single.candidates, stage);
+    if (pageBytes(single) <= maxBytes) break;
+  }
+  return withMessages(newest, single.messages);
 }
 
 export function buildSessionHistoryPage(options: {
@@ -324,6 +420,9 @@ export function buildSessionHistoryPage(options: {
   if (beforePathIndex < 0) throw new StaleHistoryCursorError();
   const available = allMessages.filter((item) => item.pathIndex < beforePathIndex);
   const turns = groupTurns(available);
+  // A cursor that does not start at a user message leaves only the head of a split turn before it.
+  const cursorMessage = allMessages.find((item) => item.pathIndex >= beforePathIndex)?.message;
+  const continuesSplitTurn = cursorMessage !== undefined && cursorMessage.role !== "user";
   const maxTurns = Math.max(1, Math.floor(historyWindow?.maxTurns ?? DEFAULT_MAX_TURNS));
   const maxBytes = Math.max(32 * 1024, Math.floor(historyWindow?.maxBytes ?? DEFAULT_MAX_BYTES));
   let selected: ProjectedMessage[] = [];
@@ -337,9 +436,15 @@ export function buildSessionHistoryPage(options: {
         entryIds: selected.map((item) => item.entryId),
       });
     if (remaining <= 0) break;
-    const fitted = fitTurnToBudget(turns[index], remaining);
+    // An empty page must always make progress, even past the soft byte budget.
+    const fitted = fitTurnToBudget(turns[index], remaining, {
+      force: selected.length === 0,
+      complete: !(continuesSplitTurn && index === turns.length - 1),
+    });
     if (!fitted) break;
     selected = [...fitted, ...selected];
+    // Earlier turns must wait until the unselected head of this turn is loaded.
+    if (fitted.length < turns[index].length) break;
   }
 
   const firstSelected = selected[0];
@@ -366,6 +471,14 @@ export function buildSessionHistoryPage(options: {
     ...(previousCursor ? { previousCursor } : {}),
     historyRevision,
   };
+}
+
+export function readSessionEntryDetails(entries: SessionEntry[], entryId: string): { details: unknown } | null {
+  const entry = entries.find((candidate) => candidate.id === entryId);
+  if (!entry) return null;
+  const message = entryToUiMessage(entry);
+  if (!message || (message.role !== "toolResult" && message.role !== "custom")) return null;
+  return message.details === undefined ? null : { details: message.details };
 }
 
 export function readSessionEntryContent(

@@ -226,6 +226,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     "sessions.contextPage": guard(sessionHandlers.contextPage),
 
     "sessions.entryContent": guard(sessionHandlers.entryContent),
+    "sessions.entryDetails": guard(sessionHandlers.entryDetails),
     "sessions.executions": guard(sessionHandlers.executions),
     "sessions.executionContent": guard(sessionHandlers.executionContent),
 

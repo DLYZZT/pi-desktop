@@ -1,4 +1,12 @@
 export const enUS: Record<string, string> = {
+  deferredContentLoad: "Load full content ({size})",
+  deferredContentLoading: "Loading full content…",
+  deferredDetailsLoad: "Load full details ({size})",
+  deferredDetailsLoading: "Loading full details…",
+  deferredContentLoadError: "Failed to load full content",
+  toolResultDetails: "Tool result details",
+  toolResultDetailsShow: "Show details",
+  toolResultDetailsHide: "Hide details",
   executionResultMissing: "Result was not recorded in the conversation.",
   toolResultImage: "Tool result image",
   replyImage: "Image in reply",
@@ -7,6 +15,14 @@ export const enUS: Record<string, string> = {
   replyImageRetry: "Retry loading image",
 };
 export const zhCN: Record<string, string> = {
+  deferredContentLoad: "加载完整内容（{size}）",
+  deferredContentLoading: "正在加载完整内容…",
+  deferredDetailsLoad: "加载完整详情（{size}）",
+  deferredDetailsLoading: "正在加载完整详情…",
+  deferredContentLoadError: "无法加载完整内容",
+  toolResultDetails: "工具结果详情",
+  toolResultDetailsShow: "显示详情",
+  toolResultDetailsHide: "收起详情",
   executionResultMissing: "对话中未记录工具结果。",
   toolResultImage: "工具结果图片",
   replyImage: "回复图片",
@@ -15,6 +31,14 @@ export const zhCN: Record<string, string> = {
   replyImageRetry: "重新加载图片",
 };
 export const zhTW: Record<string, string> = {
+  deferredContentLoad: "載入完整內容（{size}）",
+  deferredContentLoading: "正在載入完整內容…",
+  deferredDetailsLoad: "載入完整詳情（{size}）",
+  deferredDetailsLoading: "正在載入完整詳情…",
+  deferredContentLoadError: "無法載入完整內容",
+  toolResultDetails: "工具結果詳情",
+  toolResultDetailsShow: "顯示詳情",
+  toolResultDetailsHide: "收起詳情",
   executionResultMissing: "對話中未記錄工具結果。",
   toolResultImage: "工具結果圖片",
   replyImage: "回覆圖片",

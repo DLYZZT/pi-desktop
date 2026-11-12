@@ -1,15 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/i18n";
-import type { ImageContent } from "@/lib/types";
+import type { ImageContent, LoadDeferredContent } from "@/lib/types";
 import { persistedImageSource } from "@/lib/persisted-image";
 
-export function ReplyImage({
-  image,
-  onLoad,
-}: {
-  image: ImageContent;
-  onLoad?: (entryId: string, blockIndex?: number) => Promise<void>;
-}) {
+export function ReplyImage({ image, onLoad }: { image: ImageContent; onLoad?: LoadDeferredContent }) {
   const { t } = useI18n();
   const target = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);

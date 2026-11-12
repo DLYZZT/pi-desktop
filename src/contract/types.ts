@@ -70,6 +70,11 @@ export interface EntryContentResult {
   deferredContent: DeferredContentRef;
 }
 
+export interface EntryDetailsResult {
+  details: unknown;
+  deferredContent: DeferredContentRef;
+}
+
 export interface SessionRuntimeState {
   model?: { provider: string; id: string };
   agentSettled?: { aborted: boolean };
