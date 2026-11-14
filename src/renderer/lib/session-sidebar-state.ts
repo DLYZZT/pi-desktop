@@ -1,4 +1,6 @@
 import type { SessionInfo } from "./types";
+import { getRecentProjects } from "./session-list.ts";
+import { worktreePathsEqual } from "../../shared/worktree-path.ts";
 
 import type { Streams } from "@contract/api";
 
@@ -12,4 +14,18 @@ export function applySessionChangedEvent(sessions: SessionInfo[], event: Session
   next.push(event.session);
   next.sort((left, right) => right.modified.localeCompare(left.modified));
   return next;
+}
+
+/**
+ * Project the window context moves to after a project is removed: the most
+ * recent remaining project (remembered session-less ones included), or null
+ * when the removed project was the last one.
+ */
+export function resolveProjectRemovalFallback(
+  sessions: readonly SessionInfo[],
+  removedProjectRoot: string,
+  rememberedRoots: readonly string[],
+): string | null {
+  const candidates = [...getRecentProjects(sessions), ...rememberedRoots];
+  return candidates.find((root) => !worktreePathsEqual(root, removedProjectRoot)) ?? null;
 }

@@ -2,6 +2,7 @@ import { Component, type CSSProperties, type ErrorInfo, type ReactNode, useEffec
 import { AppShell } from "@/components/AppShell";
 import { ensureRpc, resetRpc } from "@/lib/api-client";
 import { useChatAppearance } from "@/hooks/useChatAppearance";
+import { useSessionListMode } from "@/hooks/useSessionListMode";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -35,6 +36,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 
 export function App() {
   const chatAppearance = useChatAppearance();
+  const sessionListMode = useSessionListMode();
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("Connecting…");
@@ -113,7 +115,7 @@ export function App() {
     );
   }
 
-  if (!ready || !chatAppearance.loaded) {
+  if (!ready || !chatAppearance.loaded || !sessionListMode.loaded) {
     return (
       <div style={centerStyle}>
         <div style={{ ...cardStyle, textAlign: "center" }}>

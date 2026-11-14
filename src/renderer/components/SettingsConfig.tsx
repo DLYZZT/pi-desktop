@@ -24,9 +24,11 @@ import type { ManagedProcessCapability } from "../../contract/processes";
 import { APP_AUTHOR, APP_DISPLAY_NAME, APP_GITHUB_URL, APP_VERSION, PI_VERSION } from "@/lib/app-version";
 import appIconUrl from "../../../build/icon.png";
 import { isAutoSessionTitleEnabled, setAutoSessionTitleEnabled } from "../lib/auto-session-title";
-import { getCacheWarmingStatus, setCacheWarmingMode } from "../lib/api-client";
 import { HerdrSettings } from "./herdr/HerdrSettings";
 import { McpConfig, type McpConfigHandle } from "./mcp/McpConfig";
+import { SettingRow, selectStyle } from "./settings/settings-controls";
+import { CacheWarmingSettings } from "./settings/CacheWarmingSettings";
+import { SessionListSettings } from "./settings/SessionListSettings";
 
 export type SettingsTab =
   "general" | "herdr" | "browser" | "channels" | "models" | "tools" | "skills" | "plugins" | "mcp" | "about";
@@ -969,38 +971,15 @@ function GeneralSettings({
   const [managedProcessesError, setManagedProcessesError] = useState<"load" | "save" | null>(null);
   const [managedProcessCapability, setManagedProcessCapability] = useState<ManagedProcessCapability | null>(null);
   const [autoSessionTitle, setAutoSessionTitle] = useState(() => isAutoSessionTitleEnabled());
-  const [cacheWarmingMode, setCacheWarmingModeState] = useState<"off" | "streaming" | "idle">("streaming");
-  const [cacheWarmingLoading, setCacheWarmingLoading] = useState(true);
-  const [cacheWarmingSaving, setCacheWarmingSaving] = useState(false);
-  const [cacheWarmingError, setCacheWarmingError] = useState<"load" | "save" | "partial" | null>(null);
   const [chatAppearanceError, setChatAppearanceError] = useState(false);
   const languageControlId = useId();
   const backgroundModeControlId = useId();
   const managedProcessesControlId = useId();
   const autoSessionTitleControlId = useId();
-  const cacheWarmingControlId = useId();
   const chatFontSizeControlId = useId();
   const chatLayoutControlId = useId();
   const chatAssistantWidthControlId = useId();
   const themeControlId = useId();
-  useEffect(() => {
-    let disposed = false;
-    void getCacheWarmingStatus()
-      .then((status) => {
-        if (disposed) return;
-        setCacheWarmingModeState(status.mode);
-        setCacheWarmingError(status.loadFailed ? "load" : null);
-      })
-      .catch(() => {
-        if (!disposed) setCacheWarmingError("load");
-      })
-      .finally(() => {
-        if (!disposed) setCacheWarmingLoading(false);
-      });
-    return () => {
-      disposed = true;
-    };
-  }, []);
   useEffect(() => {
     let disposed = false;
     void Promise.all([window.piBridge.getUiState(), window.piBridge.getManagedProcessCapability()])
@@ -1062,27 +1041,6 @@ function GeneralSettings({
       await onChatAppearanceChange(next);
     } catch {
       setChatAppearanceError(true);
-    }
-  };
-  const saveCacheWarming = async (next: "off" | "streaming" | "idle"): Promise<void> => {
-    const previous = cacheWarmingMode;
-    setCacheWarmingSaving(true);
-    setCacheWarmingError(null);
-    try {
-      const result = await setCacheWarmingMode(next);
-      setCacheWarmingModeState(result.mode);
-      setCacheWarmingError(result.pendingSessionCount > 0 ? "partial" : null);
-    } catch {
-      try {
-        const status = await getCacheWarmingStatus();
-        setCacheWarmingModeState(status.mode);
-        setCacheWarmingError(status.loadFailed ? "load" : "save");
-      } catch {
-        setCacheWarmingModeState(previous);
-        setCacheWarmingError("save");
-      }
-    } finally {
-      setCacheWarmingSaving(false);
     }
   };
   const managedProcessCapabilityMessage = (() => {
@@ -1295,36 +1253,7 @@ function GeneralSettings({
               />
             </label>
           </SettingRow>
-          <SettingRow label={t("cacheWarming", "Prompt cache warming")} controlId={cacheWarmingControlId}>
-            <select
-              id={cacheWarmingControlId}
-              value={cacheWarmingMode}
-              disabled={cacheWarmingLoading || cacheWarmingSaving || cacheWarmingError === "load"}
-              onChange={(event) => {
-                void saveCacheWarming(event.target.value as "off" | "streaming" | "idle");
-              }}
-              style={{ ...selectStyle, cursor: cacheWarmingSaving ? "wait" : "pointer" }}
-            >
-              <option value="off">{t("cacheWarmingOff", "Off")}</option>
-              <option value="streaming">{t("cacheWarmingStreaming", "During long tool runs")}</option>
-              <option value="idle">{t("cacheWarmingIdle", "Also while idle")}</option>
-            </select>
-          </SettingRow>
-          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: "var(--text-dim)" }}>
-            {t(
-              "cacheWarmingDescription",
-              "Cache warming may use model tokens. This setting is shared with the Pi CLI.",
-            )}
-          </p>
-          {cacheWarmingError && (
-            <p role="alert" style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: "var(--danger)" }}>
-              {cacheWarmingError === "load"
-                ? t("cacheWarmingLoadFailed", "The Pi cache warming setting could not be read.")
-                : cacheWarmingError === "partial"
-                  ? t("cacheWarmingPartial", "Saved, but some active sessions could not update. Reopen those sessions.")
-                  : t("cacheWarmingSaveFailed", "The Pi cache warming setting could not be saved.")}
-            </p>
-          )}
+          <CacheWarmingSettings />
           <SettingRow label={t("chatFontSize", "Chat text size")} controlId={chatFontSizeControlId}>
             <select
               id={chatFontSizeControlId}
@@ -1405,29 +1334,10 @@ function GeneralSettings({
           </select>
         </SettingRow>
       </section>
-    </div>
-  );
-}
 
-function SettingRow({ label, controlId, children }: { label: string; controlId: string; children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 20,
-        minHeight: 52,
-        padding: "10px 12px",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        background: "var(--bg-panel)",
-      }}
-    >
-      <label htmlFor={controlId} style={{ fontSize: 13, color: "var(--text-muted)", cursor: "pointer" }}>
-        {label}
-      </label>
-      {children}
+      <div style={{ height: 1, background: "var(--border)", maxWidth: 620, margin: "28px 0" }} />
+
+      <SessionListSettings />
     </div>
   );
 }
@@ -1459,15 +1369,3 @@ function ProjectRequired() {
     </div>
   );
 }
-
-const selectStyle: React.CSSProperties = {
-  minWidth: 160,
-  minHeight: 36,
-  padding: "7px 30px 7px 10px",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  background: "var(--bg)",
-  color: "var(--text)",
-  fontSize: 13,
-  cursor: "pointer",
-};
