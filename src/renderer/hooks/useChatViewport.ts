@@ -17,6 +17,14 @@ function getScrollMagnetEngaged(): boolean {
 function setScrollMagnetEngaged(value: boolean): void {
   scrollMagnetEngaged = value;
 }
+/** Programmatic smooth scrolling ignores the CSS preference, so honor reduced motion here. */
+function motionSafeScrollBehavior(behavior: ScrollBehavior): ScrollBehavior {
+  if (behavior !== "smooth") return behavior;
+  const reduced =
+    typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+  return reduced ? "auto" : "smooth";
+}
+
 const PROGRAMMATIC_SCROLL_IGNORE_MS = 700;
 const USER_SCROLL_INTENT_MS = 1200;
 
@@ -161,7 +169,7 @@ export function useChatViewport({
       // sits AFTER that spacer — scrolling to it lands in blank footer space
       // with the real content still above the fold.
       const el = agentRunningRef.current ? liveContentEndRef.current : messagesEndRef.current;
-      el?.scrollIntoView({ behavior, block: "end" });
+      el?.scrollIntoView({ behavior: motionSafeScrollBehavior(behavior), block: "end" });
     },
     [agentRunningRef],
   );
@@ -179,7 +187,7 @@ export function useChatViewport({
     if (!container || !el) return;
     const elAbsTop = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
-    container.scrollTo({ top: elAbsTop - 16, behavior: "smooth" });
+    container.scrollTo({ top: elAbsTop - 16, behavior: motionSafeScrollBehavior("smooth") });
   }, []);
 
   const updateScrollPresence = useCallback(() => {

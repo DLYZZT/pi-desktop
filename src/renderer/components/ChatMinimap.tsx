@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo, RefObject } from "react";
 import { scaledChatFont } from "@/lib/chat-appearance";
+import { useI18n } from "@/i18n";
 
 export interface ChatMinimapMessage {
   role: "user" | "assistant";
@@ -38,6 +39,17 @@ function hasTextContent(msg: ChatMinimapMessage): boolean {
   return msg.hasText;
 }
 
+function sameNodes(previous: NodeInfo[], next: NodeInfo[]): boolean {
+  if (previous.length !== next.length) return false;
+  for (let i = 0; i < next.length; i++) {
+    const a = previous[i];
+    const b = next[i];
+    if (a.msg.role !== b.msg.role || a.msg.preview !== b.msg.preview) return false;
+    if (Math.abs(a.topRatio - b.topRatio) > 1e-4 || Math.abs(a.heightRatio - b.heightRatio) > 1e-4) return false;
+  }
+  return true;
+}
+
 interface NodeInfo {
   topRatio: number; // 0–1 within total scroll height
   heightRatio: number;
@@ -46,6 +58,7 @@ interface NodeInfo {
 }
 
 export function ChatMinimap({ messages, streamingMessage, scrollContainer, messageRefs, historyTruncated }: Props) {
+  const { t } = useI18n();
   const [scrollRatio, setScrollRatio] = useState(0);
   const [viewportRatio, setViewportRatio] = useState(1);
   const [visible, setVisible] = useState(false);
@@ -62,8 +75,10 @@ export function ChatMinimap({ messages, streamingMessage, scrollContainer, messa
   const allMessagesRef = useRef(allMessages);
   allMessagesRef.current = allMessages;
 
-  const updatePositionsRef = useRef<() => void>(null!);
-  updatePositionsRef.current = () => {
+  // Scrolling only moves the viewport box. It reads three scroll metrics and
+  // leaves the per-message layout measurement to resize/content changes.
+  const updateViewportRef = useRef<() => void>(null!);
+  updateViewportRef.current = () => {
     const scrollEl = scrollContainer.current;
     if (!scrollEl) return;
 
@@ -79,8 +94,17 @@ export function ChatMinimap({ messages, streamingMessage, scrollContainer, messa
       setScrollRatio(scrollEl.scrollTop / scrollable);
       setViewportRatio(clientH / totalH);
     }
+  };
+
+  const updateNodesRef = useRef<() => void>(null!);
+  updateNodesRef.current = () => {
+    const scrollEl = scrollContainer.current;
+    if (!scrollEl) return;
 
     // Build node positions from real DOM refs
+    const totalH = scrollEl.scrollHeight;
+    const containerTop = scrollEl.getBoundingClientRect().top;
+    const scrollTop = scrollEl.scrollTop;
     const refs = messageRefs.current;
     const newNodes: NodeInfo[] = [];
     let refIndex = 0;
@@ -97,42 +121,63 @@ export function ChatMinimap({ messages, streamingMessage, scrollContainer, messa
 
       if (el && totalH > 0) {
         const elRect = el.getBoundingClientRect();
-        const containerRect = scrollEl.getBoundingClientRect();
-        const top = elRect.top - containerRect.top + scrollEl.scrollTop;
-        const h = elRect.height;
         newNodes.push({
-          topRatio: top / totalH,
-          heightRatio: h / totalH,
+          topRatio: (elRect.top - containerTop + scrollTop) / totalH,
+          heightRatio: elRect.height / totalH,
           msg,
           index: newNodes.length,
         });
       }
     }
-    setNodes(newNodes);
+    setNodes((previous) => (sameNodes(previous, newNodes) ? previous : newNodes));
   };
 
-  const updatePositions = useCallback(() => updatePositionsRef.current(), []);
+  // Coalesce bursts (scroll events, streaming growth) into one update per frame.
+  const pendingRef = useRef({ frame: 0, nodes: false });
+  const schedule = useCallback((measureNodes: boolean) => {
+    const pending = pendingRef.current;
+    pending.nodes ||= measureNodes;
+    if (pending.frame) return;
+    pending.frame = requestAnimationFrame(() => {
+      const withNodes = pending.nodes;
+      pending.frame = 0;
+      pending.nodes = false;
+      updateViewportRef.current();
+      if (withNodes) updateNodesRef.current();
+    });
+  }, []);
+  const updateViewport = useCallback(() => schedule(false), [schedule]);
+  const updatePositions = useCallback(() => schedule(true), [schedule]);
+
+  useEffect(() => {
+    const pending = pendingRef.current;
+    return () => {
+      cancelAnimationFrame(pending.frame);
+      pending.frame = 0;
+      pending.nodes = false;
+    };
+  }, []);
 
   useEffect(() => {
     const el = scrollContainer.current;
     if (!el) return;
-    el.addEventListener("scroll", updatePositions, { passive: true });
+    el.addEventListener("scroll", updateViewport, { passive: true });
     const ro = new ResizeObserver(updatePositions);
     ro.observe(el);
     // Also observe the scroll content for height changes
     if (el.firstElementChild) ro.observe(el.firstElementChild);
     updatePositions();
     return () => {
-      el.removeEventListener("scroll", updatePositions);
+      el.removeEventListener("scroll", updateViewport);
       ro.disconnect();
     };
-  }, [scrollContainer, updatePositions]);
+  }, [scrollContainer, updatePositions, updateViewport]);
 
-  // Re-measure when message count changes (new messages arrive)
+  // Re-measure when the message set changes (new, paged-in or settled messages)
   useEffect(() => {
     const t = setTimeout(updatePositions, 50);
     return () => clearTimeout(t);
-  }, [messages.length, updatePositions]);
+  }, [messages, allMessages.length, updatePositions]);
 
   const scrollToMinimapRatio = useCallback(
     (viewportTopRatio: number) => {
@@ -243,7 +288,7 @@ export function ChatMinimap({ messages, streamingMessage, scrollContainer, messa
     >
       {historyTruncated && (
         <div
-          title="Minimap shows the currently loaded history range"
+          title={t("chatMinimapTruncated", "Minimap shows the currently loaded history range")}
           style={{
             position: "absolute",
             top: 2,

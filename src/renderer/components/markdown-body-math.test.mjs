@@ -60,24 +60,63 @@ $$x = 2！$$
 
 Final paragraph.`;
 
-test("long streaming text uses a cheap escaped preview and restores complete Markdown at settlement", () => {
+test("long streaming text keeps finished blocks formatted and restores complete Markdown at settlement", () => {
   const source = followingMarkdown.repeat(20) + "\n<script>unsafe()</script>";
-  const preview = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: true }, source));
-  assert.match(preview, /data-streaming-preview/);
-  assert.doesNotMatch(preview, /<table>|<script>|class="katex/);
-  assert.match(preview, /&lt;script&gt;/);
+  const streaming = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: true }, source));
+  assertFollowingMarkdown(streaming);
+  assert.match(streaming, /class="katex/);
+  assert.doesNotMatch(streaming, /data-streaming-preview|<script>/);
   const settled = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: false }, source));
   assertFollowingMarkdown(settled);
   assert.match(settled, /class="katex/);
   assert.doesNotMatch(settled, /data-streaming-preview|<script>/);
 });
 
-test("small streaming code stays readable without highlighting and highlights once complete", () => {
-  const code = "```typescript\nconst answer = 42;\n```";
-  const preview = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: true }, code));
+test("streaming highlights finished code blocks and renders an unfinished fence without the parser", () => {
+  const source = "```typescript\nconst done = 1;\n```\n\nText\n\n```python\n" + "print('x')\n".repeat(2000);
+  const streaming = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: true }, source));
+  assert.equal((streaming.match(/data-highlighted/g) ?? []).length, 1);
+  assert.match(streaming, /<span class="markdown-code-lang">python<\/span>/);
+  assert.doesNotMatch(streaming, /data-streaming-preview|```/);
+});
+
+test("a long code block is highlighted once its fence closes while the message is still streaming", () => {
+  const code = "```python\n" + "print('a long line of code')\n".repeat(600) + "```";
+  for (const suffix of ["", "\n", "\n\n", "\nNext paragraph", "\n\nNext paragraph"]) {
+    const streaming = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: true }, code + suffix));
+    assert.equal((streaming.match(/data-highlighted/g) ?? []).length, 1, JSON.stringify(suffix));
+    assert.doesNotMatch(streaming, /data-streaming-preview|```/);
+  }
+});
+
+test("reference links resolve during streaming when the definition is in a later block", () => {
+  const source =
+    "Read the [acceptance doc][guide] first.\n\nAn ordinary paragraph.\n\n[guide]: https://example.com/guide\n\nStill streaming";
+  const streaming = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: true }, source));
+  assert.match(streaming, /<a href="https:\/\/example\.com\/guide"[^>]*>acceptance doc<\/a>/);
+  assert.doesNotMatch(streaming, /\[guide\]/);
+  const pending = renderToStaticMarkup(
+    createElement(MarkdownBody, { isStreaming: true }, "Read the [acceptance doc][guide] first.\n\nAn ordinary"),
+  );
+  assert.match(pending, /\[acceptance doc\]\[guide\]/);
+});
+
+test("an oversized unfinished paragraph falls back to an escaped preview for the tail only", () => {
+  const source = "# Title\n\n" + "word <b>x</b> ".repeat(1000);
+  const streaming = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: true }, source));
+  assert.match(streaming, /<h1>Title<\/h1>/);
+  assert.match(streaming, /data-streaming-preview/);
+  assert.match(streaming, /&lt;b&gt;/);
+});
+
+test("small streaming code stays readable without highlighting and highlights once its fence closes", () => {
+  const open = "```typescript\nconst answer = 42;\n";
+  const preview = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: true }, open));
   assert.match(preview, /const answer = 42;/);
   assert.doesNotMatch(preview, /data-highlighted/);
-  const settled = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: false }, code));
+  const closed = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: true }, open + "```"));
+  assert.match(closed, /data-highlighted/);
+  const settled = renderToStaticMarkup(createElement(MarkdownBody, { isStreaming: false }, open + "```"));
   assert.match(settled, /data-highlighted/);
 });
 

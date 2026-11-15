@@ -54,7 +54,7 @@ export function useMarkdownPlugins(markdown: string) {
       ],
     };
     // Each source gets a fresh collector. The child Markdown parser fills it
-    // before the effect runs; long streaming previews never enter the parser.
+    // before the effect runs.
   }, [markdown]);
 
   useEffect(() => {

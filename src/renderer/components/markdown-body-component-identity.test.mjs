@@ -1,5 +1,6 @@
 import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import { createElement } from "react";
 import { act, create } from "react-test-renderer";
@@ -19,6 +20,9 @@ const { MarkdownBody, getMarkdownComponentIdentityForTest, parseStats } = await 
       {
         name: "markdown-body-stubs",
         setup(build) {
+          build.onResolve({ filter: /^@\/lib\/streaming-markdown$/ }, () => ({
+            path: path.resolve(import.meta.dirname, "../lib/streaming-markdown.ts"),
+          }));
           build.onResolve({ filter: /^@\// }, (args) => ({ path: args.path, namespace: "stub" }));
           build.onResolve({ filter: /^\.\/SessionProfiler$/ }, () => ({ path: "profiler", namespace: "stub" }));
           build.onLoad({ filter: /.*/, namespace: "stub" }, (args) => ({
@@ -58,7 +62,7 @@ test("Markdown custom component types are module-stable", () => {
   for (const name of ["code", "pre", "a", "img", "table"]) assert.equal(first[name], second[name]);
 });
 
-test("stable Markdown skips parsing and long streaming updates never enter the Markdown parser", async (t) => {
+test("stable Markdown skips parsing and streaming updates re-parse only the unfinished block", async (t) => {
   const oldAct = globalThis.IS_REACT_ACT_ENVIRONMENT;
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   let renderer;
@@ -74,14 +78,24 @@ test("stable Markdown skips parsing and long streaming updates never enter the M
   assert.equal(parseStats.count, before + 1);
   await act(async () => renderer.update(createElement(MarkdownBody, null, "stable content")));
   assert.equal(parseStats.count, before + 1);
+  const finished = "finished paragraph\n\n".repeat(40);
+  await act(async () => renderer.update(createElement(MarkdownBody, { isStreaming: true }, finished + "tail")));
+  const afterFirstStreamingRender = parseStats.count;
+  assert.equal(afterFirstStreamingRender, before + 1 + 41);
   for (let i = 0; i < 10; i++) {
     await act(async () =>
-      renderer.update(createElement(MarkdownBody, { isStreaming: true }, "growing ".repeat(500) + i)),
+      renderer.update(
+        createElement(MarkdownBody, { isStreaming: true }, finished + "tail " + "growing ".repeat(i + 1)),
+      ),
     );
   }
-  assert.equal(parseStats.count, before + 1);
-  await act(async () =>
-    renderer.update(createElement(MarkdownBody, { isStreaming: false }, "growing ".repeat(500) + 9)),
-  );
-  assert.equal(parseStats.count, before + 2);
+  assert.equal(parseStats.count, afterFirstStreamingRender + 10);
+  // An oversized unfinished block is previewed as text instead of being parsed on every update.
+  const oversized = finished + "growing ".repeat(2000);
+  for (let i = 0; i < 5; i++) {
+    await act(async () => renderer.update(createElement(MarkdownBody, { isStreaming: true }, oversized + i)));
+  }
+  assert.equal(parseStats.count, afterFirstStreamingRender + 10);
+  await act(async () => renderer.update(createElement(MarkdownBody, { isStreaming: false }, oversized + 4)));
+  assert.equal(parseStats.count, afterFirstStreamingRender + 11);
 });

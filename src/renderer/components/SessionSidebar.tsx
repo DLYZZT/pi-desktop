@@ -245,6 +245,11 @@ export function SessionSidebar({
   // Done on the click path (not via the selectedCwd prop sync) so it also
   // works when the prop value won't change — e.g. re-clicking the already
   // open session after manually switching worktrees.
+  const handleSessionDeletedFromList = useCallback(
+    (id: string) => sessionList.applyChange({ cwd: null, sessionId: id, deleted: true }),
+    [sessionList],
+  );
+
   const handleSelectSessionFromList = useCallback(
     (s: SessionInfo) => {
       if (s.cwd) setSelectedCwd(s.cwd);
@@ -551,9 +556,7 @@ export function SessionSidebar({
                         unreadSessionIds={unreadSessionIds}
                         onSelectSession={handleSelectSessionFromList}
                         onRenamed={sessionList.refreshIfDisconnected}
-                        onSessionDeleted={(id) => {
-                          sessionList.applyChange({ cwd: null, sessionId: id, deleted: true });
-                        }}
+                        onSessionDeleted={handleSessionDeletedFromList}
                         depth={0}
                       />
                     ))}

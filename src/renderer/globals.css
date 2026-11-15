@@ -600,10 +600,22 @@ body {
   color: var(--text) !important;
 }
 
+.message-hover-actions,
+.message-hover-action {
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.12s,
+    color 0.12s;
+}
+
+.message-hover-scope:hover .message-hover-actions,
+.message-hover-scope:hover .message-hover-action,
+.message-hover-actions[data-visible="true"],
 .message-hover-actions:focus-within,
 .message-hover-action:focus-visible {
-  opacity: 1 !important;
-  pointer-events: auto !important;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .chat-composer-shell:focus-within {
@@ -1350,6 +1362,18 @@ span.linenumber {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Covers inline and utility-class animations too: each one jumps to its end state. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+
   .chat-input-bottom-spacer {
     transition-duration: 0.001ms !important;
   }
