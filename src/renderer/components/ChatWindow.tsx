@@ -591,23 +591,23 @@ export function ChatWindow({
                 zIndex: 40,
                 padding: `0 ${CHAT_COLUMN_PADDING}px`,
                 pointerEvents: "none",
+                // Stack the card under the notices, then let it hug the chat
+                // area's right edge. On wide windows the centred column is
+                // narrower than this overlay, so the card sits in the empty
+                // gutter beside the transcript; on narrow ones the column
+                // fills the overlay and it falls back to where it floated.
+                display: "flex",
+                flexDirection: "column",
               }}
             >
               <div className="chat-content-column">
                 <NoticeShelf notices={notices} floating align="right" />
-                {visibleTodoPlan ? (
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "flex-end",
-                      marginLeft: isMobile ? 0 : CHAT_MINIMAP_WIDTH,
-                      pointerEvents: "auto",
-                    }}
-                  >
-                    <TodoPanel plan={visibleTodoPlan} onDismiss={() => dismissTodoPlan(visibleTodoPlan)} />
-                  </div>
-                ) : null}
               </div>
+              {visibleTodoPlan ? (
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <TodoPanel plan={visibleTodoPlan} onDismiss={() => dismissTodoPlan(visibleTodoPlan)} />
+                </div>
+              ) : null}
             </div>
             <div ref={scrollContainerRef} className="relative z-[1] flex-1 overflow-y-auto pt-4 [scrollbar-width:none]">
               <div
