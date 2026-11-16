@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { AgentEvent } from "@contract/types";
 import { subscribeAgentEvents, subscribeSessionsChanged } from "@/lib/api-client";
+import { translate } from "@/i18n";
 import { SessionRefreshQueue } from "@/lib/session-refresh-queue";
 import {
   connectTimedEventStream,
@@ -10,6 +11,8 @@ import {
 } from "@/lib/event-stream-connection";
 
 const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
+/** Backoff for the mount-time agent stream subscription; capped, retried while the view lives. */
+const AGENT_EVENTS_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000];
 
 export class EventStreamConnectionError extends Error {
   constructor(public readonly status: Exclude<EventStreamConnectionStatus, "connected">) {
@@ -18,15 +21,32 @@ export class EventStreamConnectionError extends Error {
   }
 }
 
+function waitUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
 /** Owns the two complementary subscriptions for one mounted chat view. */
 export function useSessionEvents({
   sessionIdRef,
   onSessionChanged,
   sessionRefreshDelay,
+  onAgentEventsError,
+  retryWait = waitUnlessAborted,
 }: {
   sessionIdRef: RefObject<string | null>;
   onSessionChanged: (sessionId: string) => unknown | Promise<unknown>;
   sessionRefreshDelay?: () => number;
+  /** Reported once per failed connection episode, before backoff retries start. */
+  onAgentEventsError?: (message: string) => void;
+  retryWait?: (ms: number, signal: AbortSignal) => Promise<void>;
 }) {
   const eventUnsubRef = useRef<(() => void) | null>(null);
   const changesUnsubRef = useRef<(() => void) | null>(null);
@@ -35,6 +55,10 @@ export function useSessionEvents({
   onSessionChangedRef.current = onSessionChanged;
   const delayRef = useRef(sessionRefreshDelay);
   delayRef.current = sessionRefreshDelay;
+  const onAgentEventsErrorRef = useRef(onAgentEventsError);
+  onAgentEventsErrorRef.current = onAgentEventsError;
+  const retryWaitRef = useRef(retryWait);
+  retryWaitRef.current = retryWait;
   const refreshQueueRef = useRef<SessionRefreshQueue | null>(null);
   const cancelPendingSessionRefresh = useCallback(() => refreshQueueRef.current?.cancel(), []);
   const [events] = useState(() => new EventStreamConnectionManager(eventUnsubRef));
@@ -71,6 +95,32 @@ export function useSessionEvents({
     [connectEvents, isActive],
   );
 
+  // Mount-time subscription can lose the race against Host startup; without a
+  // retry the view refreshes from disk but silently drops live UI dialogs.
+  const connectEventsWithRetry = useCallback(
+    async (sid: string) => {
+      for (let attempt = 0; ; attempt++) {
+        // A send-path reconnect may have installed a healthy stream meanwhile.
+        if (eventUnsubRef.current) return;
+        const result = await connectEvents(sid);
+        if (result.status === "connected") return;
+        const signal = lifetimeRef.current.signal;
+        if (signal.aborted || sid !== sessionIdRef.current) return;
+        if (attempt === 0) {
+          const error = new EventStreamConnectionError(result.status);
+          console.error("Failed to subscribe to agent events:", error);
+          onAgentEventsErrorRef.current?.(
+            `${translate("agentEventsStreamRetrying", "Live update connection failed; retrying in the background.")} (${error.message})`,
+          );
+        }
+        const delay = AGENT_EVENTS_RETRY_DELAYS_MS[Math.min(attempt, AGENT_EVENTS_RETRY_DELAYS_MS.length - 1)];
+        await retryWaitRef.current(delay, signal);
+        if (lifetimeRef.current.signal.aborted || sid !== sessionIdRef.current) return;
+      }
+    },
+    [connectEvents, sessionIdRef],
+  );
+
   useEffect(() => {
     const lifetime = new AbortController();
     lifetimeRef.current = lifetime;
@@ -85,7 +135,7 @@ export function useSessionEvents({
       }
     };
     const sid = sessionIdRef.current;
-    if (sid) void connectEvents(sid).then(report("agent events"));
+    if (sid) void connectEventsWithRetry(sid);
 
     // Subscribe independently: persisted changes remain useful when the agent
     // stream is unavailable. The current ID also covers new-session promotion
@@ -110,7 +160,7 @@ export function useSessionEvents({
       events.invalidate();
       changes.invalidate();
     };
-  }, [changes, connectEvents, events, sessionIdRef]);
+  }, [changes, connectEvents, connectEventsWithRetry, events, sessionIdRef]);
 
   return {
     connectEvents,

@@ -23,6 +23,7 @@ export const enUS: Record<string, string> = {
   askOtherPlaceholder: "Type your answer",
   agentEventStreamConnectFailed: "Failed to connect to the agent event stream. Please try again.",
   agentEventStreamTimeout: "Timed out connecting to the agent event stream. Please try again.",
+  agentEventsStreamRetrying: "Live update connection failed; retrying in the background.",
   assistant: "Assistant",
   managedProcessContainmentFailure:
     "This process tree could not be safely confirmed as stopped. New starts are disabled; stop all processes and restart the app.",
@@ -249,6 +250,7 @@ export const zhCN: Record<string, string> = {
   askOtherPlaceholder: "输入你的回答",
   agentEventStreamConnectFailed: "连接 Agent 事件流失败，请重试。",
   agentEventStreamTimeout: "连接 Agent 事件流超时，请重试。",
+  agentEventsStreamRetrying: "实时更新连接失败，正在后台重试。",
   assistant: "助手",
   managedProcessContainmentFailure: "无法安全确认此进程树已停止。新的启动已禁用；请停止全部进程并重启应用。",
   managedProcessLanWarning: "该进程可能可从局域网访问",
@@ -472,6 +474,7 @@ export const zhTW: Record<string, string> = {
   askOtherPlaceholder: "輸入你的回答",
   agentEventStreamConnectFailed: "連線 Agent 事件流失敗，請重試。",
   agentEventStreamTimeout: "連線 Agent 事件流逾時，請重試。",
+  agentEventsStreamRetrying: "即時更新連線失敗，正在背景重試。",
   assistant: "助理",
   managedProcessContainmentFailure: "無法安全確認此程序樹已停止。已停用新的啟動；請停止所有程序並重新啟動應用程式。",
   managedProcessLanWarning: "此程序可能可透過區域網路存取",

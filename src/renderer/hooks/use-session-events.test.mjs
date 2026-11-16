@@ -48,13 +48,19 @@ const { useSessionEvents, api } = await importTestBundle("session-events-hook", 
   ],
 });
 
-async function mount(t, { id = "a", strict = false } = {}) {
+async function mount(t, { id = "a", strict = false, retryWait } = {}) {
   const sessionIdRef = { current: id };
   const events = [],
-    refreshes = [];
+    refreshes = [],
+    streamErrors = [];
   let current, renderer;
   function Probe() {
-    current = useSessionEvents({ sessionIdRef, onSessionChanged: (sid) => refreshes.push(sid) });
+    current = useSessionEvents({
+      sessionIdRef,
+      onSessionChanged: (sid) => refreshes.push(sid),
+      onAgentEventsError: (message) => streamErrors.push(message),
+      ...(retryWait ? { retryWait } : {}),
+    });
     current.handleAgentEventRef.current = (event) => events.push(event);
     return null;
   }
@@ -73,8 +79,19 @@ async function mount(t, { id = "a", strict = false } = {}) {
     sessionIdRef,
     events,
     refreshes,
+    streamErrors,
     unmount,
   };
+}
+
+function silenceConsoleError(t) {
+  const original = console.error,
+    errors = [];
+  console.error = (...args) => errors.push(args);
+  t.after(() => {
+    console.error = original;
+  });
+  return errors;
 }
 
 test("idle views receive live events and only their persisted changes, using the latest callback", async (t) => {
@@ -176,12 +193,7 @@ test("a failed agent connection leaves the persisted-change fallback subscribed"
   api.reset();
   const failure = createDeferred();
   api.enqueue("agent", failure.promise);
-  const original = console.error,
-    errors = [];
-  console.error = (...args) => errors.push(args);
-  t.after(() => {
-    console.error = original;
-  });
+  const errors = silenceConsoleError(t);
   const fixture = await mount(t);
   await act(async () => {
     failure.reject(new Error("offline"));
@@ -189,6 +201,8 @@ test("a failed agent connection leaves the persisted-change fallback subscribed"
   api.subscriptions.find((s) => s.kind === "changes").onEvent({ sessionId: "a" });
   assert.deepEqual(fixture.refreshes, ["a"]);
   assert.equal(errors.filter(([message]) => message.startsWith("Failed to subscribe")).length, 1);
+  assert.equal(fixture.streamErrors.length, 1);
+  assert.match(fixture.streamErrors[0], /EVENT_STREAM_CLOSED/);
 });
 
 test("StrictMode setup cleanup retains only one active stream of each kind", async (t) => {
@@ -203,4 +217,100 @@ test("StrictMode setup cleanup retains only one active stream of each kind", asy
   );
   await fixture.unmount();
   assert.ok(api.subscriptions.every((s) => s.closed === 1));
+});
+
+test("a failed mount subscription retries with backoff and recovers live events", async (t) => {
+  api.reset();
+  silenceConsoleError(t);
+  const waits = [];
+  const failure = createDeferred();
+  api.enqueue("agent", failure.promise);
+  api.enqueue("agent", Promise.resolve());
+  const fixture = await mount(t, {
+    retryWait: async (ms) => {
+      waits.push(ms);
+    },
+  });
+  await act(async () => {
+    failure.reject(new Error("offline"));
+  });
+  assert.deepEqual(waits, [1000]);
+  assert.equal(fixture.streamErrors.length, 1, "the episode is reported once, not per retry");
+  const agentSubs = api.subscriptions.filter((s) => s.kind === "agent");
+  assert.equal(agentSubs.length, 2);
+  assert.equal(agentSubs[1].closed, 0);
+  agentSubs[0].onEvent({ type: "ghost" });
+  assert.deepEqual(fixture.events, [], "the retired attempt must not deliver events");
+  agentSubs[1].onEvent({ type: "agent_start" });
+  assert.deepEqual(fixture.events, [{ type: "agent_start" }]);
+});
+
+test("retry backoff grows to the cap and stops once connected", async (t) => {
+  api.reset();
+  silenceConsoleError(t);
+  const waits = [];
+  for (let i = 0; i < 5; i++) api.enqueue("agent", Promise.reject(new Error("offline")));
+  api.enqueue("agent", Promise.resolve());
+  const fixture = await mount(t, {
+    retryWait: async (ms) => {
+      waits.push(ms);
+    },
+  });
+  assert.deepEqual(waits, [1000, 2000, 4000, 8000, 8000]);
+  assert.equal(fixture.streamErrors.length, 1);
+  const agentSubs = api.subscriptions.filter((s) => s.kind === "agent");
+  assert.equal(agentSubs.length, 6);
+  assert.equal(agentSubs.at(-1).closed, 0);
+  for (const subscription of agentSubs.slice(0, -1)) subscription.onEvent({ type: "ghost" });
+  assert.deepEqual(fixture.events, [], "only the newest attempt may deliver events");
+  agentSubs.at(-1).onEvent({ type: "agent_start" });
+  assert.deepEqual(fixture.events, [{ type: "agent_start" }]);
+});
+
+test("unmount during backoff stops the retry loop", async (t) => {
+  api.reset();
+  silenceConsoleError(t);
+  const waitGate = createDeferred();
+  api.enqueue("agent", Promise.reject(new Error("offline")));
+  const fixture = await mount(t, { retryWait: () => waitGate.promise });
+  assert.equal(fixture.streamErrors.length, 1);
+  await fixture.unmount();
+  await act(async () => {
+    waitGate.resolve();
+  });
+  assert.equal(api.subscriptions.filter((s) => s.kind === "agent").length, 1);
+});
+
+test("a send-path reconnect stands down the pending retry", async (t) => {
+  api.reset();
+  silenceConsoleError(t);
+  const waitGate = createDeferred();
+  api.enqueue("agent", Promise.reject(new Error("offline")));
+  const fixture = await mount(t, { retryWait: () => waitGate.promise });
+  api.enqueue("agent", Promise.resolve());
+  await act(async () => fixture.current.ensureEventsConnected("a"));
+  await act(async () => {
+    waitGate.resolve();
+  });
+  const agentSubs = api.subscriptions.filter((s) => s.kind === "agent");
+  assert.equal(agentSubs.length, 2, "the retry must not clobber the healthy send-path stream");
+  assert.equal(agentSubs.at(-1).closed, 0);
+  agentSubs.at(-1).onEvent({ type: "agent_start" });
+  assert.deepEqual(fixture.events, [{ type: "agent_start" }]);
+});
+
+test("switching session during backoff stops the retry for the old ID", async (t) => {
+  api.reset();
+  silenceConsoleError(t);
+  const waitGate = createDeferred();
+  api.enqueue("agent", Promise.reject(new Error("offline")));
+  const fixture = await mount(t, { retryWait: () => waitGate.promise });
+  fixture.sessionIdRef.current = "b";
+  await act(async () => {
+    waitGate.resolve();
+  });
+  assert.deepEqual(
+    api.subscriptions.filter((s) => s.kind === "agent").map((s) => s.sid),
+    ["a"],
+  );
 });

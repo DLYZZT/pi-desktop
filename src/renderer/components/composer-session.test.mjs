@@ -28,7 +28,7 @@ const { ChatInput, useAgentSession, api } = await importTestBundle("composer-ses
           contents:
             path === "i18n"
               ? `
-      const t = (_key, fallback) => fallback; export const useI18n = () => ({t, language:'en-US'});
+      const t = (_key, fallback) => fallback; export const useI18n = () => ({t, language:'en-US'}); export const translate = t;
     `
               : `
       export const requests = [], streams = [], toolReadRequests = [];

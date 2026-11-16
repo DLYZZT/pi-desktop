@@ -178,6 +178,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     sessionIdRef,
     onSessionChanged: (sid) => loadSessionRef.current?.(sid),
     sessionRefreshDelay: () => (agentRunningRef.current ? 1000 : 0),
+    onAgentEventsError: (message) => addNotice({ type: "error", message }),
   });
   const {
     extensionDialog,

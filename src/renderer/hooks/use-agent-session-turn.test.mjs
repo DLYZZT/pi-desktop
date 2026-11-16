@@ -30,6 +30,7 @@ const { useAgentSession, testApi, SessionPresentationStore } = await importTestB
               ? `
           const t = (_key, fallback) => fallback;
           export function useI18n() { return { language: "en-US", t }; }
+          export const translate = t;
         `
               : path === "@/lib/agent-client"
                 ? `
