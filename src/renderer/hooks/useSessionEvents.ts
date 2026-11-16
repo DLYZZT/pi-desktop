@@ -68,12 +68,11 @@ export function useSessionEvents({
   const getViewSignal = useCallback(() => lifetimeRef.current.signal, []);
 
   const connectEvents = useCallback(
-    async (sid: string): Promise<EventStreamConnectionResult> => {
-      const signal = lifetimeRef.current.signal;
-      if (signal.aborted || sid !== sessionIdRef.current) return { status: "closed", unsubscribe: () => {} };
+    async (sid: string, lifetime: AbortSignal = lifetimeRef.current.signal): Promise<EventStreamConnectionResult> => {
+      if (lifetime.aborted || sid !== sessionIdRef.current) return { status: "closed", unsubscribe: () => {} };
       return connectTimedEventStream<AgentEvent>({
         manager: events,
-        signal,
+        signal: lifetime,
         subscribe: (onEvent) => subscribeAgentEvents(sid, onEvent),
         onEvent: (event) => {
           if (sid === sessionIdRef.current) handleAgentEventRef.current?.(event);
@@ -98,13 +97,15 @@ export function useSessionEvents({
   // Mount-time subscription can lose the race against Host startup; without a
   // retry the view refreshes from disk but silently drops live UI dialogs.
   const connectEventsWithRetry = useCallback(
-    async (sid: string) => {
+    async (sid: string, signal: AbortSignal) => {
       for (let attempt = 0; ; attempt++) {
         // A send-path reconnect may have installed a healthy stream meanwhile.
-        if (eventUnsubRef.current) return;
-        const result = await connectEvents(sid);
+        if (signal.aborted || eventUnsubRef.current) return;
+        const result = await connectEvents(sid, signal);
         if (result.status === "connected") return;
-        const signal = lifetimeRef.current.signal;
+        // This attempt's own lifetime, not the ref: a remount (StrictMode's
+        // double invoke, or a new session) aborts it and installs a fresh one,
+        // and that supersede is not a connection failure worth reporting.
         if (signal.aborted || sid !== sessionIdRef.current) return;
         if (attempt === 0) {
           const error = new EventStreamConnectionError(result.status);
@@ -115,7 +116,7 @@ export function useSessionEvents({
         }
         const delay = AGENT_EVENTS_RETRY_DELAYS_MS[Math.min(attempt, AGENT_EVENTS_RETRY_DELAYS_MS.length - 1)];
         await retryWaitRef.current(delay, signal);
-        if (lifetimeRef.current.signal.aborted || sid !== sessionIdRef.current) return;
+        if (signal.aborted || sid !== sessionIdRef.current) return;
       }
     },
     [connectEvents, sessionIdRef],
@@ -135,7 +136,7 @@ export function useSessionEvents({
       }
     };
     const sid = sessionIdRef.current;
-    if (sid) void connectEventsWithRetry(sid);
+    if (sid) void connectEventsWithRetry(sid, lifetime.signal);
 
     // Subscribe independently: persisted changes remain useful when the agent
     // stream is unavailable. The current ID also covers new-session promotion

@@ -314,3 +314,25 @@ test("switching session during backoff stops the retry for the old ID", async (t
     ["a"],
   );
 });
+
+test("a superseded mount attempt is aborted silently, not reported as a failure", async (t) => {
+  api.reset();
+  const errors = silenceConsoleError(t);
+  const first = createDeferred();
+  api.enqueue("agent", first.promise);
+  api.enqueue("agent", Promise.resolve());
+  // StrictMode's setup → cleanup → setup aborts the first attempt while its
+  // subscribe is still in flight; the remount owns a fresh lifetime.
+  const fixture = await mount(t, { strict: true });
+  await act(async () => {
+    first.resolve();
+    await first.promise;
+  });
+  assert.deepEqual(fixture.streamErrors, [], "the superseded attempt must not surface a connection notice");
+  assert.equal(errors.filter(([message]) => message.startsWith("Failed to subscribe")).length, 0);
+  // The remount's stream is the live one.
+  const live = api.subscriptions.filter((s) => !s.closed && s.kind === "agent");
+  assert.equal(live.length, 1);
+  live[0].onEvent({ type: "agent_start" });
+  assert.deepEqual(fixture.events, [{ type: "agent_start" }]);
+});
