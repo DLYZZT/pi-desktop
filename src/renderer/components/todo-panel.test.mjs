@@ -55,12 +55,12 @@ test("shows the progress header and every item", async (t) => {
   const rendered = text(renderer);
   assert.match(rendered, /Plan 1\/3/);
   for (const item of items) assert.ok(rendered.includes(item.content), item.content);
-  // Completed items are struck through; the others are not.
-  const struck = renderer.root.findAll(
-    (node) => typeof node.type === "string" && node.props.style?.textDecoration === "line-through",
+  // Completed items are dimmed; the others keep the full text colour.
+  const dimmed = renderer.root.findAll(
+    (node) => typeof node.type === "string" && node.props.style?.color === "var(--text-dim)",
   );
-  assert.equal(struck.length, 1);
-  assert.equal(flatten(struck[0].props.children), "Read the projection");
+  assert.equal(dimmed.length, 1);
+  assert.equal(flatten(dimmed[0].props.children), "Read the projection");
 });
 
 test("the header toggles expansion and remembers a manual collapse", async (t) => {

@@ -54,7 +54,7 @@ export function TodoPanel({ plan, onDismiss }: TodoPanelProps) {
         pointerEvents: "auto",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 8px 7px 10px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, padding: "7px 8px 7px 10px" }}>
         <Button
           variant="ghost"
           onClick={() => {
@@ -84,6 +84,7 @@ export function TodoPanel({ plan, onDismiss }: TodoPanelProps) {
           {collapsed ? (
             <span
               style={{
+                flex: "1 1 0",
                 minWidth: 0,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -137,10 +138,9 @@ export function TodoPanel({ plan, onDismiss }: TodoPanelProps) {
               <ItemGlyph status={item.status} />
               <span
                 style={{
-                  fontSize: 12,
+                  fontSize: 13,
                   lineHeight: 1.45,
                   color: item.status === "completed" ? "var(--text-dim)" : "var(--text)",
-                  textDecoration: item.status === "completed" ? "line-through" : "none",
                   minWidth: 0,
                   wordBreak: "break-word",
                 }}

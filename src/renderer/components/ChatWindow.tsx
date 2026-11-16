@@ -607,6 +607,37 @@ export function ChatWindow({
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   <TodoPanel plan={visibleTodoPlan} onDismiss={() => dismissTodoPlan(visibleTodoPlan)} />
                 </div>
+              ) : todoPlan ? (
+                // Dismissed but still has a plan: keep a small handle to bring it back.
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDismissedPlanKey(null)}
+                    title={t("todoPlanRestore", "Show plan")}
+                    aria-label={t("todoPlanRestore", "Show plan")}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      height: 24,
+                      padding: "2px 8px",
+                      borderRadius: 999,
+                      pointerEvents: "auto",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontFamily: "var(--font-mono)",
+                        color: "var(--text-dim)",
+                      }}
+                    >
+                      {t("todoPlanTitle", "Plan")} {todoPlan.completed}/{todoPlan.items.length}
+                    </span>
+                    <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
+                  </Button>
+                </div>
               ) : null}
             </div>
             <div ref={scrollContainerRef} className="relative z-[1] flex-1 overflow-y-auto pt-4 [scrollbar-width:none]">
