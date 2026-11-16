@@ -11,6 +11,7 @@ import { scaledChatFont } from "@/lib/chat-appearance";
 import { getToolResultDisplayText } from "@/lib/tool-result-display";
 import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
+import { createStreamRateState, estimateTokens, resetStreamRate, updateStreamRate } from "@/lib/stream-rate";
 import { hasRenderableAssistantMessage, isEmptyTextBlock, isEmptyThinkingBlock } from "@/lib/message-display";
 import { getUserBubbleStyle } from "@/lib/channel-message-style";
 import { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelAttachmentCopyText } from "@shared/channel-message";
@@ -518,8 +519,8 @@ function AssistantMessageView({
   const blocks = blockItems.map(({ block }) => block);
   const [hovered, setHovered] = useState(false);
   const { copied, copy } = useCopyFeedback();
-  const streamStartRef = useRef<number | null>(null);
   const [tps, setTps] = useState<number | null>(null);
+  const streamRateRef = useRef(createStreamRateState());
   const blockItemsRef = useRef(blockItems);
   blockItemsRef.current = blockItems;
 
@@ -553,7 +554,7 @@ function AssistantMessageView({
         }
         return next;
       });
-      streamStartRef.current = null;
+      resetStreamRate(streamRateRef.current);
       setTps(null);
       return;
     }
@@ -591,9 +592,9 @@ function AssistantMessageView({
         else if (b.type === "toolCall") chars += JSON.stringify((b as ToolCallContent).input ?? {}).length;
       }
       if (chars === 0) return;
-      if (streamStartRef.current === null) streamStartRef.current = now;
-      const elapsed = (now - streamStartRef.current) / 1000;
-      if (elapsed > 0.5) setTps(chars / 4 / elapsed);
+      // Sliding-window rate: immune to mid-stream remounts (session switch and
+      // back), unlike a cumulative total divided by wall time.
+      setTps(updateStreamRate(streamRateRef.current, now, estimateTokens(chars)));
     };
     const id = setInterval(tick, 300);
     return () => clearInterval(id);
