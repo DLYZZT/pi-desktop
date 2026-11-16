@@ -12,7 +12,7 @@ import type { ToolchainSnapshot } from "../shared/toolchains/types";
 import { installToolchainGitRunner } from "./toolchain-git";
 import type { BrowserCapabilitySnapshot } from "../contract/browser";
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
-import { syncDesktopToolsForAllSessions } from "./rpc-manager";
+import { getRpcSession, syncDesktopToolsForAllSessions } from "./rpc-manager";
 import { readPiRuntimeVersion } from "./runtime-version";
 import { applyManagedProcessOwnerIdentity } from "./managed-process/owner-identity";
 import type { HerdrRuntimeDescriptor } from "../contract/herdr";
@@ -24,7 +24,14 @@ const piRuntimeVersion = readPiRuntimeVersion();
 // Web search settings and credential state must exist before any session registers its tools.
 initializeWebSearchRuntime();
 
-const server = createRpcServer();
+const server = createRpcServer({
+  // A renderer that (re)subscribes after a dialog was emitted would otherwise
+  // wait out its timeout with no UI; replay the unresolved requests to it.
+  onSubscribe: (topic, key, send) => {
+    if (topic !== "agent.events") return;
+    for (const event of getRpcSession(key)?.pendingUiEvents() ?? []) send(event);
+  },
+});
 const restoreGitRunner = installToolchainGitRunner(toolchainRuntime, () => {
   // Emitted after the Host accepts the revision and invalidates its Git cache.
   // Chat histories are unchanged; only project metadata needs reconciliation.

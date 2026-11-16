@@ -315,7 +315,16 @@ function listenPort(port: AnyMessagePort, onData: (data: unknown) => void): () =
   throw new Error("MessagePort has neither addEventListener nor on()");
 }
 
-export function createRpcServer(): RpcServer {
+export function createRpcServer(
+  options: {
+    /**
+     * Called once per port/topic/key when its first subscription arrives. The
+     * sender delivers to that port only, so retained state can be replayed to a
+     * client that subscribed after it was produced.
+     */
+    onSubscribe?: (topic: string, key: string, send: (data: unknown) => void) => void;
+  } = {},
+): RpcServer {
   const handlers = new Map<string, (params: unknown, context: RpcRequestContext) => Promise<unknown> | unknown>();
   const ports = new Set<AnyMessagePort>();
   /** port → subscription id → { topic, key } */
@@ -340,6 +349,20 @@ export function createRpcServer(): RpcServer {
     portUnlisten.delete(port);
     portCloseUnlisten.get(port)?.();
     portCloseUnlisten.delete(port);
+  }
+
+  function sendEventToPort(port: AnyMessagePort, topic: string, key: string, data: unknown): void {
+    const wire: WireEvent = { kind: "event", topic, key, data };
+    try {
+      port.postMessage(wire);
+    } catch {
+      forgetPort(port);
+      try {
+        port.close?.();
+      } catch {
+        /* ignore a transport that is already closed */
+      }
+    }
   }
 
   function requestContext(port: AnyMessagePort): RpcRequestContext {
@@ -384,7 +407,11 @@ export function createRpcServer(): RpcServer {
     if (!msg || typeof msg !== "object") return;
 
     if (msg.kind === "subscribe") {
-      ensureSubs(port).set(msg.id, { topic: msg.topic, key: msg.key });
+      const subs = ensureSubs(port);
+      const alreadySubscribed = [...subs.values()].some((sub) => sub.topic === msg.topic && sub.key === msg.key);
+      subs.set(msg.id, { topic: msg.topic, key: msg.key });
+      if (!alreadySubscribed)
+        options.onSubscribe?.(msg.topic, msg.key, (data) => sendEventToPort(port, msg.topic, msg.key, data));
       return;
     }
     if (msg.kind === "unsubscribe") {

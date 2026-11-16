@@ -243,6 +243,75 @@ test("subscribe throws without retaining a local subscription when postMessage f
   client.close();
 });
 
+test("onSubscribe replays retained events once per port/topic/key", async (t) => {
+  const { port1, port2 } = new MessageChannel();
+  const retained = new Map([["s1", [{ type: "extension_ui_request", id: "ask-1" }]]]);
+  const calls = [];
+  const server = createRpcServer({
+    onSubscribe: (topic, key, send) => {
+      calls.push(`${topic}:${key}`);
+      if (topic === "agent.events") for (const event of retained.get(key) ?? []) send(event);
+    },
+  });
+  server.attachPort(port1);
+  const client = createRpcClient(port2);
+  t.after(() => {
+    client.close();
+    server.detachPort(port1);
+  });
+  const received = [];
+  client.subscribe("agent.events", "s1", (event) => received.push(event));
+  client.subscribe("agent.events", "s1", (event) => received.push(event));
+  client.subscribe("agent.events", "s2", (event) => received.push(event));
+  server.handle({ "host.ping": () => ({ ok: true, ts: 1 }) });
+  await client.call("host.ping");
+
+  assert.deepEqual(calls, ["agent.events:s1", "agent.events:s2"], "replay runs once per port/key, not per sub id");
+  assert.deepEqual(
+    received,
+    [
+      { type: "extension_ui_request", id: "ask-1" },
+      { type: "extension_ui_request", id: "ask-1" },
+    ],
+    "each subscription on the replayed key receives it once; s2 has nothing retained",
+  );
+
+  const resubscribe = client.subscribe("agent.events", "s3", () => undefined);
+  resubscribe();
+  client.subscribe("agent.events", "s3", () => undefined);
+  await client.call("host.ping");
+  assert.deepEqual(calls, ["agent.events:s1", "agent.events:s2", "agent.events:s3", "agent.events:s3"]);
+});
+
+test("replay delivery failure detaches the port", () => {
+  const listeners = new Map();
+  let closeCalls = 0;
+  const port = {
+    on(type, listener) {
+      const entries = listeners.get(type) ?? new Set();
+      entries.add(listener);
+      listeners.set(type, entries);
+    },
+    off(type, listener) {
+      listeners.get(type)?.delete(listener);
+    },
+    postMessage() {
+      throw new Error("closed transport");
+    },
+    start() {},
+    close() {
+      closeCalls += 1;
+    },
+  };
+  const server = createRpcServer({ onSubscribe: (_topic, _key, send) => send({ type: "x" }) });
+  server.attachPort(port);
+  listeners.get("message").values().next().value({ kind: "subscribe", id: "s1", topic: "agent.events", key: "s1" });
+
+  assert.equal(closeCalls, 1);
+  assert.equal(listeners.get("message").size, 0);
+  assert.equal(listeners.get("close").size, 0);
+});
+
 test("server attach/detach is idempotent and removes message and close listeners", () => {
   const listeners = new Map();
   let closeCalls = 0;

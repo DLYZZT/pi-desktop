@@ -532,6 +532,11 @@ export class AgentSessionWrapper {
     };
   }
 
+  /** Unresolved dialog requests, for replay to a renderer that subscribes late. */
+  pendingUiEvents(): AgentEvent[] {
+    return [...this.pendingUiRequests.values()];
+  }
+
   onDestroy(cb: () => void): () => void {
     if (!this._alive) {
       cb();
