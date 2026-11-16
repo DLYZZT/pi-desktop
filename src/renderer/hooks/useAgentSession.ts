@@ -43,6 +43,7 @@ import {
 } from "../lib/session-turn-state";
 export type { AgentPhase, CompactResultInfo, QueuedMessages } from "../lib/session-turn-state";
 import { readCompactionEstimate, withCompactionEstimate } from "../lib/session-context-usage";
+import { userMessageKey } from "@/lib/message-identity";
 
 export type SessionData = SessionDetail;
 type AgentStateResponse = SessionRuntimeState;
@@ -84,54 +85,6 @@ const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
 const AGENT_STATE_RECONCILE_MS = 15_000;
-
-function extractMessageText(message: Partial<AgentMessage>): string {
-  const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((block) =>
-      block &&
-      typeof block === "object" &&
-      (block as { type?: string }).type === "text" &&
-      typeof (block as { text?: unknown }).text === "string"
-        ? (block as { text: string }).text
-        : "",
-    )
-    .filter(Boolean)
-    .join("\n");
-}
-
-function imageSignature(block: unknown): string {
-  if (!block || typeof block !== "object" || (block as { type?: unknown }).type !== "image") return "";
-  const source = (block as { source?: unknown }).source;
-  if (source && typeof source === "object") {
-    const src = source as { type?: unknown; media_type?: unknown; data?: unknown; url?: unknown };
-    return [
-      src.type === "url" ? "url" : "base64",
-      typeof src.media_type === "string" ? src.media_type : "",
-      typeof src.data === "string" ? src.data : "",
-      typeof src.url === "string" ? src.url : "",
-    ].join(":");
-  }
-  const flat = block as { data?: unknown; mimeType?: unknown };
-  return [
-    "base64",
-    typeof flat.mimeType === "string" ? flat.mimeType : "",
-    typeof flat.data === "string" ? flat.data : "",
-    "",
-  ].join(":");
-}
-
-function userMessageKey(message: Partial<AgentMessage>): string {
-  const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") return JSON.stringify({ text: content, images: [] });
-  if (!Array.isArray(content)) return JSON.stringify({ text: "", images: [] });
-  return JSON.stringify({
-    text: extractMessageText(message),
-    images: content.map(imageSignature).filter(Boolean),
-  });
-}
 
 export interface ChatInputHandle {
   insertText: (text: string) => void;
@@ -185,6 +138,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     extensionCustomUi,
     extensionStatuses,
     extensionWidgets,
+    todoPlan,
     notices,
     addNotice,
     applyExtensionSnapshot,
@@ -1369,6 +1323,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     extensionCustomUi,
     extensionStatuses,
     extensionWidgets,
+    todoPlan,
     respondToExtensionUi,
     sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,

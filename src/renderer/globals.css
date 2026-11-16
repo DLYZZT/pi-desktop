@@ -907,6 +907,22 @@ body {
   }
 }
 
+/* In-progress plan step: a slow pulse, so it reads as "working" without
+   drawing the eye away from the transcript. */
+.todo-item-active {
+  animation: todo-item-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes todo-item-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -1672,6 +1688,10 @@ span.linenumber {
 
   .ask-panel-enter {
     animation-duration: 0.001ms !important;
+  }
+
+  .todo-item-active {
+    animation: none;
   }
 
   .notice-shelf-item {

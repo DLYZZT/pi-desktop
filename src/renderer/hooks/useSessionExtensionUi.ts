@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type RefObject } from "react";
-import type { AskQuestionAnswer, ExtensionStatusItem, ExtensionWidgetItem, ExtensionUiRequest } from "@/lib/types";
+import type {
+  AskQuestionAnswer,
+  ExtensionStatusItem,
+  ExtensionWidgetItem,
+  ExtensionUiRequest,
+  TodoPlanState,
+} from "@/lib/types";
 import type { SessionRuntimeState } from "@contract/types";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { NOTICE_VISIBLE_MS, noticeExpiryDelay, noticeReducer, type NoticeType } from "@/lib/notice-queue";
@@ -36,6 +42,7 @@ export function useSessionExtensionUi({
   const [extensionCustomUi, setExtensionCustomUi] = useState<CustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
+  const [todoPlan, setTodoPlan] = useState<TodoPlanState | null>(null);
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
   const dialogOwnerRef = useRef<RequestOwner<DialogRequest> | null>(null);
   const customOwnerRef = useRef<RequestOwner<CustomRequest> | null>(null);
@@ -77,6 +84,7 @@ export function useSessionExtensionUi({
         ]);
       if (state.extensionWidgets !== undefined && runtimeGate.accept(ticket, "widgets"))
         setExtensionWidgets(state.extensionWidgets ?? []);
+      if (state.todoPlan !== undefined && runtimeGate.accept(ticket, "todoPlan")) setTodoPlan(state.todoPlan ?? null);
     },
     [getViewSignal, runtimeGate, t],
   );
@@ -227,6 +235,7 @@ export function useSessionExtensionUi({
     extensionCustomUi,
     extensionStatuses,
     extensionWidgets,
+    todoPlan,
     notices: noticeState.visible,
     addNotice,
     applyExtensionSnapshot,

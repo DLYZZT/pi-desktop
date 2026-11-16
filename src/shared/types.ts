@@ -291,6 +291,18 @@ export type ExtensionUiResponse =
   | { type: "extension_ui_response"; id: string; answers: AskQuestionAnswer[] }
   | { type: "extension_ui_response"; id: string; cancelled: true };
 
+/** One step of the agent's plan, as written by `todo_write`. */
+export interface TodoPlanItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+/** Plan shown above the composer; `completed` is precomputed for the header. */
+export interface TodoPlanState {
+  items: TodoPlanItem[];
+  completed: number;
+}
+
 export interface ExtensionStatusItem {
   key: string;
   text: string;

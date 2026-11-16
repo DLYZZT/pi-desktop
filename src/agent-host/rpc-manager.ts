@@ -51,6 +51,7 @@ import { promptChannelTurn, cancelChannelAttachmentContext } from "./channel-att
 import { createDesktopSessionTools } from "./desktop-session-tools";
 import { SessionModelSelection } from "./session-model-selection";
 import { extensionUiResolvedRequest, normalizeExtensionUiResponse } from "./extension-ui-requests";
+import { readSessionTodoPlan } from "./todo-plan";
 import { createExtensionUiDialogs } from "./extension-ui-dialogs";
 
 // ============================================================================
@@ -627,6 +628,7 @@ export class AgentSessionWrapper {
           thinkingLevel: this.inner.agent.state?.thinkingLevel ?? "off",
           extensionStatuses: this.getExtensionStatuses(),
           extensionWidgets: this.getExtensionWidgets(),
+          todoPlan: readSessionTodoPlan(this.inner.sessionManager),
         };
       }
 

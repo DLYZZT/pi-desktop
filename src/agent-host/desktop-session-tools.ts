@@ -22,6 +22,7 @@ import { createWebSearchToolDefinitions } from "./web-search/tools";
 import { peekWebSearchRuntime, webSearchToolNamesForAvailability } from "./web-search/runtime";
 import { isWebSearchToolName } from "../shared/web-search.ts";
 import { createAskQuestionTool } from "./ask-tool";
+import { createTodoWriteTool } from "./todo-tool";
 import type { SessionExecutionHistory } from "./session-execution-history";
 import type { ToolExecutionContext } from "../shared/toolchains/types";
 import type { AgentShell } from "../shared/agent-shell";
@@ -56,6 +57,7 @@ export async function createDesktopSessionTools(
     return [
       history.tool(),
       createAskQuestionTool(),
+      createTodoWriteTool(),
       createBashToolDefinition(cwd, bashOptions),
       ...(platform === "win32"
         ? [

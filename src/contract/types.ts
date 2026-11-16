@@ -9,6 +9,7 @@ import type {
   SessionTreeNode,
   TextContent,
   ThinkingContent,
+  TodoPlanState,
   ToolCallContent,
 } from "../shared/types";
 import type { SessionStatsInfo } from "../shared/pi-types";
@@ -87,6 +88,8 @@ export interface SessionRuntimeState {
   isCompacting?: boolean;
   extensionStatuses?: ExtensionStatusItem[];
   extensionWidgets?: ExtensionWidgetItem[];
+  /** Plan written by `todo_write` on this branch; omitted when there is none. */
+  todoPlan?: TodoPlanState | null;
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
   [key: string]: unknown;
 }

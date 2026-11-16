@@ -22,6 +22,7 @@ import {
 } from "@/lib/message-display";
 import { MessageView } from "./MessageView";
 import { AskUserDialog, AskUserPanel } from "./AskUserDialog";
+import { TodoPanel } from "./TodoPanel";
 import { ProcessDetailsGroup } from "./ProcessDetailsGroup";
 import { SessionProfiler } from "./SessionProfiler";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
@@ -244,6 +245,7 @@ export function ChatWindow({
     extensionCustomUi,
     extensionStatuses,
     extensionWidgets,
+    todoPlan,
     respondToExtensionUi,
     sendExtensionCustomInput,
     isAutoModelSelection,
@@ -408,6 +410,13 @@ export function ChatWindow({
   // Wide windows dock the ask panel over the composer (the transcript stays
   // readable); narrow ones keep the modal, which has no room to dock.
   const askPanelRequest = extensionDialog?.method === "ask" && !isMobile ? extensionDialog : null;
+  // Dismissal lasts until the plan itself changes: a new or different plan
+  // brings the card back, and an empty plan hides it anyway.
+  const [dismissedPlanKey, setDismissedPlanKey] = useState<string | null>(null);
+  const todoPlanKey = todoPlan ? todoPlan.items.map((item) => `${item.status}:${item.content}`).join("\n") : null;
+  const visibleTodoPlan = todoPlan && todoPlanKey !== dismissedPlanKey ? todoPlan : null;
+  const dismissTodoPlan = (plan: NonNullable<typeof todoPlan>) =>
+    setDismissedPlanKey(plan.items.map((item) => `${item.status}:${item.content}`).join("\n"));
 
   if (loading) {
     return <div className="flex h-full items-center justify-center text-text-muted">Loading session...</div>;
@@ -586,6 +595,18 @@ export function ChatWindow({
             >
               <div className="chat-content-column">
                 <NoticeShelf notices={notices} floating align="right" />
+                {visibleTodoPlan ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      marginLeft: isMobile ? 0 : CHAT_MINIMAP_WIDTH,
+                      pointerEvents: "auto",
+                    }}
+                  >
+                    <TodoPanel plan={visibleTodoPlan} onDismiss={() => dismissTodoPlan(visibleTodoPlan)} />
+                  </div>
+                ) : null}
               </div>
             </div>
             <div ref={scrollContainerRef} className="relative z-[1] flex-1 overflow-y-auto pt-4 [scrollbar-width:none]">
