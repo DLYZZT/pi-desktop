@@ -604,12 +604,12 @@ export function ChatWindow({
                 <NoticeShelf notices={notices} floating align="right" />
               </div>
               {visibleTodoPlan ? (
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <div className="todo-plan-slot" style={{ display: "flex", justifyContent: "flex-end" }}>
                   <TodoPanel plan={visibleTodoPlan} onDismiss={() => dismissTodoPlan(visibleTodoPlan)} />
                 </div>
               ) : todoPlan ? (
                 // Dismissed but still has a plan: keep a small handle to bring it back.
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <div className="todo-plan-slot" style={{ display: "flex", justifyContent: "flex-end" }}>
                   <Button
                     variant="ghost"
                     size="sm"

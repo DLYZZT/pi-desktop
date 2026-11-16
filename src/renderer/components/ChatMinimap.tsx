@@ -220,6 +220,7 @@ export function ChatMinimap({ messages, streamingMessage, scrollContainer, messa
   return (
     <div
       ref={containerRef}
+      data-chat-minimap=""
       onMouseDown={handleMouseDown}
       onMouseEnter={() => setMinimapHovered(true)}
       onMouseLeave={() => {
