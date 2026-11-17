@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   collectProjectSessions,
   filterSessionsForQuery,
+  getRecentProjects,
   getSessionDisplayTitle,
   groupSessionsByProject,
   resolveEmptyProjectRoots,
@@ -118,6 +119,47 @@ test("groups sessions by project with worktrees collapsed, most recent project f
   assert.equal(groups[0].latestModified, "2026-07-14T10:00:00.000Z");
   assert.equal(groups[2].latestModified, "2026-07-01T08:00:00.000Z");
   assert.deepEqual(groupSessionsByProject([]), []);
+});
+
+// Windows spelling drift: sessions resolved through git carry a forward-slash
+// projectRoot, while a resolveProject failure (timeout, missing dir) falls back
+// to the raw session cwd with backslashes. One project must stay one group.
+test("one project stays one group when projectRoot spellings drift on Windows", () => {
+  const gitSpelling = session("git", {
+    cwd: "D:/work/carhome",
+    projectRoot: "D:/work/carhome",
+    modified: "2026-07-14T10:00:00.000Z",
+  });
+  const fallbackSpelling = session("fallback", {
+    cwd: "D:\\work\\carhome",
+    projectRoot: "D:\\work\\carhome",
+    modified: "2026-07-13T10:00:00.000Z",
+  });
+
+  const groups = groupSessionsByProject([gitSpelling, fallbackSpelling]);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(
+    groups[0].sessions.map((item) => item.id),
+    ["git", "fallback"],
+  );
+});
+
+// Same drift, different consumer: the picker dedupes recents by path too.
+test("getRecentProjects dedupes projects whose projectRoot spellings drift", () => {
+  const gitSpelling = session("git", {
+    cwd: "D:/work/carhome",
+    projectRoot: "D:/work/carhome",
+    modified: "2026-07-14T10:00:00.000Z",
+  });
+  const fallbackSpelling = session("fallback", {
+    cwd: "D:\\work\\carhome",
+    projectRoot: "D:\\work\\carhome",
+    modified: "2026-07-13T10:00:00.000Z",
+  });
+  const other = session("other", { cwd: "/workspace/other", modified: "2026-07-12T10:00:00.000Z" });
+
+  const roots = getRecentProjects([gitSpelling, fallbackSpelling, other]);
+  assert.deepEqual(roots, ["D:/work/carhome", "/workspace/other"]);
 });
 
 test("collecting a project's sessions spans its worktrees and skips pathless rows", () => {

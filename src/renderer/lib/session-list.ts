@@ -1,5 +1,5 @@
 import type { SessionInfo } from "./types";
-import { worktreePathsEqual } from "../../shared/worktree-path.ts";
+import { normalizeWorktreePathForComparison, worktreePathsEqual } from "../../shared/worktree-path.ts";
 
 export type SessionDateGroup = "today" | "recent" | "older";
 
@@ -81,20 +81,21 @@ export function collectProjectSessions(sessions: readonly SessionInfo[], project
 }
 
 /**
- * Return all projects (deduped by projectRoot so worktrees collapse into their
- * main repo) sorted by most recent session activity.
+ * Return all projects (deduped by normalized path so worktrees and spelling
+ * drift collapse into their main repo) sorted by most recent session activity.
  */
 export function getRecentProjects(sessions: readonly SessionInfo[]): string[] {
-  const latestByRoot = new Map<string, string>(); // projectRoot -> most recent modified
+  const latestByRoot = new Map<string, { display: string; modified: string }>(); // normalized root -> latest
   for (const s of sessions) {
     const root = s.projectRoot ?? s.cwd;
     if (!root) continue;
-    const prev = latestByRoot.get(root);
-    if (!prev || s.modified > prev) {
-      latestByRoot.set(root, s.modified);
+    const key = normalizeWorktreePathForComparison(root);
+    const prev = latestByRoot.get(key);
+    if (!prev || s.modified > prev.modified) {
+      latestByRoot.set(key, { display: root, modified: s.modified });
     }
   }
-  return [...latestByRoot.entries()].sort((a, b) => b[1].localeCompare(a[1])).map(([root]) => root);
+  return [...latestByRoot.values()].sort((a, b) => b.modified.localeCompare(a.modified)).map((entry) => entry.display);
 }
 
 export interface SessionProjectGroup {
@@ -109,26 +110,30 @@ export interface SessionProjectGroup {
  * Group sessions by project (worktrees of one repo collapse into their main
  * checkout), most recently active project first. Sessions without any usable
  * path are dropped, mirroring getRecentProjects.
+ *
+ * Bucketing compares normalized paths: resolveProject falls back to the raw
+ * session cwd when git fails, so one project can surface both spellings
+ * (git's forward slashes vs the session header's backslashes on Windows) and
+ * string keys would split it into two groups.
  */
 export function groupSessionsByProject(sessions: SessionInfo[]): SessionProjectGroup[] {
-  const byRoot = new Map<string, SessionInfo[]>();
+  const byRoot = new Map<string, SessionProjectGroup>();
   for (const session of sessions) {
     const root = session.projectRoot ?? session.cwd;
     if (!root) continue;
-    const bucket = byRoot.get(root);
-    if (bucket) bucket.push(session);
-    else byRoot.set(root, [session]);
+    const bucket = byRoot.get(normalizeWorktreePathForComparison(root));
+    if (bucket) {
+      bucket.sessions.push(session);
+      if (session.modified > bucket.latestModified) bucket.latestModified = session.modified;
+    } else {
+      byRoot.set(normalizeWorktreePathForComparison(root), {
+        projectRoot: root,
+        sessions: [session],
+        latestModified: session.modified,
+      });
+    }
   }
-  return [...byRoot.entries()]
-    .map(([projectRoot, groupSessions]) => ({
-      projectRoot,
-      sessions: groupSessions,
-      latestModified: groupSessions.reduce(
-        (latest, session) => (session.modified > latest ? session.modified : latest),
-        "",
-      ),
-    }))
-    .sort((a, b) => b.latestModified.localeCompare(a.latestModified));
+  return [...byRoot.values()].sort((a, b) => b.latestModified.localeCompare(a.latestModified));
 }
 
 /**

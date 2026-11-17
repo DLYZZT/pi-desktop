@@ -511,7 +511,8 @@ export function SessionSidebar({
           runningCount: sessions.filter((s) => runningSessionIds.has(s.id)).length,
           unreadCount: sessions.filter((s) => unreadSessionIds.has(s.id)).length,
           // A collapsed group still expands when it holds the open session.
-          collapsed: collapsedProjectRoots.has(projectRoot),
+          // The stored spelling may differ from the live one (git vs raw cwd).
+          collapsed: [...collapsedProjectRoots].some((root) => worktreePathsEqual(root, projectRoot)),
         };
       })
     : [];
