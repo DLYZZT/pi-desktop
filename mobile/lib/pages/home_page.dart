@@ -77,7 +77,14 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _restoreHostSelection() async {
     final saved = await loadPreferredHost();
-    if (saved != null && widget.connection.preferredHostId == null) {
+    // 只在「本连接没有显式目标、也尚未解析出主机」时才恢复上次的选择：
+    // 扫码配对是明确意图（targetHostId 已定），此刻 preferredHostId 还没被
+    // hello_ack 赋值，拿它当守卫会把刚扫的新电脑拽回上一台——relay 侧
+    // 绑定照常完成（电脑端显示配对成功），但签发的凭证随被掐断的 socket
+    // 丢失，手机从此显示「未配对」。
+    if (saved != null &&
+        widget.connection.targetHostId == null &&
+        widget.connection.hostId == null) {
       setState(() {
         _hosts = const [];
       });
