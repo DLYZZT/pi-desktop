@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pi Agent Desktop — 本地优先 · 端到端加密 · 手机远程控制</title>
+    <title>Pi Agent Desktop — 本地优先的 AI 工作台</title>
     <meta
       name="description"
-      content="Pi Agent Desktop 社区增强版：在本地优先的 AI 工作台上加入端到端加密与手机远程控制，出门也能安全连回你的电脑。"
+      content="Pi Agent Desktop 社区增强版：本地优先的 AI 工作台，会话、浏览器、Agent 舰队、模型与消息渠道，日常工作都在同一个窗口完成。"
     />
     <style>
       :root {
@@ -361,408 +361,6 @@
         margin-bottom: 12px;
       }
 
-      /* ===== remote showcase ===== */
-      .show-grid {
-        display: grid;
-        grid-template-columns: 1fr 400px;
-        gap: 64px;
-        align-items: center;
-      }
-      @media (max-width: 960px) {
-        .show-grid {
-          grid-template-columns: 1fr;
-          gap: 48px;
-        }
-      }
-      .feats {
-        display: grid;
-        gap: 14px;
-      }
-      .feat {
-        display: flex;
-        gap: 12px;
-        align-items: flex-start;
-      }
-      .feat-tick {
-        width: 22px;
-        height: 22px;
-        border-radius: 7px;
-        flex-shrink: 0;
-        background: var(--accent-soft);
-        border: 1px solid var(--accent-soft-border);
-        color: var(--accent);
-        font-size: 12px;
-        font-weight: 700;
-        display: grid;
-        place-items: center;
-        margin-top: 2px;
-      }
-      .feat div {
-        font-size: 14.5px;
-        color: var(--text-muted);
-      }
-      .feat b {
-        color: var(--text);
-        font-weight: 600;
-      }
-
-      .phone-wrap {
-        display: flex;
-        justify-content: center;
-        position: relative;
-      }
-      .phone {
-        width: 330px;
-        border-radius: 42px;
-        padding: 9px;
-        background: #1c1a17;
-        box-shadow:
-          0 32px 70px -20px var(--shadow-color),
-          0 0 0 1px var(--tool-border);
-      }
-      .screen {
-        border-radius: 34px;
-        background: #f7f7fa;
-        overflow: hidden;
-        height: 620px;
-        display: flex;
-        flex-direction: column;
-      }
-      .notch {
-        height: 28px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        background: #1c1a17;
-        border-radius: 34px 34px 0 0;
-      }
-      .notch::after {
-        content: "";
-        width: 88px;
-        height: 20px;
-        border-radius: 10px;
-        background: #05070b;
-      }
-      .pstatus {
-        display: flex;
-        justify-content: space-between;
-        padding: 6px 20px 6px;
-        font-family: var(--font-mono);
-        font-size: 10px;
-        color: #8a867c;
-        background: #fff;
-      }
-      .pstatus .enc {
-        color: #16a34a;
-      }
-      .pbar {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        padding: 10px 14px 12px;
-        background: #fff;
-        border-bottom: 1px solid #eceaf2;
-      }
-      .pbar .avatar {
-        width: 30px;
-        height: 30px;
-        border-radius: 9px;
-        background: #534ab7;
-        display: grid;
-        place-items: center;
-        font-size: 14px;
-      }
-      .pbar .t1 {
-        font-size: 12.5px;
-        font-weight: 650;
-        color: #1a1830;
-      }
-      .pbar .t2 {
-        font-family: var(--font-mono);
-        font-size: 9.5px;
-        color: #8a86a0;
-      }
-      .pbar .live {
-        margin-left: auto;
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        font-size: 10px;
-        color: #16a34a;
-        background: rgba(22, 163, 74, 0.1);
-        border: 1px solid rgba(22, 163, 74, 0.3);
-        padding: 3px 9px;
-        border-radius: 999px;
-      }
-      .pbar .live::before {
-        content: "";
-        width: 5px;
-        height: 5px;
-        border-radius: 50%;
-        background: #16a34a;
-      }
-      .pchat {
-        flex: 1;
-        padding: 13px 13px 9px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        overflow: hidden;
-      }
-      .msg {
-        max-width: 88%;
-        border-radius: 13px;
-        padding: 9px 12px;
-        font-size: 12px;
-        line-height: 1.5;
-      }
-      .msg.ai {
-        align-self: flex-start;
-        background: #fff;
-        border: 1px solid #e8e6f0;
-        border-bottom-left-radius: 5px;
-        color: #2a2840;
-      }
-      .msg.ai .who {
-        font-size: 9.5px;
-        color: #534ab7;
-        font-weight: 700;
-        margin-bottom: 3px;
-        letter-spacing: 0.4px;
-      }
-      .msg.user {
-        align-self: flex-end;
-        background: #e3dffb;
-        color: #2f2a5e;
-        border-bottom-right-radius: 5px;
-      }
-      .think {
-        align-self: flex-start;
-        border-left: 2px solid #b9b0f0;
-        background: #f1eefc;
-        border-radius: 4px 10px 10px 4px;
-        padding: 7px 10px;
-        font-size: 10.5px;
-        color: #6e678f;
-        max-width: 88%;
-      }
-      .tool {
-        align-self: flex-start;
-        width: 88%;
-        border: 1px solid #e8e6f0;
-        border-radius: 11px;
-        background: #fff;
-        padding: 8px 10px;
-      }
-      .tool .th {
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        margin-bottom: 4px;
-      }
-      .tool .ti {
-        width: 17px;
-        height: 17px;
-        border-radius: 5px;
-        display: grid;
-        place-items: center;
-        font-size: 9px;
-      }
-      .tool .ti.ok {
-        background: rgba(22, 163, 74, 0.12);
-        color: #16a34a;
-      }
-      .tool .ti.warn {
-        background: rgba(217, 119, 6, 0.12);
-        color: #b45309;
-      }
-      .tool .tn {
-        font-size: 11px;
-        font-weight: 600;
-        color: #2a2840;
-      }
-      .tool .tc {
-        font-family: var(--font-mono);
-        font-size: 9.5px;
-        color: #8a86a0;
-      }
-      .approve {
-        display: flex;
-        gap: 6px;
-        margin-top: 7px;
-      }
-      .approve span {
-        flex: 1;
-        text-align: center;
-        font-size: 10.5px;
-        font-weight: 650;
-        padding: 5.5px 0;
-        border-radius: 7px;
-      }
-      .approve .a-ok {
-        background: rgba(22, 163, 74, 0.1);
-        color: #16a34a;
-        border: 1px solid rgba(22, 163, 74, 0.35);
-      }
-      .approve .a-no {
-        background: #f4f3f8;
-        color: #5a5775;
-        border: 1px solid #e8e6f0;
-      }
-      .queue {
-        align-self: stretch;
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        border: 1px solid #eadfb0;
-        background: #fff8e1;
-        border-radius: 10px;
-        padding: 7px 11px;
-        font-size: 10.5px;
-        color: #8d6e00;
-      }
-      .pinput {
-        margin: 0 12px 13px;
-        border: 1px solid #d9d4f0;
-        border-radius: 13px;
-        background: #fff;
-        padding: 9px 12px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        box-shadow: 0 2px 8px rgba(83, 74, 183, 0.06);
-      }
-      .pinput .ph {
-        font-size: 10.5px;
-        color: #8d6e00;
-        flex: 1;
-      }
-      .pinput .go {
-        background: #534ab7;
-        color: #fff;
-        font-size: 10.5px;
-        font-weight: 700;
-        padding: 6px 13px;
-        border-radius: 8px;
-      }
-
-      /* ===== e2ee ===== */
-      .e2ee-flow {
-        display: grid;
-        grid-template-columns: 1fr 200px 1fr;
-        gap: 22px;
-        align-items: center;
-        margin-bottom: 22px;
-      }
-      @media (max-width: 860px) {
-        .e2ee-flow {
-          grid-template-columns: 1fr;
-        }
-      }
-      .endpoint {
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        background: var(--bg-panel);
-        padding: 26px;
-        transition: all 0.18s;
-      }
-      .endpoint:hover {
-        border-color: var(--accent-soft-border);
-        box-shadow: 0 14px 34px -18px var(--shadow-color);
-      }
-      .endpoint .e-ico {
-        font-size: 26px;
-        margin-bottom: 10px;
-      }
-      .endpoint h4 {
-        font-size: 16.5px;
-        font-weight: 700;
-        margin-bottom: 4px;
-      }
-      .endpoint .e-tag {
-        font-family: var(--font-mono);
-        font-size: 11px;
-        color: var(--accent);
-        margin-bottom: 10px;
-      }
-      .endpoint p {
-        font-size: 13.5px;
-        color: var(--text-muted);
-      }
-      .endpoint p b {
-        color: var(--text);
-      }
-      .mid {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 12px;
-      }
-      .mid .flow-line {
-        width: 1px;
-        height: 40px;
-        background: linear-gradient(var(--accent-soft-border), transparent);
-      }
-      .relay {
-        text-align: center;
-        border: 1.5px dashed var(--accent-soft-border);
-        border-radius: 14px;
-        padding: 14px 20px;
-        background: var(--accent-soft);
-      }
-      .relay .r1 {
-        font-size: 14px;
-        font-weight: 700;
-        color: var(--text);
-      }
-      .relay .r2 {
-        font-family: var(--font-mono);
-        font-size: 10.5px;
-        color: var(--text-dim);
-        margin-top: 3px;
-      }
-      .crypto-cards {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 18px;
-      }
-      @media (max-width: 760px) {
-        .crypto-cards {
-          grid-template-columns: 1fr;
-        }
-      }
-      .ccard {
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        background: var(--bg-panel);
-        padding: 24px;
-        transition: all 0.18s;
-      }
-      .ccard:hover {
-        border-color: var(--accent-soft-border);
-        box-shadow: 0 14px 34px -18px var(--shadow-color);
-        transform: translateY(-2px);
-      }
-      .ccard .n {
-        font-family: var(--font-mono);
-        font-size: 11px;
-        color: var(--accent-chip-fg);
-        background: var(--accent-chip-bg);
-        border: 1px solid var(--accent-soft-border);
-        display: inline-block;
-        padding: 2px 10px;
-        border-radius: 999px;
-        margin-bottom: 12px;
-      }
-      .ccard h4 {
-        font-size: 15.5px;
-        margin-bottom: 7px;
-      }
-      .ccard p {
-        font-size: 13px;
-        color: var(--text-muted);
-      }
-
       /* ===== features ===== */
       .feature-grid {
         display: grid;
@@ -1113,15 +711,13 @@
       <div class="container nav-inner">
         <a class="nav-brand" href="#"><span class="nav-logo">π</span> Pi Agent Desktop</a>
         <div class="nav-links">
-          <a href="#remote">远程控制</a>
-          <a href="#e2ee">加密</a>
           <a href="#caps">功能</a>
           <a href="#compare">对比</a>
           <a href="#enhancements" class="opt">增强</a>
           <a href="#arch" class="opt">架构</a>
           <a href="#privacy" class="opt">隐私</a>
           <a class="nav-cta" href="https://github.com/ZhengHaoF/pi-desktop/releases" target="_blank" rel="noopener"
-            >下载 <span class="ext">v0.5.1</span></a
+            >下载 <span class="ext">v0.5.4</span></a
           >
         </div>
       </div>
@@ -1130,19 +726,14 @@
     <!-- ============ HERO ============ -->
     <header class="hero">
       <div class="container">
-        <div class="hero-chip"><span class="dot"></span> v0.5.1 已发布 · 内置 Pi Coding Agent 1.5.0</div>
+        <div class="hero-chip"><span class="dot"></span> v0.5.4 已发布 · 内置 Pi Coding Agent 1.5.0</div>
         <div class="hero-icon">π</div>
-        <h1>本地优先的 AI 工作台，<br />出门在外也连得回来。</h1>
+        <h1>本地优先的 AI 工作台，<br />会话、浏览器、舰队，一个窗口。</h1>
         <p class="hero-sub">
-          在 Pi Agent Desktop
-          之上加入<strong>端到端加密</strong>与<strong>手机远程控制</strong>。桌面上的会话、工具审批、项目操作——握在手机里，转发服务器一个字也读不到。
+          把 Pi Coding Agent 变成真正的桌面工作台：会话、浏览器、Agent
+          舰队、模型与消息渠道——日常工作都在同一个窗口完成。
         </p>
-        <div class="hero-chips">
-          <span class="chip accent"><span class="chip-dot orange"></span> 端到端加密 · 服务器读不到内容</span>
-          <span class="chip"><span class="chip-dot green"></span> 手机远程控制</span>
-          <span class="chip">一键部署云 Relay</span>
-          <span class="chip">Windows + Android 安装包</span>
-        </div>
+
         <div class="hero-ctas">
           <a
             class="btn btn-primary"
@@ -1151,154 +742,10 @@
             rel="noopener"
             >下载 Windows 版 <span class="ext">.exe</span></a
           >
-          <a
-            class="btn btn-secondary"
-            href="https://github.com/ZhengHaoF/pi-desktop/releases"
-            target="_blank"
-            rel="noopener"
-            >下载 Android 版 <span class="ext">.apk</span></a
-          >
         </div>
         <p class="hero-note">本地优先 · 零内部服务器 · 跨平台应用 · 社区增强版（非官方）· <code>Apache-2.0</code></p>
       </div>
     </header>
-
-    <!-- ============ REMOTE SHOWCASE ============ -->
-    <section class="section" id="remote">
-      <div class="container">
-        <div class="show-grid">
-          <div>
-            <div class="kicker">Remote Control</div>
-            <h2 class="section-title">把整台电脑，装进手机。</h2>
-            <p class="section-desc">
-              局域网一键内置
-              Relay，或云服务器一键部署——手机与桌面建立<strong>端到端加密</strong>连接。人在外面，一切照常。
-            </p>
-            <div class="feats">
-              <div class="feat">
-                <span class="feat-tick">✓</span>
-                <div><b>扫码即配对</b> · 一次性 token 换发长期凭证，X25519 公钥钉扎，重连免扫码</div>
-              </div>
-              <div class="feat">
-                <span class="feat-tick">✓</span>
-                <div><b>完整会话</b> · 项目分组浏览、流式回复、Markdown 与工具卡片完整还原</div>
-              </div>
-              <div class="feat">
-                <span class="feat-tick">✓</span>
-                <div><b>回合中插队</b> · steer / follow-up 队列透明可见，对齐桌面操作习惯</div>
-              </div>
-              <div class="feat">
-                <span class="feat-tick">✓</span>
-                <div><b>审批随身带</b> · 工具调用在手机上批准或拒绝，安全不经第三方</div>
-              </div>
-              <div class="feat">
-                <span class="feat-tick">✓</span>
-                <div><b>息屏保活</b> · Android 前台服务 + WakeLock，锁屏、口袋里都不断连</div>
-              </div>
-              <div class="feat">
-                <span class="feat-tick">✓</span>
-                <div><b>多电脑切换</b> · 主机目录记住所有 PC，一台手机控制全部</div>
-              </div>
-            </div>
-          </div>
-          <div class="phone-wrap">
-            <div class="phone">
-              <div class="screen">
-                <div class="notch"></div>
-                <div class="pstatus"><span>14:32</span><span class="enc">🔒 E2EE · 5G</span></div>
-                <div class="pbar">
-                  <div class="avatar">💻</div>
-                  <div>
-                    <div class="t1">HOME-PC</div>
-                    <div class="t2">host-7f3a… · work</div>
-                  </div>
-                  <div class="live">在线</div>
-                </div>
-                <div class="pchat">
-                  <div class="msg ai">
-                    <div class="who">PI · ASSISTANT</div>
-                    已扫描当前分支改动，3 个文件涉及远程控制链路的配置更新…
-                  </div>
-                  <div class="think">💭 正在分析会话缓存为何在多主机间相互覆盖…</div>
-                  <div class="tool">
-                    <div class="th"><span class="ti ok">✓</span><span class="tn">读文件</span></div>
-                    <div class="tc">readFile(session_cache.dart) · 412ms</div>
-                  </div>
-                  <div class="tool">
-                    <div class="th"><span class="ti warn">⚠</span><span class="tn">修改配置</span></div>
-                    <div class="tc">writeFile(remote-features.md)</div>
-                    <div class="approve"><span class="a-ok">批准</span><span class="a-no">拒绝</span></div>
-                  </div>
-                  <div class="queue">⚡ 已排队 1 条（回合中送达）</div>
-                  <div class="msg user">改用局域网模式，端口迁到 8788，确认下</div>
-                </div>
-                <div class="pinput"><span class="ph">回合进行中，发送将插队…</span><span class="go">发送</span></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ============ E2EE ============ -->
-    <section class="section" id="e2ee">
-      <div class="container">
-        <div class="section-head-center" style="text-align: center">
-          <div class="kicker">End-to-End Encryption</div>
-          <h2 class="section-title">中间人只能看到乱码</h2>
-          <p class="section-desc">
-            手机和电脑之间的消息，要经过服务器转发。但转发服务器<b>只能看到加密后的乱码</b>——你的聊天内容、文件路径、审批操作，它一样也读不到。
-          </p>
-        </div>
-        <div class="e2ee-flow">
-          <div class="endpoint">
-            <div class="e-ico">📱</div>
-            <h4>你的手机</h4>
-            <div class="e-tag">发送前加密</div>
-            <p>
-              消息在<b>离开手机之前</b>就已加密。扫码配对时记住了你电脑的"钥匙指纹"，以后每次连接都先核对，防止有人冒充你的电脑。
-            </p>
-          </div>
-          <div class="mid">
-            <div class="flow-line"></div>
-            <div class="relay">
-              <div class="r1">转发服务器</div>
-              <div class="r2">只见乱码 · 无法解读</div>
-            </div>
-            <div class="flow-line"></div>
-          </div>
-          <div class="endpoint">
-            <div class="e-ico">🖥️</div>
-            <h4>你的电脑</h4>
-            <div class="e-tag">收到后才解密</div>
-            <p>解密钥匙只存在你电脑本地，<b>不写进界面、不发给任何程序</b>——连桌面应用的界面代码都拿不到它。</p>
-          </div>
-        </div>
-        <div class="crypto-cards">
-          <div class="ccard">
-            <span class="n">第一道防线</span>
-            <h4>冒充不了</h4>
-            <p>
-              第一次扫码时，手机就记住了电脑密钥的"指纹"。之后哪怕有人架起假服务器、假电脑，对不上指纹，手机直接拒绝连接。
-            </p>
-          </div>
-          <div class="ccard">
-            <span class="n">第二道防线</span>
-            <h4>篡改不了</h4>
-            <p>
-              每条消息都带"防伪封条"，封条覆盖了消息内容和收件地址。转发服务器想偷偷改个目标、改一个标点，电脑收到后立刻发现并丢弃。
-            </p>
-          </div>
-          <div class="ccard">
-            <span class="n">第三道防线</span>
-            <h4>重放不了</h4>
-            <p>
-              就算有人录下一段加密消息、原样重发一百遍，每条消息都有唯一编号，见过的编号再出现就直接扔掉，不会被执行两次。
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
 
     <!-- ============ CAPABILITIES ============ -->
     <section class="section" id="caps">
@@ -1476,7 +923,7 @@
         <div class="section-head-center" style="text-align: center">
           <div class="kicker">Desktop Enhancements</div>
           <h2 class="section-title">桌面端，也打磨了 20+ 处</h2>
-          <p class="section-desc">不只是远程控制——日常使用的聊天、侧栏、模型管理，都按真实使用习惯做了增强。</p>
+          <p class="section-desc">在日常使用的聊天、侧栏、模型管理上，按真实使用习惯做了增强。</p>
         </div>
         <div class="feature-grid">
           <div class="feature-card">
@@ -1533,27 +980,24 @@
       <div class="container">
         <div class="section-head-center" style="text-align: center">
           <div class="kicker">Quick Start</div>
-          <h2 class="section-title">三步，开始远程</h2>
-          <p class="section-desc">不需要公网 IP、不需要 Docker、不需要懂加密。</p>
+          <h2 class="section-title">三步，开始工作</h2>
+          <p class="section-desc">下载安装、配置模型、发起会话。</p>
         </div>
         <div class="steps">
           <div class="step">
             <div class="sn">1</div>
-            <h4>桌面端开启远程</h4>
-            <p>
-              安装 Windows 版，在「设置 → 消息渠道 → 自建托管」打开开关。默认 <code>局域网模式</code>，内置 Relay
-              一键可用。
-            </p>
+            <h4>安装桌面版</h4>
+            <p>下载 Windows 安装包，双击安装。配置保存在 <code>~/.pi/agent/</code>，卸载不残留系统设置。</p>
           </div>
           <div class="step">
             <div class="sn">2</div>
-            <h4>手机扫码配对</h4>
-            <p>安装 Android APK，扫描电脑屏幕上的配对二维码。一次性 token 换发长期凭证，X25519 公钥同步钉扎。</p>
+            <h4>配置模型服务商</h4>
+            <p>API Key 或订阅登录皆可；从服务商与 models.dev 拉取完整模型目录，Auto 按任务复杂度自动选型。</p>
           </div>
           <div class="step">
             <div class="sn">3</div>
-            <h4>随时连回</h4>
-            <p>在公司、在地铁，4G / 5G 直连你的云 Relay。会话按项目分组，聊天、审批、插队全在手机上。</p>
+            <h4>发起第一个会话</h4>
+            <p>选择项目目录开始对话：MCP 工具、共享浏览器、联网搜索随手可用，审批与历史全程本地留痕。</p>
           </div>
         </div>
       </div>
@@ -1618,6 +1062,37 @@
                 <td><span class="yes">✓</span><span class="newtag">新增</span></td>
               </tr>
               <tr>
+                <td><b>ask_question 提问工具</b>（Agent 主动提问，桌面对话框 + 手机同屏作答，最多 5 问）</td>
+                <td><span class="no">—</span></td>
+                <td><span class="yes">✓</span><span class="newtag">新增</span></td>
+              </tr>
+              <tr>
+                <td><b>todo_write 计划工具</b>（任务计划写入 + 聊天区悬浮进度卡片）</td>
+                <td><span class="no">—</span></td>
+                <td><span class="yes">✓</span><span class="newtag">新增</span></td>
+              </tr>
+              <tr>
+                <td><b>Windows PowerShell 支持</b>（除默认 shell 外可选 PowerShell 执行）</td>
+                <td><span class="no">—</span></td>
+                <td><span class="yes">✓</span><span class="newtag">新增</span></td>
+              </tr>
+              <tr>
+                <td>
+                  <b>远程链路打磨</b>（一机多控 + 设备解绑 · 心跳保活与凭证丢失重配 · 配对设备显示手机型号 ·
+                  手动重连按钮 · 手机端项目分组菜单与流式滚动磁吸）
+                </td>
+                <td><span class="no">—</span></td>
+                <td><span class="yes">✓</span><span class="newtag">新增</span></td>
+              </tr>
+              <tr>
+                <td>
+                  <b>界面细节增强</b>（聊天顶栏显示分支 / Worktree · 滑动窗口 token 速率 · 深色模式全面重绘 · 共享
+                  Button / Dialog / Switch / Checkbox / Select 组件体系）
+                </td>
+                <td><span class="no">—</span></td>
+                <td><span class="yes">✓</span><span class="newtag">新增</span></td>
+              </tr>
+              <tr>
                 <td><b>云 Relay 一键部署</b>（pm2 单文件）+ Android 官方签名安装包</td>
                 <td><span class="no">—</span></td>
                 <td><span class="yes">✓</span><span class="newtag">新增</span></td>
@@ -1645,7 +1120,7 @@
             </tbody>
           </table>
         </div>
-        <p class="tbl-note">※ 上游为「手机控 PC」之外的纯被控端模型；本分支已规划「电脑控电脑」双身份扩展。</p>
+        <p class="tbl-note">※ 上游功能完整保留；以上「新增」行均为本分支基于上游提交的增强。</p>
       </div>
     </section>
 
@@ -1657,25 +1132,19 @@
             <div class="footer-brand">
               <span class="nav-logo" style="width: 26px; height: 26px; font-size: 13px">π</span> Pi Agent Desktop
             </div>
-            <p>把 Pi Coding Agent 变成真正的桌面工作台——本地优先，端到端加密，手机直达。</p>
+            <p>把 Pi Coding Agent 变成真正的桌面工作台——本地优先，一切尽在一个窗口。</p>
           </div>
           <div>
             <h5>产品</h5>
-            <a href="#remote">手机远程控制</a>
-            <a href="#e2ee">端到端加密</a>
-            <a href="#start">快速开始</a>
+            <a href="#caps">核心功能</a>
             <a href="#enhancements">桌面增强</a>
+            <a href="#start">快速开始</a>
+            <a href="#compare">与上游对比</a>
             <a href="https://github.com/ZhengHaoF/pi-desktop/releases" target="_blank" rel="noopener">下载中心</a>
           </div>
           <div>
             <h5>资源</h5>
             <a href="https://github.com/ZhengHaoF/pi-desktop" target="_blank" rel="noopener">GitHub 仓库</a>
-            <a
-              href="https://github.com/ZhengHaoF/pi-desktop/blob/main/docs/remote-features.md"
-              target="_blank"
-              rel="noopener"
-              >远程功能文档</a
-            >
             <a
               href="https://github.com/ZhengHaoF/pi-desktop/blob/main/docs/relay-tutorial.md"
               target="_blank"
@@ -1695,7 +1164,7 @@
         </div>
         <div class="f-bottom">
           <span>© 2026 社区增强版 · 基于 Apache License 2.0 开源</span>
-          <span class="mono">v0.5.1 · Windows x64 + Android · 非官方</span>
+          <span class="mono">v0.5.4 · Windows x64 · 非官方</span>
         </div>
       </div>
     </footer>
