@@ -9,6 +9,7 @@ import { AssistantOutcome } from "./AssistantOutcome";
 import { Button } from "./ui/Button";
 import { scaledChatFont } from "@/lib/chat-appearance";
 import { getToolResultDisplayText } from "@/lib/tool-result-display";
+import { toolActionTitle } from "@/lib/tool-action-title";
 import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { createStreamRateState, estimateTokens, resetStreamRate, updateStreamRate } from "@/lib/stream-rate";
@@ -950,8 +951,8 @@ function ToolCallBlock({
   const resultText = getToolResultDisplayText(block.toolName, result, t);
   const resultIsEmpty = resultText === null ? false : resultText.trim() === "(no output)" || resultText.trim() === "";
   const isError = result?.isError ?? false;
-  const isRunning = !result && running !== false;
-  const preview = getToolPreview(block);
+  const isRunning = !result && running === true;
+  const actionTitle = toolActionTitle(block.toolName, block.input, t);
   const browserTabId = isBrowserToolName(block.toolName) ? browserTabIdFromResult(resultText) : null;
   const browserSummary =
     isBrowserToolName(block.toolName) && resultText && !isError ? browserResultSummary(resultText, t) : null;
@@ -981,48 +982,20 @@ function ToolCallBlock({
       <Button
         onClick={() => setExpanded((v) => !v)}
         variant="ghost"
-        title={collapsedHint ?? undefined}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          width: "100%",
-          padding: "7px 12px",
-          border: "none",
-          borderBottom: expanded || result ? "1px solid var(--tool-border)" : "none",
-          color: isError ? "var(--danger)" : "var(--accent)",
-          fontSize: scaledChatFont(12),
-          textAlign: "left",
-          minWidth: 0,
-        }}
+        className="tool-action-toggle"
+        aria-expanded={expanded}
+        data-error={isError || undefined}
+        title={collapsedHint ?? actionTitle}
+        style={{ display: "flex", gap: 8, padding: "8px 12px", fontSize: scaledChatFont(12) }}
       >
-        <span style={{ flexShrink: 0, opacity: 0.85 }}>{expanded ? "▾" : "▸"}</span>
-        <span style={{ fontWeight: 600, flexShrink: 0 }}>{block.toolName}</span>
-        <span
-          style={{
-            color: "var(--tool-fg)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            flex: 1,
-            minWidth: 0,
-            opacity: 0.85,
-          }}
-        >
-          {preview}
+        <span className="tool-action-chevron" aria-hidden="true">
+          {expanded ? "▾" : "▸"}
         </span>
-        {duration !== undefined && (
-          <span
-            style={{
-              fontSize: scaledChatFont(11),
-              color: "var(--text-dim)",
-              flexShrink: 0,
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {duration}s
-          </span>
-        )}
+        <span className="tool-action-title">{actionTitle}</span>
+        <span className="tool-action-name">{block.toolName}</span>
+        {isRunning && <span className="tool-action-status">{t("toolActionRunning", "Running…")}</span>}
+        {isError && <span className="tool-action-status">{t("toolActionExecutionFailed", "Failed")}</span>}
+        {duration !== undefined && <span className="tool-action-duration">{duration}s</span>}
       </Button>
 
       {/* ── Expanded: input args ── */}
@@ -1045,13 +1018,6 @@ function ToolCallBlock({
         </pre>
       )}
 
-      {/* ── Running indicator (design.html terminal style) ── */}
-      {isRunning && !expanded && (
-        <div style={{ padding: "8px 12px", color: "var(--text-dim)" }}>
-          running
-          <span className="stream-caret" aria-hidden="true" />
-        </div>
-      )}
       {!result && running === false && (
         <p style={{ padding: "8px 12px", color: "var(--text-dim)", margin: 0 }}>
           {t("executionResultMissing", "Result was not recorded in the conversation.")}
@@ -1841,23 +1807,6 @@ function previewText(text: string): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return "Show extension message";
   return normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized;
-}
-
-function getToolPreview(block: ToolCallContent): string {
-  const input = block.input;
-  if (!input || typeof input !== "object") return "";
-  const keys = Object.keys(input);
-  if (keys.length === 0) return "";
-
-  // Common tool input patterns
-  if ("command" in input) return String(input.command).slice(0, 120);
-  if ("path" in input) return String(input.path).slice(0, 120);
-  if ("file_path" in input) return String(input.file_path).slice(0, 120);
-  if ("pattern" in input) return String(input.pattern).slice(0, 120);
-  if ("query" in input) return String(input.query).slice(0, 120);
-
-  const first = input[keys[0]];
-  return String(first).slice(0, 120);
 }
 
 function formatUsage(usage: {

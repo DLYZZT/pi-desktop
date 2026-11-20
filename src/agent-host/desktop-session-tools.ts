@@ -23,6 +23,7 @@ import { peekWebSearchRuntime, webSearchToolNamesForAvailability } from "./web-s
 import { isWebSearchToolName } from "../shared/web-search.ts";
 import { createAskQuestionTool } from "./ask-tool";
 import { createTodoWriteTool } from "./todo-tool";
+import { withShellToolDescriptionParameter } from "./shell-tool-description";
 import type { SessionExecutionHistory } from "./session-execution-history";
 import type { ToolExecutionContext } from "../shared/toolchains/types";
 import type { AgentShell } from "../shared/agent-shell";
@@ -58,15 +59,17 @@ export async function createDesktopSessionTools(
       history.tool(),
       createAskQuestionTool(),
       createTodoWriteTool(),
-      createBashToolDefinition(cwd, bashOptions),
+      withShellToolDescriptionParameter(createBashToolDefinition(cwd, bashOptions)),
       ...(platform === "win32"
         ? [
-            createDesktopPowerShellTool(
-              cwd,
-              context,
-              runtime,
-              (command) => browserAgentRuntime.guardBash(manager.getSessionId(), command),
-              assertPowerShellAuthorized,
+            withShellToolDescriptionParameter(
+              createDesktopPowerShellTool(
+                cwd,
+                context,
+                runtime,
+                (command) => browserAgentRuntime.guardBash(manager.getSessionId(), command),
+                assertPowerShellAuthorized,
+              ),
             ),
           ]
         : []),

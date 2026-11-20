@@ -55,6 +55,23 @@ test("parallel tool phases deduplicate starts and wait until the last tool finis
   assert.deepEqual(state.agentPhase, { kind: "waiting_model" });
 });
 
+test("live tool phases retain bounded action inputs without file content or script bodies", () => {
+  let state = event(createSessionTurnState(), "agent_start");
+  const args = { description: "Check project state", command: "git status", content: "private content" };
+  state = event(state, "tool_execution_start", { toolCallId: "one", toolName: "bash", args });
+  assert.deepEqual(state.agentPhase.tools[0].input, { description: "Check project state", command: "git status" });
+  args.description = "later mutation";
+  assert.equal(state.agentPhase.tools[0].input.description, "Check project state");
+  state = event(state, "tool_execution_start", {
+    toolCallId: "two",
+    toolName: "write",
+    args: { path: "file.ts", content: "secret", description: "ignore" },
+  });
+  assert.deepEqual(state.agentPhase.tools[1].input, { path: "file.ts" });
+  state = event(state, "tool_execution_end", { toolCallId: "one" });
+  assert.equal(state.agentPhase.tools[0].id, "two");
+});
+
 test("nested tool progress stays inside the parent phase until the parent ends", () => {
   let state = event(createSessionTurnState(), "agent_start");
   state = event(state, "tool_execution_start", { toolCallId: "parent", toolName: "caller" });

@@ -1365,6 +1365,58 @@ code {
   margin-top: 3px;
 }
 
+.tool-action-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  padding: 8px 12px;
+  border: 0;
+  color: var(--tool-fg);
+  text-align: left;
+}
+.tool-action-toggle[aria-expanded="true"] {
+  border-bottom: 1px solid var(--tool-border);
+}
+.tool-action-title {
+  display: -webkit-box;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-family: var(--font-sans);
+  line-height: 1.5;
+}
+.tool-action-chevron,
+.tool-action-name,
+.tool-action-status,
+.tool-action-duration {
+  flex-shrink: 0;
+  color: var(--tool-fg);
+  opacity: 0.7;
+}
+.tool-action-name {
+  max-width: 25%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+.tool-action-status {
+  font-family: var(--font-sans);
+}
+.tool-action-toggle[data-error="true"] .tool-action-status {
+  color: var(--danger);
+  opacity: 1;
+}
+.tool-action-duration {
+  font-variant-numeric: tabular-nums;
+}
+
 .markdown-code-block {
   position: relative;
   margin: 6px 0;

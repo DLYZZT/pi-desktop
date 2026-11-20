@@ -1,6 +1,7 @@
 import type { AgentEvent } from "../../contract/types.ts";
 import type { AgentMessage } from "../../shared/types.ts";
 import { normalizeToolCalls } from "../../shared/normalize.ts";
+import { toolActionInput } from "./tool-action-title.ts";
 
 export interface StreamingState {
   isStreaming: boolean;
@@ -18,7 +19,7 @@ export interface QueuedMessages {
 export type AgentPhase =
   | { kind: "waiting_model" }
   | { kind: "running_command" }
-  | { kind: "running_tools"; tools: { id: string; name: string }[] }
+  | { kind: "running_tools"; tools: { id: string; name: string; input?: Record<string, unknown> }[] }
   | null;
 
 export interface CompactResultInfo {
@@ -161,7 +162,8 @@ function reduceAgentEvent(state: SessionTurnState, event: AgentEvent): SessionTu
       const id = event.toolCallId as string;
       const name = event.toolName as string;
       const tools = state.agentPhase?.kind === "running_tools" ? [...state.agentPhase.tools] : [];
-      if (!tools.some((tool) => tool.id === id)) tools.push({ id, name });
+      const input = toolActionInput(name, event.args);
+      if (!tools.some((tool) => tool.id === id)) tools.push({ id, name, ...(input ? { input } : {}) });
       return { ...state, agentPhase: { kind: "running_tools", tools } };
     }
     case "tool_execution_end": {

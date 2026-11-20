@@ -499,3 +499,57 @@ test("a collapsed failed tool call surfaces the failure reason as its header hin
   assert.match(collapsed, /title="command exited with 1"/);
   assert.doesNotMatch(collapsed, /traceback details/);
 });
+
+test("shell action titles survive history rendering while raw commands remain expandable", () => {
+  const message = assistant({
+    content: [
+      {
+        type: "toolCall",
+        toolCallId: "intent",
+        toolName: "bash",
+        input: {
+          description: "Compare the two HTML pages",
+          command: "diff first.html second.html",
+          timeout: 10,
+        },
+      },
+    ],
+  });
+  const before = structuredClone(message);
+  const collapsed = renderToStaticMarkup(createElement(MessageView, { message, runningToolCallIds: new Set() }));
+  assert.match(collapsed, /Compare the two HTML pages/);
+  assert.match(collapsed, /tool-action-title/);
+  assert.doesNotMatch(collapsed, /diff first.html/);
+  let renderer;
+  act(() => {
+    renderer = create(createElement(MessageView, { message, runningToolCallIds: new Set() }));
+  });
+  const header = renderer.root
+    .findAll((node) => node.type === "button")
+    .find((node) => node.props.className?.includes("tool-action-toggle"));
+  assert.equal(header.props["aria-expanded"], false);
+  act(() => header.props.onClick());
+  assert.equal(header.props["aria-expanded"], true);
+  assert.match(JSON.stringify(renderer.toJSON()), /diff first.html second.html/);
+  act(() => renderer.unmount());
+  assert.deepEqual(message, before);
+});
+
+test("tool status distinguishes streaming arguments, actual execution, errors and recorded completion", () => {
+  const message = assistant({
+    content: [{ type: "toolCall", toolCallId: "status", toolName: "read", input: { path: "page.html" } }],
+  });
+  const render = (props) => renderToStaticMarkup(createElement(MessageView, { message, ...props }));
+  assert.match(render({ isStreaming: true }), /Read file: page.html/);
+  assert.doesNotMatch(render({ isStreaming: true }), /Running…/);
+  assert.match(render({ runningToolCallIds: new Set(["status"]) }), /Running…/);
+  assert.doesNotMatch(render({ runningToolCallIds: new Set() }), /Running…/);
+  const result = {
+    role: "toolResult",
+    toolCallId: "status",
+    toolName: "read",
+    content: [{ type: "text", text: "ok" }],
+  };
+  assert.doesNotMatch(render({ toolResults: new Map([["status", result]]) }), /Running…/);
+  assert.match(render({ toolResults: new Map([["status", { ...result, isError: true }]]) }), /Failed/);
+});
