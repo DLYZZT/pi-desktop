@@ -369,32 +369,104 @@ export async function runSmokeHostChecks(
                 let chatFontSizeSelect;
                 let chatLayoutSelect;
                 let chatAssistantWidthSelect;
+                // ui/Select renders a button trigger carrying the SettingRow
+                // controlId, not a native <select>. React renders the portaled
+                // listbox after the click's state update commits, so every
+                // panel interaction awaits a frame before querying the DOM.
+                // The smoke window stays hidden, so Chromium may throttle or
+                // defer rAF indefinitely; race it with a timeout so panel
+                // interactions always progress.
+                const nextFrame = () =>
+                  Promise.race([
+                    new Promise((wait) => requestAnimationFrame(() => wait())),
+                    new Promise((wait) => setTimeout(wait, 100)),
+                  ]);
+                const findTrigger = (labelTexts) => {
+                  const label = Array.from(document.querySelectorAll("label")).find((label) =>
+                    labelTexts.includes(label.textContent?.trim() || ""),
+                  );
+                  const trigger = label?.htmlFor ? document.getElementById(label.htmlFor) : undefined;
+                  return trigger instanceof HTMLButtonElement && trigger.getAttribute("aria-haspopup") === "listbox"
+                    ? trigger
+                    : undefined;
+                };
+                const openOptionValues = async (trigger) => {
+                  if (!(trigger instanceof HTMLButtonElement) || trigger.disabled) return undefined;
+                  trigger.click();
+                  await nextFrame();
+                  const panel = document.querySelector('[role="listbox"]');
+                  if (!panel) {
+                    trigger.click();
+                    return undefined;
+                  }
+                  const values = Array.from(panel.querySelectorAll('[role="option"]'), (option) =>
+                    option instanceof HTMLElement ? option.dataset.value : undefined,
+                  );
+                  trigger.click();
+                  await nextFrame();
+                  return values.every((value) => typeof value === "string") ? values : undefined;
+                };
                 while ((!channelsButton || !chatFontSizeSelect || !chatLayoutSelect || !chatAssistantWidthSelect) && Date.now() < settingsDeadline) {
                   channelsButton = findButton("Channels") || findButton("消息渠道");
-                  const labels = Array.from(document.querySelectorAll("label"));
-                  const fontLabel = labels.find((label) => ["Chat text size", "聊天字号"].includes(label.textContent?.trim() || ""));
-                  const layoutLabel = labels.find((label) => ["Conversation width", "对话宽度"].includes(label.textContent?.trim() || ""));
-                  const assistantWidthLabel = labels.find((label) => ["Model reply width", "模型回复宽度"].includes(label.textContent?.trim() || ""));
-                  chatFontSizeSelect = fontLabel?.htmlFor ? document.getElementById(fontLabel.htmlFor) : undefined;
-                  chatLayoutSelect = layoutLabel?.htmlFor ? document.getElementById(layoutLabel.htmlFor) : undefined;
-                  chatAssistantWidthSelect = assistantWidthLabel?.htmlFor ? document.getElementById(assistantWidthLabel.htmlFor) : undefined;
-                  if (!channelsButton || !chatFontSizeSelect || !chatLayoutSelect || !chatAssistantWidthSelect) {
+                  chatFontSizeSelect = findTrigger(["Chat text size", "聊天字号"]);
+                  chatLayoutSelect = findTrigger(["Conversation width", "对话宽度"]);
+                  chatAssistantWidthSelect = findTrigger(["Model reply width", "模型回复宽度"]);
+                  if (
+                    !channelsButton ||
+                    !chatFontSizeSelect ||
+                    !chatLayoutSelect ||
+                    !chatAssistantWidthSelect ||
+                    !(await openOptionValues(chatFontSizeSelect)) ||
+                    !(await openOptionValues(chatLayoutSelect)) ||
+                    !(await openOptionValues(chatAssistantWidthSelect))
+                  ) {
+                    chatFontSizeSelect = undefined;
+                    chatLayoutSelect = undefined;
+                    chatAssistantWidthSelect = undefined;
                     await new Promise((wait) => setTimeout(wait, 25));
                   }
                 }
                 if (!channelsButton) throw new Error("Channels settings tab is unavailable");
-                if (!(chatFontSizeSelect instanceof HTMLSelectElement) || !(chatLayoutSelect instanceof HTMLSelectElement) || !(chatAssistantWidthSelect instanceof HTMLSelectElement)) {
+                if (!chatFontSizeSelect || !chatLayoutSelect || !chatAssistantWidthSelect) {
                   throw new Error("Chat appearance settings are unavailable or unlabeled");
                 }
+                // Select by contract value through the themed listbox: open the
+                // panel, click the data-value row, wait for the panel to close.
+                const changeSelect = async (trigger, value) => {
+                  if (!(trigger instanceof HTMLButtonElement)) throw new Error("Select trigger disappeared");
+                  if (trigger.disabled) throw new Error("Select trigger is disabled");
+                  trigger.click();
+                  await nextFrame();
+                  const panel = document.querySelector('[role="listbox"]');
+                  const option = panel?.querySelector('[role="option"][data-value="' + value + '"]');
+                  if (!(option instanceof HTMLElement)) {
+                    trigger.click();
+                    throw new Error("Select option for value is missing: " + value);
+                  }
+                  option.click();
+                  await nextFrame();
+                };
+                // Current value reader: the selected row is only visible while
+                // the panel is open, so read its data-value.
+                const selectedValue = async (trigger) => {
+                  if (!(trigger instanceof HTMLButtonElement)) return undefined;
+                  trigger.click();
+                  await nextFrame();
+                  const current = document.querySelector('[role="listbox"] [role="option"][aria-selected="true"]');
+                  const value = current instanceof HTMLElement ? current.dataset.value : undefined;
+                  trigger.click();
+                  await nextFrame();
+                  return value;
+                };
                 const expectedFontOptions = ["small", "standard", "large", "extra-large"];
                 const expectedLayoutOptions = ["fixed", "wide"];
-                if (JSON.stringify(Array.from(chatAssistantWidthSelect.options, (option) => option.value)) !== JSON.stringify(["comfortable", "full"])) {
+                if (JSON.stringify(await openOptionValues(chatAssistantWidthSelect)) !== JSON.stringify(["comfortable", "full"])) {
                   throw new Error("Model reply width options do not match the public contract");
                 }
-                if (JSON.stringify(Array.from(chatFontSizeSelect.options, (option) => option.value)) !== JSON.stringify(expectedFontOptions)) {
+                if (JSON.stringify(await openOptionValues(chatFontSizeSelect)) !== JSON.stringify(expectedFontOptions)) {
                   throw new Error("Chat font-size options do not match the public contract");
                 }
-                if (JSON.stringify(Array.from(chatLayoutSelect.options, (option) => option.value)) !== JSON.stringify(expectedLayoutOptions)) {
+                if (JSON.stringify(await openOptionValues(chatLayoutSelect)) !== JSON.stringify(expectedLayoutOptions)) {
                   throw new Error("Chat layout options do not match the public contract");
                 }
                 let chatFixture;
@@ -426,11 +498,6 @@ export async function runSmokeHostChecks(
                   overflow: "hidden",
                 });
                 chatColumn.appendChild(assistantBubble);
-                const changeSelect = (select, value) => {
-                  const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-                  valueSetter?.call(select, value);
-                  select.dispatchEvent(new Event("change", { bubbles: true }));
-                };
                 const waitForCacheWarming = async (expected) => {
                   const cacheDeadline = Date.now() + 10000;
                   let select;
@@ -439,21 +506,30 @@ export async function runSmokeHostChecks(
                       ["Prompt cache warming", "提示缓存预热", "提示快取預熱"].includes(entry.textContent?.trim() || ""),
                     );
                     select = label?.htmlFor ? document.getElementById(label.htmlFor) : undefined;
-                    if (select instanceof HTMLSelectElement && select.isConnected && !select.disabled && select.value === expected) return select;
+                    if (
+                      select instanceof HTMLButtonElement &&
+                      select.isConnected &&
+                      !select.disabled &&
+                      select.getAttribute("aria-haspopup") === "listbox" &&
+                      (await selectedValue(select)) === expected
+                    ) {
+                      return select;
+                    }
                     await new Promise((wait) => setTimeout(wait, 25));
                   }
-                  throw new Error("Cache warming setting did not settle: " + JSON.stringify({ expected, value: select?.value, disabled: select?.disabled, connected: select?.isConnected }));
+                  throw new Error("Cache warming setting did not settle: " + JSON.stringify({ expected, connected: select?.isConnected, disabled: select?.disabled }));
                 };
                 let cacheSelect = await waitForCacheWarming("off");
-                if (JSON.stringify(Array.from(cacheSelect.options, (option) => option.value)) !== JSON.stringify(["off", "streaming", "idle"])) {
+                if (JSON.stringify(await openOptionValues(cacheSelect)) !== JSON.stringify(["off", "streaming", "idle"])) {
                   throw new Error("Cache warming setting has the wrong modes");
                 }
-                changeSelect(cacheSelect, "idle");
+                await changeSelect(cacheSelect, "idle");
                 await new Promise((wait) => setTimeout(wait, 0));
                 cacheSelect = await waitForCacheWarming("idle");
-                const cacheWarming = cacheSelect.value === "idle" && !cacheSelect.disabled;
+                const cacheWarming = cacheSelect instanceof HTMLButtonElement && !cacheSelect.disabled && (await selectedValue(cacheSelect)) === "idle";
                 if (!cacheWarming) throw new Error("Cache warming setting did not finish its UI save");
-                const waitForAppearance = async (fontSize, layout, assistantWidth = chatAssistantWidthSelect.value) => {
+                const waitForAppearance = async (fontSize, layout, assistantWidth) => {
+                  if (assistantWidth === undefined) assistantWidth = await selectedValue(chatAssistantWidthSelect);
                   const appearanceDeadline = Date.now() + 3000;
                   while (Date.now() < appearanceDeadline) {
                     const state = await window.piBridge.getUiState();
@@ -464,8 +540,11 @@ export async function runSmokeHostChecks(
                       state.chatAppearance?.fontSize === fontSize &&
                       state.chatAppearance?.layout === layout &&
                       state.chatAppearance?.assistantWidth === assistantWidth &&
+                      chatFontSizeSelect instanceof HTMLButtonElement &&
                       !chatFontSizeSelect.disabled &&
+                      chatLayoutSelect instanceof HTMLButtonElement &&
                       !chatLayoutSelect.disabled &&
+                      chatAssistantWidthSelect instanceof HTMLButtonElement &&
                       !chatAssistantWidthSelect.disabled
                     ) {
                       return;
@@ -474,39 +553,41 @@ export async function runSmokeHostChecks(
                   }
                   throw new Error("Chat appearance did not apply and persist before the deadline");
                 };
-                changeSelect(chatFontSizeSelect, "standard");
-                await waitForAppearance("standard", chatLayoutSelect.value);
-                changeSelect(chatLayoutSelect, "fixed");
+                await changeSelect(chatFontSizeSelect, "standard");
+                await waitForAppearance("standard", await selectedValue(chatLayoutSelect));
+                await changeSelect(chatLayoutSelect, "fixed");
                 await waitForAppearance("standard", "fixed");
                 const standardInputFontSize = Number.parseFloat(getComputedStyle(chatInput).fontSize);
+                // The trigger keeps a fixed settings-form font size regardless
+                // of the chat scale; the assertion below checks it never drifts.
                 const settingsFontSize = getComputedStyle(chatFontSizeSelect).fontSize;
                 const fixedColumnWidth = chatColumn.getBoundingClientRect().width;
-                changeSelect(chatFontSizeSelect, "extra-large");
+                await changeSelect(chatFontSizeSelect, "extra-large");
                 await waitForAppearance("extra-large", "fixed");
-                changeSelect(chatLayoutSelect, "wide");
+                await changeSelect(chatLayoutSelect, "wide");
                 await waitForAppearance("extra-large", "wide");
                 const extraLargeInputFontSize = Number.parseFloat(getComputedStyle(chatInput).fontSize);
                 const wideColumnWidth = chatColumn.getBoundingClientRect().width;
                 const chatScopeStyle = getComputedStyle(chatScope);
                 for (const layout of ["fixed", "wide"]) {
-                  changeSelect(chatLayoutSelect, layout);
+                  await changeSelect(chatLayoutSelect, layout);
                   await waitForAppearance("extra-large", layout);
                   const columnWidth = chatColumn.getBoundingClientRect().width;
                   const comfortableWidth = assistantBubble.getBoundingClientRect().width;
-                  changeSelect(chatAssistantWidthSelect, "full");
+                  await changeSelect(chatAssistantWidthSelect, "full");
                   await waitForAppearance("extra-large", layout, "full");
                   if (
                     Math.abs(assistantBubble.getBoundingClientRect().width - columnWidth) > 1 ||
                     assistantBubble.getBoundingClientRect().width <= comfortableWidth ||
                     Math.abs(chatColumn.getBoundingClientRect().width - columnWidth) > 1
                   ) throw new Error("Full reply width must fill, but not resize, the conversation column");
-                  changeSelect(chatAssistantWidthSelect, "comfortable");
+                  await changeSelect(chatAssistantWidthSelect, "comfortable");
                   await waitForAppearance("extra-large", layout, "comfortable");
                   if (Math.abs(assistantBubble.getBoundingClientRect().width - comfortableWidth) > 1) {
                     throw new Error("Comfortable reply width was not restored");
                   }
                 }
-                changeSelect(chatAssistantWidthSelect, "full");
+                await changeSelect(chatAssistantWidthSelect, "full");
                 await waitForAppearance("extra-large", "wide", "full");
                 window.resizeTo(900, 700);
                 await new Promise((wait) => setTimeout(wait, 50));
@@ -529,13 +610,13 @@ export async function runSmokeHostChecks(
                   document.documentElement.scrollWidth <= document.documentElement.clientWidth &&
                   (chatFixture ? chatFixture : document.querySelector(".chat-appearance-scope")) === chatScope &&
                   (chatFixture ? chatFixture.querySelector("textarea") : document.querySelector("textarea")) === chatInput;
-                changeSelect(chatAssistantWidthSelect, "comfortable");
+                await changeSelect(chatAssistantWidthSelect, "comfortable");
                 await waitForAppearance("extra-large", "wide", "comfortable");
                 assistantBubble.remove();
                 chatFixture?.remove();
-                changeSelect(chatFontSizeSelect, "standard");
+                await changeSelect(chatFontSizeSelect, "standard");
                 await waitForAppearance("standard", "wide");
-                changeSelect(chatLayoutSelect, "fixed");
+                await changeSelect(chatLayoutSelect, "fixed");
                 await waitForAppearance("standard", "fixed");
                 channelsButton.click();
                 const channelDeadline = Date.now() + 3000;

@@ -43,7 +43,12 @@ test("aggregated mode replaces the top-level controls with a project opener", ()
 });
 
 test("a collapsed project group still expands when it holds the open session", () => {
-  assert.match(sidebar, /collapsedProjectRoots\.has\(projectRoot\)/);
+  // Collapse state is matched with worktreePathsEqual, not Set.has: the stored
+  // spelling may differ from the live representative (git vs raw cwd).
+  assert.match(
+    sidebar,
+    /collapsed: \[\.\.\.collapsedProjectRoots\]\.some\(\(root\) => worktreePathsEqual\(root, projectRoot\)\)/,
+  );
   // The reveal is event-driven: once per newly selected session, so a manual
   // collapse of the active group is not overridden on the next render.
   assert.match(sidebar, /revealedSessionIdRef\.current === selectedSessionId/);

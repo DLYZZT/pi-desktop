@@ -63,7 +63,6 @@ const browserSettings = read("src/main/browser/browser-settings.ts");
 const browserPolicy = read("src/main/browser/browser-policy.ts");
 const browserService = read("src/main/browser/browser-service.ts");
 const browserAuthorization = read("src/main/browser/browser-authorization-coordinator.ts");
-const browserGrantStore = read("src/main/browser/browser-persistent-grant-store.ts");
 const browserTools = read("src/agent-host/browser-tools.ts");
 const browserTabs = read("src/main/browser/browser-tab-manager.ts");
 const browserDevToolsShortcut = read("src/main/browser/browser-devtools-shortcut.ts");
@@ -730,19 +729,24 @@ const checks = [
     browserContract.includes('"browser.requestAuthorization"') &&
       browserTools.includes('"browser.requestAuthorization"') &&
       browserService.indexOf('method === "browser.requestAuthorization"') <
-        browserService.indexOf("this.policy.assertRequest(context, permission)") &&
+        browserService.indexOf("this.policy.assertRequestForMethod(context, permission, method)") &&
       !desktopContract.includes("browserGrantSession:") &&
       !preload.includes("desktop:browser:grant-session"),
     "Agent Browser tools must preflight in Main before side effects and Renderer must not mint arbitrary runtime grants",
   ],
   [
-    browserGrantStore.includes("mode: 0o600") &&
-      browserGrantStore.includes("fs.renameSync(temp, this.filePath)") &&
+    // The persistent grant store was removed (dc44f50): authorization is the
+    // global default policy plus in-memory temporary grants, so nothing on
+    // disk can resurrect an override and stale store files are wiped on start.
+    browserService.includes(
+      'fs.rmSync(path.join(options.userDataDir, "browser-session-grants.json"), { force: true })',
+    ) &&
+      !browserAuthorization.includes("fs.") &&
       browserAuthorization.includes("private readonly pendingById") &&
       browserAuthorization.includes("AUTHORIZATION_TIMEOUT") &&
       browserAuthorization.includes("isRendererAvailable") &&
-      !browserGrantStore.includes("capabilityLeaseId"),
-    "persistent Browser policies must be private and atomic while pending requests and leases remain in memory",
+      !browserAuthorization.includes("capabilityLeaseId"),
+    "Browser authorization must keep pending requests in memory only while stale persistent grant files are wiped on start",
   ],
   [
     desktopIpc.includes("const requireTrustedBrowser") &&

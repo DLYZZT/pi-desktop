@@ -9,23 +9,60 @@ export async function runMcpPresentationChecks(window: BrowserWindow): Promise<v
   const script = String.raw`async (language, theme, restore = false) => {
     const until = async (read) => {
       const deadline = Date.now() + 5000;
-      while (Date.now() < deadline) { const value = read(); if(value) return value; await new Promise(resolve=>setTimeout(resolve,20)); }
+      while (Date.now() < deadline) { const value = await read(); if(value) return value; await new Promise(resolve=>setTimeout(resolve,20)); }
       throw new Error('MCP presentation control did not appear');
     };
     const click = async (labels) => (await until(()=>Array.from(document.querySelectorAll('button')).find(button=>labels.includes(button.textContent?.trim())))).click();
-    const set = (element,value) => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(element,value);
-      element.dispatchEvent(new Event('change',{bubbles:true}));
+    // Language/theme route through ui/Select: a button trigger whose id matches
+    // the SettingRow label, with the portaled listbox rendering after the open
+    // state commits (one frame) and options carrying their contract value.
+    // The window stays hidden during smoke, so Chromium may throttle or defer
+    // rAF indefinitely; race it with a timeout so panel reads always progress.
+    const nextFrame = () => Promise.race([
+      new Promise(resolve=>requestAnimationFrame(()=>resolve())),
+      new Promise(resolve=>setTimeout(resolve,100)),
+    ]);
+    const triggerForOption = async (value) => {
+      const triggers = Array.from(document.querySelectorAll('button[aria-haspopup="listbox"]'));
+      for (const trigger of triggers) {
+        if (trigger.disabled) continue;
+        trigger.click();
+        await nextFrame();
+        const has = Boolean(document.querySelector('[role="listbox"] [role="option"][data-value="'+value+'"]'));
+        trigger.click();
+        await nextFrame();
+        if (has) return trigger;
+      }
+      return undefined;
+    };
+    const pickOption = async (trigger, value) => {
+      if (!(trigger instanceof HTMLButtonElement)) throw new Error('Select trigger disappeared');
+      if (trigger.disabled) throw new Error('Select trigger is disabled');
+      trigger.click();
+      await nextFrame();
+      const option = document.querySelector('[role="listbox"] [role="option"][data-value="'+value+'"]');
+      if (!(option instanceof HTMLElement)) { trigger.click(); throw new Error('Select option missing: '+value); }
+      option.click();
+      await nextFrame();
+    };
+    const readSelected = async (trigger) => {
+      trigger.click();
+      await nextFrame();
+      const current = document.querySelector('[role="listbox"] [role="option"][aria-selected="true"]');
+      const value = current instanceof HTMLElement ? current.dataset.value : undefined;
+      trigger.click();
+      await nextFrame();
+      return value;
     };
     if(document.querySelector('.mcp-editor')) await click(['Cancel','取消']);
     await click(['General','通用','一般']);
-    const languageControl = await until(()=>Array.from(document.querySelectorAll('select')).find(select=>Array.from(select.options).some(option=>option.value==='en-US')));
-    const themeControl = await until(()=>Array.from(document.querySelectorAll('select')).find(select=>Array.from(select.options).some(option=>option.value==='dark')));
-    const previous = {language:languageControl.value,theme:themeControl.value};
-    set(languageControl,language);
-    await until(()=>document.documentElement.lang===language);
-    set(themeControl,theme);
-    await until(()=>document.documentElement.classList.contains('dark')===(theme==='dark'));
+    const languageControl = await until(()=>triggerForOption('en-US'));
+    const themeControl = await until(()=>triggerForOption('dark'));
+    const previous = {language:await readSelected(languageControl),theme:await readSelected(themeControl)};
+    await pickOption(languageControl,language);
+    await until(async()=>document.documentElement.lang===language);
+    await pickOption(themeControl,theme);
+    await until(async()=>document.documentElement.classList.contains('dark')===(theme==='dark'));
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
     await until(()=>document.getAnimations().filter(animation=>animation.effect?.pseudoElement?.includes('view-transition')).every(animation=>animation.playState!=='running'));
     if(restore) return previous;
@@ -38,7 +75,7 @@ export async function runMcpPresentationChecks(window: BrowserWindow): Promise<v
     const container=document.querySelector('[data-mcp-config]');
     if(container.scrollWidth>container.clientWidth+2) throw new Error('MCP form overflows its settings pane');
     if(document.documentElement.scrollWidth>window.innerWidth+2) throw new Error('MCP settings overflow the viewport');
-    for(const input of editor.querySelectorAll('input:not([type="checkbox"]),textarea,select')) {
+    for(const input of editor.querySelectorAll('input:not([type="checkbox"]),textarea')) {
       if(!input.labels?.length && !input.getAttribute('aria-label')) throw new Error('MCP form control has no associated label');
     }
     const save=Array.from(editor.querySelectorAll('button')).find(button=>['Save configuration','保存配置','儲存設定'].includes(button.textContent?.trim()));

@@ -240,7 +240,7 @@ export function BrowserSettings({ sessionId }: { sessionId: string | null }) {
               checked={settings.automation.enabled}
               onChange={(enabled) => void setAutomationEnabled(enabled)}
             />
-            <Field label={t("browserDefaultPermanentPermission", "Default permanent permission")}>
+            <Field label={t("browserDefaultPermanentPermission", "Default Agent permission")}>
               <Select
                 value={settings.automation.defaultPermission}
                 onChange={(value) =>
@@ -254,7 +254,7 @@ export function BrowserSettings({ sessionId }: { sessionId: string | null }) {
                   { value: "ask", label: t("browserPermissionAsk", "Ask for each session") },
                   { value: "deny", label: t("browserPermissionDeny", "Always deny") },
                   { value: "read", label: t("browserPermissionReadOnly", "Read only") },
-                  { value: "interact", label: t("browserPermissionAllowInteractions", "Allow interactions") },
+                  { value: "interact", label: t("browserPermissionAllowInteractions", "Interact") },
                 ]}
               />
             </Field>
@@ -265,7 +265,10 @@ export function BrowserSettings({ sessionId }: { sessionId: string | null }) {
               danger
             />
             <Toggle
-              label={t("browserAllowApprovedChannels", "Allow specifically approved channel sessions")}
+              label={t(
+                "browserAllowApprovedChannels",
+                "Allow Browser use from chat channels (WeChat, Telegram, Feishu)",
+              )}
               checked={settings.automation.allowChannelSessions}
               onChange={(allowChannelSessions) => void update({ automation: { allowChannelSessions } })}
             />
@@ -344,7 +347,7 @@ export function BrowserSettings({ sessionId }: { sessionId: string | null }) {
               <div style={dangerStyle}>
                 {t(
                   "browserAdvancedModeWarning",
-                  "One launch-only switch enables JavaScript, three-layer browser identity, trusted humanized input, full CDP network capture, confirmed write replay, the JavaScript experience library, security-header removal, advanced Profiles, certificate bypass, and unrestricted CDP. Full Cookie values remain blocked by Gate A.",
+                  "One launch-only switch enables the browser identity, trusted humanized input, full CDP network capture, confirmed write replay, the JavaScript experience library, security-header removal, advanced Profiles, certificate bypass, and unrestricted CDP. Full Cookie values remain blocked by Gate A.",
                 )}
               </div>
               <Toggle
@@ -1286,7 +1289,7 @@ function profileModeLabel(t: Translate, mode: BrowserProfileInfo["mode"]): strin
 function permissionLabel(t: Translate, permission: "none" | "read" | "interact" | "advanced"): string {
   switch (permission) {
     case "read":
-      return t("browserPermissionRead", "Read");
+      return t("browserPermissionRead", "Read only");
     case "interact":
       return t("browserPermissionInteract", "Interact");
     case "advanced":

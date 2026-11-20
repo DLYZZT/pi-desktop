@@ -393,7 +393,7 @@ function AboutSettings({ onClose }: { onClose: () => void }) {
           >
             <AboutRow label={t("softwareVersion", "Software version")} value={`v${APP_VERSION}`} />
             <AboutRow label={t("piVersion", "Pi version")} value={`v${PI_VERSION}`} />
-            <AboutRow label={t("author", "Author")} value={APP_AUTHOR} />
+            <AboutRow label={t("author", "Original author")} value={APP_AUTHOR} />
             <AboutRow label={t("forkAuthor", "Fork author")} value={APP_FORK_AUTHOR} />
             <AboutRow
               label={t("officialWebsite", "Official website")}

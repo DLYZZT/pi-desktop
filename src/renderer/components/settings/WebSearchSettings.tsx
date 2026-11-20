@@ -3,6 +3,8 @@ import { Checkbox } from "@/components/ui/Checkbox";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { useI18n } from "@/i18n";
+
+type Translate = ReturnType<typeof useI18n>["t"];
 import { getWebSearchSettings, setWebSearchSettings, testWebSearchSettings } from "@/lib/api-client";
 import type { WebSearchSnapshot } from "@shared/web-search";
 import { SettingRow } from "./settings-controls";
@@ -18,16 +20,43 @@ const inputStyle = {
 
 const hintStyle = { margin: "8px 0 0", fontSize: 12, lineHeight: 1.55, color: "var(--text-dim)" } as const;
 
-/** Per-provider hint lines; each provider declares what it supports and how its key resolves. */
-const providerHintKeys: Record<string, string> = {
-  deepseek: "webSearchProviderDeepSeekHint",
-  "tencent-wsa": "webSearchProviderTencentWsaHint",
-};
+/**
+ * Per-provider hint/placeholder lookups. Every provider gets a static `t()`
+ * branch so the i18n invariants (registered fallbacks, en-US parity) hold;
+ * unknown providers fall back to the generic lines below.
+ */
+function providerHint(t: Translate, providerId: string, supportsFetch: boolean): string {
+  switch (providerId) {
+    case "deepseek":
+      return t(
+        "webSearchProviderDeepSeekHint",
+        "DeepSeek provides both web_search and web_fetch; charges per 1,000 calls. Reuses the DeepSeek provider key from Settings → Models unless a dedicated key is saved below.",
+      );
+    case "tencent-wsa":
+      return t(
+        "webSearchProviderTencentWsaHint",
+        "Tencent Yuanbao Search provides web_search only (no web_fetch); it bills per successful call. Configure its own service API KEY below — a DeepSeek key cannot be used here.",
+      );
+    default:
+      return supportsFetch
+        ? ""
+        : t(
+            "webSearchProviderTencentWsaHint",
+            "Tencent Yuanbao Search provides web_search only (no web_fetch); it bills per successful call. Configure its own service API KEY below — a DeepSeek key cannot be used here.",
+          );
+  }
+}
 
-const placeholderKeys: Record<string, string> = {
-  deepseek: "webSearchApiKeyOverridePlaceholderDeepSeek",
-  "tencent-wsa": "webSearchApiKeyOverridePlaceholderTencentWsa",
-};
+function keyPlaceholder(t: Translate, providerId: string): string {
+  switch (providerId) {
+    case "deepseek":
+      return t("webSearchApiKeyOverridePlaceholderDeepSeek", "Reuse the DeepSeek provider key");
+    case "tencent-wsa":
+      return t("webSearchApiKeyOverridePlaceholderTencentWsa", "Tencent Yuanbao search service API KEY (sk-…)");
+    default:
+      return t("webSearchApiKeyOverridePlaceholderDeepSeek", "Reuse the DeepSeek provider key");
+  }
+}
 
 /**
  * Web search tools panel. The feature is off by default because every
@@ -188,18 +217,7 @@ export function WebSearchSettings() {
             options={providers.map((provider) => ({ value: provider.id, label: provider.label }))}
           />
         </SettingRow>
-        {activeProvider && (
-          <p style={hintStyle}>
-            {providerHintKeys[activeProvider.id]
-              ? t(providerHintKeys[activeProvider.id], "")
-              : activeProvider.supportsFetch
-                ? ""
-                : t(
-                    "webSearchProviderTencentWsaHint",
-                    "This provider offers web_search only; web_fetch is unavailable while it is selected.",
-                  )}
-          </p>
-        )}
+        {activeProvider && <p style={hintStyle}>{providerHint(t, activeProvider.id, activeProvider.supportsFetch)}</p>}
         <div style={{ height: 1, background: "var(--border)", margin: "20px 0" }} />
         <SettingRow label={t("webSearchApiKeyOverride", "Dedicated API key (optional)")} controlId={keyControlId}>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -208,11 +226,7 @@ export function WebSearchSettings() {
               style={inputStyle}
               type="password"
               autoComplete="new-password"
-              placeholder={
-                placeholderKeys[providerId]
-                  ? t(placeholderKeys[providerId], "")
-                  : t("webSearchApiKeyOverridePlaceholderDeepSeek", "Reuse the provider key")
-              }
+              placeholder={keyPlaceholder(t, providerId)}
               value={keyDraft}
               disabled={busy || testing || !providerId}
               onChange={(event) => setKeyDrafts((drafts) => ({ ...drafts, [providerId]: event.target.value }))}

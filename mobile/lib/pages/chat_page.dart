@@ -58,6 +58,9 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   String? _activeAskId;
   bool _askSheetOpen = false;
   String? _error;
+  /// sessions.get 还没回来（进页到首帧历史渲染之间）：显示加载指示，
+  /// 而不是把"还没加载"误渲染成"空会话"。
+  bool _loadingHistory = true;
   StreamSubscription<RemoteSessionEvent>? _events;
   Timer? _renderThrottle;
   bool _pendingRender = false;
@@ -128,6 +131,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
           ..clear()
           ..addAll(historyLinesFromDetail(detail));
         _currentModel = _modelFromDetail(detail);
+        _loadingHistory = false;
         // Restore the turn mirror from the runtime snapshot so the
         // steer-vs-prompt choice is correct right after opening the page.
         _turnRunning = turnRunningFromAgentState(detail['agentState']);
@@ -139,7 +143,10 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       await _reconcileTurnRunning();
       _throttledScroll();
     } catch (err) {
-      setState(() => _error = err.toString());
+      setState(() {
+        _error = err.toString();
+        _loadingHistory = false;
+      });
     }
   }
 
@@ -864,7 +871,15 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
               ),
             ),
           Expanded(
-            child: (_lines.isEmpty && _sendingText == null && !_awaitingFirst)
+            child: _loadingHistory
+                ? const Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.2),
+                    ),
+                  )
+                : (_lines.isEmpty && _sendingText == null && !_awaitingFirst)
                 ? const Center(
                     child: Text('向 PC 上的 agent 发送第一条指令…', style: TextStyle(color: Colors.black38)),
                   )

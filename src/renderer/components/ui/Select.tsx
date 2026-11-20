@@ -270,6 +270,9 @@ export function Select({
               <div
                 key={option.value}
                 role="option"
+                // Machine-readable value: smoke/E2E drivers select by contract
+                // value, not by the localized label text.
+                data-value={option.value}
                 aria-selected={option.value === value}
                 aria-disabled={option.disabled || undefined}
                 ref={(node) => {
