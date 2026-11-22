@@ -71,6 +71,15 @@ import type {
   BrowserVisualCompareResult,
   BrowserVisualCompareTarget,
 } from "../../contract/browser.ts";
+import type { BrowserDeviceMode, BrowserDeviceModeInput } from "../../contract/browser-device.ts";
+import {
+  applyBrowserDevice,
+  applyBrowserDeviceMetrics,
+  BROWSER_DEVICE_KEEP,
+  browserDevicePresentation,
+  releaseBrowserDevice,
+  resolveBrowserDevice,
+} from "./browser-device-mode.ts";
 import { BrowserCdpCoordinator } from "./browser-cdp-coordinator.ts";
 import { BrowserConsoleBuffer } from "./browser-console-buffer.ts";
 import { isBrowserDevToolsShortcut } from "./browser-devtools-shortcut.ts";
@@ -99,6 +108,9 @@ type TabRecord = {
   controlGeneration: number;
   syntheticInput: number;
   bounds?: Electron.Rectangle;
+  deviceScale?: number;
+  deviceBoundsQueued?: boolean;
+  deviceIdentity?: BrowserIdentityProfile;
   advancedReady: Promise<void>;
   networkRecorder?: BrowserNetworkRecorder;
   consoleBuffer?: BrowserConsoleBuffer;
@@ -193,8 +205,9 @@ export class BrowserTabManager {
   getIdentityForWebContents(webContentsId: number): BrowserIdentityProfile | undefined {
     for (const record of this.tabs.values()) {
       const contents = record.view.webContents as WebContents | undefined;
-      if (!contents || contents.id !== webContentsId || !record.identityProfile) continue;
-      return structuredClone(record.identityProfile);
+      if (!contents || contents.id !== webContentsId) continue;
+      const identity = record.deviceIdentity ?? record.identityProfile;
+      return identity && structuredClone(identity);
     }
     return undefined;
   }
@@ -325,7 +338,7 @@ export class BrowserTabManager {
       const visible = this.surfaceVisible && candidate === record;
       candidate.info.visible = visible;
       candidate.view.setVisible(visible);
-      if (visible && candidate.bounds) candidate.view.setBounds(candidate.bounds);
+      if (visible) this.updateNativeBounds(candidate);
       this.emitUpdate(candidate);
     }
     this.options.emit({ type: "active-tab-changed", tabId: record.info.id });
@@ -368,12 +381,95 @@ export class BrowserTabManager {
     for (const record of this.tabs.values()) {
       const visible = this.surfaceVisible && record.info.id === this.activeTabId;
       record.info.visible = visible;
-      if (visible) {
-        if (record.bounds) record.view.setBounds(record.bounds);
-      }
+      if (visible) this.updateNativeBounds(record);
       record.view.setVisible(visible);
       this.emitUpdate(record);
     }
+  }
+
+  async setDeviceMode(tabId: string, input: BrowserDeviceModeInput, sessionId?: string): Promise<BrowserTabInfo> {
+    const record = this.requireOwnedTab(tabId, sessionId);
+    return this.runAction(record, sessionId, "interact", (signal) => {
+      const change = () => {
+        const transition = record.advancedReady
+          .catch(() => undefined)
+          .then(async () => {
+            this.requireOwnedTab(tabId, sessionId);
+            const previous = record.info.device ?? { mode: "desktop" };
+            const next = resolveBrowserDevice(input, previous);
+            if (JSON.stringify(previous) === JSON.stringify(next)) return structuredClone(record.info);
+            try {
+              await this.applyDevice(record, next);
+              if (signal.aborted) throw new BrowserError("USER_TOOK_CONTROL", "Browser device change was cancelled");
+            } catch (error) {
+              if (this.tabs.has(tabId) && !record.info.crashed) {
+                await this.applyDevice(record, previous).catch(() => this.close(tabId));
+              }
+              throw error;
+            }
+            record.info.device = next;
+            record.info.generation += 1;
+            record.snapshot = undefined;
+            record.pendingFileUpload = undefined;
+            this.inspections.clearTab(tabId);
+            this.emitUpdate(record);
+            return structuredClone(record.info);
+          });
+        record.advancedReady = transition.then(
+          () => undefined,
+          () => undefined,
+        );
+        return transition;
+      };
+      if (sessionId) return change();
+      const pending = record.queue.then(change);
+      record.queue = pending.then(
+        () => undefined,
+        () => undefined,
+      );
+      return pending;
+    });
+  }
+
+  private async applyDevice(record: TabRecord, device: BrowserDeviceMode): Promise<void> {
+    const tabId = record.info.id;
+    const presentation = browserDevicePresentation(device, record.bounds);
+    const identity =
+      device.mode === "mobile"
+        ? this.identity.mobileProfile(
+            record.nativeUserAgent,
+            device.presetId === "iphone-14" ? "iOS" : "Android",
+            record.identityProfile?.acceptLanguage,
+          )
+        : record.identityProfile;
+    await applyBrowserDevice(this.cdp, tabId, device, presentation.scale);
+    await this.identity.applyTabOverride(tabId, identity);
+    record.view.webContents.setUserAgent(identity?.ua ?? record.nativeUserAgent);
+    record.deviceIdentity = device.mode === "mobile" ? identity : undefined;
+    record.deviceScale = presentation.scale;
+    if (presentation.bounds) record.view.setBounds(presentation.bounds);
+    if (device.mode === "desktop") releaseBrowserDevice(this.cdp, tabId);
+    if (device.mode === "mobile") this.queueDeviceLayout(record);
+  }
+
+  private queueDeviceLayout(record: TabRecord): void {
+    if (record.deviceBoundsQueued) return;
+    record.deviceBoundsQueued = true;
+    record.queue = record.queue
+      .then(async () => {
+        record.deviceBoundsQueued = false;
+        const device = record.info.device;
+        if (!this.tabs.has(record.info.id) || record.info.crashed || device?.mode !== "mobile") return;
+        const { bounds, scale } = browserDevicePresentation(device, record.bounds);
+        if (scale !== record.deviceScale) {
+          await applyBrowserDeviceMetrics(this.cdp, record.info.id, device, scale);
+          record.deviceScale = scale;
+        }
+        if (bounds) record.view.setBounds(bounds);
+      })
+      .catch((error: unknown) => {
+        console.warn("Browser device preview resize failed", error instanceof Error ? error.message : "Unknown error");
+      });
   }
 
   setBounds(input: BrowserBoundsInput): void {
@@ -394,7 +490,15 @@ export class BrowserTabManager {
     record.bounds = { x, y, width, height };
     // Hidden owned tabs still need a real surface size for screenshots and
     // visual comparisons. setVisible(false) prevents presentation over the UI.
-    record.view.setBounds(record.bounds);
+    this.updateNativeBounds(record);
+  }
+
+  private updateNativeBounds(record: TabRecord): void {
+    if (record.info.device?.mode === "mobile") {
+      this.queueDeviceLayout(record);
+    } else if (record.bounds) {
+      record.view.setBounds(record.bounds);
+    }
   }
 
   async navigate(
@@ -576,6 +680,7 @@ export class BrowserTabManager {
             url: redactBrowserUrl(record.info.url),
             title: record.info.title.slice(0, 512),
             loading: record.info.loading,
+            device: record.info.device ?? { mode: "desktop" },
             changed: state.changed,
             ...(state.changed ? { snapshot } : {}),
             ...(state.changed && screenshot && !screenshotTruncated ? { screenshot } : {}),
@@ -648,16 +753,27 @@ export class BrowserTabManager {
       this.assertSnapshotRef(record, options.ref, options.snapshotId, options.generation);
     }
 
-    return captureBrowserScreenshot(
+    const screenshot = await captureBrowserScreenshot(
       {
         contents: record.view.webContents,
         tabId: record.info.id,
         generation: () => record.info.generation,
         element: options.ref ? record.snapshot?.nodes.get(options.ref) : undefined,
+        deviceEmulated: record.info.device?.mode === "mobile",
+        devicePixelRatio: record.info.device?.mode === "mobile" ? record.info.device.dpr : undefined,
       },
       this.cdp,
       options,
     );
+    // Chromium may reset touch emulation while completing a surface capture.
+    // Re-assert the active device state before returning control to input actions.
+    const device = record.info.device;
+    if (device?.mode === "mobile" && !record.view.webContents.isDestroyed()) {
+      const scale = record.deviceScale ?? browserDevicePresentation(device, record.bounds).scale;
+      await applyBrowserDeviceMetrics(this.cdp, record.info.id, device, scale);
+      record.deviceScale = scale;
+    }
+    return screenshot;
   }
 
   async click(
@@ -827,10 +943,12 @@ export class BrowserTabManager {
       throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser click coordinates are invalid");
     }
     return this.runAction(record, sessionId, "interact", async (signal) => {
+      const cssX = x;
+      const cssY = y;
       const viewport = (await record.view.webContents.executeJavaScriptInIsolatedWorld(SNAPSHOT_WORLD_ID, [
         {
           code: `({ width: Math.max(0, innerWidth), height: Math.max(0, innerHeight), sensitive: (() => {
-            const e = document.elementFromPoint(${Math.round(x)}, ${Math.round(y)});
+            const e = document.elementFromPoint(${Math.round(cssX)}, ${Math.round(cssY)});
             const text = (e?.getAttribute?.('aria-label') || e?.innerText || e?.getAttribute?.('name') || '').slice(0, 200);
             return /\\b(?:buy|purchase|pay|checkout|delete|remove|send|submit|authorize|approve|confirm|download|upload|sign[ -]?in|log[ -]?in)\\b/i.test(text);
           })() })`,
@@ -838,14 +956,14 @@ export class BrowserTabManager {
       ])) as { width?: unknown; height?: unknown; sensitive?: unknown };
       const width = Number(viewport.width);
       const height = Number(viewport.height);
-      if (x < 0 || y < 0 || x >= width || y >= height) {
+      if (cssX < 0 || cssY < 0 || cssX >= width || cssY >= height) {
         throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser click coordinates are outside the viewport");
       }
       if (viewport.sensitive === true)
         await this.approveSensitiveAction(record, "Coordinate click on a sensitive control");
       record.syntheticInput += 1;
       try {
-        await this.sendMouseClick(record, Math.round(x), Math.round(y), button, clickCount, signal, modifiers);
+        await this.sendMouseClick(record, Math.round(cssX), Math.round(cssY), button, clickCount, signal, modifiers);
       } finally {
         record.syntheticInput -= 1;
       }
@@ -1214,10 +1332,19 @@ export class BrowserTabManager {
           await record.networkRecorder?.stop().catch(() => undefined);
           record.networkRecorder = undefined;
           record.identityProfile = undefined;
-          if (contents && !contents.isDestroyed()) {
-            this.identity.clear(record.info.id, contents, record.session, record.nativeUserAgent);
+          try {
+            if (contents && !contents.isDestroyed()) {
+              await this.identity.clear(record.info.id, contents, record.session, record.nativeUserAgent);
+              if (!contents.isDestroyed() && this.tabs.has(record.info.id) && record.deviceIdentity) {
+                await this.identity.applyTabOverride(record.info.id, record.deviceIdentity);
+                if (!contents.isDestroyed()) contents.setUserAgent(record.deviceIdentity.ua);
+              }
+            }
+          } catch (error) {
+            if (this.tabs.has(record.info.id) && !contents?.isDestroyed()) throw error;
+          } finally {
+            this.cdp.clearKeeps(record.info.id, BROWSER_DEVICE_KEEP);
           }
-          this.cdp.clearKeeps(record.info.id);
         });
       record.advancedReady = pending;
       cleanup.push(pending);
@@ -1493,12 +1620,20 @@ export class BrowserTabManager {
       await record.networkRecorder?.stop().catch(() => undefined);
       record.networkRecorder = undefined;
       record.identityProfile = undefined;
-      this.identity.clear(record.info.id, contents, record.session, record.nativeUserAgent);
+      await this.identity.clear(record.info.id, contents, record.session, record.nativeUserAgent);
+      if (record.deviceIdentity) {
+        await this.identity.applyTabOverride(record.info.id, record.deviceIdentity);
+        contents.setUserAgent(record.deviceIdentity.ua);
+      }
       return;
     }
     const profile = this.identity.buildProfile(settings, record.nativeUserAgent);
     await this.identity.apply(record.info.id, contents, record.session, profile);
     record.identityProfile = profile;
+    if (record.deviceIdentity) {
+      await this.identity.applyTabOverride(record.info.id, record.deviceIdentity);
+      contents.setUserAgent(record.deviceIdentity.ua);
+    }
     if (!record.consoleBuffer) {
       record.consoleBuffer = new BrowserConsoleBuffer(record.info.id, this.cdp);
     }
@@ -1549,6 +1684,9 @@ export class BrowserTabManager {
       contents: record.view.webContents,
       tabId: record.info.id,
       cdp: this.cdp,
+      ...(record.info.device?.mode === "mobile"
+        ? { device: { touch: record.info.device.touch, scale: record.deviceScale ?? 1 } }
+        : {}),
       humanized: () => this.options.getSettings().advancedBrowserMode.enabled,
       withSyntheticInput: async (task) => {
         record.syntheticInput += 1;

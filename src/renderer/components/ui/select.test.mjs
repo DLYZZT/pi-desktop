@@ -129,6 +129,20 @@ test("Select: trigger, themed listbox, keyboard model and disabled semantics", a
     await fixture.unmount();
   }
 
+  // Native browser hosts must restore their surface when a popup closes or unmounts.
+  {
+    const visibility = [];
+    const fixture = await mountFixture({ value: "alpha", onOpenChange: (open) => visibility.push(open) });
+    assert.deepEqual(visibility, []);
+    await openList(fixture);
+    assert.deepEqual(visibility, [true]);
+    await fixture.key("Escape");
+    assert.deepEqual(visibility, [true, false]);
+    await openList(fixture);
+    await fixture.unmount();
+    assert.deepEqual(visibility, [true, false, true, false]);
+  }
+
   // ── placeholder shows when the value matches no option and colors it dim ──
   {
     const fixture = await mountFixture({ value: "", placeholder: "— inherit —" });

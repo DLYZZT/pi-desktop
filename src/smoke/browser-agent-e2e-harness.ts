@@ -437,6 +437,9 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
       value.assistantTexts.includes("interact-complete:assertion=browser_click:clicked"),
   );
   assert.ok(status.toolResults.includes("browser_click"), "Agent did not execute browser_click");
+  assert.ok(status.toolResults.includes("browser_set_device_mode"), "Agent did not execute the device tool");
+  assert.equal(browserService.listTabs(sessionId)[0]?.device?.mode, "mobile");
+  assert.equal(browserCalls.get("browser.setDeviceMode"), 1);
   const interactMetrics = { ...status.browserMetrics };
   assert.equal(browserCalls.get("browser.open"), 1, "unexpected browser.open Parent RPC count");
   assert.equal(browserCalls.get("browser.inspect"), 2, "unexpected browser.inspect Parent RPC count");

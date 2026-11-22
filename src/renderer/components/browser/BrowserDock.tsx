@@ -1,4 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ExternalLink,
+  Globe,
+  LoaderCircle,
+  Monitor,
+  MoreHorizontal,
+  Plus,
+  RotateCw,
+  Smartphone,
+  Upload,
+  X,
+} from "lucide-react";
+import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
+import type { BrowserDeviceModeInput } from "../../../contract/browser-device";
 import { Input } from "@/components/ui/Input";
 import { useI18n } from "@/i18n";
 import { browserErrorMessage as messageOf } from "./browser-error-message";
@@ -14,11 +30,17 @@ import { Select } from "@/components/ui/Select";
 
 export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; ownerSessionId: string | null }) {
   const { t } = useI18n();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [presetOpen, setPresetOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [changingDevice, setChangingDevice] = useState(false);
   const [state, setState] = useState<BrowserRendererState | null>(null);
   const [address, setAddress] = useState("");
   const [profileId, setProfileId] = useState("temporary");
   const [error, setError] = useState("");
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -52,6 +74,7 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
     return window.piBridge.onBrowserEvent((event) => {
       setState((current) => (current ? applyBrowserEvent(current, event) : current));
       if (event.type === "active-tab-changed") {
+        setMoreOpen(false);
         const tab = stateRef.current?.tabs.find((candidate) => candidate.id === event.tabId);
         if (tab) setAddress(tab.url);
       } else if (event.type === "tab-updated" && event.tab.id === stateRef.current?.activeTabId) {
@@ -61,6 +84,20 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
   }, [refresh]);
 
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId) ?? null;
+  const device = activeTab?.device?.mode === "mobile" ? activeTab.device : null;
+  const run = (action: Promise<unknown>) => void action.catch(handleTabSyncError);
+  const changeDevice = async (input: BrowserDeviceModeInput) => {
+    if (!activeTab || changingDevice) return;
+    setChangingDevice(true);
+    setError("");
+    try {
+      await window.piBridge.browserSetDeviceMode(activeTab.id, input);
+    } catch (cause) {
+      handleTabSyncError(cause);
+    } finally {
+      setChangingDevice(false);
+    }
+  };
   const visibleTabs =
     state?.tabs.filter((tab) => tab.ownerSessionId === null || tab.ownerSessionId === ownerSessionId) ?? [];
 
@@ -78,12 +115,36 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
   useEffect(() => {
     const tabId = activeTab?.id;
     void window.piBridge
-      .browserSetSurfaceVisible({ ...(tabId ? { tabId } : {}), visible: visible && Boolean(tabId) })
+      .browserSetSurfaceVisible({
+        ...(tabId ? { tabId } : {}),
+        visible: visible && Boolean(tabId) && !presetOpen && !moreOpen,
+      })
       .catch(handleTabSyncError);
     return () => {
       void window.piBridge.browserSetSurfaceVisible({ visible: false }).catch(() => undefined);
     };
-  }, [activeTab?.id, handleTabSyncError, visible]);
+  }, [activeTab?.id, handleTabSyncError, visible, presetOpen, moreOpen]);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !profileOpen) {
+        setMoreOpen(false);
+        moreButtonRef.current?.focus();
+      }
+    };
+    const closeOnOutside = (event: MouseEvent | FocusEvent) => {
+      if (!profileOpen && event.target instanceof Node && !moreRef.current?.contains(event.target)) setMoreOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("focusin", closeOnOutside);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("focusin", closeOnOutside);
+    };
+  }, [moreOpen, profileOpen]);
 
   useLayoutEffect(() => {
     const element = surfaceRef.current;
@@ -168,179 +229,190 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
   }
 
   return (
-    <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", background: "var(--bg)" }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          minHeight: 34,
-          padding: "3px 5px",
-          borderBottom: "1px solid var(--border)",
-          overflowX: "auto",
-          background: "var(--bg-panel)",
-        }}
-      >
+    <div className="browser-dock">
+      <div className="browser-tab-strip" role="tablist" aria-label={t("browserTabs", "Browser tabs")}>
         {visibleTabs.map((tab) => (
-          <Button
-            key={tab.id}
-            type="button"
-            title={tab.url}
-            pressed={tab.id === state.activeTabId}
-            onClick={() => void window.piBridge.browserActivateTab(tab.id).catch((cause) => setError(messageOf(cause)))}
-            variant="ghost"
-            style={{
-              maxWidth: 150,
-              minWidth: 72,
-              height: 27,
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              padding: "0 7px",
-              // The active tab reads as connected to the page surface below.
-              background: tab.id === state.activeTabId ? "var(--bg)" : undefined,
-              border: `1px solid ${tab.id === state.activeTabId ? "var(--border)" : "transparent"}`,
-              borderRadius: 5,
-              fontSize: 10,
-              ...(tab.crashed ? { color: "var(--danger)" } : {}),
-            }}
-          >
-            {tab.loading ? (
-              <span aria-label={t("browserLoading", "Loading")}>◌</span>
-            ) : (
-              <span aria-hidden="true">●</span>
-            )}
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-              {tab.title || t("browserNewTab", "New tab")}
-            </span>
-            {tab.advanced || tab.advancedProfile ? (
-              <Badge danger>{t("browserAdvancedModeBadge", "Advanced Browser Mode")}</Badge>
-            ) : null}
-            <span
-              role="button"
-              aria-label={t("browserCloseTab", "Close tab")}
-              tabIndex={0}
-              onClick={(event) => {
-                event.stopPropagation();
-                void window.piBridge.browserCloseTab(tab.id).catch((cause) => setError(messageOf(cause)));
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.stopPropagation();
-                  void window.piBridge.browserCloseTab(tab.id).catch((cause) => setError(messageOf(cause)));
-                }
-              }}
+          <div className={`browser-tab${tab.id === state.activeTabId ? " is-active" : ""}`} key={tab.id}>
+            <Button
+              role="tab"
+              aria-selected={tab.id === state.activeTabId}
+              className="browser-tab-select"
+              size="sm"
+              style={{ minWidth: 0, padding: "0 7px", fontSize: 11, minHeight: 28 }}
+              title={tab.url}
+              onClick={() => run(window.piBridge.browserActivateTab(tab.id))}
+              variant="ghost"
             >
-              ×
-            </span>
-          </Button>
+              {tab.loading ? (
+                <LoaderCircle className="is-spinning" size={13} aria-label={t("browserLoading", "Loading")} />
+              ) : (
+                <Globe size={13} aria-hidden="true" />
+              )}
+              <span className="browser-tab-title">{tab.title || t("browserNewTab", "New tab")}</span>
+              {tab.advanced || tab.advancedProfile ? (
+                <Badge danger>{t("browserAdvancedModeBadge", "Advanced Browser Mode")}</Badge>
+              ) : null}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="browser-chrome-icon browser-tab-close"
+              aria-label={t("browserCloseTab", "Close tab")}
+              title={t("browserCloseTab", "Close tab")}
+              onClick={() => run(window.piBridge.browserCloseTab(tab.id))}
+            >
+              <X size={13} aria-hidden="true" />
+            </Button>
+          </div>
         ))}
         <Button
-          type="button"
           variant="ghost"
-          style={iconButtonStyle}
+          size="icon"
+          className="browser-chrome-icon"
           title={t("browserNewTab", "New tab")}
+          aria-label={t("browserNewTab", "New tab")}
           onClick={() => void createTab()}
         >
-          ＋
+          <Plus size={15} aria-hidden="true" />
         </Button>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          padding: 5,
-          borderBottom: "1px solid var(--border)",
-          background: "var(--bg-panel)",
-        }}
-      >
+      <div className="browser-navigation-bar">
         <Button
           variant="ghost"
-          style={iconButtonStyle}
+          size="icon"
+          className="browser-chrome-icon"
           disabled={!activeTab?.canGoBack}
           title={t("browserBack", "Back")}
-          onClick={() => activeTab && void window.piBridge.browserGoBack(activeTab.id)}
+          aria-label={t("browserBack", "Back")}
+          onClick={() => activeTab && run(window.piBridge.browserGoBack(activeTab.id))}
         >
-          ←
+          <ArrowLeft size={15} aria-hidden="true" />
         </Button>
         <Button
           variant="ghost"
-          style={iconButtonStyle}
+          size="icon"
+          className="browser-chrome-icon"
           disabled={!activeTab?.canGoForward}
           title={t("browserForward", "Forward")}
-          onClick={() => activeTab && void window.piBridge.browserGoForward(activeTab.id)}
+          aria-label={t("browserForward", "Forward")}
+          onClick={() => activeTab && run(window.piBridge.browserGoForward(activeTab.id))}
         >
-          →
+          <ArrowRight size={15} aria-hidden="true" />
         </Button>
         <Button
           variant="ghost"
-          style={iconButtonStyle}
+          size="icon"
+          className="browser-chrome-icon"
           disabled={!activeTab}
           title={activeTab?.loading ? t("browserStop", "Stop") : t("browserReload", "Reload")}
+          aria-label={activeTab?.loading ? t("browserStop", "Stop") : t("browserReload", "Reload")}
           onClick={() =>
             activeTab &&
-            void (activeTab.loading
-              ? window.piBridge.browserStop(activeTab.id)
-              : window.piBridge.browserReload(activeTab.id))
+            run(
+              activeTab.loading
+                ? window.piBridge.browserStop(activeTab.id)
+                : window.piBridge.browserReload(activeTab.id),
+            )
           }
         >
-          {activeTab?.loading ? "×" : "↻"}
+          {activeTab?.loading ? <X size={15} aria-hidden="true" /> : <RotateCw size={14} aria-hidden="true" />}
         </Button>
         <form
-          style={{ flex: 1, minWidth: 0 }}
+          className="browser-address-form"
           onSubmit={(event) => {
             event.preventDefault();
             void navigate();
           }}
         >
           <Input
+            size="sm"
             aria-label={t("browserAddress", "Browser address")}
             value={address}
             onChange={(event) => setAddress(event.target.value)}
             placeholder="https://example.com"
-            style={{
-              width: "100%",
-              height: 29,
-              boxSizing: "border-box",
-              padding: "0 9px",
-              border: `1px solid ${activeTab?.url.startsWith("http:") ? "var(--warning)" : "var(--border)"}`,
-              borderRadius: 6,
-              fontSize: 11,
-              outline: "none",
-            }}
           />
         </form>
-        <Select
-          aria-label={t("browserProfileForNewTabs", "Profile for new tabs")}
-          value={profileId}
-          onChange={setProfileId}
-          style={{ maxWidth: 90 }}
-          options={state.profiles.map((profile) => ({ value: profile.id, label: profile.name }))}
-        />
         <Button
-          variant="ghost"
-          style={iconButtonStyle}
+          variant={device ? "primary" : "ghost"}
+          size="icon"
+          className="browser-chrome-icon"
+          pressed={Boolean(device)}
           disabled={!activeTab}
-          title={t("browserChooseUpload", "Choose files for focused upload input")}
-          onClick={() =>
-            activeTab &&
-            void window.piBridge.browserChooseUploadFiles(activeTab.id).catch((cause) => setError(messageOf(cause)))
-          }
+          title={device ? t("browserDeviceDesktop", "Exit device mode") : t("browserDeviceMode", "Device mode")}
+          aria-label={device ? t("browserDeviceDesktop", "Exit device mode") : t("browserDeviceMode", "Device mode")}
+          onClick={() => void changeDevice(device ? { mode: "desktop" } : { mode: "preset", presetId: "galaxy-a55" })}
         >
-          ↑
+          {device ? <Monitor size={15} aria-hidden="true" /> : <Smartphone size={15} aria-hidden="true" />}
         </Button>
-        <Button
-          variant="ghost"
-          style={iconButtonStyle}
-          disabled={!activeTab || !/^https?:/.test(activeTab.url)}
-          title={t("browserOpenSystem", "Open in system browser")}
-          onClick={() => activeTab && void window.piBridge.openExternal(activeTab.url)}
-        >
-          ↗
-        </Button>
+        <div className="browser-more-anchor" ref={moreRef}>
+          <Button
+            ref={moreButtonRef}
+            variant="ghost"
+            size="icon"
+            className="browser-chrome-icon"
+            title={t("browserMoreActions", "More browser actions")}
+            aria-label={t("browserMoreActions", "More browser actions")}
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((open) => !open)}
+          >
+            <MoreHorizontal size={16} aria-hidden="true" />
+          </Button>
+          {moreOpen && (
+            <div
+              className="browser-more-menu"
+              role="group"
+              aria-label={t("browserMoreActions", "More browser actions")}
+            >
+              <Select
+                size="sm"
+                aria-label={t("browserProfileForNewTabs", "Profile for new tabs")}
+                value={profileId}
+                onChange={setProfileId}
+                onOpenChange={setProfileOpen}
+                options={state.profiles.map((profile) => ({ value: profile.id, label: profile.name }))}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                style={{ justifyContent: "flex-start", textAlign: "left" }}
+                className="browser-more-item"
+                disabled={!activeTab}
+                onClick={() => {
+                  setMoreOpen(false);
+                  if (activeTab) run(window.piBridge.browserChooseUploadFiles(activeTab.id));
+                }}
+              >
+                <Upload size={15} aria-hidden="true" />
+                {t("browserChooseUpload", "Choose files for focused upload input")}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                style={{ justifyContent: "flex-start", textAlign: "left" }}
+                className="browser-more-item"
+                disabled={!activeTab || !/^https?:/.test(activeTab.url)}
+                onClick={() => {
+                  if (activeTab) run(window.piBridge.openExternal(activeTab.url));
+                  setMoreOpen(false);
+                }}
+              >
+                <ExternalLink size={15} aria-hidden="true" />
+                {t("browserOpenSystem", "Open in system browser")}
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
+      {device && (
+        <BrowserDeviceToolbar
+          key={`${activeTab?.id}:${device.presetId}:${device.orientation}:${device.width}:${device.height}:${device.dpr}:${device.touch}`}
+          device={device}
+          busy={changingDevice}
+          onChange={(input) => void changeDevice(input)}
+          onOpenChange={setPresetOpen}
+        />
+      )}
 
       {(error || state.permissionRequests.length > 0 || activeDownload(state.downloads)) && (
         <div
@@ -381,11 +453,7 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
           </Button>
         </div>
       ) : (
-        <div
-          ref={surfaceRef}
-          data-browser-surface
-          style={{ flex: 1, minHeight: 1, position: "relative", background: "#fff" }}
-        />
+        <div ref={surfaceRef} data-browser-surface />
       )}
 
       {activeTab && (
@@ -568,17 +636,6 @@ const emptyStyle = {
   textAlign: "center" as const,
   color: "var(--text-muted)",
   fontSize: 11,
-};
-const iconButtonStyle = {
-  width: 28,
-  height: 28,
-  flexShrink: 0,
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: 0,
-  borderRadius: 5,
-  fontSize: 14,
 };
 const primaryButtonStyle = {
   minHeight: 32,

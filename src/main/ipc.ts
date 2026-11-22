@@ -360,6 +360,11 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   browserHandler("desktop:browser:stop", (browser, tabId: string) => browser.stop(tabId));
   browserHandler("desktop:browser:close-tab", (browser, tabId: string) => browser.closeTab(tabId));
   browserHandler("desktop:browser:close-all-tabs", (browser) => browser.closeAllTabs());
+  browserHandler(
+    "desktop:browser:set-device-mode",
+    (browser, tabId: string, device: Parameters<BrowserService["setDeviceMode"]>[1]) =>
+      browser.setDeviceMode(tabId, device),
+  );
   browserHandler("desktop:browser:set-bounds", (browser, input: Parameters<BrowserService["setBounds"]>[0]) =>
     browser.setBounds(input),
   );

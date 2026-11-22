@@ -304,6 +304,10 @@ export class BrowserService {
     this.restored = false;
   }
 
+  setDeviceMode(tabId: string, device: Parameters<BrowserTabManager["setDeviceMode"]>[1]): Promise<BrowserTabInfo> {
+    return this.tabs.setDeviceMode(tabId, device);
+  }
+
   setBounds(input: Parameters<BrowserTabManager["setBounds"]>[0]): void {
     this.tabs.setBounds(input);
   }
@@ -664,7 +668,9 @@ export class BrowserService {
     if (!after.automation.enabled) this.tabs.revokeAgentActions();
     if (!this.policy.isAdvancedEnabled()) {
       this.clearAgentHeaderRules();
-      void this.tabs.clearAdvancedState();
+      void this.tabs.clearAdvancedState().catch((error: unknown) => {
+        console.warn("Browser advanced cleanup failed", error instanceof Error ? error.message : "Unknown error");
+      });
       this.tabs.closeAll({ unsafeOnly: true });
       for (const interceptor of this.interceptors.values()) interceptor.clearAdvancedRules();
     } else {
@@ -788,6 +794,10 @@ export class BrowserService {
           ...tab,
           siteSnippetCount: this.policy.isAdvancedEnabled() ? this.snippetStore.listForUrl(tab.url).siteCount : 0,
         } as BrowserHostResult<M>;
+      }
+      case "browser.setDeviceMode": {
+        const body = params as BrowserHostParams<"browser.setDeviceMode">;
+        return (await this.tabs.setDeviceMode(body.tabId, body.device, body.sessionId)) as BrowserHostResult<M>;
       }
       case "browser.listTabs":
         return { tabs: this.tabs.list(context.sessionId) } as BrowserHostResult<M>;
@@ -1360,7 +1370,8 @@ function requiredPermission(method: BrowserHostMethod): "read" | "interact" | "a
     method === "browser.clickAt" ||
     method === "browser.type" ||
     method === "browser.press" ||
-    method === "browser.scroll"
+    method === "browser.scroll" ||
+    method === "browser.setDeviceMode"
   ) {
     return "interact";
   }

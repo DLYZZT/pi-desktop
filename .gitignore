@@ -2,6 +2,7 @@ node_modules/
 out/
 output/
 dist/
+dist-mobile/
 .DS_Store
 *.log
 .tsbuildinfo

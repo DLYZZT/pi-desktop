@@ -5,7 +5,15 @@ import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { app, BrowserWindow, nativeImage, webContents, type WebContentsView } from "electron";
-import type { BrowserClickResult, BrowserHostMethod } from "../contract/browser";
+import type {
+  BrowserClickResult,
+  BrowserHostMethod,
+  BrowserInspectResult,
+  BrowserPageSnapshot,
+  BrowserScreenshotResult,
+  BrowserTabInfo,
+} from "../contract/browser";
+import type { BrowserDeviceModeInput } from "../contract/browser-device";
 import { BrowserError } from "../main/browser/browser-error";
 import { BrowserService } from "../main/browser/browser-service";
 
@@ -62,7 +70,7 @@ function hasBrowserCode(code: string): (error: unknown) => boolean {
   return (error) => typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-browser-electron-"));
+const root = process.env.PI_BROWSER_ELECTRON_ROOT ?? fs.mkdtempSync(path.join(os.tmpdir(), "pi-browser-electron-"));
 const downloads = path.join(root, "downloads");
 const uploadFile = path.join(root, "upload.txt");
 fs.mkdirSync(downloads, { recursive: true });
@@ -175,6 +183,23 @@ async function startFixture(): Promise<{ origin: string; corsOrigin: string; sec
   if (!secureAddress || typeof secureAddress === "string") throw new Error("Certificate fixture server did not bind");
   const secureOrigin = `https://127.0.0.1:${secureAddress.port}`;
   server = http.createServer((request, response) => {
+    if (request.url === "/device-headers") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ua: request.headers["user-agent"], mobile: request.headers["sec-ch-ua-mobile"] }));
+      return;
+    }
+    if (request.url === "/device") {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(`<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>body{min-height:2400px;background:white}button{position:absolute;left:90px;top:120px;width:70px;height:40px}#scroll-target{top:1200px;width:120px;height:80px;border:0;background:rgb(240,30,20)}</style>
+        <button id="touch-target">Touch target</button><button id="scroll-target">Scrolled target</button><input aria-label="Mobile text" style="position:absolute;top:180px;left:90px;width:160px"><output>ready</output>
+        <script>const target = document.querySelector('#touch-target');
+          target.addEventListener('touchstart', event => { document.querySelector('output').textContent = 'touch:' + event.isTrusted; });
+          target.addEventListener('pointerdown', event => { document.querySelector('output').textContent = 'pointer:' + event.pointerType + ':' + event.isTrusted; });
+          target.addEventListener('click', event => { document.querySelector('output').textContent = 'click:' + event.isTrusted; });
+        </script>`);
+      return;
+    }
     if (request.url?.startsWith("/identity")) {
       const requestHeaders = Object.fromEntries(
         Object.entries(request.headers).map(([name, value]) => [
@@ -607,6 +632,133 @@ async function run(): Promise<void> {
   service.setSurfaceVisible({ tabId: tab.id, visible: true });
   const nativeView = nativeViewFor(tab.id);
   assert.equal(nativeView.getVisible(), true);
+  const desktopUa = await nativeView.webContents.executeJavaScript("navigator.userAgent");
+  const deviceTab = (await call("browser.open", {
+    url: `${fixture.origin}/device`,
+    activate: false,
+  })) as BrowserTabInfo;
+  const deviceView = nativeViewFor(deviceTab.id);
+  const desktopTouchPoints = await deviceView.webContents.executeJavaScript("navigator.maxTouchPoints");
+  const setDevice = (device: BrowserDeviceModeInput) => call("browser.setDeviceMode", { tabId: deviceTab.id, device });
+  const preset = { mode: "preset", presetId: "galaxy-a55" } as const;
+  await assert.rejects(setDevice(preset), hasBrowserCode("CAPABILITY_DISABLED"));
+  service.grantSession({ sessionId: "fixture-session", permission: "interact", source: "local" });
+  service.setBounds({ tabId: deviceTab.id, rect: { x: 0, y: 0, width: 240, height: 500 } });
+  const old = (await call("browser.snapshot", { tabId: deviceTab.id })) as BrowserPageSnapshot;
+  await setDevice(preset);
+  const getMetrics = () =>
+    deviceView.webContents.executeJavaScript(`({ width: innerWidth, height: innerHeight,
+    dpr: devicePixelRatio, touch: navigator.maxTouchPoints > 0, portrait: matchMedia('(orientation: portrait)').matches })`);
+  assert.deepEqual(await getMetrics(), { width: 360, height: 800, dpr: 3, touch: true, portrait: true });
+  assert.match(await deviceView.webContents.executeJavaScript("navigator.userAgent"), /Android.*Mobile/);
+  assert.equal(await nativeView.webContents.executeJavaScript("navigator.userAgent"), desktopUa);
+  const mobileHeaders = await deviceView.webContents.executeJavaScript("fetch('/device-headers').then(r => r.json())");
+  const desktopHeaders = await nativeView.webContents.executeJavaScript("fetch('/device-headers').then(r => r.json())");
+  assert.match(mobileHeaders.ua, /Android.*Mobile/);
+  assert.equal(mobileHeaders.mobile, "?1");
+  assert.equal(desktopHeaders.ua, desktopUa);
+  assert.notEqual(desktopHeaders.mobile, "?1");
+  service.grantSession({ sessionId: "other-session", permission: "interact", source: "local" });
+  const foreignCaps = (await service.handleHostRequest("browser.capabilities", { sessionId: "other-session" })) as {
+    snapshot: { revision: number };
+    lease: { id: string };
+  };
+  await assert.rejects(
+    service.handleHostRequest("browser.setDeviceMode", {
+      tabId: deviceTab.id,
+      device: { mode: "desktop" },
+      sessionId: "other-session",
+      capabilityLeaseId: foreignCaps.lease.id,
+      policyRevision: foreignCaps.snapshot.revision,
+      requestId: "foreign-device-denied",
+    }),
+    hasBrowserCode("TAB_NOT_OWNED"),
+  );
+  await assert.rejects(
+    call("browser.click", {
+      tabId: deviceTab.id,
+      snapshotId: old.snapshotId,
+      generation: old.generation,
+      ref: old.nodes.find((node) => node.name === "Touch target")?.ref,
+    }),
+    hasBrowserCode("STALE_ELEMENT_REF"),
+  );
+  const inspectionDevice = (await call("browser.inspect", { tabId: deviceTab.id })) as BrowserInspectResult;
+  assert.equal(inspectionDevice.device?.mode, "mobile");
+  const capture = (await call("browser.screenshot", { tabId: deviceTab.id })) as BrowserScreenshotResult;
+  assert.deepEqual({ width: capture.width, height: capture.height }, { width: 360, height: 800 });
+  // A CDP capture of a hidden tab leaves Chromium finishing surface work; showing
+  // the view in the same tick can race WasShown and wedge page visibility.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  service.activateTab(deviceTab.id);
+  service.setSurfaceVisible({ tabId: deviceTab.id, visible: true });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(deviceView.getVisible(), true, "device BrowserView should be visible after activation");
+  assert.equal(deviceView.getVisible(), true);
+  assert.equal(
+    await deviceView.webContents.executeJavaScript(
+      "navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches",
+    ),
+    true,
+  );
+  const targetPoint = await deviceView.webContents.executeJavaScript(
+    "(() => { const e = document.querySelector('#touch-target').getBoundingClientRect(); return { x: e.left + e.width / 2, y: e.top + e.height / 2 }; })()",
+  );
+  const touchResult = (await call("browser.clickAt", { tabId: deviceTab.id, ...targetPoint })) as { action?: string };
+  assert.equal(touchResult.action, "clicked");
+  const touchOutput = await deviceView.webContents.executeJavaScript("document.querySelector('output').textContent");
+  assert.match(touchOutput, /(?:touch:true|pointer:touch:true)/);
+  const mobileSnapshot = (await call("browser.snapshot", { tabId: deviceTab.id })) as BrowserPageSnapshot;
+  const mobileInput = mobileSnapshot.nodes.find((node) => node.name === "Mobile text")!;
+  const mobileType = (await call("browser.type", {
+    tabId: deviceTab.id,
+    ref: mobileInput.ref,
+    snapshotId: mobileSnapshot.snapshotId,
+    generation: mobileSnapshot.generation,
+    text: "mobile typing",
+  })) as { ok: boolean };
+  assert.equal(mobileType.ok, true);
+  assert.equal(
+    await deviceView.webContents.executeJavaScript("document.querySelector('input').value"),
+    "mobile typing",
+  );
+  service.setBounds({ tabId: deviceTab.id, rect: { x: 0, y: 0, width: 180, height: 400 } });
+  await call("browser.inspect", { tabId: deviceTab.id });
+  await deviceView.webContents.executeJavaScript("document.querySelector('output').textContent = 'ready'");
+  await call("browser.clickAt", { tabId: deviceTab.id, ...targetPoint });
+  assert.match(
+    await deviceView.webContents.executeJavaScript("document.querySelector('output').textContent"),
+    /(?:touch:true|pointer:touch:true)/,
+  );
+  assert.deepEqual(await getMetrics(), { width: 360, height: 800, dpr: 3, touch: true, portrait: true });
+  await deviceView.webContents.executeJavaScript("scrollTo(0, 1000)");
+  const scrolled = (await call("browser.snapshot", { tabId: deviceTab.id })) as BrowserPageSnapshot;
+  const scrolledTarget = scrolled.nodes.find((node) => node.name === "Scrolled target")!;
+  const elementCapture = (await call("browser.screenshot", {
+    tabId: deviceTab.id,
+    mode: "element",
+    snapshotId: scrolled.snapshotId,
+    generation: scrolled.generation,
+    ref: scrolledTarget.ref,
+  })) as BrowserScreenshotResult;
+  assert.deepEqual([elementCapture.width, elementCapture.height], [120, 80]);
+  const elementImage = nativeImage.createFromBuffer(Buffer.from(elementCapture.base64, "base64"));
+  const pixel = elementImage.toBitmap().subarray((10 * 120 + 10) * 4, (10 * 120 + 10) * 4 + 3);
+  assert.ok(
+    pixel[2]! > 200 && pixel[1]! < 70 && pixel[0]! < 70,
+    "scrolled element capture must contain the red target",
+  );
+  await deviceView.webContents.executeJavaScript("scrollTo(0, 0)");
+  await setDevice({ mode: "rotate" });
+  assert.deepEqual(await getMetrics(), { width: 800, height: 360, dpr: 3, touch: true, portrait: false });
+  await call("browser.reload", { tabId: deviceTab.id });
+  assert.deepEqual(await getMetrics(), { width: 800, height: 360, dpr: 3, touch: true, portrait: false });
+  await setDevice({ mode: "desktop" });
+  assert.equal(await deviceView.webContents.executeJavaScript("navigator.userAgent"), desktopUa);
+  assert.equal(await deviceView.webContents.executeJavaScript("navigator.maxTouchPoints"), desktopTouchPoints);
+  service.closeTab(deviceTab.id);
+  service.grantSession({ sessionId: "fixture-session", permission: "read", source: "local" });
+  stage("device-mode-ready");
   service.handleWindowVisibility(false);
   assert.equal(service.getState().surfaceVisible, false);
   service.handleWindowVisibility(true);
@@ -1000,6 +1152,7 @@ async function run(): Promise<void> {
   const advancedProof = await service.requestConfirmation("advanced-browser-mode", advancedPatch);
   assert.ok(advancedProof);
   service.updateSettings(advancedPatch, advancedProof!);
+  service.updateSettings({ automation: { allowAgentJavaScript: true } });
   service.grantSession({ sessionId: "fixture-session", permission: "advanced", source: "local" });
 
   const identityTab = (await call("browser.open", {
@@ -1710,7 +1863,7 @@ void app.whenReady().then(async () => {
     await new Promise<void>((resolve) => corsServer?.close(() => resolve()) ?? resolve());
     await new Promise<void>((resolve) => secureServer?.close(() => resolve()) ?? resolve());
     await new Promise<void>((resolve) => proxyServer?.close(() => resolve()) ?? resolve());
-    fs.rmSync(root, { recursive: true, force: true });
+    // The parent removes the fixture after Electron exits and releases its profile locks.
     app.exit(0);
   } catch (error) {
     console.error(error instanceof Error ? (error.stack ?? error.message) : error);
@@ -1724,7 +1877,7 @@ void app.whenReady().then(async () => {
     corsServer?.close();
     secureServer?.close();
     proxyServer?.close();
-    fs.rmSync(root, { recursive: true, force: true });
+    // The parent removes the fixture after Electron exits and releases its profile locks.
     app.exit(1);
   }
 });

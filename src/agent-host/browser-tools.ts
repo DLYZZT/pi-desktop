@@ -8,6 +8,7 @@ import type {
   BrowserPermissionLevel,
   BrowserCapabilitySnapshot,
 } from "../contract/browser";
+import { BROWSER_DEVICE_LIMITS, BROWSER_DEVICE_PRESETS } from "../contract/browser-device";
 import { callMain } from "./parent-rpc";
 import { BROWSER_CANONICAL_GUIDELINES, browserAgentRuntime } from "./browser-agent-runtime";
 export { getBrowserSessionSource, setBrowserSessionSource } from "./session-source";
@@ -16,6 +17,7 @@ import { getBrowserSessionSource } from "./session-source";
 export const BROWSER_TOOL_PERMISSIONS = {
   browser_open: "read",
   browser_list_tabs: "read",
+  browser_set_device_mode: "interact",
   browser_navigate: "read",
   browser_snapshot: "read",
   browser_inspect: "read",
@@ -195,7 +197,8 @@ function requiredPermissionForHostMethod(
     method === "browser.clickAt" ||
     method === "browser.type" ||
     method === "browser.press" ||
-    method === "browser.scroll"
+    method === "browser.scroll" ||
+    method === "browser.setDeviceMode"
   ) {
     return "interact";
   }
@@ -246,6 +249,30 @@ const snapshotGeneration = Type.Integer({
 });
 const url = Type.String({ minLength: 1, maxLength: 8192, description: "Absolute http(s) URL" });
 
+function deviceModeSchema() {
+  const { minSize, maxSize, minDpr, maxDpr } = BROWSER_DEVICE_LIMITS;
+  const orientation = Type.Optional(Type.Union([Type.Literal("portrait"), Type.Literal("landscape")]));
+  const touch = Type.Optional(Type.Boolean());
+  return Type.Union([
+    Type.Object({ mode: Type.Literal("desktop") }),
+    Type.Object({ mode: Type.Literal("rotate") }),
+    Type.Object({
+      mode: Type.Literal("preset"),
+      presetId: Type.Union(Object.keys(BROWSER_DEVICE_PRESETS).map((id) => Type.Literal(id))),
+      orientation,
+      touch,
+    }),
+    Type.Object({
+      mode: Type.Literal("custom"),
+      width: Type.Integer({ minimum: minSize, maximum: maxSize }),
+      height: Type.Integer({ minimum: minSize, maximum: maxSize }),
+      dpr: Type.Number({ minimum: minDpr, maximum: maxDpr }),
+      orientation,
+      touch,
+    }),
+  ]);
+}
+
 export function createBrowserToolDefinitions(): ToolDefinition[] {
   const tools: ToolDefinition[] = [
     tool(
@@ -258,7 +285,18 @@ export function createBrowserToolDefinitions(): ToolDefinition[] {
       }),
       "browser.open",
     ),
-    tool("browser_list_tabs", "List Browser tabs owned by this Agent session.", Type.Object({}), "browser.listTabs"),
+    tool(
+      "browser_list_tabs",
+      "List Browser tabs owned by this Agent session, including their device modes.",
+      Type.Object({}),
+      "browser.listTabs",
+    ),
+    tool(
+      "browser_set_device_mode",
+      "Change an owned tab's device preview without reloading. Use a phone preset, custom CSS dimensions/DPR, rotate, or restore desktop. Inspect again before interacting; old element references expire after a change. Refresh explicitly if a site needs a new request to serve mobile content.",
+      Type.Object({ tabId, device: deviceModeSchema() }),
+      "browser.setDeviceMode",
+    ),
     tool(
       "browser_navigate",
       "Navigate an owned Browser tab to a URL.",

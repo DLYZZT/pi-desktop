@@ -132,10 +132,12 @@ export class BrowserCdpCoordinator {
     this.detachIfIdle(record);
   }
 
-  clearKeeps(tabId: string): void {
+  clearKeeps(tabId: string, preserve?: string): void {
     const record = this.records.get(tabId);
     if (!record) return;
-    record.keepReasons.clear();
+    for (const reason of record.keepReasons) {
+      if (reason !== preserve) record.keepReasons.delete(reason);
+    }
     this.detachIfIdle(record);
   }
 

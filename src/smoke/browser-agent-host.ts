@@ -207,6 +207,27 @@ function browserResponses(origin: string, managedCommand: string) {
       if (typeof clicked.tabId !== "string" || clicked.action !== "clicked") {
         throw new Error("browser_click did not complete through the Agent tool adapter");
       }
+      return fauxAssistantMessage(
+        fauxToolCall("browser_set_device_mode", {
+          tabId: clicked.tabId,
+          device: { mode: "preset", presetId: "galaxy-a55" },
+        }),
+        { stopReason: "toolUse" },
+      );
+    },
+    (context: Context) => {
+      const configured = lastToolResult(context, "browser_set_device_mode") as {
+        id?: string;
+        device?: { mode?: string; width?: number; height?: number };
+      };
+      if (
+        !configured.id ||
+        configured.device?.mode !== "mobile" ||
+        configured.device.width !== 360 ||
+        configured.device.height !== 800
+      ) {
+        throw new Error("Agent device tool did not apply the mobile preset");
+      }
       return fauxAssistantMessage("interact-complete:assertion=browser_click:clicked");
     },
     fauxAssistantMessage(

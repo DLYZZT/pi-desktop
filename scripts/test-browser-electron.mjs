@@ -10,6 +10,7 @@ import { resolveElectronBinary, terminateProcessTree } from "./process-utils.mjs
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-browser-harness-build-"));
 const outfile = path.join(temp, "browser-electron-harness.cjs");
+fs.mkdirSync(path.join(temp, "fixture"));
 try {
   buildSync({
     absWorkingDir: root,
@@ -26,7 +27,11 @@ try {
     cwd: root,
     stdio: "inherit",
     detached: process.platform !== "win32",
-    env: { ...process.env, ELECTRON_DISABLE_SECURITY_WARNINGS: "true" },
+    env: {
+      ...process.env,
+      ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+      PI_BROWSER_ELECTRON_ROOT: path.join(temp, "fixture"),
+    },
   });
   const status = await new Promise((resolve) => {
     const timer = setTimeout(() => {
@@ -47,5 +52,5 @@ try {
   });
   process.exitCode = status;
 } finally {
-  fs.rmSync(temp, { recursive: true, force: true });
+  fs.rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }

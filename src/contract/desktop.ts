@@ -1,3 +1,4 @@
+import type { BrowserDeviceModeInput } from "./browser-device";
 import type { AppLanguage } from "../shared/app-language.ts";
 import type { ChannelId } from "../shared/channel-types";
 import type { ManagedProcessCapability } from "./processes";
@@ -247,6 +248,7 @@ export interface PiBridge {
   browserStop: (tabId: string) => Promise<void>;
   browserCloseTab: (tabId: string) => Promise<void>;
   browserCloseAllTabs: () => Promise<void>;
+  browserSetDeviceMode: (tabId: string, device: BrowserDeviceModeInput) => Promise<BrowserTabInfo>;
   browserSetBounds: (input: BrowserBoundsInput) => Promise<void>;
   browserSetSurfaceVisible: (input: { tabId?: string; visible: boolean }) => Promise<void>;
   browserRevokeTemporarySessionPermission: (sessionId: string) => Promise<void>;

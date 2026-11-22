@@ -123,6 +123,7 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
     browserStop: (tabId) => ipcRenderer.invoke("desktop:browser:stop", tabId),
     browserCloseTab: (tabId) => ipcRenderer.invoke("desktop:browser:close-tab", tabId),
     browserCloseAllTabs: () => ipcRenderer.invoke("desktop:browser:close-all-tabs"),
+    browserSetDeviceMode: (tabId, device) => ipcRenderer.invoke("desktop:browser:set-device-mode", tabId, device),
     browserSetBounds: (input) => ipcRenderer.invoke("desktop:browser:set-bounds", input),
     browserSetSurfaceVisible: (input) => ipcRenderer.invoke("desktop:browser:set-surface-visible", input),
     browserRevokeTemporarySessionPermission: (sessionId) =>

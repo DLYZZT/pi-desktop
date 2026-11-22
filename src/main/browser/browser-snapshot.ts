@@ -210,6 +210,7 @@ export function tabSummary(tab: BrowserTabInfo): BrowserTabSummary {
     loading: tab.loading,
     crashed: tab.crashed,
     visible: tab.visible,
+    device: tab.device ?? { mode: "desktop" },
   };
 }
 

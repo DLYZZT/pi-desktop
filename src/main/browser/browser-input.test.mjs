@@ -118,6 +118,30 @@ test("mouse dispatch failure restores focus emulation and releases the CDP lease
   assert.equal(h.state.debuggerUsers, 0);
 });
 
+test("scaled mobile taps release the pointer even when cancelled after pressing", async () => {
+  const h = harness();
+  h.target.device = { touch: true, scale: 0.5 };
+  const controller = new globalThis.AbortController();
+  const send = h.target.cdp.sendCommand;
+  h.target.cdp.sendCommand = async (id, method, params) => {
+    await send(id, method, params);
+    if (method === "Input.emulateTouchFromMouseEvent" && params.type === "mousePressed") controller.abort();
+  };
+  await assert.rejects(
+    sendBrowserMouseClick(h.target, 120, 140, "left", 1, controller.signal),
+    (error) => error.code === "USER_TOOK_CONTROL",
+  );
+  const events = h.calls.filter(({ method }) => method === "Input.emulateTouchFromMouseEvent");
+  assert.deepEqual(
+    events.map(({ params }) => [params.type, params.x, params.y]),
+    [
+      ["mousePressed", 60, 70],
+      ["mouseReleased", 60, 70],
+    ],
+  );
+  assert.equal(h.state.debuggerUsers, 0);
+});
+
 test("scroll clamps to the viewport and releases both input and debugger resources after cancellation", async () => {
   const h = harness();
   const controller = new globalThis.AbortController();

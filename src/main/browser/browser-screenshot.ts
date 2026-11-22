@@ -18,6 +18,12 @@ const MAX_FULL_PAGE_HEIGHT = 16_384;
 
 const MAX_SCREENSHOT_PIXELS = 32_000_000;
 
+function assertScreenshotPixels(width: number, height: number, scale = 1): void {
+  if (width * height * scale * scale > MAX_SCREENSHOT_PIXELS) {
+    throw new BrowserError("RESULT_TOO_LARGE", "Browser screenshot exceeds the pixel limit");
+  }
+}
+
 const MAX_COMPARE_PIXELS = 16_000_000;
 
 type ScreenshotCdp = Pick<BrowserCdpCoordinator, "acquire" | "sendCommand">;
@@ -26,6 +32,8 @@ interface ScreenshotTarget {
   tabId: string;
   generation: () => number;
   element?: BrowserSnapshotNode;
+  deviceEmulated?: boolean;
+  devicePixelRatio?: number;
 }
 
 export async function captureBrowserScreenshot(
@@ -39,7 +47,7 @@ export async function captureBrowserScreenshot(
   const generation = target.generation();
   let image: Electron.NativeImage | undefined;
   let captureError: unknown;
-  if (mode !== "full-page") {
+  if (!target.deviceEmulated && mode !== "full-page") {
     const rect = mode === "element" ? screenshotRectForNode(target.element, MAX_SCREENSHOT_PIXELS) : undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -69,9 +77,9 @@ export async function captureBrowserScreenshot(
     buffer = format === "jpeg" ? image.toJPEG(clampInteger(quality, 1, 100)) : image.toPNG();
   } else {
     const clip = await screenshotClip(target, cdp, mode);
-    if (clip.width * clip.height > MAX_SCREENSHOT_PIXELS) {
-      throw new BrowserError("RESULT_TOO_LARGE", "Browser screenshot exceeds the pixel limit");
-    }
+    // Device captures are returned at CSS resolution, independent of the preview scale and DPR.
+    const captureScale = target.deviceEmulated ? 1 / (target.devicePixelRatio ?? 1) : 1;
+    assertScreenshotPixels(clip.width, clip.height, target.deviceEmulated ? 1 : (target.devicePixelRatio ?? 1));
     const releaseDebugger = cdp.acquire(target.tabId);
     try {
       const captured = (await withTimeout(
@@ -79,8 +87,8 @@ export async function captureBrowserScreenshot(
           format,
           ...(format === "jpeg" ? { quality: clampInteger(quality, 1, 100) } : {}),
           fromSurface: true,
-          captureBeyondViewport: mode === "full-page",
-          clip: { ...clip, scale: 1 },
+          captureBeyondViewport: target.deviceEmulated || mode === "full-page",
+          clip: { ...clip, scale: captureScale },
         }),
         8_000,
         "ACTION_TIMEOUT",
@@ -103,6 +111,7 @@ export async function captureBrowserScreenshot(
       releaseDebugger();
     }
   }
+  assertScreenshotPixels(size.width, size.height);
   if (target.generation() !== generation) {
     throw new BrowserError("INSPECTION_STALE", "Browser page changed during screenshot", {
       details: { reason: "generation-changed" },
@@ -129,7 +138,11 @@ async function screenshotClip(
   mode: BrowserScreenshotMode,
 ): Promise<{ x: number; y: number; width: number; height: number }> {
   if (mode === "element") {
-    return screenshotRectForNode(target.element, MAX_SCREENSHOT_PIXELS);
+    const rect = screenshotRectForNode(target.element, MAX_SCREENSHOT_PIXELS);
+    const offset = (await target.contents.executeJavaScriptInIsolatedWorld(SNAPSHOT_WORLD_ID, [
+      { code: "({ x: scrollX, y: scrollY })" },
+    ])) as { x: number; y: number };
+    return { ...rect, x: rect.x + offset.x, y: rect.y + offset.y };
   }
   if (mode === "full-page") {
     const releaseDebugger = cdp.acquire(target.tabId);
@@ -148,11 +161,11 @@ async function screenshotClip(
     }
   }
   const viewport = (await target.contents.executeJavaScriptInIsolatedWorld(SNAPSHOT_WORLD_ID, [
-    { code: "({ width: Math.max(1, innerWidth), height: Math.max(1, innerHeight) })" },
-  ])) as { width?: unknown; height?: unknown };
+    { code: "({ width: Math.max(1, innerWidth), height: Math.max(1, innerHeight), x: scrollX, y: scrollY })" },
+  ])) as { width?: unknown; height?: unknown; x: number; y: number };
   return {
-    x: 0,
-    y: 0,
+    x: viewport.x,
+    y: viewport.y,
     width: clampInteger(Number(viewport.width), 1, 8_192),
     height: clampInteger(Number(viewport.height), 1, 8_192),
   };

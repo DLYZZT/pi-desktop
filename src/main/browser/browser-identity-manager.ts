@@ -63,6 +63,33 @@ export class BrowserIdentityManager {
       return;
     }
     this.cdp.keepAttached(tabId, IDENTITY_KEEP_REASON);
+    await this.applyTabOverride(tabId, profile);
+  }
+
+  mobileProfile(
+    nativeUserAgent: string,
+    platform: "Android" | "iOS",
+    acceptLanguage = "en-US,en",
+  ): BrowserIdentityProfile {
+    const version = extractChromiumVersion(nativeUserAgent) ?? process.versions.chrome ?? "0.0.0.0";
+    const android = platform === "Android";
+    const ua = android
+      ? `Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version.split(".")[0]}.0.0.0 Mobile Safari/537.36`
+      : "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+    return {
+      ...profileFor(ua, version, platform, acceptLanguage, "chrome-compatible"),
+      platformVersion: android ? "10.0.0" : "17.0.0",
+      architecture: "arm",
+      bitness: "64",
+      model: android ? "" : "iPhone",
+    };
+  }
+
+  async applyTabOverride(tabId: string, profile?: BrowserIdentityProfile): Promise<void> {
+    if (!profile || profile.mode === "native") {
+      await this.cdp.sendCommand(tabId, "Emulation.setUserAgentOverride", { userAgent: "" });
+      return;
+    }
     await this.cdp.sendCommand(tabId, "Emulation.setUserAgentOverride", {
       userAgent: profile.ua,
       acceptLanguage: profile.acceptLanguage,
@@ -82,10 +109,14 @@ export class BrowserIdentityManager {
     });
   }
 
-  clear(tabId: string, contents: WebContents, browserSession: Session, nativeUserAgent: string): void {
+  async clear(tabId: string, contents: WebContents, browserSession: Session, nativeUserAgent: string): Promise<void> {
     contents.setUserAgent(nativeUserAgent);
     browserSession.setUserAgent(nativeUserAgent);
-    this.cdp.releaseKeep(tabId, IDENTITY_KEEP_REASON);
+    try {
+      if (this.cdp.isAttached(tabId)) await this.applyTabOverride(tabId);
+    } finally {
+      this.cdp.releaseKeep(tabId, IDENTITY_KEEP_REASON);
+    }
   }
 }
 

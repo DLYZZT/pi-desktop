@@ -3,7 +3,7 @@ import type { BrowserInputModifier } from "../../contract/browser.ts";
 import type { BrowserCdpCoordinator } from "./browser-cdp-coordinator.ts";
 import { BrowserError } from "./browser-error.ts";
 import { SNAPSHOT_WORLD_ID, elementPointScript } from "./browser-dom-scripts.ts";
-import { abortableDelay } from "./browser-action-timing.ts";
+import { abortableDelay, withTimeout } from "./browser-action-timing.ts";
 import { clampInteger } from "./browser-bounds.ts";
 
 const KEY_PATTERN =
@@ -16,6 +16,7 @@ export interface BrowserInputTarget {
   tabId: string;
   cdp: Pick<BrowserCdpCoordinator, "acquire" | "sendCommand">;
   humanized: () => boolean;
+  device?: { touch: boolean; scale: number };
   withSyntheticInput: <T>(task: () => Promise<T>) => Promise<T>;
 }
 
@@ -156,8 +157,8 @@ export async function scrollBrowserPage(
       for (let index = 0; index < segments; index += 1) {
         target.contents.sendInputEvent({
           type: "mouseWheel",
-          x,
-          y,
+          x: Math.round(x * (target.device?.scale ?? 1)),
+          y: Math.round(y * (target.device?.scale ?? 1)),
           deltaX: Math.round(deltaX / segments),
           deltaY: Math.round(deltaY / segments),
           canScroll: true,
@@ -188,17 +189,55 @@ export async function sendBrowserMouseClick(
 ): Promise<void> {
   target.contents.focus();
   const releaseDebugger = target.cdp.acquire(target.tabId);
+  const scale = target.device?.scale ?? 1;
+  const point = { x: x * scale, y: y * scale };
   const cdpModifiers = cdpModifierMask(modifiers);
   let focusEmulationEnabled = false;
   try {
     await target.cdp.sendCommand(target.tabId, "Emulation.setFocusEmulationEnabled", { enabled: true });
     focusEmulationEnabled = true;
+    if (target.device?.touch && button === "left" && modifiers.length === 0) {
+      for (let index = 0; index < clickCount; index += 1) {
+        try {
+          await withTimeout(
+            target.cdp.sendCommand(target.tabId, "Input.emulateTouchFromMouseEvent", {
+              type: "mousePressed",
+              x: Math.round(point.x),
+              y: Math.round(point.y),
+              button: "left",
+            }),
+            3_000,
+            "ACTION_TIMEOUT",
+            signal,
+          );
+          await abortableDelay(24, signal);
+        } finally {
+          await withTimeout(
+            target.cdp.sendCommand(target.tabId, "Input.emulateTouchFromMouseEvent", {
+              type: "mouseReleased",
+              x: Math.round(point.x),
+              y: Math.round(point.y),
+              button: "left",
+            }),
+            3_000,
+            "ACTION_TIMEOUT",
+          );
+        }
+        if (index + 1 < clickCount) await abortableDelay(32, signal);
+      }
+      await target.contents
+        .executeJavaScriptInIsolatedWorld(SNAPSHOT_WORLD_ID, [{ code: "true" }])
+        .catch(() => undefined);
+      return;
+    }
+    x = point.x;
+    y = point.y;
     if (target.humanized()) {
       const viewport = (await target.contents.executeJavaScriptInIsolatedWorld(SNAPSHOT_WORLD_ID, [
         { code: `({ x: Math.max(0, innerWidth / 2), y: Math.max(0, innerHeight / 2) })` },
       ])) as { x?: unknown; y?: unknown };
-      const startX = Number(viewport.x) || x;
-      const startY = Number(viewport.y) || y;
+      const startX = Number(viewport.x) * scale || x;
+      const startY = Number(viewport.y) * scale || y;
       const segments = randomBetween(3, 7);
       for (let index = 1; index <= segments; index += 1) {
         const progress = index / segments;

@@ -1,3 +1,5 @@
+import type { BrowserDeviceMode, BrowserDeviceModeInput } from "./browser-device.ts";
+
 export const BROWSER_SETTINGS_VERSION = 3 as const;
 
 export type BrowserProfileMode = "ephemeral" | "persistent" | "unsafe";
@@ -270,6 +272,7 @@ export interface BrowserCreateProfileInput {
 export type BrowserDataType = "cookies" | "cache" | "local-storage" | "indexed-db" | "service-workers" | "all";
 
 export interface BrowserTabInfo {
+  device?: BrowserDeviceMode;
   id: string;
   ownerSessionId: string | null;
   profileId: string;
@@ -405,6 +408,7 @@ export interface BrowserScreenshotOptions {
 }
 
 export interface BrowserTabSummary {
+  device?: BrowserDeviceMode;
   id: string;
   profileId: string;
   url: string;
@@ -420,6 +424,7 @@ export interface BrowserInspectResult {
   tabId: string;
   generation: number;
   tabs: BrowserTabSummary[];
+  device?: BrowserDeviceMode;
   url: string;
   title: string;
   loading: boolean;
@@ -751,6 +756,10 @@ export interface BrowserHostRpc {
     params: BrowserHostRequestContext & { url: string; profileId?: string; activate?: boolean };
     result: BrowserTabInfo & { siteSnippetCount: number };
   };
+  "browser.setDeviceMode": {
+    params: BrowserHostRequestContext & { tabId: string; device: BrowserDeviceModeInput };
+    result: BrowserTabInfo;
+  };
   "browser.listTabs": {
     params: BrowserHostRequestContext;
     result: { tabs: BrowserTabInfo[] };
@@ -973,6 +982,7 @@ export const BROWSER_HOST_METHODS: ReadonlySet<BrowserHostMethod> = new Set<Brow
   "browser.requestRouteBypass",
   "browser.open",
   "browser.listTabs",
+  "browser.setDeviceMode",
   "browser.navigate",
   "browser.snapshot",
   "browser.inspect",

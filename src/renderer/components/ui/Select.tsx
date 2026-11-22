@@ -9,7 +9,7 @@
  * trigger keeps focus while open; aria-activedescendant carries listbox
  * semantics.
  */
-import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type Ref } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "./Button";
 import { ChevronDown } from "lucide-react";
@@ -45,6 +45,8 @@ function moveIndex(index: number, delta: number, options: SelectOption[]): numbe
 export interface SelectProps {
   value: string;
   onChange: (v: string) => void;
+  /** Lets native-view hosts temporarily hide their surface behind the popup. */
+  onOpenChange?: (open: boolean) => void;
   options: readonly (string | SelectOption)[];
   /** Trigger text when the value matches no option (e.g. the empty "inherit" slot). */
   placeholder?: string;
@@ -64,6 +66,7 @@ export interface SelectProps {
 export function Select({
   value,
   onChange,
+  onOpenChange,
   options,
   placeholder,
   disabled,
@@ -76,6 +79,15 @@ export function Select({
   ref,
 }: SelectProps) {
   const [open, setOpen] = useState(false);
+  const openChangeRef = useRef(onOpenChange);
+  useLayoutEffect(() => {
+    openChangeRef.current = onOpenChange;
+  }, [onOpenChange]);
+  useLayoutEffect(() => {
+    if (!open) return;
+    openChangeRef.current?.(true);
+    return () => openChangeRef.current?.(false);
+  }, [open]);
   const [activeIndex, setActiveIndex] = useState(0);
   const activeIndexRef = useRef(0);
   const panelRef = useRef<HTMLDivElement | null>(null);
