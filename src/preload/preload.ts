@@ -115,17 +115,23 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
       ipcRenderer.invoke("desktop:browser:update-settings", patch, confirmation),
     browserListTabs: (sessionId) => ipcRenderer.invoke("desktop:browser:list-tabs", sessionId),
     browserCreateUserTab: (input) => ipcRenderer.invoke("desktop:browser:create-user-tab", input),
-    browserActivateTab: (tabId) => ipcRenderer.invoke("desktop:browser:activate-tab", tabId),
-    browserNavigateUser: (tabId, url) => ipcRenderer.invoke("desktop:browser:navigate-user", tabId, url),
-    browserGoBack: (tabId) => ipcRenderer.invoke("desktop:browser:go-back", tabId),
-    browserGoForward: (tabId) => ipcRenderer.invoke("desktop:browser:go-forward", tabId),
-    browserReload: (tabId) => ipcRenderer.invoke("desktop:browser:reload", tabId),
-    browserStop: (tabId) => ipcRenderer.invoke("desktop:browser:stop", tabId),
-    browserCloseTab: (tabId) => ipcRenderer.invoke("desktop:browser:close-tab", tabId),
+    browserActivateTab: (tabId, ownerSessionId) =>
+      ipcRenderer.invoke("desktop:browser:activate-tab", tabId, ownerSessionId),
+    browserNavigateUser: (tabId, url, ownerSessionId) =>
+      ipcRenderer.invoke("desktop:browser:navigate-user", tabId, url, ownerSessionId),
+    browserGoBack: (tabId, ownerSessionId) => ipcRenderer.invoke("desktop:browser:go-back", tabId, ownerSessionId),
+    browserGoForward: (tabId, ownerSessionId) =>
+      ipcRenderer.invoke("desktop:browser:go-forward", tabId, ownerSessionId),
+    browserReload: (tabId, ownerSessionId) => ipcRenderer.invoke("desktop:browser:reload", tabId, ownerSessionId),
+    browserStop: (tabId, ownerSessionId) => ipcRenderer.invoke("desktop:browser:stop", tabId, ownerSessionId),
+    browserCloseTab: (tabId, ownerSessionId) => ipcRenderer.invoke("desktop:browser:close-tab", tabId, ownerSessionId),
     browserCloseAllTabs: () => ipcRenderer.invoke("desktop:browser:close-all-tabs"),
-    browserSetDeviceMode: (tabId, device) => ipcRenderer.invoke("desktop:browser:set-device-mode", tabId, device),
-    browserSetBounds: (input) => ipcRenderer.invoke("desktop:browser:set-bounds", input),
-    browserSetSurfaceVisible: (input) => ipcRenderer.invoke("desktop:browser:set-surface-visible", input),
+    browserSetDeviceMode: (tabId, device, ownerSessionId) =>
+      ipcRenderer.invoke("desktop:browser:set-device-mode", tabId, device, ownerSessionId),
+    browserSetBounds: (input, ownerSessionId) =>
+      ipcRenderer.invoke("desktop:browser:set-bounds", input, ownerSessionId),
+    browserSetSurfaceVisible: (input, ownerSessionId) =>
+      ipcRenderer.invoke("desktop:browser:set-surface-visible", input, ownerSessionId),
     browserRevokeTemporarySessionPermission: (sessionId) =>
       ipcRenderer.invoke("desktop:browser:revoke-temporary-session-permission", sessionId),
     browserRespondAgentAuthorization: (requestId, decision) =>
@@ -152,7 +158,8 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
     browserClearPageSnippets: () => ipcRenderer.invoke("desktop:browser:clear-page-snippets"),
     browserRespondPermission: (requestId, decision) =>
       ipcRenderer.invoke("desktop:browser:respond-permission", requestId, decision),
-    browserChooseUploadFiles: (tabId) => ipcRenderer.invoke("desktop:browser:choose-upload-files", tabId),
+    browserChooseUploadFiles: (tabId, ownerSessionId) =>
+      ipcRenderer.invoke("desktop:browser:choose-upload-files", tabId, ownerSessionId),
     browserReset: () => ipcRenderer.invoke("desktop:browser:reset"),
     clearBadge: () => {
       ipcRenderer.send("desktop:set-badge-count", 0);

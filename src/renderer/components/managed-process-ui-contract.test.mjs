@@ -22,7 +22,10 @@ test("managed process UI exposes lifecycle controls and independent Browser open
     assert.match(panel, new RegExp(`call\\(\\"processes\\.${method}\\"`));
   }
   assert.match(panel, /browserCreateUserTab/);
-  assert.match(panel, /ownerSessionId: process\.ownerSessionId/);
+  // Endpoint tabs belong to the conversation currently on screen, not to the
+  // (possibly background) conversation that started the process.
+  assert.match(panel, /ownerSessionId: currentSessionId/);
+  assert.match(shell, /<ProcessPanel[\s\S]*currentSessionId=\{selectedSession\?\.id \?\? null\}/);
   assert.match(shell, /PROCESSES_TAB_ID/);
   assert.match(shell, /activateUi/);
 });

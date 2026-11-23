@@ -154,6 +154,8 @@ export class BrowserTabManager {
   private activeTabId: string | null = null;
   private surfaceVisible = false;
   private surfaceRequestedVisible = false;
+  /** Conversation whose panel requested the native surface; null means unconstrained. */
+  private surfaceSessionId: string | null = null;
   private windowVisible = true;
   private readonly locallyApprovedPrivateOrigins = new Set<string>();
   private readonly cdp = new BrowserCdpCoordinator();
@@ -179,6 +181,18 @@ export class BrowserTabManager {
 
   getOwnedTabUrl(tabId: string, sessionId: string): string {
     return this.requireOwnedTab(tabId, sessionId).info.url;
+  }
+
+  /**
+   * Renderer-originated commands may drive tabs they own plus shared
+   * (ownerless) tabs. Agent commands keep the stricter requireOwnedTab path.
+   */
+  assertUserTabAccess(tabId: string, sessionId?: string | null): void {
+    const record = this.tabs.get(tabId);
+    if (!record) throw new BrowserError("TAB_NOT_FOUND", "Browser tab was not found");
+    if (!this.canUserAccessTab(record, sessionId)) {
+      throw new BrowserError("TAB_NOT_OWNED", "Browser tab belongs to another session");
+    }
   }
 
   countCapturedRequests(): number {
@@ -335,7 +349,8 @@ export class BrowserTabManager {
     this.activeTabId = record.info.id;
     record.info.lastActiveAt = this.options.now?.() ?? Date.now();
     for (const candidate of this.tabs.values()) {
-      const visible = this.surfaceVisible && candidate === record;
+      const visible =
+        this.surfaceVisible && candidate === record && this.canUserAccessTab(candidate, this.surfaceSessionId);
       candidate.info.visible = visible;
       candidate.view.setVisible(visible);
       if (visible) this.updateNativeBounds(candidate);
@@ -344,13 +359,20 @@ export class BrowserTabManager {
     this.options.emit({ type: "active-tab-changed", tabId: record.info.id });
   }
 
-  setSurfaceVisible(input: { tabId?: string; visible: boolean }): void {
+  setSurfaceVisible(input: { tabId?: string; visible: boolean }, sessionId?: string | null): void {
     // Renderer effects can race a tab close by one frame. A visibility update
     // for that stale tab must not overwrite the replacement tab's state or
     // surface an expected TAB_NOT_FOUND error to the user.
     if (input.tabId && !this.tabs.has(input.tabId)) return;
+    // A panel must never present another conversation's native view. Ignoring
+    // the request keeps the current surface untouched instead of flashing a
+    // cross-session page.
+    if (input.tabId && !this.canUserAccessTab(this.tabs.get(input.tabId)!, sessionId)) return;
     this.surfaceRequestedVisible = input.visible;
-    if (input.tabId) this.activeTabId = this.requireTab(input.tabId).info.id;
+    if (input.tabId) {
+      this.surfaceSessionId = sessionId ?? null;
+      this.activeTabId = this.requireTab(input.tabId).info.id;
+    }
     this.applySurfaceVisibility();
   }
 
@@ -366,6 +388,7 @@ export class BrowserTabManager {
     // state through browserGetState before it can request visibility again.
     this.surfaceRequestedVisible = false;
     this.surfaceVisible = false;
+    this.surfaceSessionId = null;
     for (const record of this.tabs.values()) {
       record.info.visible = false;
       try {
@@ -379,7 +402,10 @@ export class BrowserTabManager {
   private applySurfaceVisibility(): void {
     this.surfaceVisible = this.surfaceRequestedVisible && this.windowVisible;
     for (const record of this.tabs.values()) {
-      const visible = this.surfaceVisible && record.info.id === this.activeTabId;
+      const visible =
+        this.surfaceVisible &&
+        record.info.id === this.activeTabId &&
+        this.canUserAccessTab(record, this.surfaceSessionId);
       record.info.visible = visible;
       if (visible) this.updateNativeBounds(record);
       record.view.setVisible(visible);
@@ -472,10 +498,12 @@ export class BrowserTabManager {
       });
   }
 
-  setBounds(input: BrowserBoundsInput): void {
+  setBounds(input: BrowserBoundsInput, sessionId?: string | null): void {
     // ResizeObserver callbacks have the same close race as visibility effects.
     const record = this.tabs.get(input.tabId);
     if (!record) return;
+    // Never let a conversation position another conversation's native view.
+    if (!this.canUserAccessTab(record, sessionId)) return;
     const win = this.options.getWindow();
     if (!win || win.isDestroyed()) throw new BrowserError("BROWSER_DISABLED", "Main window is unavailable");
     const content = win.getContentBounds();
@@ -1318,6 +1346,30 @@ export class BrowserTabManager {
     this.inspections.clearSession(sessionId);
   }
 
+  /** Restored tabs whose owning conversation is gone become shared user tabs. */
+  adoptOrphanTabs(tabIds: readonly string[], knownSessionIds: ReadonlySet<string>): void {
+    for (const tabId of tabIds) {
+      const record = this.tabs.get(tabId);
+      const owner = record?.info.ownerSessionId;
+      if (!record || !owner || knownSessionIds.has(owner)) continue;
+      record.info.ownerSessionId = null;
+      this.emitUpdate(record);
+    }
+  }
+
+  /** A deleted conversation must not leave unreachable tabs behind. */
+  closeSessionTabs(sessionId: string): void {
+    for (const [tabId, record] of [...this.tabs]) {
+      if (record.info.ownerSessionId === sessionId) this.close(tabId);
+    }
+    if (this.surfaceSessionId === sessionId) {
+      // The presented conversation no longer exists; wait for the Renderer to
+      // request visibility for whatever conversation it shows next.
+      this.surfaceRequestedVisible = false;
+      this.applySurfaceVisibility();
+    }
+  }
+
   async clearAdvancedState(): Promise<void> {
     const cleanup: Promise<void>[] = [];
     for (const record of [...this.tabs.values()]) {
@@ -1736,6 +1788,11 @@ export class BrowserTabManager {
       throw new BrowserError("TAB_NOT_OWNED", "Browser tab belongs to another session");
     }
     return record;
+  }
+
+  private canUserAccessTab(record: TabRecord, sessionId?: string | null): boolean {
+    if (!sessionId) return true;
+    return record.info.ownerSessionId === null || record.info.ownerSessionId === sessionId;
   }
 
   private resolveInspectionTab(tabId: string | undefined, sessionId: string): TabRecord {

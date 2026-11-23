@@ -11,6 +11,7 @@ import { StatusDot } from "@/components/ui/StatusDot";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
 
 type Props = {
+  currentSessionId: string | null;
   onActiveCountChange?: (count: number) => void;
   onOpenBrowser?: () => void;
 };
@@ -42,7 +43,7 @@ const buttonStyle = {
   fontSize: 11,
 } as const;
 
-export function ProcessPanel({ onActiveCountChange, onOpenBrowser }: Props) {
+export function ProcessPanel({ currentSessionId, onActiveCountChange, onOpenBrowser }: Props) {
   const { t } = useI18n();
   const { confirm, dialog } = useConfirm();
   const [processes, setProcesses] = useState<ManagedProcessPublicInfo[]>([]);
@@ -189,12 +190,15 @@ export function ProcessPanel({ onActiveCountChange, onOpenBrowser }: Props) {
     }
   };
 
-  const openEndpoint = async (process: ManagedProcessPublicInfo, url: string) => {
+  const openEndpoint = async (url: string) => {
     setBusy(true);
     try {
       const tab = await window.piBridge.browserCreateUserTab({
         url,
-        ownerSessionId: process.ownerSessionId,
+        // The Process panel lists every conversation's processes. A tab opened
+        // while viewing conversation B must appear there, even when the
+        // process belongs to conversation A.
+        ownerSessionId: currentSessionId,
         activate: true,
       });
       window.dispatchEvent(new CustomEvent("pi-desktop:open-browser-tab", { detail: { tabId: tab.id } }));
@@ -373,7 +377,7 @@ export function ProcessPanel({ onActiveCountChange, onOpenBrowser }: Props) {
                   key={endpoint.id}
                   type="button"
                   disabled={busy}
-                  onClick={() => void openEndpoint(selected, endpoint.url)}
+                  onClick={() => void openEndpoint(endpoint.url)}
                   style={{ ...buttonStyle, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis" }}
                 >
                   {t("openInBrowser", "Open in Browser")}: {endpoint.url}

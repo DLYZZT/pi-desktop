@@ -67,6 +67,8 @@ export interface BrowserServiceOptions {
   confirmPrivateNetwork?: (url: string) => Promise<boolean>;
   chooseSavePath?: (filename: string) => Promise<string | null>;
   chooseUploadPaths?: () => Promise<string[]>;
+  /** Session ids that still exist; null while the session index is unavailable. */
+  listKnownSessionIds?: () => Promise<string[] | null>;
   secretCodec?: BrowserSecretCodec;
 }
 
@@ -261,31 +263,38 @@ export class BrowserService {
     return this.tabs.create(input);
   }
 
-  activateTab(tabId: string): void {
+  activateTab(tabId: string, ownerSessionId?: string | null): void {
+    this.tabs.assertUserTabAccess(tabId, ownerSessionId);
     this.tabs.activate(tabId);
   }
 
-  async navigateUser(tabId: string, url: string): Promise<void> {
+  async navigateUser(tabId: string, url: string, ownerSessionId?: string | null): Promise<void> {
+    this.tabs.assertUserTabAccess(tabId, ownerSessionId);
     await this.tabs.navigate(tabId, url, undefined, true);
   }
 
-  async goBack(tabId: string): Promise<void> {
+  async goBack(tabId: string, ownerSessionId?: string | null): Promise<void> {
+    this.tabs.assertUserTabAccess(tabId, ownerSessionId);
     await this.tabs.goBack(tabId);
   }
 
-  async goForward(tabId: string): Promise<void> {
+  async goForward(tabId: string, ownerSessionId?: string | null): Promise<void> {
+    this.tabs.assertUserTabAccess(tabId, ownerSessionId);
     await this.tabs.goForward(tabId);
   }
 
-  async reload(tabId: string): Promise<void> {
+  async reload(tabId: string, ownerSessionId?: string | null): Promise<void> {
+    this.tabs.assertUserTabAccess(tabId, ownerSessionId);
     await this.tabs.reload(tabId);
   }
 
-  stop(tabId: string): void {
+  stop(tabId: string, ownerSessionId?: string | null): void {
+    this.tabs.assertUserTabAccess(tabId, ownerSessionId);
     this.tabs.stop(tabId);
   }
 
-  closeTab(tabId: string): void {
+  closeTab(tabId: string, ownerSessionId?: string | null): void {
+    this.tabs.assertUserTabAccess(tabId, ownerSessionId);
     this.tabs.close(tabId);
   }
 
@@ -304,16 +313,21 @@ export class BrowserService {
     this.restored = false;
   }
 
-  setDeviceMode(tabId: string, device: Parameters<BrowserTabManager["setDeviceMode"]>[1]): Promise<BrowserTabInfo> {
+  setDeviceMode(
+    tabId: string,
+    device: Parameters<BrowserTabManager["setDeviceMode"]>[1],
+    ownerSessionId?: string | null,
+  ): Promise<BrowserTabInfo> {
+    this.tabs.assertUserTabAccess(tabId, ownerSessionId);
     return this.tabs.setDeviceMode(tabId, device);
   }
 
-  setBounds(input: Parameters<BrowserTabManager["setBounds"]>[0]): void {
-    this.tabs.setBounds(input);
+  setBounds(input: Parameters<BrowserTabManager["setBounds"]>[0], ownerSessionId?: string | null): void {
+    this.tabs.setBounds(input, ownerSessionId);
   }
 
-  setSurfaceVisible(input: { tabId?: string; visible: boolean }): void {
-    this.tabs.setSurfaceVisible(input);
+  setSurfaceVisible(input: { tabId?: string; visible: boolean }, ownerSessionId?: string | null): void {
+    this.tabs.setSurfaceVisible(input, ownerSessionId);
   }
 
   handleWindowVisibility(visible: boolean): void {
@@ -491,7 +505,8 @@ export class BrowserService {
     throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser permission request was not found");
   }
 
-  async chooseUploadFiles(tabId: string): Promise<string[]> {
+  async chooseUploadFiles(tabId: string, ownerSessionId?: string | null): Promise<string[]> {
+    this.tabs.assertUserTabAccess(tabId, ownerSessionId);
     const paths = await (this.options.chooseUploadPaths?.() ?? this.defaultChooseUploadPaths());
     if (paths.length) await this.tabs.chooseUploadFiles(tabId, paths);
     return paths;
@@ -525,21 +540,47 @@ export class BrowserService {
         .filter((profile) => profile.mode !== "unsafe")
         .map((profile) => profile.id),
     );
+    const restoredTabIds: string[] = [];
     for (const record of this.restoreStore.read().sort((left, right) => left.order - right.order)) {
       if (!profileIds.has(record.profileId)) continue;
       try {
-        await this.tabs.create({
+        const tab = await this.tabs.create({
           profileId: record.profileId,
           url: record.url,
           ownerSessionId: record.ownerSessionId,
           activate: false,
         });
+        restoredTabIds.push(tab.id);
       } catch {
         // One unavailable URL/Profile must not prevent restoring other tabs.
       }
     }
     const first = this.tabs.list()[0];
     if (first) this.tabs.activate(first.id);
+    if (restoredTabIds.length > 0) void this.normalizeRestoredTabOwners(restoredTabIds);
+  }
+
+  /**
+   * A restored tab whose owning conversation was deleted (or forked away) would
+   * otherwise stay invisible in every conversation while still holding a tab
+   * slot. The session index lives in the Agent Host and is not ready during
+   * window creation, so poll briefly and then adopt orphans as shared tabs.
+   */
+  private async normalizeRestoredTabOwners(tabIds: readonly string[]): Promise<void> {
+    const listKnownSessionIds = this.options.listKnownSessionIds;
+    if (!listKnownSessionIds) return;
+    let known: string[] | null = null;
+    for (let attempt = 0; attempt < 40 && !this.disposed; attempt += 1) {
+      try {
+        known = await listKnownSessionIds();
+      } catch {
+        known = null;
+      }
+      if (known) break;
+      await new Promise((resolve) => setTimeout(resolve, 750));
+    }
+    if (!known || this.disposed) return;
+    this.tabs.adoptOrphanTabs(tabIds, new Set(known));
   }
 
   getCapabilitySnapshot(): BrowserCapabilitySnapshot {
@@ -743,6 +784,9 @@ export class BrowserService {
       const body = params as BrowserHostParams<"browser.sessionEnded">;
       this.revokeSession(body.sessionId);
       this.tabs.clearSessionState(body.sessionId);
+      // The Host reports session deletion through this method: its tabs must
+      // not survive as unreachable records that still consume tab slots.
+      this.tabs.closeSessionTabs(body.sessionId);
       return { ok: true } as BrowserHostResult<M>;
     }
     if (method === "browser.requestRouteBypass") {

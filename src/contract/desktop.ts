@@ -240,17 +240,24 @@ export interface PiBridge {
   ) => Promise<BrowserSettingsPublic>;
   browserListTabs: (sessionId?: string) => Promise<BrowserTabInfo[]>;
   browserCreateUserTab: (input: BrowserCreateTabInput) => Promise<BrowserTabInfo>;
-  browserActivateTab: (tabId: string) => Promise<void>;
-  browserNavigateUser: (tabId: string, url: string) => Promise<void>;
-  browserGoBack: (tabId: string) => Promise<void>;
-  browserGoForward: (tabId: string) => Promise<void>;
-  browserReload: (tabId: string) => Promise<void>;
-  browserStop: (tabId: string) => Promise<void>;
-  browserCloseTab: (tabId: string) => Promise<void>;
+  browserActivateTab: (tabId: string, ownerSessionId?: string | null) => Promise<void>;
+  browserNavigateUser: (tabId: string, url: string, ownerSessionId?: string | null) => Promise<void>;
+  browserGoBack: (tabId: string, ownerSessionId?: string | null) => Promise<void>;
+  browserGoForward: (tabId: string, ownerSessionId?: string | null) => Promise<void>;
+  browserReload: (tabId: string, ownerSessionId?: string | null) => Promise<void>;
+  browserStop: (tabId: string, ownerSessionId?: string | null) => Promise<void>;
+  browserCloseTab: (tabId: string, ownerSessionId?: string | null) => Promise<void>;
   browserCloseAllTabs: () => Promise<void>;
-  browserSetDeviceMode: (tabId: string, device: BrowserDeviceModeInput) => Promise<BrowserTabInfo>;
-  browserSetBounds: (input: BrowserBoundsInput) => Promise<void>;
-  browserSetSurfaceVisible: (input: { tabId?: string; visible: boolean }) => Promise<void>;
+  browserSetDeviceMode: (
+    tabId: string,
+    device: BrowserDeviceModeInput,
+    ownerSessionId?: string | null,
+  ) => Promise<BrowserTabInfo>;
+  browserSetBounds: (input: BrowserBoundsInput, ownerSessionId?: string | null) => Promise<void>;
+  browserSetSurfaceVisible: (
+    input: { tabId?: string; visible: boolean },
+    ownerSessionId?: string | null,
+  ) => Promise<void>;
   browserRevokeTemporarySessionPermission: (sessionId: string) => Promise<void>;
   browserRespondAgentAuthorization: (requestId: string, decision: BrowserAgentAuthorizationDecision) => Promise<void>;
   browserListProfiles: () => Promise<BrowserProfileInfo[]>;
@@ -272,7 +279,7 @@ export interface PiBridge {
   browserDeletePageSnippet: (snippetId: string) => Promise<void>;
   browserClearPageSnippets: () => Promise<void>;
   browserRespondPermission: (requestId: string, decision: BrowserPermissionDecision) => Promise<void>;
-  browserChooseUploadFiles: (tabId: string) => Promise<string[]>;
+  browserChooseUploadFiles: (tabId: string, ownerSessionId?: string | null) => Promise<string[]>;
   browserReset: () => Promise<BrowserRendererState>;
   clearBadge: () => void;
   onHostStatus: (cb: (s: { status: HostStatus; detail?: string }) => void) => () => void;

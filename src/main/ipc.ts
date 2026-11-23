@@ -350,26 +350,44 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
   browserHandler("desktop:browser:create-user-tab", (browser, input: BrowserCreateTabInput) =>
     browser.createUserTab(input),
   );
-  browserHandler("desktop:browser:activate-tab", (browser, tabId: string) => browser.activateTab(tabId));
-  browserHandler("desktop:browser:navigate-user", (browser, tabId: string, url: string) =>
-    browser.navigateUser(tabId, url),
+  browserHandler("desktop:browser:activate-tab", (browser, tabId: string, ownerSessionId?: string | null) =>
+    browser.activateTab(tabId, ownerSessionId),
   );
-  browserHandler("desktop:browser:go-back", (browser, tabId: string) => browser.goBack(tabId));
-  browserHandler("desktop:browser:go-forward", (browser, tabId: string) => browser.goForward(tabId));
-  browserHandler("desktop:browser:reload", (browser, tabId: string) => browser.reload(tabId));
-  browserHandler("desktop:browser:stop", (browser, tabId: string) => browser.stop(tabId));
-  browserHandler("desktop:browser:close-tab", (browser, tabId: string) => browser.closeTab(tabId));
+  browserHandler(
+    "desktop:browser:navigate-user",
+    (browser, tabId: string, url: string, ownerSessionId?: string | null) =>
+      browser.navigateUser(tabId, url, ownerSessionId),
+  );
+  browserHandler("desktop:browser:go-back", (browser, tabId: string, ownerSessionId?: string | null) =>
+    browser.goBack(tabId, ownerSessionId),
+  );
+  browserHandler("desktop:browser:go-forward", (browser, tabId: string, ownerSessionId?: string | null) =>
+    browser.goForward(tabId, ownerSessionId),
+  );
+  browserHandler("desktop:browser:reload", (browser, tabId: string, ownerSessionId?: string | null) =>
+    browser.reload(tabId, ownerSessionId),
+  );
+  browserHandler("desktop:browser:stop", (browser, tabId: string, ownerSessionId?: string | null) =>
+    browser.stop(tabId, ownerSessionId),
+  );
+  browserHandler("desktop:browser:close-tab", (browser, tabId: string, ownerSessionId?: string | null) =>
+    browser.closeTab(tabId, ownerSessionId),
+  );
   browserHandler("desktop:browser:close-all-tabs", (browser) => browser.closeAllTabs());
   browserHandler(
     "desktop:browser:set-device-mode",
-    (browser, tabId: string, device: Parameters<BrowserService["setDeviceMode"]>[1]) =>
-      browser.setDeviceMode(tabId, device),
+    (browser, tabId: string, device: Parameters<BrowserService["setDeviceMode"]>[1], ownerSessionId?: string | null) =>
+      browser.setDeviceMode(tabId, device, ownerSessionId),
   );
-  browserHandler("desktop:browser:set-bounds", (browser, input: Parameters<BrowserService["setBounds"]>[0]) =>
-    browser.setBounds(input),
+  browserHandler(
+    "desktop:browser:set-bounds",
+    (browser, input: Parameters<BrowserService["setBounds"]>[0], ownerSessionId?: string | null) =>
+      browser.setBounds(input, ownerSessionId),
   );
-  browserHandler("desktop:browser:set-surface-visible", (browser, input: { tabId?: string; visible: boolean }) =>
-    browser.setSurfaceVisible(input),
+  browserHandler(
+    "desktop:browser:set-surface-visible",
+    (browser, input: { tabId?: string; visible: boolean }, ownerSessionId?: string | null) =>
+      browser.setSurfaceVisible(input, ownerSessionId),
   );
   browserHandler("desktop:browser:revoke-temporary-session-permission", (browser, sessionId: string) =>
     browser.revokeTemporarySessionPermission(sessionId),
@@ -420,7 +438,9 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     "desktop:browser:respond-permission",
     (browser, requestId: string, decision: BrowserPermissionDecision) => browser.respondPermission(requestId, decision),
   );
-  browserHandler("desktop:browser:choose-upload-files", (browser, tabId: string) => browser.chooseUploadFiles(tabId));
+  browserHandler("desktop:browser:choose-upload-files", (browser, tabId: string, ownerSessionId?: string | null) =>
+    browser.chooseUploadFiles(tabId, ownerSessionId),
+  );
   browserHandler("desktop:browser:reset", (browser) => browser.reset());
 }
 

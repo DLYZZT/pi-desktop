@@ -24,6 +24,7 @@ import type {
   BrowserEvent,
   BrowserPermissionRequest,
   BrowserRendererState,
+  BrowserTabInfo,
 } from "../../../contract/browser";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
@@ -43,19 +44,33 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const refreshGenerationRef = useRef(0);
+
+  // A tab is presentable in this conversation when it is shared (ownerless) or
+  // owned by the selected session. The global active tab can belong to another
+  // conversation; that tab must never drive this panel's chrome or surface.
+  const isVisibleTab = useCallback(
+    (tab: BrowserTabInfo) => tab.ownerSessionId === null || tab.ownerSessionId === ownerSessionId,
+    [ownerSessionId],
+  );
 
   const refresh = useCallback(async () => {
+    const generation = ++refreshGenerationRef.current;
     try {
       const next = await window.piBridge.browserGetState();
+      // A conversation switch can issue a newer refresh while this one is in
+      // flight; only the latest response may overwrite the panel.
+      if (generation !== refreshGenerationRef.current) return;
       if (!stateRef.current) setProfileId(next.settings.settings.panel.defaultProfileId);
       setState(next);
       const active = next.tabs.find((tab) => tab.id === next.activeTabId);
-      if (active) setAddress(active.url);
+      setAddress(active && isVisibleTab(active) ? active.url : "");
       setError("");
     } catch (cause) {
+      if (generation !== refreshGenerationRef.current) return;
       setError(messageOf(cause));
     }
-  }, []);
+  }, [isVisibleTab]);
 
   const handleTabSyncError = useCallback(
     (cause: unknown) => {
@@ -75,15 +90,22 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
       setState((current) => (current ? applyBrowserEvent(current, event) : current));
       if (event.type === "active-tab-changed") {
         setMoreOpen(false);
-        const tab = stateRef.current?.tabs.find((candidate) => candidate.id === event.tabId);
-        if (tab) setAddress(tab.url);
+        const previous = stateRef.current?.tabs.find((candidate) => candidate.id === stateRef.current?.activeTabId);
+        const next = stateRef.current?.tabs.find((candidate) => candidate.id === event.tabId);
+        const previousUrl = previous && isVisibleTab(previous) ? previous.url : "";
+        const nextUrl = next && isVisibleTab(next) ? next.url : "";
+        // Keep a URL the user is still typing unless it was the old tab's URL.
+        setAddress((current) => (current !== "" && current !== previousUrl ? current : nextUrl));
       } else if (event.type === "tab-updated" && event.tab.id === stateRef.current?.activeTabId) {
-        setAddress(event.tab.url);
+        // Foreign tabs keep updating in the background; they must not wipe an
+        // address the user is typing for this conversation.
+        if (isVisibleTab(event.tab)) setAddress(event.tab.url);
       }
     });
-  }, [refresh]);
+  }, [isVisibleTab, refresh]);
 
-  const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId) ?? null;
+  const visibleTabs = state?.tabs.filter(isVisibleTab) ?? [];
+  const activeTab = visibleTabs.find((tab) => tab.id === state?.activeTabId) ?? null;
   const device = activeTab?.device?.mode === "mobile" ? activeTab.device : null;
   const run = (action: Promise<unknown>) => void action.catch(handleTabSyncError);
   const changeDevice = async (input: BrowserDeviceModeInput) => {
@@ -91,39 +113,44 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
     setChangingDevice(true);
     setError("");
     try {
-      await window.piBridge.browserSetDeviceMode(activeTab.id, input);
+      await window.piBridge.browserSetDeviceMode(activeTab.id, input, ownerSessionId);
     } catch (cause) {
       handleTabSyncError(cause);
     } finally {
       setChangingDevice(false);
     }
   };
-  const visibleTabs =
-    state?.tabs.filter((tab) => tab.ownerSessionId === null || tab.ownerSessionId === ownerSessionId) ?? [];
 
   useEffect(() => {
     if (!state || !visible || !state.activeTabId) return;
     const active = state.tabs.find((tab) => tab.id === state.activeTabId);
-    if (!active || active.ownerSessionId === null || active.ownerSessionId === ownerSessionId) return;
+    if (!active || isVisibleTab(active)) return;
+    // Showing another conversation's native view would leak its page into this
+    // panel. Switch to this conversation's most recent tab instead; when there
+    // is none the visibility effect below keeps the surface hidden.
     const replacement = [...state.tabs]
-      .filter((tab) => tab.ownerSessionId === null || tab.ownerSessionId === ownerSessionId)
+      .filter(isVisibleTab)
       .sort((left, right) => right.lastActiveAt - left.lastActiveAt)[0];
-    if (replacement) void window.piBridge.browserActivateTab(replacement.id).catch(handleTabSyncError);
-    else void window.piBridge.browserSetSurfaceVisible({ visible: false });
-  }, [handleTabSyncError, ownerSessionId, state, visible]);
+    if (replacement) {
+      void window.piBridge.browserActivateTab(replacement.id, ownerSessionId).catch(handleTabSyncError);
+    }
+  }, [handleTabSyncError, isVisibleTab, ownerSessionId, state, visible]);
 
   useEffect(() => {
     const tabId = activeTab?.id;
     void window.piBridge
-      .browserSetSurfaceVisible({
-        ...(tabId ? { tabId } : {}),
-        visible: visible && Boolean(tabId) && !presetOpen && !moreOpen,
-      })
+      .browserSetSurfaceVisible(
+        {
+          ...(tabId ? { tabId } : {}),
+          visible: visible && Boolean(tabId) && !presetOpen && !moreOpen,
+        },
+        ownerSessionId,
+      )
       .catch(handleTabSyncError);
     return () => {
       void window.piBridge.browserSetSurfaceVisible({ visible: false }).catch(() => undefined);
     };
-  }, [activeTab?.id, handleTabSyncError, visible, presetOpen, moreOpen]);
+  }, [activeTab?.id, handleTabSyncError, moreOpen, ownerSessionId, presetOpen, visible]);
 
   useEffect(() => {
     if (!moreOpen) return;
@@ -164,11 +191,14 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
         if (key === lastBoundsKey) return;
         lastBoundsKey = key;
         void window.piBridge
-          .browserSetBounds({
-            tabId,
-            rect,
-            scaleFactorVersion,
-          })
+          .browserSetBounds(
+            {
+              tabId,
+              rect,
+              scaleFactorVersion,
+            },
+            ownerSessionId,
+          )
           .catch((cause) => {
             if (lastBoundsKey === key) lastBoundsKey = "";
             handleTabSyncError(cause);
@@ -191,14 +221,15 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
       window.removeEventListener("resize", sync);
       window.removeEventListener("scroll", sync, true);
     };
-  }, [activeTab?.id, handleTabSyncError, visible]);
+  }, [activeTab?.id, handleTabSyncError, ownerSessionId, visible]);
 
-  const createTab = async () => {
+  const createTab = async (url?: string) => {
     try {
       const tab = await window.piBridge.browserCreateUserTab({
         profileId,
         ownerSessionId,
         activate: true,
+        ...(url ? { url } : {}),
       });
       setAddress(tab.url);
       await refresh();
@@ -208,9 +239,16 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
   };
 
   const navigate = async () => {
-    if (!activeTab) return;
+    const target = address.trim();
+    if (!target) return;
+    if (!activeTab) {
+      // The address bar stays usable in a conversation without a tab: Enter
+      // opens a tab owned by this conversation instead of driving a foreign one.
+      await createTab(target);
+      return;
+    }
     try {
-      await window.piBridge.browserNavigateUser(activeTab.id, address);
+      await window.piBridge.browserNavigateUser(activeTab.id, target, ownerSessionId);
     } catch (cause) {
       setError(messageOf(cause));
     }
@@ -240,7 +278,7 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
               size="sm"
               style={{ minWidth: 0, padding: "0 7px", fontSize: 11, minHeight: 28 }}
               title={tab.url}
-              onClick={() => run(window.piBridge.browserActivateTab(tab.id))}
+              onClick={() => run(window.piBridge.browserActivateTab(tab.id, ownerSessionId))}
               variant="ghost"
             >
               {tab.loading ? (
@@ -259,7 +297,7 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
               className="browser-chrome-icon browser-tab-close"
               aria-label={t("browserCloseTab", "Close tab")}
               title={t("browserCloseTab", "Close tab")}
-              onClick={() => run(window.piBridge.browserCloseTab(tab.id))}
+              onClick={() => run(window.piBridge.browserCloseTab(tab.id, ownerSessionId))}
             >
               <X size={13} aria-hidden="true" />
             </Button>
@@ -285,7 +323,7 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
           disabled={!activeTab?.canGoBack}
           title={t("browserBack", "Back")}
           aria-label={t("browserBack", "Back")}
-          onClick={() => activeTab && run(window.piBridge.browserGoBack(activeTab.id))}
+          onClick={() => activeTab && run(window.piBridge.browserGoBack(activeTab.id, ownerSessionId))}
         >
           <ArrowLeft size={15} aria-hidden="true" />
         </Button>
@@ -296,7 +334,7 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
           disabled={!activeTab?.canGoForward}
           title={t("browserForward", "Forward")}
           aria-label={t("browserForward", "Forward")}
-          onClick={() => activeTab && run(window.piBridge.browserGoForward(activeTab.id))}
+          onClick={() => activeTab && run(window.piBridge.browserGoForward(activeTab.id, ownerSessionId))}
         >
           <ArrowRight size={15} aria-hidden="true" />
         </Button>
@@ -311,8 +349,8 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
             activeTab &&
             run(
               activeTab.loading
-                ? window.piBridge.browserStop(activeTab.id)
-                : window.piBridge.browserReload(activeTab.id),
+                ? window.piBridge.browserStop(activeTab.id, ownerSessionId)
+                : window.piBridge.browserReload(activeTab.id, ownerSessionId),
             )
           }
         >
@@ -380,7 +418,7 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
                 disabled={!activeTab}
                 onClick={() => {
                   setMoreOpen(false);
-                  if (activeTab) run(window.piBridge.browserChooseUploadFiles(activeTab.id));
+                  if (activeTab) run(window.piBridge.browserChooseUploadFiles(activeTab.id, ownerSessionId));
                 }}
               >
                 <Upload size={15} aria-hidden="true" />
@@ -447,7 +485,7 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
           <div>{t("browserTabCrashed", "This tab’s renderer crashed.")}</div>
           <Button
             style={{ ...primaryButtonStyle, marginTop: 9 }}
-            onClick={() => void window.piBridge.browserReload(activeTab.id)}
+            onClick={() => void window.piBridge.browserReload(activeTab.id, ownerSessionId)}
           >
             {t("browserReload", "Reload")}
           </Button>

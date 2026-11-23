@@ -395,23 +395,28 @@ export function AppShell({
       const tabId = (event as CustomEvent<{ tabId?: string }>).detail?.tabId;
       dispatchFileTab({ type: "select", tabId: BROWSER_TAB_ID });
       openRightPanel();
-      if (tabId) void window.piBridge.browserActivateTab(tabId).catch(() => undefined);
+      if (tabId) {
+        void window.piBridge.browserActivateTab(tabId, selectedSession?.id ?? null).catch(() => undefined);
+      }
     };
     window.addEventListener("pi-desktop:open-browser-tab", openBrowserTab);
     return () => window.removeEventListener("pi-desktop:open-browser-tab", openBrowserTab);
-  }, [openRightPanel]);
+  }, [openRightPanel, selectedSession?.id]);
 
   useEffect(
     () =>
       window.piBridge.onBrowserEvent((event) => {
         if (event.type !== "tab-created" || !event.tab.ownerSessionId) return;
+        // A background conversation's Agent must not open or hijack this
+        // conversation's Browser panel.
+        if (event.tab.ownerSessionId !== (selectedSession?.id ?? null)) return;
         void window.piBridge.browserGetSettings().then((settings) => {
           if (!settings.settings.panel.openOnAgentUse) return;
           dispatchFileTab({ type: "select", tabId: BROWSER_TAB_ID });
           openRightPanel();
         });
       }),
-    [openRightPanel],
+    [openRightPanel, selectedSession?.id],
   );
 
   useEffect(
@@ -1303,6 +1308,7 @@ export function AppShell({
               />
             ) : activeFileTabId === PROCESSES_TAB_ID ? (
               <ProcessPanel
+                currentSessionId={selectedSession?.id ?? null}
                 onActiveCountChange={setManagedProcessCount}
                 onOpenBrowser={() => dispatchFileTab({ type: "select", tabId: BROWSER_TAB_ID })}
               />

@@ -625,6 +625,19 @@ function startMainProcess(): void {
         if (win && !win.isDestroyed()) win.webContents.send("browser:event", event);
       },
       onCapabilitySnapshot: (snapshot) => hostManager?.setBrowserCapabilitySnapshot(snapshot),
+      // Restored Browser tabs keep their owning conversation. The Agent Host
+      // owns the session index, so resolve it lazily once the Host is ready;
+      // null tells BrowserService to retry instead of pruning prematurely.
+      listKnownSessionIds: async () => {
+        const manager = hostManager;
+        if (!manager || manager.getStatus() !== "ready") return null;
+        try {
+          const result = await manager.call<{ sessions: Array<{ id: string }> }>("sessions.list", {}, 15_000);
+          return result.sessions.map((session) => session.id);
+        } catch {
+          return null;
+        }
+      },
     });
     const ui = loadUiState();
     await refreshHerdrAgentCliDiscovery();
