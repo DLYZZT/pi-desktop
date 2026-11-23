@@ -12,7 +12,13 @@ import { getToolResultDisplayText } from "@/lib/tool-result-display";
 import { toolActionTitle } from "@/lib/tool-action-title";
 import { useCopyFeedback } from "@/hooks/useCopyFeedback";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
-import { createStreamRateState, estimateTokens, resetStreamRate, updateStreamRate } from "@/lib/stream-rate";
+import {
+  createStreamRateState,
+  estimateTokens,
+  estimateToolInputChars,
+  resetStreamRate,
+  updateStreamRate,
+} from "@/lib/stream-rate";
 import { hasRenderableAssistantMessage, isEmptyTextBlock, isEmptyThinkingBlock } from "@/lib/message-display";
 import { getUserBubbleStyle } from "@/lib/channel-message-style";
 import { CHANNEL_ATTACHMENT_PROMPT_PLACEHOLDER, channelAttachmentCopyText } from "@shared/channel-message";
@@ -590,7 +596,7 @@ function AssistantMessageView({
       for (const b of bs) {
         if (b.type === "text") chars += (b as TextContent).text?.length ?? 0;
         else if (b.type === "thinking") chars += (b as ThinkingContent).thinking?.length ?? 0;
-        else if (b.type === "toolCall") chars += JSON.stringify((b as ToolCallContent).input ?? {}).length;
+        else if (b.type === "toolCall") chars += estimateToolInputChars((b as ToolCallContent).input);
       }
       if (chars === 0) return;
       // Sliding-window rate: immune to mid-stream remounts (session switch and
@@ -632,7 +638,7 @@ function AssistantMessageView({
             for (const b of blocks) {
               if (b.type === "text") chars += (b as TextContent).text?.length ?? 0;
               else if (b.type === "thinking") chars += (b as ThinkingContent).thinking?.length ?? 0;
-              else if (b.type === "toolCall") chars += JSON.stringify((b as ToolCallContent).input ?? {}).length;
+              else if (b.type === "toolCall") chars += estimateToolInputChars((b as ToolCallContent).input);
             }
             const est = Math.round(chars / 4);
             return (
@@ -943,8 +949,10 @@ function ToolCallBlock({
   const [expanded, setExpanded] = useState(false);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const { t } = useI18n();
-  const inputStr = JSON.stringify(block.input, null, 2);
   const isEditTool = isEditToolName(block.toolName);
+  // Collapsed cards never show the args. Serializing a large edit/write input
+  // on every streaming snapshot is pure waste, so build it only when visible.
+  const inputStr = expanded && !isEditTool ? JSON.stringify(block.input, null, 2) : null;
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
 
   // Result display

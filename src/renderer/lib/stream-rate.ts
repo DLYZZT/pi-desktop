@@ -40,6 +40,30 @@ export function estimateTokens(chars: number): number {
 }
 
 /**
+ * Character estimate for a tool call input without serializing it.
+ * JSON.stringify copies and escapes the entire payload — O(total chars) on
+ * every streaming frame for large edit/write inputs — while summing string
+ * lengths only walks the value's nodes. The result approximates the JSON text
+ * length closely enough for the token badge and rate window.
+ */
+export function estimateToolInputChars(value: unknown): number {
+  if (value === null || value === undefined) return 4;
+  if (typeof value === "string") return value.length;
+  if (typeof value === "number" || typeof value === "boolean") return String(value).length;
+  if (Array.isArray(value)) {
+    let total = 2;
+    for (const item of value) total += estimateToolInputChars(item) + 1;
+    return total;
+  }
+  if (typeof value === "object") {
+    let total = 2;
+    for (const [key, item] of Object.entries(value)) total += key.length + 3 + estimateToolInputChars(item) + 1;
+    return total;
+  }
+  return 0;
+}
+
+/**
  * Record a sample and return the rate over the window, in tokens per second.
  * Returns null while there is no usable span (single sample, window under ~1s,
  * or an idle stream), so partial windows don't produce absurd values.

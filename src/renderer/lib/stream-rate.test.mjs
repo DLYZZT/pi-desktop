@@ -3,10 +3,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 
-const { createStreamRateState, estimateTokens, resetStreamRate, updateStreamRate } = await importTestBundle(
-  "src/renderer/lib/stream-rate",
-  { entryPoints: [path.join(import.meta.dirname, "stream-rate.ts")] },
-);
+const { createStreamRateState, estimateTokens, estimateToolInputChars, resetStreamRate, updateStreamRate } =
+  await importTestBundle("src/renderer/lib/stream-rate", {
+    entryPoints: [path.join(import.meta.dirname, "stream-rate.ts")],
+  });
 
 test("estimateTokens divides characters by four", () => {
   assert.equal(estimateTokens(400), 100);
@@ -70,4 +70,26 @@ test("resetStreamRate drops all samples", () => {
   updateStreamRate(state, 1000, 200);
   resetStreamRate(state);
   assert.equal(updateStreamRate(state, 2000, 300), null);
+});
+
+test("estimateToolInputChars approximates JSON length without serializing", () => {
+  // A large edit/write payload: the estimate must track the string length
+  // closely while never building the serialized copy.
+  const input = { path: "src/app.ts", content: "x".repeat(100_000) };
+  const estimate = estimateToolInputChars(input);
+  const actual = JSON.stringify(input).length;
+  assert.ok(Math.abs(estimate - actual) <= 8, `estimate ${estimate} vs JSON ${actual}`);
+});
+
+test("estimateToolInputChars walks nested structures and primitives", () => {
+  const input = { edits: [{ old: "a", new: "bb" }], count: 12, dryRun: true, note: null };
+  const estimate = estimateToolInputChars(input);
+  const actual = JSON.stringify(input).length;
+  // One comma of slack per container is acceptable for a token badge.
+  assert.ok(Math.abs(estimate - actual) <= 8, `estimate ${estimate} vs JSON ${actual}`);
+  assert.equal(estimateToolInputChars("abc"), 3);
+  assert.equal(estimateToolInputChars(null), 4);
+  assert.equal(estimateToolInputChars(undefined), 4);
+  assert.equal(estimateToolInputChars({}), 2);
+  assert.equal(estimateToolInputChars([]), 2);
 });

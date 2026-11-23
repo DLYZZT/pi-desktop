@@ -764,7 +764,7 @@ export function ChatWindow({
                       );
                       if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
                       return (
-                        <div key={renderKey} ref={attachVisibleRef(idx, currentRefIdx)}>
+                        <div key={renderKey} className="chat-message-shell" ref={attachVisibleRef(idx, currentRefIdx)}>
                           {view}
                         </div>
                       );
@@ -866,6 +866,7 @@ export function ChatWindow({
                         rendered.push(
                           <div
                             key={processGroupKey}
+                            className="chat-message-shell"
                             ref={
                               processRefIdx === undefined
                                 ? undefined

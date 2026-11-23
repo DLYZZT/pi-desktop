@@ -721,6 +721,14 @@ html[data-chat-layout="wide"] .chat-appearance-scope {
   margin-inline: auto;
 }
 
+/* Off-screen transcript entries skip layout and paint. The "auto" intrinsic
+   size remembers each entry's real height after its first render, so the
+   scrollbar stays stable once history has been scrolled through. */
+.chat-message-shell {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
+}
+
 /* Theme toggle: circular wipe via View Transitions API.
    Disable the UA cross-fade; the actual clip-path animation is driven by
    Element.animate() in hooks/useTheme.ts after transition.ready resolves. */
