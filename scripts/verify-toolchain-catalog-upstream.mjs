@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -21,9 +22,9 @@ export function catalogRequestHeaders(url, token, overrides = {}) {
   return headers;
 }
 
-async function fetchChecked(url, init = {}) {
+async function fetchChecked(url, init = {}, timeoutMs = 30_000) {
   const controller = new globalThis.AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await globalThis.fetch(url, {
       ...init,
@@ -101,12 +102,78 @@ async function verifyGithubComponents(components) {
   }
 }
 
+const GOOGLE_PLATFORM_TOOLS_XML = "https://dl.google.com/android/repository/repository2-3.xml";
+
+function parseGooglePlatformToolsMetadata(xml) {
+  const start = xml.indexOf('<remotePackage path="platform-tools">');
+  if (start < 0) throw new Error("Google repository metadata is missing platform-tools");
+  const end = xml.indexOf("</remotePackage>", start);
+  if (end < 0) throw new Error("Google platform-tools metadata is truncated");
+  const block = xml.slice(start, end);
+  const revision = block.match(
+    /<revision>[\s\S]*?<major>(\d+)<\/major>[\s\S]*?<minor>(\d+)<\/minor>[\s\S]*?<micro>(\d+)<\/micro>/,
+  );
+  if (!revision) throw new Error("Google platform-tools metadata is missing a revision");
+  const archives = new Map();
+  for (const match of block.matchAll(/<archive>([\s\S]*?)<\/archive>/g)) {
+    const body = match[1];
+    const hostOs = body.match(/<host-os>([^<]+)<\/host-os>/)?.[1];
+    const url = body.match(/<url>([^<]+)<\/url>/)?.[1];
+    const size = Number(body.match(/<size>(\d+)<\/size>/)?.[1]);
+    const sha1 = body.match(/<checksum type="sha1">([a-f0-9]{40})<\/checksum>/)?.[1];
+    if (!hostOs || !url || !Number.isSafeInteger(size) || !sha1) {
+      throw new Error("Google platform-tools metadata contains an incomplete archive");
+    }
+    archives.set(url, { hostOs, size, sha1 });
+  }
+  if (archives.size === 0) throw new Error("Google platform-tools metadata contains no archives");
+  return { version: `${revision[1]}.${revision[2]}.${revision[3]}`, archives };
+}
+
+async function verifyGooglePlatformTools(components) {
+  const metadata = parseGooglePlatformToolsMetadata(
+    await (await fetchChecked(GOOGLE_PLATFORM_TOOLS_XML, {}, 120_000)).text(),
+  );
+  const variantsByUrl = new Map();
+  for (const component of components) {
+    for (const variant of component.variants) {
+      const entries = variantsByUrl.get(variant.url) ?? [];
+      entries.push({ component, variant });
+      variantsByUrl.set(variant.url, entries);
+    }
+  }
+  for (const [url, entries] of variantsByUrl) {
+    const name = artifactName(url);
+    const bytes = Buffer.from(await (await fetchChecked(url, {}, 120_000)).arrayBuffer());
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    for (const { component, variant } of entries) {
+      if (bytes.length !== variant.downloadBytes) {
+        throw new Error(`${component.id}/${name} size ${bytes.length} != ${variant.downloadBytes}`);
+      }
+      if (sha256 !== variant.sha256) {
+        throw new Error(`${component.id}/${name} sha256 does not match the fixed catalog checksum`);
+      }
+      const archive = metadata.archives.get(name);
+      if (component.version === metadata.version && archive) {
+        const sha1 = createHash("sha1").update(bytes).digest("hex");
+        if (archive.size !== variant.downloadBytes || archive.sha1 !== sha1) {
+          throw new Error(`${component.id}/${name} does not match the Google SDK repository metadata`);
+        }
+      }
+    }
+  }
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const nodeComponents = components.filter((component) => component.id === "node-lts");
-  const githubComponents = components.filter((component) => component.id !== "node-lts");
+  const googleComponents = components.filter((component) => component.id === "platform-tools");
+  const githubComponents = components.filter(
+    (component) => component.id !== "node-lts" && component.id !== "platform-tools",
+  );
   await verifyNodeComponents(nodeComponents);
+  await verifyGooglePlatformTools(googleComponents);
   await verifyGithubComponents(githubComponents);
   console.log(
-    `OK: ${nodeComponents.length + githubComponents.length} catalog releases match upstream checksums, digests, and artifact sizes`,
+    `OK: ${nodeComponents.length + googleComponents.length + githubComponents.length} catalog releases match upstream checksums, digests, and artifact sizes`,
   );
 }

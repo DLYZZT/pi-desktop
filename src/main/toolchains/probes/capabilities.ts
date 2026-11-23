@@ -245,6 +245,19 @@ async function probeBun(seed: ExecutableSeed, options: CapabilityProbeOptions): 
   return versionCandidateWithMaximumMajor(seed, versionResult.stdout, 1);
 }
 
+async function probeAdb(seed: ExecutableSeed, options: CapabilityProbeOptions): Promise<ToolCandidate> {
+  // `adb version` does not start the adb server (unlike `adb devices`), so it is
+  // safe to run during every toolchain scan.
+  const result = await run(seed, options, ["version"]);
+  if (!probeSucceeded(result) || !result.stdout.includes("Android Debug Bridge")) {
+    return failedCandidate(seed, result);
+  }
+  // The first line reports the wire protocol (for example 1.0.41); the
+  // platform-tools release is on the following "Version 37.0.3" line.
+  const version = result.stdout.match(/^Version\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?)/m)?.[1] ?? firstVersion(result.stdout);
+  return candidateFromSeed(seed, { version });
+}
+
 async function probeVersionOnly(seed: ExecutableSeed, options: CapabilityProbeOptions): Promise<ToolCandidate> {
   const result = await run(seed, options, ["--version"]);
   if (!probeSucceeded(result)) return failedCandidate(seed, result);
@@ -284,6 +297,9 @@ export async function probeExecutableSeed(
       break;
     case "js.bun":
       candidate = await probeBun(seed, options);
+      break;
+    case "android.adb":
+      candidate = await probeAdb(seed, options);
       break;
     default:
       candidate = await probeVersionOnly(seed, options);

@@ -43,6 +43,7 @@ test("renders verified providers, incomplete Node distributions, and the no-netw
     "search.fd",
     "data.jq",
     "network.curl",
+    "android.adb",
   ]) {
     capabilities[id] = capability(id);
   }
@@ -123,7 +124,7 @@ test("renders verified providers, incomplete Node distributions, and the no-netw
   assert.match(html, /Incomplete/);
   assert.match(html, /does not run shell profiles or access the network/);
   assert.match(html, /<button[^>]*>Rescan<\/button>/);
-  assert.equal((html.match(/data-tool-id=/g) ?? []).length, 15);
+  assert.equal((html.match(/data-tool-id=/g) ?? []).length, 16);
   assert.match(html, /<aside[^>]*aria-label="Developer tool list"/);
   assert.match(html, /data-tool-id="js\.node"[^>]*aria-current="true"/);
   assert.doesNotMatch(html, /<details|<summary/);
@@ -131,11 +132,14 @@ test("renders verified providers, incomplete Node distributions, and the no-netw
   assert.match(html, /Python/);
   assert.match(html, /CLI essentials/);
   assert.match(html, /Agent runtimes/);
+  assert.match(html, /Android/);
+  assert.match(html, /ADB \(adb\)/);
   assert.match(html, /Bash/);
   assert.match(html, /Git/);
   assert.match(html, /ripgrep \(rg\)/);
   assert.ok(html.indexOf("JavaScript") < html.indexOf("Python"));
-  assert.ok(html.indexOf("Python") < html.indexOf("CLI essentials"));
+  assert.ok(html.indexOf("Python") < html.indexOf("Android"));
+  assert.ok(html.indexOf("Android") < html.indexOf("CLI essentials"));
   assert.match(html, /Tool resolution/);
   assert.match(html, /Detected providers/);
   assert.match(html, /Managed runtime/);

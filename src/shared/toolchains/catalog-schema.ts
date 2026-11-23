@@ -53,6 +53,7 @@ const COMPONENT_URL_PREFIXES: Record<ManagedComponentId, readonly string[]> = {
   fd: ["https://github.com/sharkdp/fd/releases/download/"],
   jq: ["https://github.com/jqlang/jq/releases/download/"],
   bun: ["https://github.com/oven-sh/bun/releases/download/"],
+  "platform-tools": ["https://dl.google.com/android/repository/"],
   herdr: ["https://github.com/herdrdev/herdr/releases/download/"],
 };
 

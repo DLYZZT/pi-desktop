@@ -249,6 +249,27 @@ test("parses Python Launcher and PEP 514 paths with spaces and UNC roots", () =>
   );
 });
 
+test("finds adb from ANDROID_HOME and the default Android SDK location", async () => {
+  const home = "/Users/测试";
+  const fileSystem = memoryFileSystem({
+    files: ["/opt/android-sdk/platform-tools/adb", `${home}/Library/Android/sdk/platform-tools/adb`],
+  });
+  const registry = new DiscoveryRegistry({
+    platform: "darwin",
+    arch: "arm64",
+    env: { PATH: "/usr/bin", ANDROID_HOME: "/opt/android-sdk" },
+    homeDir: home,
+    fileSystem,
+  });
+
+  const seeds = await registry.collect();
+  const adb = seeds.filter((seed) => seed.capability === "android.adb");
+  assert.deepEqual(adb.map((seed) => [seed.discovery, seed.executable]).sort(), [
+    ["android-home", "/opt/android-sdk/platform-tools/adb"],
+    ["android-sdk", `${home}/Library/Android/sdk/platform-tools/adb`],
+  ]);
+});
+
 function result(command, stdout, overrides = {}) {
   return {
     executable: command.executable,

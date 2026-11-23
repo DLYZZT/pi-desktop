@@ -29,7 +29,7 @@ function requireVariants(source, componentId, requiredVariants) {
   }
 }
 
-for (const componentId of ["node-lts", "cpython", "uv", "jq", "bun"]) {
+for (const componentId of ["node-lts", "cpython", "uv", "jq", "bun", "platform-tools"]) {
   requireVariants(catalog, componentId, releasedVariants);
 }
 requireVariants(catalog, "portable-git", ["win32-x64"]);

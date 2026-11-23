@@ -70,6 +70,7 @@ const COMPONENT_SOURCE_NAMES: Readonly<Record<ManagedComponentId, string>> = {
   fd: "sharkdp/fd",
   jq: "jqlang/jq",
   bun: "Oven Bun",
+  "platform-tools": "Google Android SDK Platform-Tools",
   herdr: "Herdr",
 };
 
@@ -1128,6 +1129,7 @@ function summarizeCommands(commands: ToolchainResolution["commands"]): string[] 
     ["JavaScript", ["js.node", "js.npm", "js.npx", "js.bun"]],
     ["Python", ["python.interpreter", "python.uv"]],
     ["Search", ["search.rg", "search.fd"]],
+    ["Android", ["android.adb"]],
   ];
   const summary: string[] = [];
   for (const [label, capabilities] of groups) {

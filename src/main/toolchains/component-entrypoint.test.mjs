@@ -5,6 +5,24 @@ import path from "node:path";
 import test from "node:test";
 import { findComponentEntrypoints } from "./component-entrypoint.ts";
 
+test("selects adb from the platform-tools directory of a Platform-Tools archive", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-platform-tools-entrypoints-"));
+  try {
+    for (const relative of ["bin/adb", "platform-tools/adb", "platform-tools/AdbWinApi.dll"]) {
+      const absolute = path.join(root, ...relative.split("/"));
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, relative);
+    }
+    const entrypoints = findComponentEntrypoints("platform-tools", root);
+    assert.deepEqual(
+      entrypoints.map((entrypoint) => [entrypoint.capability, path.relative(root, entrypoint.executable)]),
+      [["android.adb", path.join("platform-tools", "adb")]],
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("selects PortableGit cmd/git.exe and bin/bash.exe from the same component root", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-portable-entrypoints-"));
   try {

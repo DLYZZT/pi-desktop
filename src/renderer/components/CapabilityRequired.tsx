@@ -196,6 +196,7 @@ export function installActionForIssue(
     return { action: "install-profile", profileId: "windows-shell-essentials" };
   }
   if (issue.capability === "data.jq") return { action: "install-profile", profileId: "cli-essentials" };
+  if (issue.capability === "android.adb") return { action: "install-component", componentId: "platform-tools" };
   return undefined;
 }
 
@@ -215,6 +216,7 @@ function capabilityLabel(
     "vcs.git": "Git",
     "shell.bash": "Bash",
     "data.jq": "jq",
+    "android.adb": "ADB",
   };
   return labels[capability] ?? capability;
 }
