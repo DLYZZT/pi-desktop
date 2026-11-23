@@ -1303,11 +1303,8 @@ code {
   list-style: none;
 }
 .markdown-body .task-list-item {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 7px;
-  align-items: start;
-  padding-left: 0;
+  position: relative;
+  padding-left: calc(18px + 7px);
 }
 .markdown-body .task-list-item::marker {
   content: "";
@@ -1334,6 +1331,19 @@ code {
   border: solid var(--accent);
   border-width: 0 1.5px 1.5px 0;
   transform: rotate(45deg) translateY(-1px);
+}
+/* The checkbox is the only element that sits in the marker gutter, and it is
+   the first child in both shapes the renderer produces: `<li><input>text` for
+   tight items and `<li><p><input>…</p>` plus further blocks for loose ones.
+   Pinning it absolutely keeps every other child at the full content width —
+   a two-column grid used to auto-place a loose item's later paragraphs into
+   the 18px checkbox column, squeezing them to one character per line. */
+.markdown-body .task-list-item > input[type="checkbox"],
+.markdown-body .task-list-item > p:first-child > input[type="checkbox"]:first-child {
+  position: absolute;
+  left: 1px;
+  top: 5px;
+  margin: 0;
 }
 .markdown-body blockquote {
   border-left: 3px solid color-mix(in srgb, var(--border) 75%, var(--text-muted));
