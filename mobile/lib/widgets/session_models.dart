@@ -3,44 +3,49 @@
 /// toolResult messages pair into their card by toolCallId.
 library;
 
-import 'dart:convert';
-
-String _clip(String value, [int max = 120]) =>
-    value.length <= max ? value : value.substring(0, max);
-
 /// One rendered line in the chat view: a text bubble, thinking card or tool card.
 class ChatLine {
   final String kind; // 'text' | 'thinking' | 'tool'
   String role;
   String text;
   bool done;
+  /// Ordinal of the source message in the transcript. History assigns it while
+  /// walking `context.messages`; live events count `message_start`. Process
+  /// groups use it for stable keys and per-message counts.
+  int? messageIndex;
   // Tool card fields (kind == 'tool').
   String? toolCallId;
   String? toolName;
-  String? inputJson;
-  String? preview;
+  /// True for a toolCall block; false for a standalone toolResult card.
+  bool fromToolCall;
+  /// Raw tool arguments, kept so the card can derive its action title and
+  /// serialize the args only while expanded.
+  Map<dynamic, dynamic>? input;
   String? resultText;
   bool resultIsError;
   bool running;
-  ChatLine.text({required this.role, required this.text, this.done = false})
+  ChatLine.text({required this.role, required this.text, this.done = false, this.messageIndex})
       : kind = 'text',
+        fromToolCall = false,
         resultIsError = false,
         running = false;
-  ChatLine.thinking({required this.role, required this.text, this.done = false})
+  ChatLine.thinking({required this.role, required this.text, this.done = false, this.messageIndex})
       : kind = 'thinking',
+        fromToolCall = false,
         resultIsError = false,
         running = false;
   ChatLine.tool({
     required this.toolCallId,
     required this.toolName,
-    required this.inputJson,
-    required this.preview,
+    this.input,
+    this.running = false,
+    this.messageIndex,
+    this.fromToolCall = false,
   })  : kind = 'tool',
         role = 'assistant',
         text = '',
         done = false,
-        resultIsError = false,
-        running = true;
+        resultIsError = false;
 }
 
 /// A PC session as returned by sessions.list (SessionInfo subset).
@@ -110,49 +115,39 @@ String? extractText(Object? content) {
   return null;
 }
 
-/// Mirrors the desktop getToolPreview: the first meaningful input value.
-String toolPreview(Map<dynamic, dynamic> input) {
-  if (input.isEmpty) return '';
-  for (final key in ['command', 'path', 'file_path', 'pattern', 'query']) {
-    if (input.containsKey(key)) return _clip('${input[key]}'.replaceAll('\n', ' '));
-  }
-  return _clip('${input.values.first}'.replaceAll('\n', ' '));
-}
-
-/// Chinese display labels for common tools, aligned with the desktop.
-String toolDisplayName(String toolName) {
-  final lower = toolName.toLowerCase();
-  if (lower == 'bash' || lower == 'powershell' || lower.contains('command')) return '终端';
-  if (lower == 'read') return '读取文件';
-  if (lower == 'write') return '写入文件';
-  if (lower == 'edit' || lower == 'multiedit') return '编辑文件';
-  if (lower.startsWith('browser')) return '浏览器';
-  if (lower.contains('websearch') || lower.contains('search')) return '搜索';
-  if (lower.contains('fetch')) return '网页抓取';
-  if (lower.contains('todo')) return '任务清单';
-  return toolName;
-}
-
 /// Upsert a tool card line by toolCallId; returns its index.
+///
+/// [live] cards start out running until their result pairs in. History cards
+/// never do: a toolCall with no recorded result (truncated history) must not
+/// spin forever.
 int upsertToolCard(
   List<ChatLine> lines,
   Map<String, int> indexByCallId,
-  Map<dynamic, dynamic> block,
-) {
+  Map<dynamic, dynamic> block, {
+  bool live = true,
+  int? messageIndex,
+}) {
   final toolCallId = block['toolCallId'] as String? ?? '';
-  final input = block['input'];
-  final inputJson = input is Map ? const JsonEncoder.withIndent('  ').convert(input) : '${input ?? ''}';
-  final preview = input is Map ? toolPreview(input) : '';
+  final rawInput = block['input'];
+  final input = rawInput is Map ? rawInput : null;
   final toolName = block['toolName'] as String? ?? 'tool';
   final existing = indexByCallId[toolCallId];
   if (existing != null && existing < lines.length && lines[existing].kind == 'tool') {
     final line = lines[existing];
     line.toolName = toolName;
-    line.inputJson = inputJson;
-    line.preview = preview;
+    // Early streaming snapshots may carry a partial or missing input; keep
+    // the last complete one so the action title does not flicker backwards.
+    if (input != null) line.input = input;
     return existing;
   }
-  lines.add(ChatLine.tool(toolCallId: toolCallId, toolName: toolName, inputJson: inputJson, preview: preview));
+  lines.add(ChatLine.tool(
+    toolCallId: toolCallId,
+    toolName: toolName,
+    input: input,
+    running: live,
+    messageIndex: messageIndex,
+    fromToolCall: true,
+  ));
   indexByCallId[toolCallId] = lines.length - 1;
   return lines.length - 1;
 }
@@ -161,8 +156,9 @@ int upsertToolCard(
 bool applyToolResult(
   List<ChatLine> lines,
   Map<String, int> indexByCallId,
-  Map<dynamic, dynamic> message,
-) {
+  Map<dynamic, dynamic> message, {
+  int? messageIndex,
+}) {
   final toolCallId = message['toolCallId'] as String?;
   final text = extractText(message['content']) ?? '';
   final isError = message['isError'] == true;
@@ -180,8 +176,7 @@ bool applyToolResult(
   lines.add(ChatLine.tool(
     toolCallId: toolCallId ?? '',
     toolName: message['toolName'] as String? ?? 'tool',
-    inputJson: '',
-    preview: '',
+    messageIndex: messageIndex,
   ));
   final line = lines.last;
   line.resultText = text.trim().isEmpty ? '(无输出)' : text;
@@ -199,11 +194,12 @@ List<ChatLine> historyLinesFromDetail(Map<String, dynamic> detail) {
   final context = detail['context'];
   final messages = context is Map ? context['messages'] : null;
   if (messages is List) {
-    for (final message in messages) {
+    for (var messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+      final message = messages[messageIndex];
       if (message is! Map) continue;
       final role = message['role'] as String? ?? 'assistant';
       if (role == 'toolResult') {
-        applyToolResult(lines, indexByCallId, message);
+        applyToolResult(lines, indexByCallId, message, messageIndex: messageIndex);
         continue;
       }
       if (role != 'user' && role != 'assistant') continue;
@@ -211,27 +207,37 @@ List<ChatLine> historyLinesFromDetail(Map<String, dynamic> detail) {
       if (content is! List) {
         final text = extractText(content);
         if (text != null && text.trim().isNotEmpty) {
-          lines.add(ChatLine.text(role: role, text: text.trim(), done: true));
+          lines.add(ChatLine.text(role: role, text: text.trim(), done: true, messageIndex: messageIndex));
         }
         continue;
       }
       for (final block in content) {
         if (block is! Map) continue;
         if (block['type'] == 'toolCall') {
-          upsertToolCard(lines, indexByCallId, block);
+          upsertToolCard(lines, indexByCallId, block, live: false, messageIndex: messageIndex);
         } else if (block['type'] == 'thinking') {
           final thinking = (block['thinking'] as String? ?? '').trim();
           if (thinking.isNotEmpty) {
-            lines.add(ChatLine.thinking(role: role, text: thinking, done: true));
+            lines.add(ChatLine.thinking(role: role, text: thinking, done: true, messageIndex: messageIndex));
           }
         } else if (block['type'] == 'text') {
           final text = (block['text'] as String? ?? '').trim();
-          if (text.isNotEmpty) lines.add(ChatLine.text(role: role, text: text, done: true));
+          if (text.isNotEmpty) {
+            lines.add(ChatLine.text(role: role, text: text, done: true, messageIndex: messageIndex));
+          }
         }
       }
     }
   }
   return lines;
+}
+
+/// Number of messages in a sessions.get detail, used to seed the live message
+/// ordinal so freshly streamed lines never collide with history entries.
+int historyMessageCount(Map<String, dynamic> detail) {
+  final context = detail['context'];
+  final messages = context is Map ? context['messages'] : null;
+  return messages is List ? messages.length : 0;
 }
 
 /// Group session summaries by project root, sorted by recency.

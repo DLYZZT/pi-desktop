@@ -3,6 +3,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
@@ -11,6 +12,8 @@ import '../core/remote_connection.dart';
 import '../widgets/ask_sheet.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/session_models.dart';
+import '../widgets/tool_action_title.dart';
+import '../widgets/transcript_groups.dart';
 
 /// PC `agentState.running` means the session object is still alive
 /// (`isAlive()`), NOT that a turn is in flight. A turn is running only when
@@ -48,6 +51,14 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   final _toolIndexByCallId = <String, int>{};
   final _expandedTools = <String>{};
   final _expandedThinking = <String>{};
+  /// Process groups the user opened, keyed by the turn's user message ordinal.
+  final _expandedProcessGroups = <String>{};
+  /// A finished turn stays unfolded while the reader is away from the bottom;
+  /// folding it there would yank their viewport. Cleared when they scroll back.
+  bool _holdLastTurnOpen = false;
+  /// Ordinal of the live message being streamed, so lines of the same message
+  /// share one count in process-group headers. Seeded from history.
+  int _liveMessageIndex = -1;
   final _approvals = <Map<String, dynamic>>[];
   /// Pending ask requests keyed by requestId. The sheet shows one at a time and
   /// the map survives a sheet being dismissed so it can be reopened.
@@ -130,6 +141,9 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
         _lines
           ..clear()
           ..addAll(historyLinesFromDetail(detail));
+        // Live messages must not reuse history ordinals, or a fresh turn would
+        // fold into the last historical group's key.
+        _liveMessageIndex = historyMessageCount(detail) - 1;
         _currentModel = _modelFromDetail(detail);
         _loadingHistory = false;
         // Restore the turn mirror from the runtime snapshot so the
@@ -155,17 +169,29 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   /// polling in sync with the mirror.
   void _applyTurnRunning(bool running) {
     if (!mounted) return;
+    final wasRunning = _turnRunning;
+    final finished = wasRunning && !running;
     setState(() {
       _turnRunning = running;
       if (!running) {
         _steeringQueue = const [];
         _followUpQueue = const [];
       }
+      if (running) {
+        _holdLastTurnOpen = false;
+      } else if (finished && !_scrollMagnetEngaged) {
+        // Folding the just-finished turn shrinks the transcript and would
+        // shift whatever the reader is looking at. Keep it unfolded until
+        // they scroll back to the bottom.
+        _holdLastTurnOpen = true;
+      }
     });
     if (running) {
       _startQueuePolling();
     } else {
       _stopQueuePolling();
+      // The finished turn now folds; keep the viewport pinned to the bottom.
+      if (finished && !_holdLastTurnOpen) _scrollMagnetOnToggle();
     }
   }
 
@@ -325,6 +351,11 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     final data = event.data;
     if (data is! Map) return;
     final type = data['type'] as String?;
+    if (type == 'message_start') {
+      // A new message in the stream: advance the ordinal that process groups
+      // use for "N 条消息" and for their stable expansion keys.
+      _liveMessageIndex += 1;
+    }
     final message = data['message'];
     if (message is! Map) return;
     final role = message['role'] as String?;
@@ -332,7 +363,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       if (role == 'toolResult') {
         // Tool results pair into their toolCall card (desktop MessageView
         // behavior); unpaired ones become standalone result cards.
-        applyToolResult(_lines, _toolIndexByCallId, message);
+        applyToolResult(_lines, _toolIndexByCallId, message, messageIndex: _liveMessageIndex);
         _throttledScroll();
         return;
       }
@@ -357,13 +388,14 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   }
 
   void _applyStreamedMessage(String? role, Object? content, String? text, {required bool done}) {
+    final messageIndex = _liveMessageIndex;
     var hasContent = false;
     if (content is List) {
       for (final block in content) {
         if (block is! Map) continue;
         if (block['type'] == 'toolCall') {
           hasContent = true;
-          upsertToolCard(_lines, _toolIndexByCallId, block);
+          upsertToolCard(_lines, _toolIndexByCallId, block, messageIndex: messageIndex);
         } else if (block['type'] == 'thinking') {
           hasContent = true;
           _upsertThinkingLine(role ?? 'assistant', block['thinking'] as String? ?? '', done: done);
@@ -408,7 +440,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       open.text = chunk;
       open.done = done;
     } else {
-      _lines.add(ChatLine.thinking(role: role, text: chunk, done: done));
+      _lines.add(ChatLine.thinking(role: role, text: chunk, done: done, messageIndex: _liveMessageIndex));
     }
   }
 
@@ -542,7 +574,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       open.text = blockText;
       open.done = done;
     } else {
-      _lines.add(ChatLine.text(role: role, text: blockText, done: done));
+      _lines.add(ChatLine.text(role: role, text: blockText, done: done, messageIndex: _liveMessageIndex));
     }
   }
 
@@ -606,6 +638,11 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     final near = isNearChatBottom(maxScrollExtent: metrics.maxScrollExtent, offset: metrics.pixels);
     if (near != _awayFromBottom) setState(() => _awayFromBottom = !near);
     if (near && !_scrollMagnetEngaged) setState(() => _scrollMagnetEngaged = true);
+    if (near && _holdLastTurnOpen) {
+      // Back at the bottom: now it is safe to fold the finished turn.
+      setState(() => _holdLastTurnOpen = false);
+      _scrollMagnetOnToggle();
+    }
   }
 
   /// 悬浮"回到底部"：跳到底并重新吸附，后续流式输出继续跟随。
@@ -799,9 +836,25 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildProcessGroup(BuildContext context, ProcessGroupEntry group) {
+    return _ProcessGroupCard(
+      messageCount: group.messageCount,
+      toolCallCount: group.toolCallCount,
+      expanded: _expandedProcessGroups.contains(group.key),
+      onToggle: () => setState(() {
+        if (!_expandedProcessGroups.remove(group.key)) _expandedProcessGroups.add(group.key);
+        _scrollMagnetOnToggle();
+      }),
+      children: [for (final line in group.processLines) _buildLine(context, line)],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ready = widget.connection.isReady;
+    // Fold each completed turn's process into one collapsed row; the turn that
+    // is still streaming (or held open for a reader scrolled away) stays flat.
+    final entries = buildTranscriptEntries(_lines, liveTail: _turnRunning || _holdLastTurnOpen);
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title, overflow: TextOverflow.ellipsis),
@@ -891,12 +944,15 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                     controller: _scrollController,
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     itemCount:
-                        _lines.length + (_sendingText != null ? 1 : 0) + (_awaitingFirst ? 1 : 0),
+                        entries.length + (_sendingText != null ? 1 : 0) + (_awaitingFirst ? 1 : 0),
                     itemBuilder: (context, index) {
-                      if (index < _lines.length) {
-                        return _buildLine(context, _lines[index]);
+                      if (index < entries.length) {
+                        final entry = entries[index];
+                        final group = entry.group;
+                        if (group != null) return _buildProcessGroup(context, group);
+                        return _buildLine(context, entry.line!);
                       }
-                      final pendingIndex = index - _lines.length;
+                      final pendingIndex = index - entries.length;
                       if (_sendingText != null && pendingIndex == 0) {
                         return Align(
                           alignment: Alignment.centerRight,
@@ -1150,8 +1206,8 @@ class _ThinkingCard extends StatelessWidget {
 }
 
 /// Collapsible tool card mirroring the desktop ToolCallBlock: header with a
-/// display label + input preview, running/error state, expandable full input
-/// JSON and paired result text.
+/// readable action title, raw tool name and running/error state, expandable
+/// args JSON and paired result text.
 class _ToolCard extends StatelessWidget {
   final ChatLine line;
   final bool expanded;
@@ -1171,8 +1227,13 @@ class _ToolCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = toolDisplayName(line.toolName ?? 'tool');
-    final hasBody = (line.inputJson?.isNotEmpty ?? false) || (line.resultText?.isNotEmpty ?? false);
+    final actionTitle = toolActionTitle(line.toolName ?? 'tool', line.input);
+    final hasInput = line.input?.isNotEmpty ?? false;
+    final hasBody = hasInput || (line.resultText?.isNotEmpty ?? false);
+    // Collapsed cards never show the args. Serializing a large edit/write
+    // input on every streaming snapshot is pure waste, so build it only when
+    // the card is open.
+    final inputJson = expanded && hasInput ? const JsonEncoder.withIndent('  ').convert(line.input) : null;
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
       decoration: BoxDecoration(
@@ -1192,16 +1253,32 @@ class _ToolCard extends StatelessWidget {
                 children: [
                   Icon(_icon, size: 15, color: Colors.black54),
                   const SizedBox(width: 6),
-                  Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                  const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      line.preview ?? '',
+                      actionTitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11, color: Colors.black54, fontFamily: 'monospace'),
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                     ),
                   ),
+                  const SizedBox(width: 6),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 72),
+                    child: Text(
+                      line.toolName ?? 'tool',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 10, color: Colors.black38),
+                    ),
+                  ),
+                  if (line.resultIsError) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      '失败',
+                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.red.shade700),
+                    ),
+                  ],
+                  const SizedBox(width: 6),
                   if (line.running)
                     const SizedBox(
                       width: 12,
@@ -1229,7 +1306,7 @@ class _ToolCard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (line.inputJson?.isNotEmpty ?? false)
+                        if (inputJson != null)
                           Container(
                             width: double.infinity,
                             padding: const EdgeInsets.all(6),
@@ -1238,7 +1315,7 @@ class _ToolCard extends StatelessWidget {
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              line.inputJson!,
+                              inputJson,
                               style: const TextStyle(fontSize: 10, fontFamily: 'monospace', color: Colors.black87),
                             ),
                           ),
@@ -1264,6 +1341,72 @@ class _ToolCard extends StatelessWidget {
                       ],
                     ),
                   )
+                : const SizedBox(width: double.infinity),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One completed turn's folded process, mirroring the desktop
+/// ProcessDetailsGroup: a "过程详情 · N 条消息 · M 次工具调用" header that hides
+/// the thinking cards and tool cards until tapped.
+class _ProcessGroupCard extends StatelessWidget {
+  final int messageCount;
+  final int toolCallCount;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final List<Widget> children;
+
+  const _ProcessGroupCard({
+    required this.messageCount,
+    required this.toolCallCount,
+    required this.expanded,
+    required this.onToggle,
+    required this.children,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = <String>['过程详情', '$messageCount 条消息'];
+    if (toolCallCount > 0) parts.add('$toolCallCount 次工具调用');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+              child: Row(
+                children: [
+                  AnimatedRotation(
+                    turns: expanded ? 0.25 : 0,
+                    duration: const Duration(milliseconds: 140),
+                    child: const Icon(Icons.chevron_right, size: 14, color: Colors.black45),
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      parts.join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12, color: Colors.black54),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: expanded
+                ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children)
                 : const SizedBox(width: double.infinity),
           ),
         ],
