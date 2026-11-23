@@ -179,6 +179,8 @@ export const enUS: Record<string, string> = {
   toolCategoryScanning: "Scanning…",
   toolDetailDescription:
     "Choose which verified provider Pi Desktop should use for Skills, Plugins, Agent commands, and project operations.",
+  adbDetailDescription:
+    "Enable USB debugging on the device and accept its authorization prompt. Windows may need the OEM USB driver; Linux requires a udev rule for non-root access. Once the Pi-managed copy is installed, Auto uses it first.",
   toolDiscoveryFailed: "Tool discovery failed. Existing selections were not changed; try rescanning.",
   toolDiscoveryPrivacy:
     "Scanning does not run shell profiles or access the network. Pi Desktop does not modify the system PATH, shell profile, or registry.",
@@ -198,7 +200,8 @@ export const enUS: Record<string, string> = {
   toolErrorIntegrity: "The downloaded file failed integrity verification and was discarded.",
   toolErrorInvalidSelection: "The selected executable did not provide the requested healthy tool.",
   toolErrorModified: "The managed runtime was modified; repair it before use.",
-  toolErrorOffline: "The official download source is unreachable. Check the network and retry.",
+  toolErrorOffline:
+    "The official download source is unreachable. If the network is restricted, enable a system proxy/TUN and retry.",
   toolErrorPermission: "Pi Desktop cannot write or execute its private tool directory.",
   toolErrorRequired: "A required developer tool is unavailable. Rescan or install the matching Essentials profile.",
   toolErrorUnsupported: "This managed tool is not available for the current platform and architecture.",
@@ -207,6 +210,7 @@ export const enUS: Record<string, string> = {
   toolGroupAgentRuntimes: "Agent runtimes",
   toolGroupJavaScript: "JavaScript",
   toolGroupPython: "Python",
+  toolGroupAndroid: "Android",
   toolHealth: "Status",
   toolHealthBlockedByTrust: "Trust required",
   toolHealthBroken: "Broken",
@@ -453,6 +457,8 @@ export const zhCN: Record<string, string> = {
   toolCandidatesTitle: "检测到的来源",
   toolCategoryScanning: "扫描中…",
   toolDetailDescription: "选择 Pi Desktop 应用于技能、插件、Agent 命令和项目操作的已验证工具来源。",
+  adbDetailDescription:
+    "请在设备上开启 USB 调试并确认授权弹窗。Windows 可能需要安装厂商 USB 驱动；Linux 非 root 访问需要配置 udev 规则。安装 Pi 托管版本后，自动模式会优先使用它。",
   toolDiscoveryFailed: "工具发现失败。已有选择未被更改，请重新扫描。",
   toolDiscoveryPrivacy: "扫描不会执行 shell profile 或访问网络。Pi Desktop 不会修改系统 PATH、shell profile 或注册表。",
   toolDiscoveryStarting: "工具发现正在启动…",
@@ -469,7 +475,7 @@ export const zhCN: Record<string, string> = {
   toolErrorIntegrity: "下载文件未通过完整性验证，已被丢弃。",
   toolErrorInvalidSelection: "所选可执行文件未提供所需的健康工具。",
   toolErrorModified: "托管运行时已被修改，请修复后再使用。",
-  toolErrorOffline: "无法连接官方下载来源。请检查网络后重试。",
+  toolErrorOffline: "无法连接官方下载来源。若网络受限，请开启系统代理/TUN 后重试。",
   toolErrorPermission: "Pi Desktop 无法写入或执行其私有工具目录。",
   toolErrorRequired: "缺少此操作所需的开发工具。请重新扫描，或安装对应的基础工具包。",
   toolErrorUnsupported: "当前平台和架构没有可用的托管版本。",
@@ -478,6 +484,7 @@ export const zhCN: Record<string, string> = {
   toolGroupAgentRuntimes: "Agent 运行时",
   toolGroupJavaScript: "JavaScript",
   toolGroupPython: "Python",
+  toolGroupAndroid: "Android",
   toolHealth: "状态",
   toolHealthBlockedByTrust: "需要信任",
   toolHealthBroken: "不可用",
@@ -722,6 +729,8 @@ export const zhTW: Record<string, string> = {
   toolCandidatesTitle: "偵測到的來源",
   toolCategoryScanning: "掃描中…",
   toolDetailDescription: "選擇 Pi Desktop 套用給技能、外掛、Agent 命令與專案操作的已驗證工具來源。",
+  adbDetailDescription:
+    "請在裝置上開啟 USB 偵錯並確認授權彈窗。Windows 可能需要安裝廠商 USB 驅動程式；Linux 非 root 存取需要設定 udev 規則。安裝 Pi 託管版本後，自動模式會優先使用它。",
   toolDiscoveryFailed: "工具探索失敗。既有的選擇未改變，請重新掃描。",
   toolDiscoveryPrivacy: "掃描不會執行 shell 設定檔或存取網路。Pi Desktop 不會修改系統 PATH、shell 設定檔或登錄檔。",
   toolDiscoveryStarting: "工具探索正在啟動…",
@@ -738,7 +747,7 @@ export const zhTW: Record<string, string> = {
   toolErrorIntegrity: "下載檔案未通過完整性驗證，已丟棄。",
   toolErrorInvalidSelection: "所選的執行檔未提供所需的健康檢查工具。",
   toolErrorModified: "受管執行階段已被修改，請修復後再使用。",
-  toolErrorOffline: "無法連線官方下載來源。請檢查網路後重試。",
+  toolErrorOffline: "無法連線官方下載來源。若網路受限，請開啟系統代理/TUN 後重試。",
   toolErrorPermission: "Pi Desktop 無法寫入或執行其私人工具目錄。",
   toolErrorRequired: "缺少此操作所需的開發工具。請重新掃描，或安裝對應的基礎工具套件。",
   toolErrorUnsupported: "目前的平台與架構沒有可用的受管版本。",
@@ -747,6 +756,7 @@ export const zhTW: Record<string, string> = {
   toolGroupAgentRuntimes: "Agent 執行階段",
   toolGroupJavaScript: "JavaScript",
   toolGroupPython: "Python",
+  toolGroupAndroid: "Android",
   toolHealth: "狀態",
   toolHealthBlockedByTrust: "需要信任",
   toolHealthBroken: "無法使用",

@@ -183,9 +183,9 @@
 
 ### 跨平台开发工具管理
 
-- 优先发现并验证用户已有的 Node.js/npm、Python、uv、Git/Bash、Bun 和 jq，覆盖 GUI 启动时 PATH 不完整的常见场景
+- 优先发现并验证用户已有的 Node.js/npm、Python、uv、Git/Bash、Bun、jq 和 Android SDK Platform-Tools（adb），覆盖 GUI 启动时 PATH 不完整的常见场景
 - 为 Skills、Plugins、Agent Bash、Git/worktree 和搜索工具提供一致的绝对路径与局部执行环境
-- 用户确认后可把 Node.js LTS、CPython、uv、PortableGit、Bun 和 jq 安装到应用私有目录，不修改系统 PATH、Shell 配置或注册表
+- 用户确认后可把 Node.js LTS、CPython、uv、PortableGit、Bun、jq 和 Android Platform-Tools 安装到应用私有目录，不修改系统 PATH、Shell 配置或注册表
 - 安装包内置经过清单校验的目标平台 ripgrep 与 fd，保证基础搜索离线可用
 
 ### 微信、Telegram 与飞书/Lark 消息渠道
@@ -229,7 +229,7 @@ v0.5.1 内置 Pi Coding Agent 1.5.0，修复超大轮次阻断长会话历史恢
 
 应用会读取 `~/.pi/agent/` 中的会话与配置。如果你已经使用 Pi CLI，可以直接复用现有数据，无需迁移；此前没有使用过 Pi CLI 也不影响使用。
 
-Pi Desktop 会先发现并验证用户已经安装的 Node.js/npm、Python、Git、Bash、uv、jq 和 Bun；内置的 `rg`/`fd` 保证离线搜索可用。
+Pi Desktop 会先发现并验证用户已经安装的 Node.js/npm、Python、Git、Bash、uv、jq、Bun 和 adb；内置的 `rg`/`fd` 保证离线搜索可用。
 
 ### 桌面安装包系统要求
 

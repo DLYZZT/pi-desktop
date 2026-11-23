@@ -23,6 +23,13 @@ const COMPONENT_ENTRYPOINTS: Record<ManagedComponentId, readonly EntrypointDefin
   fd: [{ capability: "search.fd", names: ["fd.exe", "fd"] }],
   jq: [{ capability: "data.jq", names: ["jq.exe", "jq"] }],
   bun: [{ capability: "js.bun", names: ["bun.exe", "bun"] }],
+  "platform-tools": [
+    {
+      capability: "android.adb",
+      names: ["adb.exe", "adb"],
+      preferredSuffixes: ["platform-tools/adb.exe", "platform-tools/adb"],
+    },
+  ],
   herdr: [],
 };
 

@@ -16,6 +16,7 @@ const capabilities = [
   "search.fd",
   "data.jq",
   "network.curl",
+  "android.adb",
 ];
 
 function successfulResult(command) {
@@ -28,7 +29,9 @@ function successfulResult(command) {
   else if (args.includes("pi-toolchain-fd-probe.txt")) stdout = "./pi-toolchain-fd-probe.txt\n";
   else if (args.includes(".pi")) stdout = '"PI_TOOLCHAIN_JQ_OK"\n';
   else if (args.includes("PI_TOOLCHAIN_BUN_OK")) stdout = "PI_TOOLCHAIN_BUN_OK";
-  else if (args.includes("platform.python_version")) {
+  else if (args === "version") {
+    stdout = "Android Debug Bridge version 1.0.41\nVersion 37.0.3-15312975\nInstalled as /tools/android-adb\n";
+  } else if (args.includes("platform.python_version")) {
     stdout = JSON.stringify({
       executable: command.executable,
       version: "3.13.4",
@@ -84,7 +87,15 @@ test("probes every reported Phase 1 capability without network or shell-profile 
       assert.equal(candidates[1].capability, "python.uvx");
       assert.deepEqual(candidates[1].argvPrefix, ["tool", "run"]);
     }
+    if (capability === "android.adb") {
+      assert.equal(candidates[0].version, "37.0.3");
+    }
   }
+
+  assert.equal(
+    commands.some((command) => command.args.includes("devices")),
+    false,
+  );
 
   assert.equal(
     commands.some((command) => command.args.some((arg) => /^https?:/i.test(arg))),

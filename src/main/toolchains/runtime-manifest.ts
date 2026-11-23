@@ -37,6 +37,7 @@ const COMPONENT_ENTRYPOINT_CAPABILITIES: Readonly<Record<ManagedComponentId, rea
   fd: ["search.fd"],
   jq: ["data.jq"],
   bun: ["js.bun"],
+  "platform-tools": ["android.adb"],
   herdr: [],
 };
 

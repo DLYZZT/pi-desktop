@@ -94,6 +94,7 @@ const POSIX_TOOL_NAMES: ReadonlyArray<readonly [ToolCapabilityId, readonly strin
   ["search.fd", ["fd", "fdfind"]],
   ["data.jq", ["jq"]],
   ["network.curl", ["curl"]],
+  ["android.adb", ["adb"]],
 ];
 
 const WINDOWS_TOOL_NAMES: ReadonlyArray<readonly [ToolCapabilityId, readonly string[]]> = [
@@ -109,6 +110,7 @@ const WINDOWS_TOOL_NAMES: ReadonlyArray<readonly [ToolCapabilityId, readonly str
   ["search.fd", ["fd.exe", "fdfind.exe"]],
   ["data.jq", ["jq.exe"]],
   ["network.curl", ["curl.exe"]],
+  ["android.adb", ["adb.exe"]],
 ];
 
 function platformPath(platform: NodeJS.Platform): typeof path.win32 | typeof path.posix {
@@ -138,6 +140,7 @@ function executableCapability(filePath: string, platform: NodeJS.Platform): Tool
   if (basename === "fd" || basename === "fdfind") return "search.fd";
   if (basename === "jq") return "data.jq";
   if (basename === "curl") return "network.curl";
+  if (basename === "adb") return "android.adb";
   return undefined;
 }
 
@@ -348,6 +351,14 @@ export class DiscoveryRegistry {
         "git-for-windows-local",
         1_043,
       );
+      const androidSdkRoot =
+        envValue(this.env, "ANDROID_HOME", this.platform) ?? envValue(this.env, "ANDROID_SDK_ROOT", this.platform);
+      add(androidSdkRoot ? pathApi.join(androidSdkRoot, "platform-tools") : undefined, "android-home", 1_070);
+      add(
+        localAppData ? pathApi.join(localAppData, "Android", "Sdk", "platform-tools") : undefined,
+        "android-sdk",
+        1_071,
+      );
       add(userProfile ? pathApi.join(userProfile, ".local", "bin") : undefined, "user-local", 1_050);
 
       if (localAppData) {
@@ -418,6 +429,10 @@ export class DiscoveryRegistry {
         1_025,
       );
 
+      const androidSdkRoot =
+        envValue(this.env, "ANDROID_HOME", this.platform) ?? envValue(this.env, "ANDROID_SDK_ROOT", this.platform);
+      add(androidSdkRoot ? pathApi.join(androidSdkRoot, "platform-tools") : undefined, "android-home", 1_040);
+
       if (this.homeDir) {
         for (const distribution of ["miniconda3", "anaconda3", "miniforge3", "mambaforge"]) {
           add(pathApi.join(this.homeDir, distribution, "bin"), `conda-known:${distribution}`, 1_026);
@@ -427,6 +442,11 @@ export class DiscoveryRegistry {
       if (this.platform === "darwin") {
         add("/opt/homebrew/bin", "homebrew", 1_030);
         add("/usr/local/microsoft/powershell/7", "powershell", 1_030);
+        add(
+          this.homeDir ? pathApi.join(this.homeDir, "Library", "Android", "sdk", "platform-tools") : undefined,
+          "android-sdk",
+          1_040,
+        );
         const brewRoots = ["/opt/homebrew/opt", "/usr/local/opt"];
         for (const root of brewRoots) {
           enumerate(
@@ -447,6 +467,16 @@ export class DiscoveryRegistry {
       } else if (this.platform === "linux") {
         add("/home/linuxbrew/.linuxbrew/bin", "linuxbrew", 1_030);
         add("/opt/microsoft/powershell/7", "powershell", 1_031);
+        add(
+          this.homeDir ? pathApi.join(this.homeDir, "Android", "Sdk", "platform-tools") : undefined,
+          "android-sdk",
+          1_040,
+        );
+        add(
+          this.homeDir ? pathApi.join(this.homeDir, "Android", "sdk", "platform-tools") : undefined,
+          "android-sdk",
+          1_041,
+        );
       }
 
       if (this.homeDir) {
@@ -516,6 +546,7 @@ export class DiscoveryRegistry {
           "bun.exe",
           "pwsh.exe",
           "curl.exe",
+          "adb.exe",
         ],
         env: this.env,
       });

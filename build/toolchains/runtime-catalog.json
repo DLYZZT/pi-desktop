@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "revision": 3,
+  "revision": 4,
   "components": [
     {
       "id": "node-lts",
@@ -238,6 +238,53 @@
           "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip",
           "sha256": "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f",
           "downloadBytes": 35969274,
+          "archive": "zip",
+          "installer": "safe-archive"
+        }
+      ]
+    },
+    {
+      "id": "platform-tools",
+      "version": "37.0.3",
+      "provides": ["android.adb"],
+      "license": {
+        "name": "Android SDK Platform-Tools (Apache-2.0)",
+        "url": "https://developer.android.com/tools/releases/platform-tools"
+      },
+      "variants": [
+        {
+          "platform": "darwin",
+          "arch": "arm64",
+          "url": "https://dl.google.com/android/repository/platform-tools_r37.0.3-darwin.zip",
+          "sha256": "df21339b9371fef9b19264404338dc686f59a88a1dce634b963da344909001d6",
+          "downloadBytes": 16597626,
+          "archive": "zip",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "darwin",
+          "arch": "x64",
+          "url": "https://dl.google.com/android/repository/platform-tools_r37.0.3-darwin.zip",
+          "sha256": "df21339b9371fef9b19264404338dc686f59a88a1dce634b963da344909001d6",
+          "downloadBytes": 16597626,
+          "archive": "zip",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "win32",
+          "arch": "x64",
+          "url": "https://dl.google.com/android/repository/platform-tools_r37.0.3-win.zip",
+          "sha256": "89d108360a3bf2924d3bea837239edaccc22fd6ff5befd3787c4348a9fe4f09d",
+          "downloadBytes": 8188601,
+          "archive": "zip",
+          "installer": "safe-archive"
+        },
+        {
+          "platform": "linux",
+          "arch": "x64",
+          "url": "https://dl.google.com/android/repository/platform-tools_r37.0.3-linux.zip",
+          "sha256": "214548146cadb2ca3508143d8a1d4be4c59de5bb837253e3ede89ed74cf450d1",
+          "downloadBytes": 9571024,
           "archive": "zip",
           "installer": "safe-archive"
         }

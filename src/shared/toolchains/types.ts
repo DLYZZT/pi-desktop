@@ -13,6 +13,7 @@ export const TOOL_CAPABILITY_IDS = [
   "search.fd",
   "data.jq",
   "network.curl",
+  "android.adb",
 ] as const;
 
 export type ToolCapabilityId = (typeof TOOL_CAPABILITY_IDS)[number];
@@ -26,6 +27,7 @@ export const MANAGED_COMPONENT_IDS = [
   "fd",
   "jq",
   "bun",
+  "platform-tools",
   "herdr",
 ] as const;
 

@@ -15,7 +15,32 @@ const REDIRECT_HOSTS = new Set([
   "raw.githubusercontent.com",
   "nodejs.org",
   "releases.astral.sh",
+  "dl.google.com",
 ]);
+
+// Chromium's net stack reports proxy/DNS failures with its own codes instead of
+// Node's ENOTFOUND/ECONNREFUSED. Treat both as an offline download so the UI can
+// point users at their proxy configuration.
+const OFFLINE_NETWORK_CODES = new Set([
+  "ENOTFOUND",
+  "ECONNREFUSED",
+  "EAI_AGAIN",
+  "ETIMEDOUT",
+  "ERR_NAME_NOT_RESOLVED",
+  "ERR_INTERNET_DISCONNECTED",
+  "ERR_PROXY_CONNECTION_FAILED",
+  "ERR_TUNNEL_CONNECTION_FAILED",
+  "ERR_CONNECTION_TIMED_OUT",
+  "ERR_CONNECTION_REFUSED",
+  "ERR_CONNECTION_RESET",
+  "ERR_NETWORK_CHANGED",
+  "ERR_ADDRESS_UNREACHABLE",
+]);
+
+function isOfflineDownloadError(code: string | undefined): boolean {
+  if (!code) return false;
+  return OFFLINE_NETWORK_CODES.has(code.replace(/^net::/i, ""));
+}
 
 export interface DownloadProgress {
   downloadedBytes: number;
@@ -76,10 +101,9 @@ async function fetchArtifact(
     } catch (error) {
       const code = (error as { code?: unknown }).code;
       throw new ToolchainError({
-        code:
-          code === "ENOTFOUND" || code === "ECONNREFUSED"
-            ? "TOOLCHAIN_DOWNLOAD_OFFLINE"
-            : "TOOLCHAIN_DOWNLOAD_REJECTED",
+        code: isOfflineDownloadError(typeof code === "string" ? code : undefined)
+          ? "TOOLCHAIN_DOWNLOAD_OFFLINE"
+          : "TOOLCHAIN_DOWNLOAD_REJECTED",
         message: "Could not download the managed runtime artifact",
         cause: error,
         causeCode: typeof code === "string" ? code : undefined,

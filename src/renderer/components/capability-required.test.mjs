@@ -54,6 +54,10 @@ test("recommends only the managed component that can satisfy the missing capabil
     action: "install-profile",
     profileId: "javascript-essentials",
   });
+  assert.deepEqual(
+    installActionForIssue({ code: "TOOLCHAIN_CAPABILITY_REQUIRED", capability: "android.adb" }, "win32"),
+    { action: "install-component", componentId: "platform-tools" },
+  );
 });
 
 test("typed RPC errors preserve the capability and message nested by the Host serializer", () => {

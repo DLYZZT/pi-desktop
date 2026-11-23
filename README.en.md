@@ -183,9 +183,9 @@ Generated images appear in final replies and remain viewable when session histor
 
 ### Cross-platform developer tool management
 
-- Discover and verify the user's existing Node.js/npm, Python, uv, Git/Bash, Bun, and jq installations, including common locations missing from a GUI launch PATH
+- Discover and verify the user's existing Node.js/npm, Python, uv, Git/Bash, Bun, jq, and Android SDK Platform-Tools (adb) installations, including common locations missing from a GUI launch PATH
 - Give Skills, Plugins, Agent Bash, Git/worktree operations, and search tools one consistent set of absolute paths and per-process environments
-- With explicit user confirmation, install Node.js LTS, CPython, uv, PortableGit, Bun, and jq into private application storage without changing the system PATH, shell profile, or registry
+- With explicit user confirmation, install Node.js LTS, CPython, uv, PortableGit, Bun, jq, and Android Platform-Tools into private application storage without changing the system PATH, shell profile, or registry
 - Bundle manifest-verified ripgrep and fd binaries for the target platform so basic search remains available offline
 
 ### WeChat, Telegram, and Feishu/Lark channels
@@ -229,7 +229,7 @@ Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or np
 
 The application reads sessions and configuration from `~/.pi/agent/`. If you already use the Pi CLI, your existing data is available without migration. The desktop application also works if you have never used the CLI.
 
-Pi Desktop first discovers and verifies the user's existing Node.js/npm, Python, Git, Bash, uv, jq, and Bun installations; bundled `rg` and `fd` keep search available offline.
+Pi Desktop first discovers and verifies the user's existing Node.js/npm, Python, Git, Bash, uv, jq, Bun, and adb installations; bundled `rg` and `fd` keep search available offline.
 
 ### Desktop system requirements
 

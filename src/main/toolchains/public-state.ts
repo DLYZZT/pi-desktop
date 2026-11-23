@@ -7,6 +7,7 @@ import type {
   ToolCandidate,
   ToolCapabilityId,
   ToolPreference,
+  ToolProvider,
 } from "../../shared/toolchains/types";
 import { MANAGED_COMPONENT_IDS, TOOL_CAPABILITY_IDS } from "../../shared/toolchains/types.ts";
 import { redactToolPath, type PathRedactionRoot } from "./candidate-normalizer.ts";
@@ -20,6 +21,15 @@ const MISSING_REASON: Partial<Record<ToolCapabilityId, PublicCapabilityState["re
   "python.interpreter": "TOOLCHAIN_PYTHON_REQUIRED",
   "python.uv": "TOOLCHAIN_UV_REQUIRED",
   "python.uvx": "TOOLCHAIN_UV_REQUIRED",
+};
+
+/**
+ * Android tooling can come from Android Studio (system) or the Pi-managed
+ * download. Once the managed copy is installed it should win in `auto` mode,
+ * while explicit project/custom selections still take precedence.
+ */
+const AUTO_PROVIDER_PRIORITY: Partial<Record<ToolCapabilityId, readonly ToolProvider[]>> = {
+  "android.adb": ["project", "custom", "managed", "system", "bundled", "legacy-upstream-managed"],
 };
 
 export function commandDescriptorFromCandidate(candidate: ToolCandidate, platform: NodeJS.Platform): CommandDescriptor {
@@ -54,6 +64,17 @@ export function selectDefaultCandidates(
         candidatesForCapability.find((candidate) => /(?:^|[\\/])pwsh\.exe$/iu.test(candidate.executable));
       if (preferred) {
         selected[capability] = preferred;
+        continue;
+      }
+    }
+    const autoPriority = preference === "auto" ? AUTO_PROVIDER_PRIORITY[capability] : undefined;
+    if (autoPriority) {
+      const preferred = autoPriority
+        .map((provider) => candidatesForCapability.find((candidate) => candidate.provider === provider))
+        .find((candidate) => candidate !== undefined);
+      const match = preferred ?? candidatesForCapability[0];
+      if (match) {
+        selected[capability] = match;
         continue;
       }
     }

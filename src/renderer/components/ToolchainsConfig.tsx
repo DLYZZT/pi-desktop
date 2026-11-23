@@ -21,7 +21,7 @@ import { useI18n } from "@/i18n";
 import { Button } from "@/components/ui/Button";
 
 const TOOL_CATEGORIES: ReadonlyArray<{
-  id: "javascript" | "python" | "cli";
+  id: "javascript" | "python" | "android" | "cli";
   capabilities: readonly ToolCapabilityId[];
 }> = [
   {
@@ -31,6 +31,10 @@ const TOOL_CATEGORIES: ReadonlyArray<{
   {
     id: "python",
     capabilities: ["python.interpreter", "python.uv", "python.uvx"],
+  },
+  {
+    id: "android",
+    capabilities: ["android.adb"],
   },
   {
     id: "cli",
@@ -47,6 +51,7 @@ const CAPABILITY_COMPONENTS: Partial<Record<ToolCapabilityId, ManagedComponentId
   "search.rg": "ripgrep",
   "search.fd": "fd",
   "data.jq": "jq",
+  "android.adb": "platform-tools",
 };
 
 const CAPABILITY_CACHES: Partial<Record<ToolCapabilityId, ToolchainCacheId>> = {
@@ -70,6 +75,7 @@ const CAPABILITY_LABELS: Record<ToolCapabilityId, string> = {
   "search.fd": "fd",
   "data.jq": "jq",
   "network.curl": "curl",
+  "android.adb": "ADB (adb)",
 };
 
 const COMPONENT_LABELS: Record<ManagedComponentId, string> = {
@@ -81,6 +87,7 @@ const COMPONENT_LABELS: Record<ManagedComponentId, string> = {
   fd: "fd",
   jq: "jq",
   bun: "Bun",
+  "platform-tools": "Android Platform-Tools",
   herdr: "Herdr",
 };
 
@@ -100,6 +107,8 @@ function toolCategoryTitle(category: (typeof TOOL_CATEGORIES)[number]["id"], t: 
       return t("toolGroupJavaScript", "JavaScript");
     case "python":
       return t("toolGroupPython", "Python");
+    case "android":
+      return t("toolGroupAndroid", "Android");
     case "cli":
       return t("toolGroupCli", "CLI essentials");
   }
@@ -645,6 +654,14 @@ function ToolDetail({
             "Choose which verified provider Pi Desktop should use for Skills, Plugins, Agent commands, and project operations.",
           )}
         </div>
+        {capability === "android.adb" && (
+          <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.6, color: "var(--text-dim)" }}>
+            {t(
+              "adbDetailDescription",
+              "Enable USB debugging on the device and accept its authorization prompt. Windows may need the OEM USB driver; Linux requires a udev rule for non-root access. Once the Pi-managed copy is installed, Auto uses it first.",
+            )}
+          </div>
+        )}
       </div>
 
       {(failed || actionError) && (
@@ -1094,7 +1111,10 @@ export function friendlyToolchainError(error: unknown, t: Translate): string {
 
 function friendlyErrorCode(code: string, t: Translate): string {
   if (code === "TOOLCHAIN_DOWNLOAD_OFFLINE")
-    return t("toolErrorOffline", "The official download source is unreachable. Check the network and retry.");
+    return t(
+      "toolErrorOffline",
+      "The official download source is unreachable. If the network is restricted, enable a system proxy/TUN and retry.",
+    );
   if (code === "TOOLCHAIN_DOWNLOAD_REJECTED")
     return t(
       "toolErrorDownloadRejected",

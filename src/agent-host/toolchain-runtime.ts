@@ -30,6 +30,7 @@ const ENV_COMMAND_ORDER: readonly ToolCapabilityId[] = [
   "search.fd",
   "data.jq",
   "network.curl",
+  "android.adb",
 ];
 
 export interface ToolchainRuntimeOptions {
