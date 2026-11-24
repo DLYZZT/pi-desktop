@@ -1,5 +1,6 @@
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { RpcError } from "../contract/types.ts";
 
 type DirectoryValidation = { ok: true; path: string; canonicalPath: string } | { ok: false; error: string };
 
@@ -25,4 +26,13 @@ export function canonicalPathForComparison(candidate: string): string {
     // Historical session cwd values can refer to directories that no longer exist.
   }
   return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
+export function assertSessionWorkingDirectory(cwd: string): void {
+  if (!validateExistingDirectory(cwd).ok)
+    throw new RpcError({
+      code: "SESSION_CWD_UNAVAILABLE",
+      detail: { cwd },
+      message: `The session working directory is unavailable (${cwd}). Restore the directory to resume this session.`,
+    });
 }

@@ -48,12 +48,12 @@ test("MCP declaration and approval hooks never persist SDK-only PowerShell as an
   t.mock.method(service, "attach", async (hooks) => {
     attached = hooks;
   });
-  for (const action of ["setDeclarations", "setGrants"]) {
+  for (const action of ["setDeclarations", "setGrants", "addGrants"]) {
     const handlers = new Map();
     const policy = {
       setMcpAuthorizer() {},
       setMcpPreparation() {},
-      setMcpIdentityGuard() {},
+      setMcpGrantGuard() {},
       setMcpExecution() {},
       isEmpty: () => false,
       isAllowed: () => false,
@@ -70,7 +70,7 @@ test("MCP declaration and approval hooks never persist SDK-only PowerShell as an
       getActiveTools: () => ["read", "powershell"],
     });
     await handlers.get("session_start")({}, { sessionManager: { getSessionId: () => action, getEntries: () => [] } });
-    attached[action](["mcp__fixture__tool"]);
+    await attached.withToolWriteLock(() => attached[action](["mcp__fixture__tool"]));
     assert.deepEqual(store.get(action), ["read"], action);
     assert.equal(store.getMcpExecution(action)?.includes("powershell") ?? false, false);
   }

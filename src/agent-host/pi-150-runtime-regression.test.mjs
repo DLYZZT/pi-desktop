@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import {
   ModelRuntime,
+  CURRENT_SESSION_VERSION,
   SessionManager,
   SettingsManager,
   createAgentSessionServices,
   createAgentSessionFromServices,
+  createAgentSessionRuntime,
 } from "@earendil-works/pi-coding-agent";
 
 function assistant(text, model = { api: "openai-completions", provider: "fixture-oauth", id: "fixture" }) {
@@ -123,6 +125,45 @@ async function oauthSession(t, root, extensionPaths = []) {
   await session.bindExtensions({ mode: "rpc" });
   return { session, manager, requests, overrides, services };
 }
+
+test("SDK import cleans up a copy when the old cwd is missing and a retry with cwd override succeeds once", async (t) => {
+  const root = directory(t);
+  const sessionDir = path.join(root, "sessions");
+  const { services } = await oauthSession(t, root);
+  const source = path.join(root, "import.jsonl");
+  const original =
+    JSON.stringify({
+      type: "session",
+      version: CURRENT_SESSION_VERSION,
+      id: "cwd-fixture",
+      timestamp: new Date(0).toISOString(),
+      cwd: path.join(root, "moved-project"),
+    }) + "\n";
+  writeFileSync(source, original);
+  const runtime = await createAgentSessionRuntime(
+    async ({ sessionManager, sessionStartEvent }) => ({
+      ...(await createAgentSessionFromServices({
+        services,
+        sessionManager,
+        sessionStartEvent,
+        model: services.modelRuntime.getModel("fixture-oauth", "fixture"),
+      })),
+      services,
+      diagnostics: services.diagnostics,
+    }),
+    { cwd: root, agentDir: root, sessionManager: SessionManager.create(root, sessionDir) },
+  );
+  try {
+    await assert.rejects(runtime.importFromJsonl(source), { name: "MissingSessionCwdError" });
+    assert.deepEqual(readdirSync(sessionDir), []);
+    assert.deepEqual(await runtime.importFromJsonl(source, root), { cancelled: false });
+    assert.deepEqual(readdirSync(sessionDir), ["import.jsonl"]);
+    assert.equal(runtime.session.sessionManager.getSessionId(), "cwd-fixture");
+    assert.equal(readFileSync(source, "utf8"), original);
+  } finally {
+    await runtime.dispose();
+  }
+});
 
 for (const kind of ["branch", "compaction"]) {
   test(`SDK ${kind} uses stored OAuth rather than an explicit API-key override`, async (t) => {

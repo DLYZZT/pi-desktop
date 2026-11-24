@@ -33,6 +33,8 @@ export interface SessionDetail {
   toolNames?: string[];
   filePath: string;
   info: SessionInfo | null;
+  /** The saved cwd when the directory is currently unavailable. History remains readable. */
+  unavailableWorkingDirectory?: string;
   tree: SessionTreeNode[];
   leafId: string | null;
   context: PagedContextInfo;

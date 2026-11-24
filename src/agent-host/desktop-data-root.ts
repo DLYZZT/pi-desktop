@@ -8,3 +8,7 @@ export function desktopDataRoot(): string {
     path.join(homedir(), ".pi", "desktop")
   );
 }
+
+export function directoryForkWorkspaceRoot(): string {
+  return path.resolve(desktopDataRoot(), "pending-directory-forks");
+}

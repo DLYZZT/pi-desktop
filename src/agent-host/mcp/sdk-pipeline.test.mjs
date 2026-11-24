@@ -66,14 +66,16 @@ for (const mode of ["nested", "codemode", "search"])
                           {
                             name: "echo",
                             inputSchema: {
+                              $id: "schemas/echo.json",
                               type: "object",
                               properties: {
                                 text: { type: "string" },
-                                limit: { type: "integer", maximum: 10 },
+                                limit: { $ref: "#/$defs/limit" },
                                 names: { type: "array", items: { type: "string" } },
                                 choice: { anyOf: [{ type: "integer" }, { type: "string" }] },
                               },
                               required: ["text", "limit", "names", "choice"],
+                              $defs: { limit: { type: "integer", maximum: 10, description: "Result quota" } },
                             },
                           },
                         ],
@@ -189,7 +191,7 @@ for (const mode of ["nested", "codemode", "search"])
                   mode === "nested"
                     ? {}
                     : mode === "search"
-                      ? { query: "fixture echo" }
+                      ? { query: "quota" }
                       : {
                           code: `const result = await tools.mcp__fixture__echo(${JSON.stringify(toolArguments)}); text(result.structuredContent.original); text("CODEMODE_FULL_" + "界".repeat(50000));`,
                         },

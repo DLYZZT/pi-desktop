@@ -252,6 +252,10 @@ export interface Api {
     params: { id: string; entryId: string };
     result: EntryDetailsResult;
   };
+  "sessions.forkToDirectory": {
+    params: { id: string; cwd: string; confirmedIncompleteTail?: string };
+    result: SessionInfo;
+  };
   "sessions.export": {
     params: { id: string; format?: "md" | "json" | "bundle" };
     result: { content: string; suggestedName: string };

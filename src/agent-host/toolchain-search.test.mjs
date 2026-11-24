@@ -6,6 +6,17 @@ import test from "node:test";
 import { createDesktopSearchToolDefinitions, searchToolRuntimeFromContext } from "./toolchain-search.ts";
 import { ToolchainRuntime } from "./toolchain-runtime.ts";
 
+const bundledRipgrep = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "build",
+  "toolchains",
+  "core",
+  `${process.platform}-${process.arch}`,
+  process.platform === "win32" ? "rg.exe" : "rg",
+);
+
 function command(capability, script) {
   return {
     capability,
@@ -17,6 +28,17 @@ function command(capability, script) {
     cwdSemantics: process.platform === "win32" ? "native" : "posix",
     envPatch: {},
   };
+}
+
+function ripgrepContext() {
+  return context({
+    "search.rg": {
+      ...command("search.rg", ""),
+      executable: bundledRipgrep,
+      argvPrefix: [],
+      binDir: path.dirname(bundledRipgrep),
+    },
+  });
 }
 
 function context(commands) {
@@ -86,33 +108,13 @@ test("missing injected search capabilities fail closed instead of invoking upstr
 });
 
 test("Desktop grep ignores RIPGREP_CONFIG_PATH so regex and literal searches keep their meaning", async (t) => {
-  const bundled = path.join(
-    import.meta.dirname,
-    "..",
-    "..",
-    "build",
-    "toolchains",
-    "core",
-    `${process.platform}-${process.arch}`,
-    process.platform === "win32" ? "rg.exe" : "rg",
-  );
-  if (!fs.existsSync(bundled)) return t.skip("bundled ripgrep is not prepared");
+  if (!fs.existsSync(bundledRipgrep)) return t.skip("bundled ripgrep is not prepared");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-search-rgconfig-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, "sample.txt"), "alpha123\nalpha[0-9]+\n");
   const config = path.join(root, "ripgreprc");
   fs.writeFileSync(config, "--fixed-strings\n");
-  const rg = {
-    capability: "search.rg",
-    provider: "bundled",
-    executable: bundled,
-    argvPrefix: [],
-    binDir: path.dirname(bundled),
-    version: "test",
-    cwdSemantics: process.platform === "win32" ? "native" : "posix",
-    envPatch: {},
-  };
-  const executionContext = context({ "search.rg": rg, "search.fd": command("search.fd", "") });
+  const executionContext = ripgrepContext();
   executionContext.nativeEnv.RIPGREP_CONFIG_PATH = config;
   executionContext.shellEnv.RIPGREP_CONFIG_PATH = config;
   const runtime = new ToolchainRuntime({
@@ -128,4 +130,69 @@ test("Desktop grep ignores RIPGREP_CONFIG_PATH so regex and literal searches kee
   const literal = await text({ pattern: "alpha[0-9]+", literal: true });
   assert.match(literal, /sample\.txt:2: alpha\[0-9\]\+/);
   assert.doesNotMatch(literal, /sample\.txt:1:/);
+});
+
+test("Desktop grep roots slash globs at the requested directory and prints paths relative to it", async (t) => {
+  if (!fs.existsSync(bundledRipgrep)) return t.skip("bundled ripgrep is not prepared");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-search-glob-root-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const target = path.join(root, "repo");
+  for (const directory of ["migrations/main", "other/migrations/main"]) {
+    fs.mkdirSync(path.join(target, directory), { recursive: true });
+    fs.writeFileSync(path.join(target, directory, "a.js"), "needle\n");
+  }
+  fs.symlinkSync(target, path.join(root, "alias"), process.platform === "win32" ? "junction" : "dir");
+  const [grep] = createDesktopSearchToolDefinitions(root, ripgrepContext(), new ToolchainRuntime());
+  for (const [searchPath, glob] of [
+    ["repo", "migrations/main/*.js"],
+    ["alias", "./migrations/main/*.js"],
+  ]) {
+    const result = await grep.execute("grep", { pattern: "needle", path: searchPath, glob }, undefined, undefined, {});
+    assert.equal(result.content[0].text, "migrations/main/a.js:1: needle");
+  }
+});
+
+test("Desktop grep reports an exceeded limit only for an extra match and retains trailing context", async (t) => {
+  if (!fs.existsSync(bundledRipgrep)) return t.skip("bundled ripgrep is not prepared");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-search-grep-limit-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "sample.txt");
+  const [grep] = createDesktopSearchToolDefinitions(root, ripgrepContext(), new ToolchainRuntime());
+  const search = (context) =>
+    grep.execute("grep", { path: file, pattern: "needle", limit: 1, context }, undefined, undefined, {});
+
+  fs.writeFileSync(file, "before\r\nneedle\r\nafter\r\n");
+  const exact = await search(1);
+  assert.equal(exact.details, undefined);
+  assert.equal(exact.content[0].text, "sample.txt-1- before\nsample.txt:2: needle\nsample.txt-3- after");
+
+  fs.appendFileSync(file, "unused\nneedle extra\nafter omitted match\n");
+  const exceeded = await search(1);
+  assert.equal(exceeded.details.matchLimitReached, 1);
+  assert.ok(exceeded.content[0].text.startsWith(exact.content[0].text + "\n\n["));
+  assert.doesNotMatch(exceeded.content[0].text, /unused|needle extra|after omitted match/);
+
+  fs.writeFileSync(file, "before\nneedle\nneedle nearby\nafter nearby\n");
+  const adjacent = await search(2);
+  assert.equal(adjacent.details.matchLimitReached, 1);
+  assert.match(
+    adjacent.content[0].text,
+    /^sample\.txt-1- before\nsample\.txt:2: needle\nsample\.txt-3- needle nearby\nsample\.txt-4- after nearby\n/,
+  );
+});
+
+test("Desktop grep keeps full truncation totals when the byte budget is exceeded", async (t) => {
+  if (!fs.existsSync(bundledRipgrep)) return t.skip("bundled ripgrep is not prepared");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-search-grep-bytes-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const line = "needle " + "x".repeat(200);
+  const count = 350;
+  fs.writeFileSync(path.join(root, "sample.txt"), `${line}\n`.repeat(count));
+  const [grep] = createDesktopSearchToolDefinitions(root, ripgrepContext(), new ToolchainRuntime());
+  const result = await grep.execute("grep", { path: ".", pattern: "needle", limit: count }, undefined, undefined, {});
+  const fullOutput = Array.from({ length: count }, (_, index) => `sample.txt:${index + 1}: ${line}`).join("\n");
+  assert.equal(result.details.matchLimitReached, undefined);
+  assert.equal(result.details.truncation.totalLines, count);
+  assert.equal(result.details.truncation.totalBytes, Buffer.byteLength(fullOutput));
+  assert.ok(result.details.truncation.outputLines < count);
 });

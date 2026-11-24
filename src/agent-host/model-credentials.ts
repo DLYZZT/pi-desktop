@@ -2,6 +2,7 @@ import path from "node:path";
 import { ModelRuntime, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
 import { withLockedJsonFile, type JsonRecord } from "../shared/node/locked-json-file";
+import { resolveModelCredentialPath } from "./model-credential-path";
 
 /** SDK credential-store adapter: the actual locked mutation outlives cancelled API callers. */
 export class DesktopModelCredentials implements CredentialStore {
@@ -18,12 +19,14 @@ export class DesktopModelCredentials implements CredentialStore {
     );
     return work;
   }
+  private async withLock<T>(action: Parameters<typeof withLockedJsonFile<T>>[1], signal: AbortSignal): Promise<T> {
+    signal.throwIfAborted();
+    return withLockedJsonFile(await resolveModelCredentialPath(this.filename), action, signal, { allowEmpty: true });
+  }
   private load(): Promise<JsonRecord> {
     this.closing.signal.throwIfAborted();
     if (this.reading) return this.reading;
-    const work = this.track(
-      withLockedJsonFile(this.filename, async (data) => data, this.closing.signal, { allowEmpty: true }),
-    );
+    const work = this.track(this.withLock(async (data) => data, this.closing.signal));
     this.reading = work;
     void work.then(
       () => {
@@ -64,19 +67,14 @@ export class DesktopModelCredentials implements CredentialStore {
     options?.signal?.addEventListener("abort", cancelCaller, { once: true });
     this.closing.signal.addEventListener("abort", cancelShutdown, { once: true });
     if (options?.signal?.aborted) cancelCaller();
-    const work = withLockedJsonFile(
-      this.filename,
-      async (data, save) => {
-        // Stop cancels lock waits, not an entered mutation. The SDK separately shields started OAuth refreshes.
-        this.closing.signal.removeEventListener("abort", cancelShutdown);
-        controller.signal.throwIfAborted();
-        const next = await fn(data[provider] as Credential | undefined);
-        if (next !== undefined) await save({ ...data, [provider]: next });
-        return next ?? (data[provider] as Credential | undefined);
-      },
-      controller.signal,
-      { allowEmpty: true },
-    ).finally(() => {
+    const work = this.withLock(async (data, save) => {
+      // Stop cancels lock waits, not an entered mutation. The SDK separately shields started OAuth refreshes.
+      this.closing.signal.removeEventListener("abort", cancelShutdown);
+      controller.signal.throwIfAborted();
+      const next = await fn(data[provider] as Credential | undefined);
+      if (next !== undefined) await save({ ...data, [provider]: next });
+      return next ?? (data[provider] as Credential | undefined);
+    }, controller.signal).finally(() => {
       options?.signal?.removeEventListener("abort", cancelCaller);
       this.closing.signal.removeEventListener("abort", cancelShutdown);
     });
@@ -86,16 +84,11 @@ export class DesktopModelCredentials implements CredentialStore {
     this.closing.signal.throwIfAborted();
     const signal = options?.signal ? AbortSignal.any([options.signal, this.closing.signal]) : this.closing.signal;
     return this.track(
-      withLockedJsonFile(
-        this.filename,
-        async (data, save) => {
-          const next = { ...data };
-          delete next[provider];
-          await save(next);
-        },
-        signal,
-        { allowEmpty: true },
-      ),
+      this.withLock(async (data, save) => {
+        const next = { ...data };
+        delete next[provider];
+        await save(next);
+      }, signal),
     );
   }
   stopWaiting(): void {

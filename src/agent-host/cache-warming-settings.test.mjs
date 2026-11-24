@@ -24,7 +24,7 @@ test("global cache warming defaults without a write and preserves other Pi setti
     },
   );
   assert.deepEqual(await service.get(), {
-    mode: "streaming",
+    mode: "idle",
     scope: "global",
     loadFailed: false,
     pendingSessionCount: 0,
@@ -42,6 +42,8 @@ test("global cache warming defaults without a write and preserves other Pi setti
     defaultProvider: "anthropic",
     cacheWarming: "off",
   });
+  writeFileSync(file, JSON.stringify({ cacheWarming: "streaming" }));
+  assert.equal((await service.get()).mode, "streaming");
   writeFileSync(file, JSON.stringify({ cacheWarming: "idle" }));
   assert.equal((await service.get()).mode, "idle");
   assert.equal(isCacheWarmingMode("unknown"), false);

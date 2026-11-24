@@ -9,6 +9,20 @@ import {
 } from "./pi-runtime-contract.mjs";
 
 const authoringDocuments = ["README.md", "CHANGELOG.md", "docs/sdk.md", "docs/extensions.md", "docs/codemode.md"];
+const vendoredNotices = {
+  "@earendil-works/pi-schema": {
+    directory: "schema",
+    file: "THIRD_PARTY_NOTICES/typebox-LICENSE",
+    attribution: "Copyright (c) 2017-2026 Haydn Paterson",
+    sha256: "e8a7cc256941a26ba8234f04390165243a4d42f74fd6491934140605bf7eae2d",
+  },
+  "@earendil-works/pi-mcp": {
+    directory: "mcp",
+    file: "THIRD_PARTY_NOTICES/modelcontextprotocol-typescript-sdk.txt",
+    attribution: "Copyright (c) 2024 Anthropic, PBC",
+    sha256: "8694aa57bec3f3e9ad0559e91c63a795904e967104efb9d6fc9d153e56f567c2",
+  },
+};
 
 /** Required public assets are located through the same graph as runtime imports. */
 export function validatePiAuthoringAssets({ graph, readPackage, exists, platform, arch }) {
@@ -22,9 +36,11 @@ export function validatePiAuthoringAssets({ graph, readPackage, exists, platform
     }
     if (manifest.name === "@earendil-works/pi-ai") required.add(`${root}/dist/providers/data/amazon-bedrock.json`);
     if (manifest.name === "@earendil-works/pi-schema") {
-      for (const entry of ["README.md", "dist/formats/index.d.ts", "LICENSES/typebox-LICENSE"])
-        required.add(`${root}/${entry}`);
+      required.add(`${root}/README.md`);
+      required.add(`${root}/dist/formats/index.d.ts`);
     }
+    const vendoredNotice = vendoredNotices[manifest.name];
+    if (vendoredNotice) required.add(`${root}/${vendoredNotice.file}`);
     if (manifest.name === "@earendil-works/pi-tui" && platform && arch) {
       const filename = {
         darwin: "darwin-platform.node",
@@ -64,6 +80,7 @@ export function createPiAuthoringFileSets({ graph, readPackage }) {
               "native/**/*",
               "LICENSE",
               "LICENSES/**/*",
+              "THIRD_PARTY_NOTICES/**/*",
             ]
           : []),
       ],
@@ -116,21 +133,17 @@ export function validatePiNotices({ graph, readPackage, readFile, notice }) {
       !row[5]?.includes(`https://github.com/earendil-works/pi/tree/v${version}`)
     )
       throw new Error(`Pi third-party notice is missing or stale: ${name} ${version}`);
-    if (name === "@earendil-works/pi-schema") {
-      const license = readFile(`${root}/LICENSES/typebox-LICENSE`).replace(/\r\n/gu, "\n").trim();
-      if (
-        createHash("sha256").update(license).digest("hex") !==
-        "e8a7cc256941a26ba8234f04390165243a4d42f74fd6491934140605bf7eae2d"
-      )
-        throw new Error("Pi schema TypeBox license text is missing or changed");
-      if (
-        !notice.includes("Copyright (c) 2017-2026 Haydn Paterson") ||
-        !notice.includes(
-          `https://github.com/earendil-works/pi/blob/v${version}/packages/schema/LICENSES/typebox-LICENSE`,
-        )
-      )
-        throw new Error("Pi schema TypeBox attribution is missing or stale");
-    }
+    const vendoredNotice = vendoredNotices[name];
+    if (!vendoredNotice) continue;
+    const { file, directory, attribution, sha256 } = vendoredNotice;
+    const license = readFile(`${root}/${file}`).replace(/\r\n/gu, "\n").trim();
+    if (createHash("sha256").update(license).digest("hex") !== sha256)
+      throw new Error(`Pi third-party license text is missing or changed: ${name}/${file}`);
+    if (
+      !notice.includes(attribution) ||
+      !notice.includes(`https://github.com/earendil-works/pi/blob/v${version}/packages/${directory}/${file}`)
+    )
+      throw new Error(`Pi third-party attribution is missing or stale: ${name}`);
   }
 }
 

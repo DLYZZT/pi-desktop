@@ -31,9 +31,9 @@ const fixtureModule = await importTestBundle("session-handler-order", {
             "rpc-manager":
               "let session; export const setSession = value => {session = value;}; export const getRpcSession = () => session; export const getRunningRpcSessionIds = () => [];",
             "session-reader":
-              "let file; export const invalidated = []; export const setFile = value => {file=value; invalidated.length=0;}; export const resolveSessionPath = async () => file; export const invalidateSessionPathCache = id => invalidated.push(id); export const listAllSessions = async () => []; export const getSessionIndexMetrics = () => ({}); export const buildSessionContext = () => ({}); export const buildSessionInfoFromManager = async () => ({}); const unexpected = () => {throw new Error('Unexpected history conversion');}; export {unexpected as entryToUiMessage, unexpected as parseChannelSourceMarker, unexpected as parseRunId, unexpected as withUserMessageSource};",
+              "let file; export const invalidated = []; export const setFile = value => {file=value; invalidated.length=0;}; export const resolveSessionPath = async () => file; export const invalidateSessionPathCache = id => invalidated.push(id); export const listAllSessions = async () => []; export const getSessionIndexMetrics = () => ({}); export const buildSessionContext = () => ({}); export const buildSessionInfoFromManager = async () => ({}); const unexpected = () => {throw new Error('Unexpected history conversion');}; export {unexpected as cacheSessionPath, unexpected as entryToUiMessage, unexpected as parseChannelSourceMarker, unexpected as parseRunId, unexpected as withUserMessageSource};",
             "session-index":
-              "export const removed = []; export const sessionIndex = {removePath(file) {removed.push(file); return {cwd:'/fixture'};}, async refreshPath() {return null;}};",
+              "export const removed = []; export const sessionExistsInStores = () => false; export const sessionIndex = {removePath(file) {removed.push(file); return {cwd:'/fixture'};}, async refreshPath() {return null;}};",
             "parent-rpc": "export const calls = []; export const callMain = async (...args) => {calls.push(args);};",
           }[name],
         }));
@@ -121,6 +121,16 @@ test("stop failure keeps the file, event binding and notifications intact", asyn
   assert.deepEqual(fixture.order, ["stop"]);
   assert.deepEqual(fixture.events, []);
   assert.deepEqual(fixture.index.removed, []);
+});
+
+test("the directory fork leaves a running source alone", async (t) => {
+  const fixture = createFixture(t);
+  await assert.rejects(fixture.handlers.forkToDirectory({ id: "session", cwd: path.dirname(fixture.file) }), {
+    code: "SESSION_FORK_BUSY",
+  });
+  assert.equal(fs.readFileSync(fixture.file, "utf8"), "owned fixture");
+  assert.deepEqual(fixture.order, []);
+  assert.deepEqual(fixture.events, []);
 });
 
 test("Agent disposal failure also leaves the session file and binding in place", async (t) => {

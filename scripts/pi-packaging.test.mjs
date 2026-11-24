@@ -21,7 +21,7 @@ for (const layout of ["hoisted", "nested"]) {
     const manifests = new Map();
     const graph = new Map();
     const files = new Set();
-    for (const name of ["pi-coding-agent", "pi-ai", "pi-tui", "pi-telemetry", "pi-schema"]) {
+    for (const name of ["pi-coding-agent", "pi-ai", "pi-tui", "pi-telemetry", "pi-schema", "pi-mcp"]) {
       const directory = `${name === "pi-coding-agent" ? "" : prefix}node_modules/@earendil-works/${name}`;
       graph.set(directory, "1.0.4");
       manifests.set(`${directory}/package.json`, { name: `@earendil-works/${name}`, types: "./dist/index.d.ts" });
@@ -29,8 +29,9 @@ for (const layout of ["hoisted", "nested"]) {
       if (name === "pi-ai") files.add(`${directory}/dist/providers/data/amazon-bedrock.json`);
       if (name === "pi-tui") files.add(`${directory}/native/darwin/prebuilds/darwin-arm64/darwin-platform.node`);
       if (name === "pi-schema")
-        for (const entry of ["README.md", "dist/formats/index.d.ts", "LICENSES/typebox-LICENSE"])
+        for (const entry of ["README.md", "dist/formats/index.d.ts", "THIRD_PARTY_NOTICES/typebox-LICENSE"])
           files.add(`${directory}/${entry}`);
+      if (name === "pi-mcp") files.add(`${directory}/THIRD_PARTY_NOTICES/modelcontextprotocol-typescript-sdk.txt`);
     }
     for (const entry of ["README.md", "CHANGELOG.md", "docs/sdk.md", "docs/extensions.md", "docs/codemode.md"])
       files.add(`${coding}/${entry}`);
@@ -54,6 +55,10 @@ for (const layout of ["hoisted", "nested"]) {
     assert.equal(ai.filter.includes("dist/**/*.json"), layout === "nested");
     assert.ok(ai.filter.includes("dist/**/*.d.ts"));
     assert.ok(sets.find((entry) => entry.from === coding).filter.includes("docs/**/*"));
+    for (const name of ["pi-schema", "pi-mcp"]) {
+      const fileSet = sets.find((entry) => entry.from.endsWith(`/${name}`));
+      assert.equal(fileSet.filter.includes("THIRD_PARTY_NOTICES/**/*"), layout === "nested");
+    }
   });
 }
 
@@ -65,7 +70,7 @@ test("a missing FileSet source fails before electron-builder can silently omit i
   assert.doesNotThrow(() => assertFileSetSources(root, ["out/**/*", { from: "node_modules" }]));
 });
 
-test("Pi notices reject stale versions/links and incomplete TypeBox license text", () => {
+test("Pi notices reject stale versions, missing attribution, and incomplete vendored licenses", () => {
   const { graph } = installedPiPackaging(root);
   const notice = readFileSync(path.join(root, "THIRD_PARTY_NOTICES.md"), "utf8");
   const readFile = (entry) => readFileSync(path.join(root, entry), "utf8");
@@ -77,19 +82,17 @@ test("Pi notices reject stale versions/links and incomplete TypeBox license text
     for (const broken of ["", line.replace(version, "0.0.0"), line.replace(`/blob/v${version}/`, "/blob/v0.0.0/")])
       assert.throws(() => validatePiNotices({ ...options, notice: notice.replace(line, broken) }), /missing or stale/);
   }
-  assert.throws(
-    () => validatePiNotices({ ...options, notice: notice.replace("Copyright (c) 2017-2026 Haydn Paterson", "") }),
-    /attribution/,
-  );
-  assert.throws(
-    () =>
-      validatePiNotices({
-        ...options,
-        readFile: (entry) =>
-          entry.endsWith("typebox-LICENSE") ? "Copyright (c) 2017-2026 Haydn Paterson" : readFile(entry),
-      }),
-    /license text/,
-  );
+  for (const [file, attribution] of [
+    ["typebox-LICENSE", "Copyright (c) 2017-2026 Haydn Paterson"],
+    ["modelcontextprotocol-typescript-sdk.txt", "Copyright (c) 2024 Anthropic, PBC"],
+  ]) {
+    assert.throws(() => validatePiNotices({ ...options, notice: notice.replace(attribution, "") }), /attribution/);
+    assert.throws(
+      () =>
+        validatePiNotices({ ...options, readFile: (entry) => (entry.endsWith(file) ? attribution : readFile(entry)) }),
+      /license text/,
+    );
+  }
 });
 
 test("ASAR package validation handles hoisting but rejects stale, unknown and contradictory locked versions", () => {

@@ -4,6 +4,7 @@ import { ensureAzureUpgrade } from "./azure-upgrade";
 import { createDesktopModelRuntime } from "./model-credentials";
 import { createAutoRoutingExtension } from "./auto-routing";
 import { ensureProviderRenameSettings } from "./provider-renames";
+import { guardSessionCacheWarming } from "./session-cache-warming";
 
 export async function createDesktopAgentSessionServices(
   options: NonNullable<Parameters<typeof createAgentSessionServices>[0]>,
@@ -44,5 +45,7 @@ export async function createDesktopAgentSessionServices(
   });
   if (await ensureProviderRenameSettings(agentDir, options.cwd, services.settingsManager.isProjectTrusted()))
     await services.settingsManager.reload();
+  // The Host creates a separate settings manager for each attached session.
+  if (sessionManager && !options.settingsManager) guardSessionCacheWarming(services.settingsManager, sessionManager);
   return { ...services, azureUpgrade, agentDir };
 }

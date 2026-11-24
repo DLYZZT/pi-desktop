@@ -9,7 +9,7 @@ import { normalizeToolCalls } from "../shared/normalize.ts";
 test("Terra keeps provider-specific context windows and supports turning thinking off", () => {
   for (const [provider, contextWindow] of [
     ["openai", 272000],
-    ["azure", 272000],
+    ["azure", 1050000],
     ["openai-codex", 500000],
   ]) {
     const model = getModel(provider, "gpt-6.1-terra");

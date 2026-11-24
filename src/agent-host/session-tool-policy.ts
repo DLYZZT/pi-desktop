@@ -20,13 +20,13 @@ export class SessionToolPolicy {
   setAvailability(check: (name: string) => boolean): void {
     this.availability = check;
   }
-  private mcpIdentityGuard?: (name: string) => boolean;
+  private mcpGrantGuard?: (name: string) => boolean;
   private mcpPreparation?: (name: string, input: unknown, ctx: ExtensionContext, callId: string) => Promise<void>;
   setMcpPreparation(prepare: NonNullable<SessionToolPolicy["mcpPreparation"]>): void {
     this.mcpPreparation = prepare;
   }
-  setMcpIdentityGuard(guard: (name: string) => boolean): void {
-    this.mcpIdentityGuard = guard;
+  setMcpGrantGuard(guard: (name: string) => boolean): void {
+    this.mcpGrantGuard = guard;
   }
   private mcpAuthorizer?: (
     name: string,
@@ -61,6 +61,11 @@ export class SessionToolPolicy {
   isEmpty(): boolean {
     return this.requested?.length === 0;
   }
+  restoreSelection(requested: string[] | undefined, execution: string[] | undefined, mcp: string[] | undefined): void {
+    this.requested = requested;
+    this.execution = execution;
+    this.mcpExecution = mcp;
+  }
   setMcpExecution(names: string[]): void {
     this.mcpExecution = [...names];
   }
@@ -91,7 +96,7 @@ export class SessionToolPolicy {
         this.session.getActiveToolNames().includes(name)
       );
     if (isMcpManagedTool(name)) {
-      if (name.startsWith("mcp__") && this.mcpIdentityGuard && !this.mcpIdentityGuard(name)) return false;
+      if (this.mcpGrantGuard && !this.mcpGrantGuard(name)) return false;
       if (this.mcpExecution !== undefined) return this.mcpExecution.includes(name);
       if (this.execution !== undefined) return this.execution.includes(name);
       return this.requested?.includes(name) === true && this.session.getActiveToolNames().includes(name);

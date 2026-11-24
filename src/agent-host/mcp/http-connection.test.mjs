@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import { StreamableHttpTransport } from "@earendil-works/pi-mcp";
 import { importTestBundle } from "#test-bundle";
 const { McpConnection, McpOAuthStore } = await importTestBundle("mcp-http", {
   packages: "external",
@@ -14,7 +15,7 @@ const { McpConnection, McpOAuthStore } = await importTestBundle("mcp-http", {
   },
 });
 
-test("real Streamable HTTP MCP initializes, reads resources and shares one rotating-token refresh", async (t) => {
+test("real Streamable HTTP MCP accepts CR-delimited SSE, reads resources and shares one rotating-token refresh", async (t) => {
   const root = mkdtempSync(path.join(tmpdir(), "pi-mcp-http-")),
     credentials = new McpOAuthStore(root);
   let base,
@@ -57,7 +58,13 @@ test("real Streamable HTTP MCP initializes, reads resources and shares one rotat
               ? { contents: [{ uri: message.params.uri, text: "RAW_RESOURCE_原始", mimeType: "text/plain" }] }
               : { content: [{ type: "text", text: "HTTP_ORIGINAL_" + message.params.arguments.text }] };
     if (message.method === "tools/call") calls++;
-    json({ jsonrpc: "2.0", id: message.id, result });
+    const reply = { jsonrpc: "2.0", id: message.id, result };
+    if (message.method === "tools/call" && message.params.arguments.text === "one") {
+      return response
+        .writeHead(200, { "content-type": "text/event-stream" })
+        .end("event: message\rdata: " + JSON.stringify(reply) + "\r\r");
+    }
+    json(reply);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -108,3 +115,45 @@ test("real Streamable HTTP MCP initializes, reads resources and shares one rotat
   assert.equal((await second.client.readResource("fixture://ordinary")).contents[0].text, "RAW_RESOURCE_原始");
   assert.equal((await credentials.forServer("fixture", url).load()).tokens.refresh_token, "ROTATED");
 });
+
+for (const [contentType, format] of [
+  ["application/json", "JSON"],
+  ["text/event-stream", "SSE event"],
+]) {
+  test(
+    `Streamable HTTP cancels the response body when an MCP ${format} exceeds the limit`,
+    { timeout: 8000 },
+    async (t) => {
+      const json = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { text: "x".repeat(200) } });
+      const payload = format === "JSON" ? json : "data: " + json + "\n\n";
+      let cancelled = false;
+      const response = new globalThis.ReadableStream({
+        start(controller) {
+          controller.enqueue(new globalThis.TextEncoder().encode(payload));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const transport = new StreamableHttpTransport({
+        url: "http://127.0.0.1:0",
+        fetch: async () => new globalThis.Response(response, { headers: { "content-type": contentType } }),
+        maxMessageBytes: 128,
+        openGetStream: false,
+      });
+      t.after(() => transport.close());
+      await transport.start();
+      const message = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+      if (format === "JSON") {
+        await assert.rejects(transport.send(message), /exceeds 128 bytes/);
+      } else {
+        const responseMessage = new Promise((resolve) => transport.onMessage(resolve));
+        await transport.send(message);
+        const reply = await responseMessage;
+        assert.equal(reply.id, message.id);
+        assert.match(reply.error.message, /exceeds 128 bytes/);
+      }
+      assert.equal(cancelled, true);
+    },
+  );
+}

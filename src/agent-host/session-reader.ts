@@ -70,19 +70,27 @@ async function listAllSessionsFallback(): Promise<SessionInfo[]> {
 
 // Session path cache: sessionId → absolute file path. Its lifetime is bounded
 // by the Agent Host utility process.
-const sessionPathCache = new Map<string, string>();
+let pathCacheRoot: string | undefined;
+let sessionPathCache = new Map<string, string>();
 
 function getPathCache(): Map<string, string> {
+  const root = sessionIndex.sessionsRoot();
+  if (pathCacheRoot !== root) {
+    pathCacheRoot = root;
+    sessionPathCache = new Map();
+  }
   return sessionPathCache;
 }
 
 export async function resolveSessionPath(sessionId: string): Promise<string | null> {
-  const cached = getPathCache().get(sessionId);
+  const cache = getPathCache();
+  const cached = cache.get(sessionId);
   if (cached && existsSync(cached)) return cached;
-  if (cached) getPathCache().delete(sessionId);
+  if (cached) cache.delete(sessionId);
 
   const indexed = await sessionIndex.resolvePath(sessionId);
-  if (indexed) getPathCache().set(sessionId, indexed);
+  if (cache !== getPathCache()) return resolveSessionPath(sessionId);
+  if (indexed) cache.set(sessionId, indexed);
   return indexed;
 }
 
@@ -99,6 +107,8 @@ export function invalidateSessionPathCache(sessionId: string): void {
 }
 
 function findCachedSessionId(filePath: string): string | undefined {
+  const indexed = sessionIndex.getByPath(filePath);
+  if (indexed) return indexed.id;
   for (const [id, cachedPath] of getPathCache()) {
     if (cachedPath === filePath) return id;
   }
@@ -122,7 +132,7 @@ function getMessageTextContent(message: unknown): string {
     .join(" ");
 }
 
-function getMessageActivityTime(entry: SessionEntry): number | undefined {
+function getMessageActivityTime(entry: SessionEntry | PiSessionEntry): number | undefined {
   if (entry.type !== "message") return undefined;
   const message = entry.message as unknown as { role?: unknown; timestamp?: unknown };
   if (message.role !== "user" && message.role !== "assistant") return undefined;
@@ -136,13 +146,13 @@ function getMessageActivityTime(entry: SessionEntry): number | undefined {
 export async function buildSessionInfoFromManager(
   filePath: string,
   manager: SessionManager,
-  entries: SessionEntry[],
-  options: { resolveProjectInfo?: boolean } = {},
+  entries: readonly (SessionEntry | PiSessionEntry)[],
+  options: { resolveProjectInfo?: boolean; cachePath?: boolean } = {},
 ): Promise<SessionInfo | null> {
   const header = manager.getHeader();
   if (!header) return null;
 
-  cacheSessionPath(header.id, filePath);
+  if (options.cachePath !== false) cacheSessionPath(header.id, filePath);
   let messageCount = 0;
   let firstMessage = "";
   let lastActivityTime: number | undefined;

@@ -7,73 +7,111 @@ import type { SessionToolPolicy } from "./session-tool-policy";
 import { getDefaultStore, type DesktopSessionToolStore } from "./session-tool-store";
 import { useAgentShell } from "../shared/agent-shell";
 
+import type { SessionPromptPolicy } from "./session-prompt-policy";
+import type { loadSessionToolSelection } from "./session-shell";
+import { withExtensionTools } from "./tool-activation";
+
+/** SDK construction may yield. Install the latest explicit selection, and migrate only an absent row. */
+export function activateInitialSessionTools(
+  session: AgentSessionLike,
+  selection: Awaited<ReturnType<typeof loadSessionToolSelection>>,
+  policy: SessionToolPolicy,
+  prompt: SessionPromptPolicy,
+) {
+  const store = getDefaultStore(),
+    id = session.sessionId;
+  const migrate = selection.persistSelection && selection.toolNames !== undefined;
+  const activate = () => {
+    const names =
+      migrate && selection.toolNames
+        ? store.initialSelection(id, selection.toolNames, selection.shell)
+        : (store.get(id) ?? selection.toolNames);
+    policy.restoreSelection(names, store.getExecution(id), store.getMcpExecution(id));
+    policy.bind(session);
+    if (names !== undefined) session.setActiveToolsByName(withExtensionTools(session, names));
+    prompt.setForceEmpty(names?.length === 0);
+    return names;
+  };
+  return migrate ? store.writeLock.run(activate) : activate();
+}
+
 export function applySessionToolCommand(
   context: {
     sessionId: string;
     session: AgentSessionLike;
     policy?: SessionToolPolicy;
     requested?: string[];
+    isCurrent?(): boolean;
     apply(names: string[]): void;
     persist?(id: string, names: string[]): void;
     preferences?: DesktopSessionToolStore;
   },
   command: { type?: unknown; toolNames?: unknown },
 ) {
-  validateDesktopToolNames(command.toolNames, process.platform);
+  const requestedNames = command.toolNames;
+  validateDesktopToolNames(requestedNames, process.platform);
   const store = context.preferences ?? getDefaultStore();
-  const names = useAgentShell(
-    filterDesktopToolNames(command.toolNames, process.platform),
-    store.getShell(context.sessionId),
-  );
-  if (
-    names.includes("powershell") &&
-    context.policy?.describe().some((tool) => tool.name === "powershell" && tool.available === false)
-  )
-    throw new RpcError({
-      code: "TOOLCHAIN_CAPABILITY_REQUIRED",
-      message: "PowerShell is unavailable. Select a working PowerShell in Developer tools and reload the session.",
-    });
-  const persist = context.persist ?? ((id: string, names: string[]) => store.set(id, names));
-  if (command.type === "set_tools") {
-    persist(context.sessionId, names);
-    store.authorizeMcpSelection(context.sessionId, names);
-    context.apply(names);
-    return null;
-  }
-  if (!context.policy) throw new Error("Session execution policy is unavailable");
-  if (command.type === "set_orchestration_tools") {
-    const available = new Set(
-      context.session
-        .getAllTools()
-        .filter((tool) => tool.exposure !== "hidden")
-        .map((tool) => tool.name),
+  const identitiesCurrent = store.captureMcpSelection(context.sessionId, requestedNames);
+  return store.writeLock.run(() => {
+    if (context.isCurrent?.() === false || !identitiesCurrent())
+      throw new RpcError({
+        code: "CONFLICT",
+        message: "The session or tool selection changed while saving permissions.",
+      });
+    const names = useAgentShell(
+      filterDesktopToolNames(requestedNames, process.platform),
+      store.getShell(context.sessionId),
     );
-    if (names.some((name) => !isOrchestrationTool(name) || !available.has(name)))
-      throw new RpcError({ code: "BAD_REQUEST", message: "Invalid orchestration tool selection" });
-    const current = store.filterActiveSelection(
-      context.sessionId,
-      context.requested ??
-        store.get(context.sessionId) ??
-        context.session.getActiveToolNames().filter((name) => !isMcpManagedTool(name)),
-      context.requested,
-    );
-    if (!current.length)
-      throw new RpcError({ code: "BAD_REQUEST", message: "Enable a tool preset before orchestration tools" });
-    if (store.get(context.sessionId) === undefined) persist(context.sessionId, current);
-    store.setOrchestration(context.sessionId, names);
-    context.apply(store.get(context.sessionId)!);
-  } else {
-    if (store.get(context.sessionId) === undefined)
-      persist(
-        context.sessionId,
-        store.filterActiveSelection(
-          context.sessionId,
-          context.requested ?? context.session.getActiveToolNames(),
-          context.requested,
-        ),
+    if (
+      names.includes("powershell") &&
+      context.policy?.describe().some((tool) => tool.name === "powershell" && tool.available === false)
+    )
+      throw new RpcError({
+        code: "TOOLCHAIN_CAPABILITY_REQUIRED",
+        message: "PowerShell is unavailable. Select a working PowerShell in Developer tools and reload the session.",
+      });
+    const persist = context.persist ?? ((id: string, names: string[]) => store.locked.set(id, names));
+    if (command.type === "set_tools") {
+      persist(context.sessionId, names);
+      store.locked.authorizeMcpSelection(context.sessionId, names);
+      context.apply(names);
+      return null;
+    }
+    if (!context.policy) throw new Error("Session execution policy is unavailable");
+    if (command.type === "set_orchestration_tools") {
+      const available = new Set(
+        context.session
+          .getAllTools()
+          .filter((tool) => tool.exposure !== "hidden")
+          .map((tool) => tool.name),
       );
-    store.setExecution(context.sessionId, names);
-    context.policy.setExecution(names);
-  }
-  return context.policy.describe();
+      if (names.some((name) => !isOrchestrationTool(name) || !available.has(name)))
+        throw new RpcError({ code: "BAD_REQUEST", message: "Invalid orchestration tool selection" });
+      const current = store.filterActiveSelection(
+        context.sessionId,
+        store.get(context.sessionId) ??
+          context.requested ??
+          context.session.getActiveToolNames().filter((name) => !isMcpManagedTool(name)),
+        context.requested,
+      );
+      if (!current.length)
+        throw new RpcError({ code: "BAD_REQUEST", message: "Enable a tool preset before orchestration tools" });
+      if (store.get(context.sessionId) === undefined) persist(context.sessionId, current);
+      store.locked.setOrchestration(context.sessionId, names);
+      context.apply(store.get(context.sessionId)!);
+    } else {
+      if (store.get(context.sessionId) === undefined)
+        persist(
+          context.sessionId,
+          store.filterActiveSelection(
+            context.sessionId,
+            context.requested ?? context.session.getActiveToolNames(),
+            context.requested,
+          ),
+        );
+      store.locked.setExecution(context.sessionId, names);
+      context.policy.setExecution(store.getExecution(context.sessionId) ?? []);
+    }
+    return context.policy.describe();
+  });
 }

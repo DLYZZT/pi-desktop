@@ -1,6 +1,6 @@
 import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -109,6 +109,31 @@ test("same-type replacement during login invalidates the confirmed version and p
   const data = JSON.parse(readFileSync(f.filename));
   assert.equal(data.openai.key, "concurrent-fixture");
   assert.equal(data.other.key, "other-fixture");
+});
+
+test("settings login and logout update the auth.json target while preserving the link", async (t) => {
+  const { filename } = fixture(t, { type: "api_key", key: "original-fixture" });
+  const alias = path.join(path.dirname(filename), "linked-auth.json");
+  try {
+    symlinkSync(path.basename(filename), alias, "file");
+  } catch (error) {
+    if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+    return t.skip("File symlinks are unavailable on this Windows host");
+  }
+  const mutations = new CredentialMutations(alias);
+  const runtime = {
+    getProvider: () => ({ auth: { apiKey: { login: async () => ({ type: "api_key", key: "new-fixture" }) } } }),
+    refresh: async () => ({ aborted: false, errors: new Map() }),
+  };
+  const previous = await mutations.snapshot("openai");
+  await mutations.login(runtime, "openai", "api_key", { notify() {} }, undefined, {
+    expectedVersion: previous.version,
+  });
+  assert.equal(JSON.parse(readFileSync(filename)).openai.key, "new-fixture");
+  const saved = await mutations.snapshot("openai");
+  await mutations.logout(runtime, "openai", "api_key", saved.version);
+  assert.equal(lstatSync(alias).isSymbolicLink(), true);
+  assert.deepEqual(JSON.parse(readFileSync(filename)), { other: { type: "api_key", key: "other-fixture" } });
 });
 
 test("authentication replacement requires confirmation and cancellation prevents a late commit", async (t) => {

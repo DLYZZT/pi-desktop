@@ -53,11 +53,15 @@ export interface McpSessionHooks {
   isEmpty(): boolean;
   isRunning(): boolean;
   isAllowed(name: string): boolean;
+  /** Run validation and the synchronous setGrants/setDeclarations hooks as one permission change. */
+  withToolWriteLock?<T>(change: () => T): T | Promise<T>;
   setGrants?(names: string[]): void;
+  approvalRevision?(): string;
+  addGrants?(names: string[]): void;
   declarations?(): string[] | undefined;
   orchestration?(): string[] | undefined;
   setDeclarations?(names: string[]): void;
-  catalog?(tools: readonly NamedMcpTool[]): void;
+  catalog?(tools: readonly NamedMcpTool[]): void | Promise<void>;
 }
 interface Registration {
   connection: McpConnection;
@@ -255,29 +259,33 @@ export class McpService {
   onShutdown(cleanup: () => Promise<void>): void {
     this.cleanups.add(cleanup);
   }
-  declare(sessionId: string, names: string[]): McpPanelSnapshot {
-    const binding = this.requireBinding(sessionId),
-      known = new Set(
+  declare(sessionId: string, names: string[]) {
+    const selected = this.captureToolIdentities(this.requireBinding(sessionId), names);
+    return this.withToolWriteLock(sessionId, (binding) => {
+      if (!selected())
+        throw new RpcError({ code: "CONFLICT", message: "The MCP tool selection changed while saving declarations." });
+      const known = new Set(
         binding.hooks.pi
           .getAllTools()
           .filter((tool) => tool.exposure !== "hidden")
           .map((tool) => tool.name),
       );
-    if (
-      binding.hooks.isEmpty() ||
-      !Array.isArray(names) ||
-      names.some((name) => !isMcpManagedTool(name) || !known.has(name))
-    )
-      throw new RpcError({ code: "BAD_REQUEST", message: "Invalid MCP tool declarations" });
-    const entries = names.filter((name) => !name.startsWith("mcp__"));
-    binding.hooks.setDeclarations?.(entries);
-    binding.declarations = new Set(entries);
-    binding.hooks.pi.setActiveTools([
-      ...binding.hooks.pi.getActiveTools().filter((name) => !isMcpManagedTool(name) || name.startsWith("mcp__")),
-      ...names,
-    ]);
-    this.publish(binding);
-    return this.panel(sessionId);
+      if (
+        binding.hooks.isEmpty() ||
+        !Array.isArray(names) ||
+        names.some((name) => !isMcpManagedTool(name) || !known.has(name))
+      )
+        throw new RpcError({ code: "BAD_REQUEST", message: "Invalid MCP tool declarations" });
+      const entries = names.filter((name) => !name.startsWith("mcp__"));
+      binding.hooks.setDeclarations?.(entries);
+      binding.declarations = new Set(entries);
+      binding.hooks.pi.setActiveTools([
+        ...binding.hooks.pi.getActiveTools().filter((name) => !isMcpManagedTool(name) || name.startsWith("mcp__")),
+        ...names,
+      ]);
+      this.publish(binding);
+      return this.panel(sessionId);
+    });
   }
   extensionEntries(sessionId: string) {
     return [...this.requireBinding(sessionId).connections.values()]
@@ -290,9 +298,46 @@ export class McpService {
         ...projectConfig(entry.config),
       }));
   }
-  grant(sessionId: string, names: string[]): McpPanelSnapshot {
-    const binding = this.requireBinding(sessionId),
-      known = new Set(binding.hooks.pi.getAllTools().map((tool) => tool.name));
+  grant(sessionId: string, names: string[]) {
+    const selection = this.captureToolIdentities(this.requireBinding(sessionId), names);
+    return this.withToolWriteLock(sessionId, (binding) => {
+      if (!selection())
+        throw new RpcError({ code: "CONFLICT", message: "The MCP tool selection changed while saving permissions." });
+      return this.applyGrants(binding, names);
+    });
+  }
+  private captureToolIdentities(binding: SessionBinding, names: string[]): () => boolean {
+    if (!Array.isArray(names)) throw new RpcError({ code: "BAD_REQUEST", message: "Invalid MCP tool selection" });
+    const selected = names
+      .filter((name) => typeof name === "string" && name.startsWith("mcp__"))
+      .map((name) => {
+        const registration = binding.registrations.get(name);
+        const snapshot = registration?.connection.snapshot;
+        return { name, registration, generation: snapshot?.generation, revision: snapshot?.revision };
+      });
+    return () =>
+      selected.every(({ name, registration, generation, revision }) => {
+        const current = binding.registrations.get(name);
+        return (
+          !!registration &&
+          !!current &&
+          current.exposure !== "hidden" &&
+          current.connection === registration.connection &&
+          current.connection.snapshot.state === "connected" &&
+          current.connection.snapshot.generation === generation &&
+          current.connection.snapshot.revision === revision &&
+          current.tool.name === registration.tool.name &&
+          current.resource === registration.resource
+        );
+      });
+  }
+  private applyGrants(binding: SessionBinding, names: string[], additive = false): McpPanelSnapshot {
+    const known = new Set(
+      binding.hooks.pi
+        .getAllTools()
+        .filter((tool) => tool.exposure !== "hidden")
+        .map((tool) => tool.name),
+    );
     if (binding.hooks.isEmpty())
       throw new RpcError({ code: "CONFLICT", message: "Enable a session tool preset before granting MCP tools" });
     if (
@@ -303,11 +348,17 @@ export class McpService {
       throw new RpcError({ code: "BAD_REQUEST", message: "MCP grants must name registered MCP tools" });
     if (!binding.hooks.setGrants)
       throw new RpcError({ code: "UNSUPPORTED", message: "This session does not support MCP grants" });
-    binding.hooks.setGrants([...new Set(names)]);
-    binding.grantRevision++;
+    if (additive && binding.hooks.addGrants) binding.hooks.addGrants(names);
+    else {
+      const retained = additive
+        ? [...known].filter((name) => isMcpManagedTool(name) && binding.hooks.isAllowed(name))
+        : [];
+      binding.hooks.setGrants([...new Set([...retained, ...names])]);
+    }
+    if (!additive) binding.grantRevision++;
     this.activateCallers(binding);
     this.publish(binding);
-    return this.panel(sessionId);
+    return this.panel(binding.id);
   }
   resetPermissionRequests(sessionId: string): void {
     this.authorization.reset(sessionId);
@@ -361,9 +412,18 @@ export class McpService {
     valid = () => true,
   ): Promise<boolean> {
     const binding = this.sessions.get(sessionId);
-    if (!binding || binding.closed || binding.hooks.isEmpty() || !ctx.hasUI) return false;
+    if (
+      !binding ||
+      binding.closed ||
+      binding.hooks.isEmpty() ||
+      !ctx.hasUI ||
+      ctx.signal?.aborted ||
+      !isMcpManagedTool(name)
+    )
+      return false;
     if (binding.hooks.isAllowed(name)) return true;
     const entry = binding.registrations.get(name);
+    if (name.startsWith("mcp__") && (!entry || entry.exposure === "hidden")) return false;
     const server = input && typeof input === "object" ? (input as { server?: unknown }).server : undefined;
     const connections = entry
       ? [entry.connection]
@@ -378,43 +438,43 @@ export class McpService {
       (connection) => `${connection.snapshot.name}:${connection.snapshot.generation}:${connection.snapshot.revision}`,
     );
     const grantRevision = binding.grantRevision;
+    const savedRevision = binding.hooks.approvalRevision?.();
     const requested = [...binding.registrations.values()].filter(
       (registration) => connections.includes(registration.connection) && registration.exposure !== "hidden",
     );
+    const shown = requested.map((registration) => registration.name);
+    const selection = this.captureToolIdentities(binding, shown);
     const target = {
       servers: connections.map((connection) => connection.snapshot.name),
       tools: requested.map((registration) => registration.tool.name),
-      identity: identities.join("\0"),
+      identity: JSON.stringify([identities, shown, grantRevision, savedRevision]),
     };
-    return this.authorization.request(sessionId, target, ctx, () => {
-      if (
-        !valid() ||
-        binding.grantRevision !== grantRevision ||
-        this.sessions.get(sessionId) !== binding ||
-        binding.closed ||
-        binding.hooks.isEmpty() ||
-        connections.some(
-          (connection, index) =>
-            binding.connections.get(connection.snapshot.name) !== connection ||
-            connection.snapshot.state !== "connected" ||
-            `${connection.snapshot.name}:${connection.snapshot.generation}:${connection.snapshot.revision}` !==
-              identities[index],
+    const approved = await this.authorization.request(sessionId, target, ctx, (signal) => {
+      const commit = () => {
+        if (
+          signal.aborted ||
+          !valid() ||
+          binding.grantRevision !== grantRevision ||
+          binding.hooks.approvalRevision?.() !== savedRevision ||
+          !selection() ||
+          this.sessions.get(sessionId) !== binding ||
+          binding.closed ||
+          binding.hooks.isEmpty() ||
+          connections.some(
+            (connection, index) =>
+              binding.connections.get(connection.snapshot.name) !== connection ||
+              connection.snapshot.state !== "connected" ||
+              `${connection.snapshot.name}:${connection.snapshot.generation}:${connection.snapshot.revision}` !==
+                identities[index],
+          )
         )
-      )
-        return false;
-      const retained = binding.hooks.pi
-        .getAllTools()
-        .filter((tool) => isMcpManagedTool(tool.name) && binding.hooks.isAllowed(tool.name))
-        .map((tool) => tool.name);
-      this.grant(sessionId, [
-        ...new Set([
-          ...retained,
-          ...requested.map((registration) => registration.name),
-          ...(this.panel(sessionId).entryTools ?? []),
-        ]),
-      ]);
-      return true;
+          return false;
+        this.applyGrants(binding, [...shown, ...(this.panel(sessionId).entryTools ?? [])], true);
+        return true;
+      };
+      return binding.hooks.withToolWriteLock ? binding.hooks.withToolWriteLock(commit) : commit();
     });
+    return approved && !ctx.signal?.aborted && valid() && this.sessions.get(sessionId) === binding;
   }
   async target(target: McpTarget): Promise<{
     config: McpServerConfig;
@@ -1013,7 +1073,7 @@ export class McpService {
     this.publishCatalog(binding);
   }
   private publishCatalog(binding: SessionBinding): void {
-    binding.hooks.catalog?.(
+    const pending = binding.hooks.catalog?.(
       [...binding.registrations.values()].map((entry) => ({
         name: entry.name,
         server: entry.connection.snapshot.name,
@@ -1021,6 +1081,21 @@ export class McpService {
         resource: entry.resource,
       })),
     );
+    if (pending)
+      void pending.catch((error: unknown) => {
+        if (binding.closed) return;
+        binding.error = error instanceof Error ? error.message : String(error);
+        this.publish(binding);
+      });
+  }
+  private withToolWriteLock<T>(id: string, change: (binding: SessionBinding) => T): T | Promise<T> {
+    const binding = this.requireBinding(id);
+    const apply = () => {
+      if (this.requireBinding(id) !== binding)
+        throw new RpcError({ code: "CONFLICT", message: "The MCP session changed while saving permissions." });
+      return change(binding);
+    };
+    return binding.hooks.withToolWriteLock ? binding.hooks.withToolWriteLock(apply) : apply();
   }
   private publish(binding: SessionBinding): void {
     this.options.changed(binding.id, this.snapshot(binding.id));

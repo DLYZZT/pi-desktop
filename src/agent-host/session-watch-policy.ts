@@ -1,4 +1,5 @@
 import path from "node:path";
+import { directoryForkWorkspaceRoot } from "./desktop-data-root.ts";
 
 export type SessionWatchChange = { kind: "ignore" } | { kind: "refresh-all" } | { kind: "refresh-path"; path: string };
 
@@ -11,6 +12,8 @@ export function classifySessionWatchChange(
   const name = filename.toString();
   const resolvedAgentDir = path.resolve(agentDir);
   const candidate = path.resolve(resolvedAgentDir, name);
+  const privateForks = directoryForkWorkspaceRoot();
+  if (candidate === privateForks || candidate.startsWith(privateForks + path.sep)) return { kind: "ignore" };
   if (candidate !== resolvedAgentDir && !candidate.startsWith(`${resolvedAgentDir}${path.sep}`))
     return { kind: "ignore" };
   const resolvedSessionsRoot = path.resolve(sessionsRoot);

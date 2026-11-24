@@ -1,5 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, renameSync } from "node:fs";
+import {
+  closeSync,
+  createReadStream,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  type BigIntStats,
+} from "node:fs";
 import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -18,6 +31,15 @@ const MAX_INDEX_RECORDS = 10_000;
 const TERMINAL = new Set(["succeeded", "failed", "blocked", "cancelled", "interrupted"]);
 export function isTerminalExecution(status: string): boolean {
   return TERMINAL.has(status);
+}
+
+export function forkFileIdentity(stat: BigIntStats): string {
+  return `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
+}
+
+export interface ForkHistoryOwnership {
+  directory: string;
+  journal: string;
 }
 
 function safeId(value: string): string {
@@ -40,6 +62,45 @@ export class ExecutionLogStore {
     this.sessionId = safeId(sessionId);
     this.directory = path.join(root, "tool-executions", sessionId);
     this.journal = path.join(root, "tool-executions", `${sessionId}.jsonl`);
+  }
+
+  journalStat() {
+    return statSync(this.journal, { bigint: true, throwIfNoEntry: false });
+  }
+
+  /** Claim both names exclusively before a fork may append history or roll it back. */
+  reserveForkTarget() {
+    mkdirSync(path.dirname(this.journal), { recursive: true, mode: 0o700 });
+    mkdirSync(this.directory, { mode: 0o700 });
+    const directory = lstatSync(this.directory, { bigint: true });
+    let journal: BigIntStats | undefined;
+    try {
+      const fd = openSync(this.journal, "wx", 0o600);
+      try {
+        journal = fstatSync(fd, { bigint: true });
+      } finally {
+        closeSync(fd);
+      }
+    } catch (error) {
+      if (journal && this.owns(this.journal, forkFileIdentity(journal))) unlinkSync(this.journal);
+      if (this.owns(this.directory, forkFileIdentity(directory))) rmdirSync(this.directory);
+      throw error;
+    }
+    return { directory: forkFileIdentity(directory), journal: forkFileIdentity(journal) };
+  }
+
+  private owns(filename: string, identity: string): boolean {
+    const current = lstatSync(filename, { bigint: true, throwIfNoEntry: false });
+    return !!current && forkFileIdentity(current) === identity;
+  }
+
+  ownsForkTarget(ownership: ForkHistoryOwnership): boolean {
+    return this.owns(this.journal, ownership.journal) && this.owns(this.directory, ownership.directory);
+  }
+
+  rollbackForkTarget(ownership: ForkHistoryOwnership): void {
+    if (this.owns(this.journal, ownership.journal)) unlinkSync(this.journal);
+    if (this.owns(this.directory, ownership.directory)) rmSync(this.directory, { recursive: true });
   }
 
   async readLatest(

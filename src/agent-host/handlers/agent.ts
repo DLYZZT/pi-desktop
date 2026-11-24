@@ -8,6 +8,7 @@ import { resolveSessionPath } from "../session-reader";
 import { readSessionSnapshot } from "../session-readonly";
 import { allowFileRoot } from "../file-access";
 import { emitIndexedSessionChange } from "../session-change";
+import { assertSessionWorkingDirectory } from "../directory-validation";
 
 export function createAgentNewLockKey(): string {
   return `__new__${randomUUID()}`;
@@ -83,6 +84,9 @@ export function createAgentHandlers({
       }
       const existing = getRpcSession(sessionId);
       if (existing?.isAlive()) {
+        if (["prompt", "steer", "follow_up", "compact"].includes(command.type)) {
+          assertSessionWorkingDirectory(existing.inner.sessionManager.getCwd());
+        }
         // Ensure event subscription
         bindEvents(existing, sessionId);
         return existing.send(command);
@@ -90,6 +94,7 @@ export function createAgentHandlers({
       const filePath = await resolveSessionPath(sessionId);
       if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
       const cwd = readSessionSnapshot(filePath).getHeader()?.cwd ?? process.cwd();
+      assertSessionWorkingDirectory(cwd);
       const { session } = await startRpcSession(sessionId, filePath, cwd);
       bindEvents(session, sessionId);
       return session.send(command);

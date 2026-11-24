@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -6,9 +7,22 @@ import test from "node:test";
 import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import { importTestBundle } from "#test-bundle";
 import { createDeferred } from "#test-timing";
-const { McpService } = await importTestBundle("mcp-service", {
+import lockfile from "proper-lockfile";
+const {
+  McpService,
+  DesktopSessionToolStore,
+  sessionMcpPermissions,
+  SessionToolPolicy,
+  setAgentSessionSource,
+  workerModule,
+} = await importTestBundle("mcp-service", {
   packages: "external",
-  entryPoints: [path.join(import.meta.dirname, "service.ts")],
+  stdin: {
+    loader: "ts",
+    resolveDir: import.meta.dirname,
+    contents:
+      'export { McpService } from "./service.ts"; export {DesktopSessionToolStore} from "../session-tool-store.ts"; export {sessionMcpPermissions} from "./extensions.ts"; export {SessionToolPolicy} from "../session-tool-policy.ts"; export {setAgentSessionSource} from "../session-source.ts"; export const workerModule=import.meta.url;',
+  },
 });
 async function waitFor(read) {
   const deadline = Date.now() + 3000;
@@ -602,6 +616,245 @@ test("MCP pending approval cannot cross source changes, revocation or a cancelle
   assert.equal(await cancelled, false);
   assert.equal(grants.size, 0);
   assert.equal(await f.service.requestAuthorization("session", "mcp__fixture__echo", {}, { hasUI: false }), false);
+});
+
+async function savedMcpPermissions(f) {
+  const file = path.join(f.root, "permissions.json"),
+    store = new DesktopSessionToolStore(file);
+  await store.set("session", ["read"]);
+  const manager = {},
+    policy = new SessionToolPolicy(manager, ["read"]);
+  setAgentSessionSource(manager, "local");
+  policy.bind({ getAllTools: f.hooks.pi.getAllTools, getActiveToolNames: f.hooks.pi.getActiveTools });
+  const hooks = sessionMcpPermissions(store, "session", f.hooks.pi, policy, {});
+  Object.assign(f.hooks, hooks);
+  await hooks.catalog(
+    f.service
+      .tools("session")
+      .map((tool) => ({ name: tool.name, server: tool.server, tool: tool.originalName, resource: tool.resource })),
+  );
+  return { file, store, policy };
+}
+async function addSecondServer(f) {
+  const config = await f.service.config.snapshot("global");
+  await f.service.config.upsert(
+    "global",
+    undefined,
+    "another",
+    { command: "fixture", exposure: "direct" },
+    config.revision,
+  );
+  await f.service.changed("global");
+  await waitFor(() => f.service.tools("session").some((tool) => tool.server === "another"));
+}
+
+test("separate first-use approvals queued on the same permission file both retain the tools the user selected", async (t) => {
+  const f = await fixture(t);
+  await addSecondServer(f);
+  const { file, store } = await savedMcpPermissions(f);
+  const waiting = createDeferred();
+  let waiters = 0;
+  f.hooks.withToolWriteLock = (change) => {
+    if (++waiters === 2) waiting.resolve();
+    return store.writeLock.run(change);
+  };
+  const names = ["mcp__fixture__echo", "mcp__another__echo"];
+  const before = store.getMcpExecution("session");
+  const unlock = lockfile.lockSync(file, { realpath: false });
+  const requests = names.map((name) =>
+    f.service.requestAuthorization("session", name, {}, { hasUI: true, ui: { confirm: async () => true } }),
+  );
+  try {
+    await waiting.promise;
+    assert.deepEqual(store.getMcpExecution("session"), before);
+  } finally {
+    unlock();
+  }
+  assert.deepEqual(await Promise.all(requests), [true, true]);
+  assert.deepEqual(new Set(store.getMcpExecution("session")), new Set([...(before ?? []), ...names]));
+});
+
+test("a queued approval merges another Host's additive grant even when its server is absent locally", async (t) => {
+  const f = await fixture(t),
+    { file, store, policy } = await savedMcpPermissions(f);
+  const queued = createDeferred();
+  f.hooks.withToolWriteLock = (apply) => {
+    queued.resolve();
+    return store.writeLock.run(apply);
+  };
+  const unlock = lockfile.lockSync(file, { realpath: false });
+  const local = "mcp__fixture__echo",
+    remote = "mcp__remote__other";
+  const request = f.service.requestAuthorization(
+    "session",
+    local,
+    {},
+    { hasUI: true, ui: { confirm: async () => true } },
+  );
+  try {
+    await queued.promise;
+  } finally {
+    unlock();
+  }
+  execFileSync(process.execPath, [
+    "--input-type=module",
+    "-e",
+    `
+    const {DesktopSessionToolStore}=await import(process.argv[1]);
+    const store=new DesktopSessionToolStore(process.argv[2]),name=process.argv[3];
+    await store.observeMcpTools("session",[{name,server:"remote",tool:"other"}]);
+    await store.addMcpExecution("session",[name],["read"],[]);
+  `,
+    workerModule,
+    file,
+    remote,
+  ]);
+  assert.equal(await request, true);
+  assert.deepEqual(
+    new Set(store.getMcpExecution("session").filter((n) => n.startsWith("mcp__"))),
+    new Set([local, remote]),
+  );
+  assert.equal(policy.isAllowed(local), true);
+  assert.equal(policy.isAllowed(remote), false);
+});
+
+test("a second Host's revocation survives an approved dialog already waiting for the file lock", async (t) => {
+  const f = await fixture(t);
+  await addSecondServer(f);
+  const { file, store, policy } = await savedMcpPermissions(f);
+  const old = "mcp__fixture__echo",
+    next = "mcp__another__echo";
+  await f.service.grant("session", [old]);
+  assert.equal(policy.isAllowed(old), true);
+  const queued = createDeferred();
+  f.hooks.withToolWriteLock = (change) => {
+    queued.resolve();
+    return store.writeLock.run(change);
+  };
+  const release = lockfile.lockSync(file, { realpath: false });
+  const request = f.service.requestAuthorization(
+    "session",
+    next,
+    {},
+    { hasUI: true, ui: { confirm: async () => true } },
+  );
+  try {
+    await queued.promise;
+  } finally {
+    release();
+  }
+  execFileSync(process.execPath, [
+    "--input-type=module",
+    "-e",
+    `
+    const {DesktopSessionToolStore}=await import(process.argv[1]);
+    await new DesktopSessionToolStore(process.argv[2]).setExecution("session",[]);
+  `,
+    workerModule,
+    file,
+  ]);
+  assert.equal(await request, false);
+  assert.equal(policy.isAllowed(old), false);
+  assert.equal(policy.isAllowed(next), false);
+  assert.deepEqual(store.getExecution("session"), []);
+  assert.equal(store.getMcpExecution("session"), undefined);
+});
+
+test("removed MCP tools cannot receive queued grants after a catalog update on the same connection", async (t) => {
+  const options = { catalog: [{ name: "echo", inputSchema: { type: "object" } }] },
+    f = await fixture(t, options);
+  const { file, store } = await savedMcpPermissions(f);
+  const queued = createDeferred();
+  let waits = 0;
+  f.hooks.withToolWriteLock = (change) => {
+    if (++waits === 2) queued.resolve();
+    return store.writeLock.run(change);
+  };
+  const release = lockfile.lockSync(file, { realpath: false }),
+    name = "mcp__fixture__echo";
+  const dialog = f.service.requestAuthorization(
+    "session",
+    name,
+    {},
+    { hasUI: true, ui: { confirm: async () => true } },
+  );
+  const manual = assert.rejects(f.service.grant("session", [name]), { code: "CONFLICT" });
+  try {
+    await queued.promise;
+    options.catalog = [];
+    await f.service.getConnection("session", "fixture").refreshTools();
+  } finally {
+    release();
+  }
+  await manual;
+  assert.equal(await dialog, false);
+  assert.equal(store.getMcpExecution("session")?.includes(name) ?? false, false);
+});
+
+test("MCP approval is revalidated after a contended permission write, before granting anything", async (t) => {
+  const f = await fixture(t),
+    entered = createDeferred(),
+    release = createDeferred();
+  const controller = new globalThis.AbortController();
+  let grants = 0;
+  f.hooks.setGrants = () => {
+    grants++;
+  };
+  f.hooks.withToolWriteLock = async (apply) => {
+    entered.resolve();
+    await release.promise;
+    return apply();
+  };
+  const result = f.service.requestAuthorization(
+    "session",
+    "mcp__fixture__echo",
+    {},
+    { hasUI: true, signal: controller.signal, ui: { confirm: async () => true } },
+  );
+  await entered.promise;
+  controller.abort();
+  release.resolve();
+  assert.equal(await result, false);
+  assert.equal(grants, 0);
+});
+
+test("a cancelled caller sharing an MCP approval leaves the other caller's decision intact", async (t) => {
+  const f = await fixture(t),
+    { file, store } = await savedMcpPermissions(f);
+  const queued = createDeferred(),
+    cancel = new globalThis.AbortController();
+  f.hooks.withToolWriteLock = (apply) => {
+    queued.resolve();
+    return store.writeLock.run(apply);
+  };
+  let confirms = 0;
+  const ctx = {
+    hasUI: true,
+    ui: {
+      confirm: async () => {
+        confirms++;
+        return true;
+      },
+    },
+  };
+  const unlock = lockfile.lockSync(file, { realpath: false });
+  const main = f.service.requestAuthorization("session", "mcp__fixture__echo", {}, ctx);
+  try {
+    await queued.promise;
+    const other = f.service.requestAuthorization(
+      "session",
+      "mcp__fixture__echo",
+      {},
+      { ...ctx, signal: cancel.signal },
+    );
+    cancel.abort();
+    assert.equal(await other, false);
+    assert.equal(confirms, 1);
+  } finally {
+    unlock();
+  }
+  assert.equal(await main, true);
+  assert.ok(store.getMcpExecution("session").includes("mcp__fixture__echo"));
 });
 
 test("disabling a server revokes its generation immediately even while a prompt is running", async (t) => {

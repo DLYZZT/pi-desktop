@@ -29,6 +29,33 @@ const { SessionIndex } = await importTestBundle("src/agent-host/session-index", 
   entryPoints: [path.join(import.meta.dirname, "session-index.ts")],
 });
 
+test("a custom sessions root containing Desktop user data never indexes the SDK's private fork copy", async (t) => {
+  const previous = process.env.PI_DESKTOP_USER_DATA;
+  const profile = path.join(sessionsRoot, "nested-desktop");
+  process.env.PI_DESKTOP_USER_DATA = profile;
+  t.after(() => {
+    if (previous === undefined) delete process.env.PI_DESKTOP_USER_DATA;
+    else process.env.PI_DESKTOP_USER_DATA = previous;
+    rmSync(profile, { recursive: true, force: true });
+  });
+  const directory = path.join(profile, "pending-directory-forks", "fixture", "sdk");
+  mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, "staged.jsonl");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "private-copy",
+      cwd: projectRoot,
+      timestamp: new Date().toISOString(),
+    }) + "\n",
+  );
+  const index = new SessionIndex();
+  assert.equal(await index.resolvePath("private-copy"), null);
+  assert.equal(await index.refreshPath(file), null);
+});
+
 function writeSession(id, options = {}) {
   const filePath = path.join(sessionsRoot, "project", `${id}.jsonl`);
   const timestamp = options.timestamp ?? "2026-08-06T00:00:00.000Z";

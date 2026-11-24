@@ -24,13 +24,14 @@ import { useI18n } from "@/i18n";
 import type { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
 import { localizedExtensionConfirmCopy } from "@/lib/extension-ui-copy";
+import { SessionDirectoryNotice } from "./SessionDirectoryNotice";
 
 interface Props {
   session: SessionInfo | null;
   newSessionCwd: string | null;
   onAgentEnd?: () => void;
   onSessionCreated?: (session: SessionInfo) => void;
-  onSessionForked?: (newSessionId: string) => void;
+  onSessionForked?: (session: string | SessionInfo) => void;
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
   onBranchDataChange?: (
@@ -114,6 +115,7 @@ export function ChatWindow({
 
   const {
     sessionId: currentSessionId,
+    data: sessionDetail,
     loading,
     error,
     messages,
@@ -405,6 +407,15 @@ export function ChatWindow({
       {extensionDialog && <ExtensionDialog request={extensionDialog} onRespond={respondToExtensionUi} />}
 
       {extensionCustomUi && <ExtensionCustomPanel request={extensionCustomUi} onInput={sendExtensionCustomInput} />}
+
+      {sessionDetail?.sessionId === session?.id && sessionDetail?.unavailableWorkingDirectory !== undefined && (
+        <SessionDirectoryNotice
+          key={sessionDetail.sessionId}
+          sessionId={sessionDetail.sessionId}
+          cwd={sessionDetail.unavailableWorkingDirectory}
+          onForked={onSessionForked}
+        />
+      )}
 
       {isEmptyNew ? (
         <div className="relative z-[1] flex min-h-0 flex-[1_1_0] flex-col items-center justify-end overflow-y-auto px-4 pt-8">

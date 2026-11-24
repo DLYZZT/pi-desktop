@@ -2,7 +2,6 @@ import { mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { ChannelBinding, InboundEnvelope } from "../../shared/channel-types";
 import { channelPromptText } from "../../shared/channel-message";
 import type { AgentMessage } from "../../shared/types";
@@ -20,7 +19,8 @@ import { projectChannelToolProgress } from "./tool-progress";
 import { resolveSessionPath } from "../session-reader";
 import { collectOutboundFiles } from "./outbound-files";
 import { setDesktopSessionToolNames } from "../session-tool-store";
-import { assertSessionWritable } from "../session-readonly.ts";
+import { readSessionSnapshot } from "../session-readonly.ts";
+import { assertSessionWorkingDirectory } from "../directory-validation.ts";
 
 const OUTBOUND_FILE_CONTEXT = [
   "This IM transport can send files from the current workspace when the user explicitly asks to receive them.",
@@ -39,11 +39,11 @@ type OpenedSession = { session: AgentSessionWrapper; sessionId: string; cwd: str
 
 export class PiSessionBridge {
   private readonly onSession: (session: AgentSessionWrapper, sessionId: string) => void;
-  private readonly persistToolNames: (sessionId: string, toolNames: string[]) => void;
+  private readonly persistToolNames: (sessionId: string, toolNames: string[]) => void | Promise<void>;
 
   constructor(
     onSession: (session: AgentSessionWrapper, sessionId: string) => void,
-    persistToolNames: (sessionId: string, toolNames: string[]) => void = setDesktopSessionToolNames,
+    persistToolNames: (sessionId: string, toolNames: string[]) => void | Promise<void> = setDesktopSessionToolNames,
   ) {
     this.onSession = onSession;
     this.persistToolNames = persistToolNames;
@@ -65,18 +65,17 @@ export class PiSessionBridge {
     binding: ChannelBinding,
     newSessionToolNames: string[] = binding.toolNames,
   ): Promise<OpenedSession> {
-    this.prepareWorkspace(binding);
-
     if (binding.sessionId) {
       const existing = getRpcSession(binding.sessionId);
       if (existing?.isAlive()) {
+        assertSessionWorkingDirectory(existing.cwd || binding.cwd);
         this.onSession(existing, binding.sessionId);
         return { session: existing, sessionId: binding.sessionId, cwd: existing.cwd || binding.cwd };
       }
       const sessionFile = await resolveSessionPath(binding.sessionId);
       if (sessionFile) {
-        assertSessionWritable(sessionFile);
-        const cwd = SessionManager.open(sessionFile).getHeader()?.cwd ?? binding.cwd;
+        const cwd = readSessionSnapshot(sessionFile).getHeader()?.cwd ?? binding.cwd;
+        assertSessionWorkingDirectory(cwd);
         const started = await startRpcSession(binding.sessionId, sessionFile, cwd, binding.toolNames);
         this.onSession(started.session, started.realSessionId);
         return { session: started.session, sessionId: started.realSessionId, cwd: started.session.cwd || cwd };
@@ -103,7 +102,7 @@ export class PiSessionBridge {
       await existing.send({ type: "set_tools", toolNames });
       return;
     }
-    this.persistToolNames(binding.sessionId, toolNames);
+    await this.persistToolNames(binding.sessionId, toolNames);
   }
 
   async runCommand(

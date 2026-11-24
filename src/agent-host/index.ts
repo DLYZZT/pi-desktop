@@ -15,6 +15,7 @@ import { readPiRuntimeVersion } from "./runtime-version";
 import { applyManagedProcessOwnerIdentity } from "./managed-process/owner-identity";
 import type { HerdrRuntimeDescriptor } from "../contract/herdr";
 import { herdrRuntimeController } from "./herdr/runtime-controller";
+import { recoverInterruptedDirectoryForks } from "./session-fork-workspace";
 
 const piRuntimeVersion = readPiRuntimeVersion();
 
@@ -26,6 +27,9 @@ const restoreGitRunner = installToolchainGitRunner(toolchainRuntime, () => {
 });
 const stopHandlers = registerHandlers(server);
 const stopWatcher = startSessionWatcher(server);
+void recoverInterruptedDirectoryForks().catch((error) =>
+  console.warn("[agent-host] failed to recover directory forks:", error),
+);
 
 function log(message: string): void {
   try {

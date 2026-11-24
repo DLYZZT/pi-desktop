@@ -11,10 +11,10 @@ import { stream } from "@earendil-works/pi-ai/api/openai-responses";
 import { getSupportedThinkingLevels, envApiKeyAuth } from "@earendil-works/pi-ai";
 
 test("catalogs keep chat selection separate from images and classifiers", async () => {
-  // Since 1.3.0 Codex serves a 500K window; the API-key providers keep 272K.
+  // Each provider publishes its own context window.
   for (const [provider, contextWindow] of [
     ["openai", 272_000],
-    ["azure", 272_000],
+    ["azure", 1_050_000],
     ["openai-codex", 500_000],
   ]) {
     assert.equal(getModel(provider, "gpt-6.1-sol")?.contextWindow, contextWindow);

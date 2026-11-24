@@ -3,6 +3,8 @@ import { call } from "@/lib/api-client";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { getPresetFromTools, getToolNamesForPreset, getSelectedToolNames, type ToolPreset } from "@shared/tool-presets";
 import { LatestRequestGate } from "@/lib/latest-request-gate";
+import { sessionClientErrorMessage } from "@/lib/session-error-message";
+import { useI18n } from "@/i18n";
 
 export function useSessionToolSelection({
   cwd,
@@ -23,6 +25,7 @@ export function useSessionToolSelection({
   isActive: () => boolean;
   captureCommandView: () => () => boolean;
 }) {
+  const { t } = useI18n();
   const key = owner ?? cwd;
   const [selection, setSelection] = useState<{ owner?: string | null; names: string[] } | null>(null);
   const selected = selection && selection.owner === key ? selection.names : null;
@@ -84,13 +87,13 @@ export function useSessionToolSelection({
       } catch (error) {
         if (owns() && intents.isCurrent(request)) {
           desired.current = null;
-          setError(String(error));
+          setError(sessionClientErrorMessage(error, t, String(error)));
         }
       } finally {
         if (pending.current?.request === request) pending.current = null;
       }
     },
-    [captureCommandView, ensuringNewSessionRef, gate, isActive, sessionIdRef, setPreset, setSelected, intents, key],
+    [captureCommandView, ensuringNewSessionRef, gate, isActive, sessionIdRef, setPreset, setSelected, intents, key, t],
   );
   const handleToolPresetChange = useCallback(
     async (next: "none" | "default" | "full") => {
@@ -107,13 +110,13 @@ export function useSessionToolSelection({
       } catch (error) {
         if (owns() && intents.isCurrent(request)) {
           desired.current = null;
-          setError(String(error));
+          setError(sessionClientErrorMessage(error, t, String(error)));
         }
       } finally {
         if (pending.current?.request === request) pending.current = null;
       }
     },
-    [apply, available, captureCommandView, gate, intents, isActive, key],
+    [apply, available, captureCommandView, gate, intents, isActive, key, t],
   );
   return {
     loadTools,

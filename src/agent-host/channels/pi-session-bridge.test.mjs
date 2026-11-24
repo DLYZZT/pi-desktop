@@ -1,6 +1,6 @@
 import { importTestBundle } from "#test-bundle";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -61,21 +61,11 @@ const mocks = new Map([
     `,
   ],
   ["file-access", "export function allowFileRoot() {}"],
-  ["session-readonly", "export function assertSessionWritable() {}"],
-  [
-    "pi-coding-agent",
-    `
-      export const SessionManager = {
-        open() {
-          return { getHeader() { return { cwd: "/restored-cwd" }; } };
-        },
-      };
-    `,
-  ],
 ]);
 
 const { PiSessionBridge, getExternalCommandCalls, getStartCalls, setResolvedSessionPath, setRpcSession } =
   await importTestBundle("src/agent-host/channels/pi-session-bridge", {
+    packages: "external",
     stdin: {
       contents: `
       export { PiSessionBridge } from "./pi-session-bridge.ts";
@@ -94,10 +84,6 @@ const { PiSessionBridge, getExternalCommandCalls, getStartCalls, setResolvedSess
       {
         name: "pi-session-bridge-mocks",
         setup(builder) {
-          builder.onResolve({ filter: /^\.\.\/session-readonly\.ts$/ }, () => ({
-            path: "session-readonly",
-            namespace: "pi-session-bridge-test",
-          }));
           builder.onResolve({ filter: /^\.\.\/rpc-manager$/ }, () => ({
             path: "rpc-manager",
             namespace: "pi-session-bridge-test",
@@ -118,10 +104,6 @@ const { PiSessionBridge, getExternalCommandCalls, getStartCalls, setResolvedSess
             path: "file-access",
             namespace: "pi-session-bridge-test",
           }));
-          builder.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, () => ({
-            path: "pi-coding-agent",
-            namespace: "pi-session-bridge-test",
-          }));
           builder.onLoad({ filter: /.*/, namespace: "pi-session-bridge-test" }, (args) => ({
             contents: mocks.get(args.path),
             loader: "js",
@@ -133,7 +115,20 @@ const { PiSessionBridge, getExternalCommandCalls, getStartCalls, setResolvedSess
 
 test("restoring a channel session applies the binding tool names", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "pi-session-bridge-tools-"));
-  setResolvedSessionPath("/sessions/session-history.jsonl");
+  const restored = path.join(cwd, "restored"),
+    file = path.join(cwd, "session.jsonl");
+  mkdirSync(restored);
+  writeFileSync(
+    file,
+    JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "session-history",
+      timestamp: new Date().toISOString(),
+      cwd: restored,
+    }),
+  );
+  setResolvedSessionPath(file);
   const bridge = new PiSessionBridge(() => {});
   const toolNames = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 
@@ -154,12 +149,7 @@ test("restoring a channel session applies the binding tool names", async () => {
       "reload",
     );
 
-    assert.deepEqual(getStartCalls().at(-1), [
-      "session-history",
-      "/sessions/session-history.jsonl",
-      "/restored-cwd",
-      toolNames,
-    ]);
+    assert.deepEqual(getStartCalls().at(-1), ["session-history", file, restored, toolNames]);
     assert.deepEqual(getExternalCommandCalls().at(-1), { command: "reload" });
   } finally {
     await rm(cwd, { recursive: true, force: true });
@@ -278,4 +268,37 @@ test("tool synchronization persists inactive sessions only in the Desktop sideca
   );
 
   assert.deepEqual(sidecarWrites, [{ sessionId: "session-inactive", toolNames: ["read"] }]);
+});
+
+test("IM restores neither an unavailable saved cwd nor the missing binding directory and never dispatches the turn", async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-im-missing-cwd-"));
+  t.after(() => {
+    setRpcSession(undefined);
+    return rm(root, { recursive: true, force: true });
+  });
+  const missing = path.join(root, "gone"),
+    file = path.join(root, "history.jsonl");
+  const bytes = Buffer.from(
+    JSON.stringify({ type: "session", version: 3, id: "im-moved", timestamp: new Date().toISOString(), cwd: missing }),
+  );
+  writeFileSync(file, bytes);
+  setResolvedSessionPath(file);
+  const bridge = new PiSessionBridge(() => {});
+  const started = getStartCalls().length,
+    commands = getExternalCommandCalls().length;
+  for (const live of [false, true]) {
+    setRpcSession(live ? { cwd: missing, isAlive: () => true } : undefined);
+    for (const cwd of [root, missing]) {
+      const binding = { sessionId: "im-moved", cwd, toolNames: [] };
+      await assert.rejects(bridge.runTurn(binding, { text: "hello" }), {
+        code: "SESSION_CWD_UNAVAILABLE",
+        detail: { cwd: missing },
+      });
+      await assert.rejects(bridge.runCommand(binding, "compact"), { code: "SESSION_CWD_UNAVAILABLE" });
+    }
+  }
+  assert.equal(getStartCalls().length, started);
+  assert.equal(getExternalCommandCalls().length, commands);
+  assert.equal(existsSync(missing), false);
+  assert.deepEqual(readFileSync(file), bytes);
 });

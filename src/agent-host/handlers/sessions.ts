@@ -10,7 +10,7 @@ import type { SessionTreeNode } from "../../shared/types";
 import { getRpcSession, getRunningRpcSessionIds } from "../rpc-manager";
 import { readSessionSnapshot, assertSessionWritable } from "../session-readonly";
 import { getDesktopSessionToolNames } from "../session-tool-store";
-import { canonicalPathForComparison } from "../directory-validation";
+import { canonicalPathForComparison, validateExistingDirectory } from "../directory-validation";
 import {
   buildSessionContext,
   buildSessionInfoFromManager,
@@ -38,6 +38,8 @@ import { getSessionContentSnapshot, invalidateSessionContent } from "../session-
 import { buildSessionStats } from "../session-stats";
 import { sessionIndex } from "../session-index";
 import { emitIndexedSessionChange } from "../session-change";
+import { forkSessionToDirectory } from "../session-directory-fork";
+import { forkNeedsOwnToolSelection } from "../session-shell";
 import { callMain } from "../parent-rpc";
 import type { ManagedProcessService } from "../managed-process/service";
 
@@ -50,6 +52,7 @@ type SessionHandlers = {
   contextPage: NonNullable<ApiHandler["sessions.contextPage"]>;
   entryContent: NonNullable<ApiHandler["sessions.entryContent"]>;
   entryDetails: NonNullable<ApiHandler["sessions.entryDetails"]>;
+  forkToDirectory: NonNullable<ApiHandler["sessions.forkToDirectory"]>;
   export: NonNullable<ApiHandler["sessions.export"]>;
   delete: NonNullable<ApiHandler["sessions.delete"]>;
   rename: NonNullable<ApiHandler["sessions.rename"]>;
@@ -181,12 +184,15 @@ export function createSessionHandlers({
         ]);
         const infoMs = performance.now() - infoStartedAt;
 
-        const toolNames = getDesktopSessionToolNames(id);
+        const header = sm.getHeader();
+        const toolNames = getDesktopSessionToolNames(id) ?? (forkNeedsOwnToolSelection(header) ? [] : undefined);
+        const cwd = header?.cwd;
         const detail: SessionDetail = {
           sessionId: id,
           ...(toolNames === undefined ? {} : { toolNames }),
           filePath,
           info,
+          ...(cwd !== undefined && !validateExistingDirectory(cwd).ok ? { unavailableWorkingDirectory: cwd } : {}),
           leafId,
           tree,
           context,
@@ -338,6 +344,14 @@ export function createSessionHandlers({
         lines.push("");
       }
       return { content: lines.join("\n"), suggestedName: `session-${id}.md` };
+    },
+
+    forkToDirectory: async (params) => {
+      const session = await forkSessionToDirectory(params);
+      await emitIndexedSessionChange(server, session.id, session.cwd).catch((error: unknown) => {
+        console.warn("[agent-host] could not notify clients of the published session fork:", error);
+      });
+      return session;
     },
 
     delete: async (params) => {

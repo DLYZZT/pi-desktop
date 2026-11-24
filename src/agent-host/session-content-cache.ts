@@ -31,7 +31,7 @@ function fingerprint(filePath: string): Fingerprint {
   return { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, ino: stat.ino };
 }
 
-function fingerprintsEqual(left: Fingerprint, right: Fingerprint): boolean {
+export function fingerprintsEqual(left: Fingerprint, right: Fingerprint): boolean {
   return (
     left.size === right.size &&
     left.mtimeMs === right.mtimeMs &&

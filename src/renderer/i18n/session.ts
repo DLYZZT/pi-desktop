@@ -183,6 +183,22 @@ export const enUS: Record<string, string> = {
   sessionHasNoBranches: "This session has no branches",
   sessionInfo: "Session info",
   sessionLoadFailed: "Failed to load session.",
+  sessionWorkingDirectoryUnavailable:
+    "The session's working directory is unavailable ({cwd}). Restore it to resume this session.",
+  sessionDirectoryForkAction: "Choose a new folder to continue",
+  sessionDirectoryForkPending: "Preparing session copy…",
+  sessionDirectoryForkHint:
+    "Copies the history into a new chat-only session and keeps the original. You can choose tool permissions in the new session.",
+  sessionDirectoryForkTargetUnavailable: "The selected folder is unavailable. Choose another folder.",
+  sessionDirectoryForkBusy: "Wait for the original session to finish before forking it.",
+  sessionDirectoryForkFailed: "Could not create the session copy.",
+  sessionDirectoryForkSourceChanged:
+    "The source history has changed. Choose the folder again to copy the current history.",
+  sessionDirectoryForkRecoverTail: "Create a copy from complete records",
+  sessionDirectoryForkIncompleteTail:
+    "The last record (line {line}) is incomplete. You can copy the complete records to the selected folder. The original file is preserved.",
+  sessionDirectoryForkInvalidHistory:
+    "The history file contains a damaged record at line {line}. Restore the session file from a backup and try again, or start a new session in the selected folder.",
   sessionListLoadFailed: "Failed to load sessions.",
   sessionName: "Name",
   sessionRenamedTo: "Session renamed to {name}",
@@ -403,6 +419,19 @@ export const zhCN: Record<string, string> = {
   sessionHasNoBranches: "此会话没有分支",
   sessionInfo: "会话信息",
   sessionLoadFailed: "加载会话失败。",
+  sessionWorkingDirectoryUnavailable: "会话的原工作目录不可用（{cwd}）。恢复目录后即可继续此会话。",
+  sessionDirectoryForkAction: "选择新文件夹继续",
+  sessionDirectoryForkPending: "正在准备会话副本…",
+  sessionDirectoryForkHint: "复制历史到仅可对话的新会话，保留原会话。你可以在新会话里重新选择工具权限。",
+  sessionDirectoryForkTargetUnavailable: "所选文件夹不可用，请选择其他文件夹。",
+  sessionDirectoryForkBusy: "请等原会话完成当前操作，再创建副本。",
+  sessionDirectoryForkFailed: "无法创建会话副本。",
+  sessionDirectoryForkSourceChanged: "原会话历史已更新。请重新选择文件夹以复制当前历史。",
+  sessionDirectoryForkRecoverTail: "用完整记录创建副本",
+  sessionDirectoryForkIncompleteTail:
+    "最后一条记录（第 {line} 行）不完整。可以将此前的完整记录复制到所选文件夹，原会话文件会保留。",
+  sessionDirectoryForkInvalidHistory:
+    "会话历史文件的第 {line} 行已损坏。请从备份恢复会话文件后重试，或在所选文件夹新建会话。",
   sessionListLoadFailed: "加载会话失败。",
   sessionName: "名称",
   sessionRenamedTo: "会话已重命名为 {name}",
@@ -624,6 +653,19 @@ export const zhTW: Record<string, string> = {
   sessionHasNoBranches: "此會話沒有分支",
   sessionInfo: "會話資訊",
   sessionLoadFailed: "載入會話失敗。",
+  sessionWorkingDirectoryUnavailable: "會話的原工作目錄無法存取（{cwd}）。還原目錄後即可繼續此會話。",
+  sessionDirectoryForkAction: "選擇新資料夾繼續",
+  sessionDirectoryForkPending: "正在準備會話副本…",
+  sessionDirectoryForkHint: "將歷史記錄複製到僅可對話的新會話，保留原會話。你可以在新會話中重新選擇工具權限。",
+  sessionDirectoryForkTargetUnavailable: "無法存取所選資料夾，請選擇其他資料夾。",
+  sessionDirectoryForkBusy: "請等原會話完成目前的操作，再建立副本。",
+  sessionDirectoryForkFailed: "無法建立會話副本。",
+  sessionDirectoryForkSourceChanged: "原會話歷史已更新。請重新選擇資料夾以複製目前的歷史。",
+  sessionDirectoryForkRecoverTail: "使用完整記錄建立副本",
+  sessionDirectoryForkIncompleteTail:
+    "最後一筆記錄（第 {line} 行）不完整。可以將先前的完整記錄複製到所選資料夾，原會話檔案會保留。",
+  sessionDirectoryForkInvalidHistory:
+    "會話歷史檔案的第 {line} 行已損壞。請從備份還原會話檔案後再試，或在所選資料夾建立新會話。",
   sessionListLoadFailed: "載入會話失敗。",
   sessionName: "名稱",
   sessionRenamedTo: "會話已重新命名為 {name}",

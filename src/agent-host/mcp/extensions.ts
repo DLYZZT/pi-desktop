@@ -1,16 +1,63 @@
-import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { SessionToolPolicy } from "../session-tool-policy";
 import { peekMcpService } from "./runtime";
 import { readLegacyMcpEvidence } from "./legacy-permissions";
 import type { SessionExecutionHistory } from "../session-execution-history";
-import {
-  getDesktopSessionToolNames,
-  setDesktopSessionMcpExecutionTools,
-  getDesktopSessionMcpDeclarations,
-  setDesktopSessionMcpDeclarations,
-  getDefaultStore,
-} from "../session-tool-store";
+import { getDefaultStore, type DesktopSessionToolStore } from "../session-tool-store";
+import type { McpSessionHooks } from "./service";
+
+export function sessionMcpPermissions(
+  store: DesktopSessionToolStore,
+  id: string,
+  pi: Pick<ExtensionAPI, "getActiveTools">,
+  policy: SessionToolPolicy,
+  evidence: Record<string, string>,
+): Omit<McpSessionHooks, "pi" | "ctx" | "isRunning"> {
+  policy.setMcpGrantGuard((name) => store.mcpGrantAllows(id, name));
+  return {
+    isEmpty: () => policy.isEmpty() || store.get(id)?.length === 0,
+    isAllowed: (name) => policy.isAllowed(name),
+    withToolWriteLock: (change) => store.writeLock.run(change),
+    approvalRevision: () => store.mcpGrantRevision(id),
+    addGrants: (names) => {
+      const tools = policy.describe();
+      store.locked.addMcpExecution(
+        id,
+        names,
+        tools.filter((tool) => tool.active).map((tool) => tool.name),
+        tools.filter((tool) => tool.executionAllowed).map((tool) => tool.name),
+      );
+      policy.setMcpExecution(store.getMcpExecution(id) ?? []);
+    },
+    catalog: (tools) => {
+      const observed = store.observeMcpTools(id, tools, evidence);
+      const syncGrants = () => {
+        const explicit = store.getMcpExecution(id) ?? store.getExecution(id);
+        policy.setMcpExecution(explicit ?? (store.get(id) ?? []).filter((name) => pi.getActiveTools().includes(name)));
+      };
+      return observed ? observed.then(syncGrants) : syncGrants();
+    },
+    declarations: () => store.getMcpDeclaration(id),
+    orchestration: () => store.getOrchestration(id),
+    setDeclarations: (names) => {
+      if (store.get(id) === undefined) store.locked.setFromActive(id, pi.getActiveTools());
+      store.locked.setMcpDeclaration(id, names);
+    },
+    setGrants: (names) => {
+      if (store.get(id) === undefined)
+        store.locked.setFromActive(
+          id,
+          policy
+            .describe()
+            .filter((tool) => tool.active)
+            .map((tool) => tool.name),
+        );
+      store.locked.setMcpExecution(id, names);
+      policy.setMcpExecution(store.getMcpExecution(id) ?? []);
+    },
+  };
+}
 
 export function desktopMcpExtensions(
   policy: SessionToolPolicy,
@@ -118,7 +165,6 @@ export function desktopMcpExtensions(
         pi.on("session_start", async (_event, ctx) => {
           const id = ctx.sessionManager.getSessionId(),
             store = getDefaultStore();
-          policy.setMcpIdentityGuard((name) => store.mcpIdentityMatches(id, name));
           const evidence = await readLegacyMcpEvidence(
             ctx.sessionManager.getEntries(),
             store.unverifiedMcpTools(id),
@@ -128,36 +174,8 @@ export function desktopMcpExtensions(
           await service.attach({
             pi,
             ctx,
-            isEmpty: () => policy.isEmpty(),
             isRunning,
-            isAllowed: (name) => policy.isAllowed(name),
-            catalog: (tools) => {
-              store.observeMcpTools(id, tools, evidence);
-              const explicit = store.getMcpExecution(id) ?? store.getExecution(id);
-              policy.setMcpExecution(
-                explicit ?? (store.get(id) ?? []).filter((name) => pi.getActiveTools().includes(name)),
-              );
-            },
-            declarations: () => getDesktopSessionMcpDeclarations(ctx.sessionManager.getSessionId()),
-            orchestration: () => getDefaultStore().getOrchestration(ctx.sessionManager.getSessionId()),
-            setDeclarations: (names) => {
-              const id = ctx.sessionManager.getSessionId();
-              if (getDesktopSessionToolNames(id) === undefined) store.setFromActive(id, pi.getActiveTools());
-              setDesktopSessionMcpDeclarations(id, names);
-            },
-            setGrants: (names) => {
-              const id = ctx.sessionManager.getSessionId();
-              if (getDesktopSessionToolNames(id) === undefined)
-                store.setFromActive(
-                  id,
-                  policy
-                    .describe()
-                    .filter((tool) => tool.active)
-                    .map((tool) => tool.name),
-                );
-              setDesktopSessionMcpExecutionTools(id, names);
-              policy.setMcpExecution(names);
-            },
+            ...sessionMcpPermissions(store, id, pi, policy, evidence),
           });
         });
         pi.on("mcp_servers_change", async (_event, ctx) => {

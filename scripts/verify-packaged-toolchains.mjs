@@ -279,12 +279,28 @@ function verifyPiRuntimeAssets(resources, platform, arch) {
     notice: fs.readFileSync(path.join(resources, "THIRD_PARTY_NOTICES.md"), "utf8"),
   });
   const codingAgentRoot = resolvePackage("", "@earendil-works/pi-coding-agent", exists);
-  const grokRoot = resolvePackage(codingAgentRoot, "grok-mermaid", exists);
+  const mermaidRoot = resolvePackage(codingAgentRoot, "lovely-mermaid", exists);
+  const mermaid = readPackage(`${mermaidRoot}/package.json`);
+  const mermaidEntry = mermaid.exports?.["."]?.default;
+  if (
+    mermaid.name !== "lovely-mermaid" ||
+    mermaid.version !== readPackage(`${codingAgentRoot}/package.json`).dependencies?.["lovely-mermaid"] ||
+    mermaidEntry !== "./dist/index.js"
+  ) {
+    throw new Error("Packaged lovely-mermaid has an unexpected version or runtime entry");
+  }
   const typeboxRoot = resolvePackage("", "typebox", exists);
-  for (const entry of [`${grokRoot}/dist/index.js`, `${typeboxRoot}/build/index.mjs`]) {
+  const mermaidLicense = `${mermaidRoot}/LICENSE`;
+  for (const entry of [path.posix.join(mermaidRoot, mermaidEntry), mermaidLicense, `${typeboxRoot}/build/index.mjs`]) {
     if (!exists(entry)) throw new Error(`Packaged runtime asset is missing: ${entry}`);
   }
-  for (const packageRoot of new Set([...graph.keys(), grokRoot, typeboxRoot])) {
+  const license = extractAsarFile(asarPath, mermaidLicense).toString("utf8").replace(/\r\n/gu, "\n").trim();
+  if (
+    createHash("sha256").update(license).digest("hex") !==
+    "ac29541ee3573ba941d0411a6880cf11b815efeb73fd19f1a0b575d29524d327"
+  )
+    throw new Error("Packaged lovely-mermaid license text is missing or changed");
+  for (const packageRoot of new Set([...graph.keys(), mermaidRoot, typeboxRoot])) {
     assertLockedPackage(lockfile, packageRoot, readPackage(`${packageRoot}/package.json`));
   }
 }

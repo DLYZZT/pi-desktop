@@ -12,6 +12,7 @@ import {
 import { randomUUID } from "crypto";
 import { excludedPiTools, filterDesktopToolNames, validateDesktopToolNames } from "../shared/pi-tool-policy.ts";
 import { assertSessionWritable } from "./session-readonly.ts";
+import { assertSessionWorkingDirectory } from "./directory-validation.ts";
 import { cacheSessionPath } from "./session-reader";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike } from "../shared/pi-types";
@@ -27,7 +28,6 @@ import { browserCapabilityRuntime } from "./browser-capability-runtime";
 import { browserAgentRuntime } from "./browser-agent-runtime";
 import { projectExtensionDiagnostics } from "./extension-diagnostics";
 import {
-  setDesktopSessionToolNames,
   getDesktopSessionExecutionTools,
   setDesktopSessionExecutionTools,
   getDefaultStore,
@@ -35,7 +35,7 @@ import {
 import { withExtensionTools, filterUnapprovedShellTools, dropPendingRestoredTools } from "./tool-activation";
 export { withExtensionTools } from "./tool-activation";
 import { SessionToolPolicy } from "./session-tool-policy";
-import { applySessionToolCommand } from "./session-tool-settings";
+import { activateInitialSessionTools, applySessionToolCommand } from "./session-tool-settings";
 import { withSessionOrchestration } from "./session-orchestration";
 export { getLegacySessionToolNames } from "./legacy-session-tools";
 import { peekHerdrBridge } from "./herdr/runtime";
@@ -145,12 +145,12 @@ export class AgentSessionWrapper {
   refreshToolchain?: () => Promise<void>;
   private readonly resourceReload = new SessionResourceReload();
   private readonly modelConfig = new SessionModelConfig();
-  private readonly persistToolNames: (sessionId: string, toolNames: string[]) => void;
 
   constructor(
     inner: AgentSessionLike,
     requestedToolNames?: string[],
-    persistToolNames: (sessionId: string, toolNames: string[]) => void = setDesktopSessionToolNames,
+    private readonly persistToolNames: (id: string, names: string[]) => void = (id, names) =>
+      getDefaultStore().locked.set(id, names),
     promptPolicy?: SessionPromptPolicy,
     private readonly executionHistory?: SessionExecutionHistory,
     private readonly toolPolicy?: SessionToolPolicy,
@@ -159,7 +159,6 @@ export class AgentSessionWrapper {
   ) {
     this.inner = inner;
     this.toolPolicy?.setResourceReady(() => this.resourceReload.executionReady());
-    this.persistToolNames = persistToolNames;
     this.requestedToolNames = requestedToolNames
       ? filterDesktopToolNames(requestedToolNames, process.platform)
       : requestedToolNames;
@@ -411,6 +410,14 @@ export class AgentSessionWrapper {
     return run;
   }
 
+  private async prepareModelTurn(syncConfig = true): Promise<void> {
+    const cwd = this.sessionFile ? this.cwd || this.inner.sessionManager.getCwd() : undefined;
+    if (cwd !== undefined) assertSessionWorkingDirectory(cwd);
+    if (syncConfig) await this.modelConfig.sync(this.inner, this.modelSelection);
+    if (syncConfig && cwd !== undefined) assertSessionWorkingDirectory(cwd);
+    this.modelSelection.assertReady(this.inner);
+  }
+
   async runExternalTurn(params: {
     runId: string;
     message: string;
@@ -423,8 +430,7 @@ export class AgentSessionWrapper {
     return this.enqueueTurn(async () => {
       // Extensions can start runs outside the wrapper queue; let their existing source finish first.
       if (this.inner.isStreaming || this.inner.isCompacting) await this.inner.waitForIdle();
-      await this.modelConfig.sync(this.inner, this.modelSelection);
-      this.modelSelection.assertReady(this.inner);
+      await this.prepareModelTurn();
       this.emit({ type: "channel_turn_start", runId: params.runId });
       this.externalTurnActive = true;
       this.externalTurnChannel = params.channel;
@@ -494,8 +500,7 @@ export class AgentSessionWrapper {
   async runExternalCommand(params: { command: ExternalSessionCommand; customInstructions?: string }): Promise<void> {
     await this.enqueueTurn(async () => {
       if (params.command === "compact") {
-        await this.modelConfig.sync(this.inner, this.modelSelection);
-        this.modelSelection.assertReady(this.inner);
+        await this.prepareModelTurn();
         await this.inner.compact(params.customInstructions);
         return;
       }
@@ -554,8 +559,7 @@ export class AgentSessionWrapper {
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
         if (!streamingBehavior) browserAgentRuntime.beginTurn(this.sessionId, "local");
         const invokePrompt = async () => {
-          if (!streamingBehavior) await this.modelConfig.sync(this.inner, this.modelSelection);
-          this.modelSelection.assertReady(this.inner);
+          await this.prepareModelTurn(!streamingBehavior);
           return this.inner.prompt(command.message as string, {
             ...(promptImages?.length ? { images: promptImages } : {}),
             ...(streamingBehavior ? { streamingBehavior } : {}),
@@ -662,16 +666,14 @@ export class AgentSessionWrapper {
           newSessionId,
           new Set(forkManager.getBranch().map((entry) => entry.id)),
         );
-        this.persistToolNames(
-          newSessionId,
-          filterUnapprovedShellTools(
-            this.requestedToolNames ?? this.inner.getActiveToolNames(),
-            this.requestedToolNames,
-          ),
+        const selected = filterUnapprovedShellTools(
+          this.requestedToolNames ?? this.inner.getActiveToolNames(),
+          this.requestedToolNames,
         );
+        await getDefaultStore().writeLock.run(() => this.persistToolNames(newSessionId, selected));
         const execution = this.toolPolicy?.getExecution();
-        if (execution) setDesktopSessionExecutionTools(newSessionId, execution);
-        copyDesktopMcpTools(this.sessionId, newSessionId);
+        if (execution) await setDesktopSessionExecutionTools(newSessionId, execution);
+        await copyDesktopMcpTools(this.sessionId, newSessionId);
         cacheSessionPath(newSessionId, newSessionFile);
         await this.dispose({ abort: true, reason: "fork" });
         return { cancelled: false, newSessionId };
@@ -690,8 +692,7 @@ export class AgentSessionWrapper {
       case "compact": {
         const result = await this.withFinalRunningNotification(() =>
           this.enqueueTurn(async () => {
-            await this.modelConfig.sync(this.inner, this.modelSelection);
-            this.modelSelection.assertReady(this.inner);
+            await this.prepareModelTurn();
             return this.inner.compact(command.customInstructions as string | undefined);
           }),
         );
@@ -784,6 +785,7 @@ export class AgentSessionWrapper {
             session: this.inner,
             policy: this.toolPolicy,
             requested: this.requestedToolNames,
+            isCurrent: () => this.isAlive(),
             apply: (names) => this.applyRequestedTools(names),
             persist: (id, names) => this.persistToolNames(id, names),
           },
@@ -1450,21 +1452,18 @@ export async function startRpcSession(
     await executionHistory.recover();
 
     const managerSessionId = sessionManager.getSessionId();
-    const {
-      shell,
-      toolNames: sessionToolNames,
-      hasStoredTools,
-    } = loadSessionToolSelection(sessionManager, !sessionFile, toolNames);
+    const selection = await loadSessionToolSelection(sessionManager, !sessionFile, toolNames, true);
+    const { shell } = selection;
     const toolPolicy = new SessionToolPolicy(
       sessionManager,
-      sessionToolNames,
-      getDesktopSessionExecutionTools(sessionId),
+      selection.toolNames,
+      getDesktopSessionExecutionTools(managerSessionId),
       getDesktopSessionMcpExecutionTools(managerSessionId),
     );
 
     // Build services first so extension-registered providers are available
     // before the SDK restores the saved model from the session file.
-    const promptPolicy = new SessionPromptPolicy(sessionToolNames?.length === 0);
+    const promptPolicy = new SessionPromptPolicy(selection.toolNames?.length === 0);
     const modelSelection = new SessionModelSelection();
     const services = await createAgentSessionServices(
       {
@@ -1501,14 +1500,7 @@ export async function startRpcSession(
     });
     modelSelection.finish(inner, modelFallbackMessage);
     const realSessionId = inner.sessionId as string;
-    toolPolicy.bind(inner);
-
-    // Keep every tool registered so a session initialized with no tools can enable
-    // them later. Narrow only the active set, never the registry allow-list.
-    if (sessionToolNames !== undefined) {
-      inner.setActiveToolsByName(withExtensionTools(inner, sessionToolNames));
-      if (!hasStoredTools) setDesktopSessionToolNames(realSessionId, sessionToolNames, shell);
-    }
+    const sessionToolNames = await activateInitialSessionTools(inner, selection, toolPolicy, promptPolicy);
 
     const wrapper = new AgentSessionWrapper(
       inner,

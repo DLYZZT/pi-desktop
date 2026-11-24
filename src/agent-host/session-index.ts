@@ -1,7 +1,10 @@
+import { opendir, stat } from "node:fs/promises";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getSessionContentSnapshot } from "./session-content-cache.ts";
+import { directoryForkWorkspaceRoot } from "./desktop-data-root.ts";
+import { readSessionFileHeader } from "./session-readonly.ts";
 import type { SessionInfo } from "../shared/types";
 import { buildSessionInfoFromManager } from "./session-reader";
 import { getProjectCacheRevision, resolveProject } from "../shared/worktree";
@@ -48,6 +51,7 @@ function sameFingerprint(left: Fingerprint, right: Fingerprint): boolean {
 function discoverSessionFiles(root: string): string[] {
   if (!existsSync(root)) return [];
   const files: string[] = [];
+  const privateForks = directoryForkWorkspaceRoot();
   const directories = [root];
   while (directories.length > 0) {
     const directory = directories.pop()!;
@@ -59,6 +63,7 @@ function discoverSessionFiles(root: string): string[] {
     }
     for (const entry of entries) {
       const candidate = path.join(directory, entry.name);
+      if (candidate === privateForks) continue;
       if (entry.isDirectory()) directories.push(candidate);
       else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(candidate);
     }
@@ -66,10 +71,41 @@ function discoverSessionFiles(root: string): string[] {
   return files;
 }
 
+/** Recovery may consult a former sessions root without installing its paths in the active index. */
+export async function sessionExistsInStores(roots: string[], id: string): Promise<boolean> {
+  const directories = [...new Set(roots)],
+    privateForks = directoryForkWorkspaceRoot();
+  const scanned = new Map<string, string>();
+  const version = async (directory: string) => {
+    const s = await stat(directory, { bigint: true });
+    return `${s.dev}:${s.ino}:${s.ctimeNs}:${s.mtimeNs}`;
+  };
+  while (directories.length) {
+    const directory = directories.pop()!;
+    if (scanned.has(directory)) continue;
+    scanned.set(directory, await version(directory));
+    for await (const entry of await opendir(directory)) {
+      const candidate = path.join(directory, entry.name);
+      if (candidate === privateForks) continue;
+      if (entry.isDirectory()) directories.push(candidate);
+      else if (entry.isFile() && entry.name.endsWith(".jsonl") && readSessionFileHeader(candidate)?.id === id)
+        return true;
+    }
+  }
+  // A migration can move a file between directories already visited by the scan.
+  // Destructive recovery needs a stable negative result from both roots.
+  for (const [directory, before] of scanned) {
+    if ((await version(directory)) !== before)
+      throw Object.assign(new Error("Session directories changed during recovery"), { code: "EAGAIN" });
+  }
+  return false;
+}
+
 export class SessionIndex {
   private readonly byPath = new Map<string, IndexRecord>();
   private readonly pathById = new Map<string, string>();
   private refreshPromise: Promise<void> | null = null;
+  private indexedRoot?: string;
   private initialized = false;
   private projectRevision = -1;
   private projectViewsRefreshedAt = 0;
@@ -81,7 +117,7 @@ export class SessionIndex {
     totalMs: 0,
   };
 
-  private sessionsRoot(): string {
+  sessionsRoot(): string {
     return path.resolve(process.env.PI_CODING_AGENT_SESSION_DIR || path.join(getAgentDir(), "sessions"));
   }
 
@@ -140,7 +176,10 @@ export class SessionIndex {
       try {
         const { manager, entries } = getSessionContentSnapshot(filePath);
         const header = manager.getHeader();
-        const info = await buildSessionInfoFromManager(filePath, manager, entries, { resolveProjectInfo });
+        const info = await buildSessionInfoFromManager(filePath, manager, entries, {
+          resolveProjectInfo,
+          cachePath: false,
+        });
         const after = fingerprint(filePath);
         if (!sameFingerprint(before, after)) {
           if (attempt === 0) continue;
@@ -173,10 +212,17 @@ export class SessionIndex {
   }
 
   refreshAll(): Promise<void> {
-    if (this.refreshPromise) return this.refreshPromise;
+    const root = this.sessionsRoot();
+    if (this.refreshPromise)
+      return this.indexedRoot === root ? this.refreshPromise : this.refreshPromise.then(() => this.refreshAll());
+    if (this.indexedRoot !== root) {
+      this.initialized = false;
+      this.projectViewsRefreshedAt = 0;
+    }
+    this.indexedRoot = root;
     this.refreshPromise = (async () => {
       const startedAt = performance.now();
-      const files = discoverSessionFiles(this.sessionsRoot());
+      const files = discoverSessionFiles(root);
       const discovered = new Set(files);
       let filesParsed = 0;
       let filesReused = 0;
@@ -223,6 +269,9 @@ export class SessionIndex {
     const resolved = path.resolve(filePath);
     const root = this.sessionsRoot();
     if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) return null;
+    if (this.indexedRoot !== undefined && this.indexedRoot !== root) await this.refreshAll();
+    this.indexedRoot = root;
+    if (resolved.startsWith(directoryForkWorkspaceRoot() + path.sep)) return null;
     if (!resolved.endsWith(".jsonl") || !existsSync(resolved)) {
       this.removePath(resolved);
       return null;
@@ -238,6 +287,7 @@ export class SessionIndex {
     if (existing && sameFingerprint(existing.fingerprint, currentFingerprint)) return existing.info;
     const startedAt = performance.now();
     const record = await this.parsePath(resolved, currentFingerprint, true);
+    if (this.sessionsRoot() !== root || this.indexedRoot !== root) return null;
     this.byPath.set(resolved, record);
     this.rebuildDerivedState();
     this.initialized = true;
@@ -259,11 +309,11 @@ export class SessionIndex {
   }
 
   getByPath(filePath: string): SessionInfo | null {
-    return this.byPath.get(path.resolve(filePath))?.info ?? null;
+    return this.indexedRoot === this.sessionsRoot() ? (this.byPath.get(path.resolve(filePath))?.info ?? null) : null;
   }
 
   async getAll(): Promise<SessionInfo[]> {
-    if (!this.initialized) await this.initialize();
+    if (!this.initialized || this.indexedRoot !== this.sessionsRoot()) await this.initialize();
     await this.refreshProjectViews();
     return [...this.byPath.values()]
       .flatMap((record) => (record.info ? [record.info] : []))
@@ -271,7 +321,7 @@ export class SessionIndex {
   }
 
   async resolvePath(sessionId: string): Promise<string | null> {
-    if (!this.initialized) await this.initialize();
+    if (!this.initialized || this.indexedRoot !== this.sessionsRoot()) await this.initialize();
     const known = this.pathById.get(sessionId);
     if (known) return known;
     await this.refreshAll();

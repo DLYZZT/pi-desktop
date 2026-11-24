@@ -5,6 +5,9 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import lockfile from "proper-lockfile";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { CODING_FULL_TOOLS, PRESET_FULL } from "../shared/tool-presets.ts";
 
 const { DesktopSessionToolStore } = await importTestBundle("src/agent-host/session-tool-store", {
@@ -15,6 +18,101 @@ const { DesktopSessionToolStore } = await importTestBundle("src/agent-host/sessi
     sourcefile: "session-tool-store-test-entry.ts",
     loader: "ts",
   },
+});
+
+test("the first ordinary permission writes after a killed lock holder wait without blocking and preserve order", async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-killed-tool-writer-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "session-tools.json"),
+    store = new DesktopSessionToolStore(file);
+  store.set("existing", ["edit"]);
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      'require("proper-lockfile").lockSync(process.argv[1],{realpath:false});process.send("locked");setInterval(()=>{},60000);',
+      file,
+    ],
+    { cwd: import.meta.dirname, stdio: ["ignore", "ignore", "pipe", "ipc"] },
+  );
+  t.after(() => child.kill());
+  assert.equal((await once(child, "message"))[0], "locked");
+  const exited = once(child, "exit");
+  child.kill("SIGKILL");
+  await exited;
+  const first = store.set("new", ["read"]),
+    revoke = store.set("new", []);
+  await new Promise(setImmediate);
+  assert.equal(store.get("new"), undefined);
+  await Promise.all([first, revoke]);
+  assert.deepEqual(store.get("new"), []);
+  assert.deepEqual(store.get("existing"), ["edit"]);
+});
+
+test("an asynchronous recovery scan keeps other permission changes queued until its synchronous commit", async (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "pi-permission-scan-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new DesktopSessionToolStore(path.join(directory, "permissions.json"));
+  const entered = Promise.withResolvers(),
+    release = Promise.withResolvers();
+  const scan = store.writeLock.prepareThenRun(
+    async () => {
+      entered.resolve();
+      await release.promise;
+      return "checked";
+    },
+    (result) => {
+      assert.equal(result, "checked");
+      store.locked.set("session", ["read"]);
+    },
+  );
+  await entered.promise;
+  assert.equal(store.writeLock.isHeld, false);
+  const later = store.set("session", []);
+  assert.equal(store.get("session"), undefined);
+  release.resolve();
+  await Promise.all([scan, later]);
+  assert.deepEqual(store.get("session"), []);
+  await assert.rejects(
+    store.writeLock.prepareThenRun(
+      async () => {
+        throw new Error("unavailable store");
+      },
+      () => assert.fail(),
+    ),
+    /unavailable store/,
+  );
+  await store.set("session", ["edit"]);
+  assert.deepEqual(store.get("session"), ["edit"]);
+});
+
+test("a fork waits for a concurrent policy writer and preserves its latest grants and unknown fields", async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "pi-fork-grant-lock-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "session-tools.json"),
+    store = new DesktopSessionToolStore(file);
+  store.set("original", ["read"]);
+  assert.deepEqual(store.get("original"), ["read"]);
+  const release = lockfile.lockSync(file, { realpath: false });
+  let published = false;
+  const pending = store.publishChatOnlyFork("copy", undefined, () => {
+    published = true;
+  });
+  try {
+    assert.equal(published, false);
+    const latest = JSON.parse(readFileSync(file));
+    latest.sessions.original.toolNames = ["edit"];
+    latest.sessions.original.extra = "written by another process";
+    writeFileSync(file, JSON.stringify(latest));
+  } finally {
+    release();
+  }
+  await pending;
+  assert.equal(published, true);
+  assert.deepEqual(store.get("original"), ["edit"]);
+  assert.deepEqual(store.get("copy"), []);
+  const saved = JSON.parse(readFileSync(file));
+  assert.equal(saved.sessions.original.extra, "written by another process");
 });
 
 test("general orchestration preferences preserve child grants and survive reopen and no-tools transitions", async (t) => {

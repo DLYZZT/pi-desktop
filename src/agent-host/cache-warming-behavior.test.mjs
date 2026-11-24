@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync } from "node:fs";
+import { guardSessionCacheWarming, suspendForkCacheWarming } from "./session-cache-warming.ts";
+import { createDeferred } from "#test-timing";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -15,7 +17,7 @@ import {
 const provider = "pi-desktop-warming-fixture";
 const modelId = "warmable-model";
 
-function response(model, content, stopReason = "stop") {
+function response(model, content, stopReason = "stop", ready = Promise.resolve()) {
   const stream = createAssistantMessageEventStream();
   const message = {
     role: "assistant",
@@ -34,14 +36,14 @@ function response(model, content, stopReason = "stop") {
       cost: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
     },
   };
-  void Promise.resolve().then(() => {
+  void ready.then(() => {
     stream.push({ type: "done", reason: stopReason, message });
     stream.end();
   });
   return stream;
 }
 
-async function fixture(t, mode, slowTool = false) {
+async function fixture(t, mode, slowTool = false, warmReady) {
   const directory = mkdtempSync(path.join(tmpdir(), "pi-warming-behavior-"));
   const manager = SessionManager.inMemory(directory);
   let ordinaryRequests = 0;
@@ -87,7 +89,7 @@ async function fixture(t, mode, slowTool = false) {
               streamSimple(model, _context, options) {
                 if (options?.maxTokens === 1) {
                   warmRequests++;
-                  return response(model, [{ type: "text", text: "warm" }]);
+                  return response(model, [{ type: "text", text: "warm" }], "stop", warmReady);
                 }
                 ordinaryRequests++;
                 return slowTool && ordinaryRequests === 1
@@ -106,6 +108,7 @@ async function fixture(t, mode, slowTool = false) {
   });
   const model = services.modelRuntime.getModel(provider, modelId);
   assert.ok(model);
+  guardSessionCacheWarming(services.settingsManager, manager);
   const { session } = await createAgentSessionFromServices({
     services,
     sessionManager: manager,
@@ -135,6 +138,46 @@ async function fixture(t, mode, slowTool = false) {
   });
   return { session, manager, toolStarted, releaseTool, counts: () => ({ ordinaryRequests, warmRequests }) };
 }
+
+test("an idle SDK session neither replays a paid request in a missing cwd nor records a response during overlapping forks", async (t) => {
+  const gate = createDeferred(),
+    f = await fixture(t, "idle", false, gate.promise);
+  const cwd = f.manager.getCwd();
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  await f.session.prompt("start", { source: "rpc" });
+  renameSync(cwd, cwd + "-moved");
+  try {
+    t.mock.timers.tick(10_000);
+    await new Promise(setImmediate);
+    assert.equal(f.counts().warmRequests, 0);
+  } finally {
+    renameSync(cwd + "-moved", cwd);
+  }
+  await f.session.prompt("restored", { source: "rpc" });
+  t.mock.timers.tick(10_000);
+  await new Promise(setImmediate);
+  assert.equal(f.counts().warmRequests, 1);
+  const first = suspendForkCacheWarming(f.manager.getSessionId()),
+    second = suspendForkCacheWarming(f.manager.getSessionId());
+  first();
+  try {
+    gate.resolve();
+    await new Promise(setImmediate);
+    assert.equal(
+      f.manager.getEntries().some((entry) => entry.type === "usage"),
+      false,
+    );
+    assert.equal(f.session.settingsManager.getCacheWarmingMode(), "off");
+  } finally {
+    second();
+  }
+  assert.equal(f.session.settingsManager.getCacheWarmingMode(), "idle");
+  await f.session.prompt("continue", { source: "rpc" });
+  t.mock.timers.tick(10_000);
+  await new Promise(setImmediate);
+  assert.equal(f.counts().warmRequests, 2);
+  assert.equal(f.manager.getEntries().filter((entry) => entry.type === "usage").length, 1);
+});
 
 test("off never refreshes a completed SDK request, while idle records a separate usage entry", async (t) => {
   const off = await fixture(t, "off");

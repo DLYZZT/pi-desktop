@@ -969,7 +969,7 @@ function GeneralSettings({
   const [managedProcessesError, setManagedProcessesError] = useState<"load" | "save" | null>(null);
   const [managedProcessCapability, setManagedProcessCapability] = useState<ManagedProcessCapability | null>(null);
   const [autoSessionTitle, setAutoSessionTitle] = useState(() => isAutoSessionTitleEnabled());
-  const [cacheWarmingMode, setCacheWarmingModeState] = useState<"off" | "streaming" | "idle">("streaming");
+  const [cacheWarmingMode, setCacheWarmingModeState] = useState<"off" | "streaming" | "idle">("idle");
   const [cacheWarmingLoading, setCacheWarmingLoading] = useState(true);
   const [cacheWarmingSaving, setCacheWarmingSaving] = useState(false);
   const [cacheWarmingError, setCacheWarmingError] = useState<"load" | "save" | "partial" | null>(null);
@@ -1313,7 +1313,7 @@ function GeneralSettings({
           <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: "var(--text-dim)" }}>
             {t(
               "cacheWarmingDescription",
-              "Cache warming may use model tokens. This setting is shared with the Pi CLI.",
+              "By default, eligible prompt caches also stay warm while idle. Warming may use model tokens. This setting is shared with the Pi CLI.",
             )}
           </p>
           {cacheWarmingError && (

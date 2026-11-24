@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -146,6 +148,26 @@ test("global credentials, models, MCP auth references and trusted project prefer
   assert.equal(azureUpgradeRevision(f.agent), revision);
   assert.equal(readdirSync(path.join(f.agent, "desktop-azure-backups")).length, count);
 });
+test("Azure migration updates a linked auth.json target and backs up its original bytes", async (t) => {
+  const f = fixture(t);
+  const alias = path.join(f.agent, "auth.json");
+  const target = path.join(f.root, "shared-auth.json");
+  f.write(target, { [old]: { type: "api_key", key: "PRIVATE_FIXTURE" } });
+  try {
+    symlinkSync(path.relative(f.agent, target), alias, "file");
+  } catch (error) {
+    if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+    return t.skip("File symlinks are unavailable on this Windows host");
+  }
+  const before = readFileSync(target, "utf8");
+  const result = await ensureAzureUpgrade({ agentDir: f.agent });
+  assert.equal(result.status, "migrated");
+  assert.deepEqual(result.files, [alias]);
+  assert.equal(readFileSync(result.backups[0], "utf8"), before);
+  assert.equal(lstatSync(alias).isSymbolicLink(), true);
+  assert.deepEqual(JSON.parse(readFileSync(target)), { azure: { type: "api_key", key: "PRIVATE_FIXTURE" } });
+});
+
 test("conflicting credentials and preference keys preserve every file until explicitly resolved", async (t) => {
   const f = fixture(t),
     authFile = path.join(f.agent, "auth.json"),

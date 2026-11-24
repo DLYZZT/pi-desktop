@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, statSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -14,6 +14,9 @@ const { DesktopModelCredentials } = await importTestBundle("model-credentials", 
 const { resolveProviderAuth } = await import(
   new URL("./auth/resolve.js", import.meta.resolve("@earendil-works/pi-ai"))
 );
+const { AuthStorage } = await import(
+  new URL("./core/auth-storage.js", import.meta.resolve("@earendil-works/pi-coding-agent"))
+);
 function fixture(t) {
   const root = mkdtempSync(path.join(tmpdir(), "pi-model-credential-life-")),
     filename = path.join(root, "auth.json");
@@ -26,6 +29,17 @@ function fixture(t) {
     }),
   );
   return { filename, store: new DesktopModelCredentials(filename) };
+}
+
+function linkCredentialFile(t, filename, target) {
+  try {
+    symlinkSync(target, filename, "file");
+    return true;
+  } catch (error) {
+    if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+    t.skip("File symlinks are unavailable on this Windows host");
+    return false;
+  }
 }
 test("cancelled SDK auth returns promptly while shutdown waits for the rotated token to be saved under the CLI lock", async (t) => {
   const f = fixture(t),
@@ -120,4 +134,50 @@ test("the public ModelRuntime credential-store injection resolves API keys and n
   assert.equal((await runtime.getAuth("anthropic")).auth.apiKey, "FIRST");
   writeFileSync(f.filename, JSON.stringify({ anthropic: { type: "api_key", key: "SECOND" } }));
   assert.equal((await runtime.getAuth("anthropic")).auth.apiKey, "SECOND");
+});
+
+test("Desktop and the Pi CLI serialize writes through an auth.json symlink and preserve the link", async (t) => {
+  const { filename } = fixture(t);
+  const alias = path.join(path.dirname(filename), "alias.json");
+  if (!linkCredentialFile(t, alias, path.basename(filename))) return;
+  const desktop = new DesktopModelCredentials(alias);
+  const entered = createDeferred();
+  const release = createDeferred();
+  const cli = AuthStorage.create(alias).modify("fixture", async (current) => {
+    entered.resolve();
+    await release.promise;
+    return { ...current, access: "CLI_ROTATION" };
+  });
+  try {
+    await Promise.race([entered.promise, cli]);
+    const timeout = globalThis.AbortSignal.timeout(60);
+    await assert.rejects(
+      desktop.modify("other", async () => assert.fail("Desktop entered while the CLI held the lock"), {
+        signal: timeout,
+      }),
+      (error) => error === timeout.reason || error.cause === timeout.reason,
+    );
+  } finally {
+    release.resolve();
+    await cli;
+  }
+  assert.equal((await desktop.read("fixture")).access, "CLI_ROTATION");
+  await desktop.modify("fixture", async (current) => ({ ...current, access: "DESKTOP_ROTATION" }));
+  await desktop.delete("other");
+  assert.equal(lstatSync(alias).isSymbolicLink(), true);
+  assert.equal(readStoredCredential("fixture", filename).access, "DESKTOP_ROTATION");
+  assert.equal(readStoredCredential("other", filename), undefined);
+});
+
+test("saving the first credential follows a dangling auth.json symlink", async (t) => {
+  const { filename } = fixture(t);
+  const dir = path.dirname(filename);
+  const alias = path.join(dir, "missing-alias.json");
+  const target = path.join(dir, "new-auth.json");
+  if (!linkCredentialFile(t, alias, path.basename(target))) return;
+  const desktop = new DesktopModelCredentials(alias);
+  assert.equal(await desktop.read("fixture"), undefined);
+  await desktop.modify("fixture", async () => ({ type: "api_key", key: "INITIAL" }));
+  assert.equal(lstatSync(alias).isSymbolicLink(), true);
+  assert.equal(readStoredCredential("fixture", target).key, "INITIAL");
 });

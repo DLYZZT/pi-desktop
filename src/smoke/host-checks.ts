@@ -143,7 +143,7 @@ export async function runSmokeHostChecks(
       throw new Error("Smoke Pi settings must be isolated under temporary user data");
     }
     const initialWarming = await call<{ mode?: string; scope?: string }>("settings.getCacheWarming");
-    if (initialWarming.mode !== "streaming" || initialWarming.scope !== "global") {
+    if (initialWarming.mode !== "idle" || initialWarming.scope !== "global") {
       throw new Error("Pi cache warming default did not load from isolated global settings");
     }
     const updatedWarming = await call<{ mode?: string; pendingSessionCount?: number }>("settings.setCacheWarming", {

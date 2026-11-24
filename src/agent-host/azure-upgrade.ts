@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { AzureUpgradeReport } from "../contract/types";
 import { parseJsonRecord, withLockedJsonFile, type JsonRecord } from "../shared/node/locked-json-file";
+import { resolveModelCredentialPath } from "./model-credential-path";
 import { parseModelsConfig } from "./models-config-validation";
 
 export const LEGACY_AZURE_PROVIDER = "azure-openai-responses";
@@ -164,8 +165,10 @@ async function migrate(agentDir: string, cwd?: string, projectTrusted = true): P
     const lock = async (index: number): Promise<void> => {
       const snapshot = lockedFiles[index];
       if (snapshot) {
+        const lockFilename =
+          snapshot.kind === "auth" ? await resolveModelCredentialPath(snapshot.filename) : snapshot.filename;
         await withLockedJsonFile(
-          snapshot.filename,
+          lockFilename,
           async (value, save) => {
             const fresh = await readDocument(snapshot.filename, snapshot.kind);
             if (!isDeepStrictEqual(value, fresh?.value ?? {}))

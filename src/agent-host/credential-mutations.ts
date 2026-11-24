@@ -5,6 +5,7 @@ import type { AuthInteraction, Credential, LoginOptions } from "@earendil-works/
 import type { CredentialMutationOptions, CredentialSnapshot } from "../contract/auth";
 import { RpcError } from "../contract/types";
 import { withLockedJsonFile, type JsonRecord } from "../shared/node/locked-json-file";
+import { resolveModelCredentialPath } from "./model-credential-path";
 
 function snapshot(provider: string, data: JsonRecord): CredentialSnapshot {
   const credential = data[provider] as Credential | undefined;
@@ -27,8 +28,10 @@ function assertVersion(current: CredentialSnapshot, expected: string | undefined
 export class CredentialMutations {
   constructor(private readonly authPath = path.join(getAgentDir(), "auth.json")) {}
 
-  snapshot(provider: string): Promise<CredentialSnapshot> {
-    return withLockedJsonFile(this.authPath, async (data) => snapshot(provider, data));
+  async snapshot(provider: string): Promise<CredentialSnapshot> {
+    return withLockedJsonFile(await resolveModelCredentialPath(this.authPath), async (data) =>
+      snapshot(provider, data),
+    );
   }
 
   async login(
@@ -39,7 +42,8 @@ export class CredentialMutations {
     options?: LoginOptions,
     mutation: CredentialMutationOptions = {},
   ): Promise<Credential> {
-    const before = await this.snapshot(provider);
+    const filename = await resolveModelCredentialPath(this.authPath);
+    const before = await withLockedJsonFile(filename, async (data) => snapshot(provider, data));
     assertVersion(before, mutation.expectedVersion);
     if (before.type !== null && before.type !== type && mutation.replaceExisting !== true) {
       throw new RpcError({
@@ -62,7 +66,7 @@ export class CredentialMutations {
     signal.throwIfAborted();
     if (credential.type !== type) throw new Error("Provider returned the wrong credential type");
     await withLockedJsonFile(
-      this.authPath,
+      filename,
       async (data, save) => {
         assertVersion(snapshot(provider, data), before.version);
         await save({ ...data, [provider]: credential });
@@ -79,7 +83,7 @@ export class CredentialMutations {
     type: "api_key" | "oauth",
     expectedVersion?: string,
   ): Promise<void> {
-    await withLockedJsonFile(this.authPath, async (data, save) => {
+    await withLockedJsonFile(await resolveModelCredentialPath(this.authPath), async (data, save) => {
       const current = snapshot(provider, data);
       assertVersion(current, expectedVersion);
       if (current.type !== null && current.type !== type)

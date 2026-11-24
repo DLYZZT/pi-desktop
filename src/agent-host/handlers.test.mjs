@@ -77,6 +77,47 @@ test("agent command envelope validation runs before session lookup without closi
   );
 });
 
+test("a saved session with a missing directory remains readable but cannot start a turn", async (t) => {
+  const project = mkdtempSync(path.join(tmpdir(), "pi-removed-session-project-"));
+  const manager = SessionManager.create(project);
+  const timestamp = Date.now();
+  manager.appendMessage({ role: "user", content: "Historical prompt", timestamp });
+  manager.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "Historical reply" }],
+    api: "openai-completions",
+    provider: "fixture",
+    model: "fixture",
+    stopReason: "stop",
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { total: 0 } },
+    timestamp,
+  });
+  t.after(() => rmSync(project, { recursive: true, force: true }));
+  rmSync(project, { recursive: true, force: true });
+  const sessionId = manager.getSessionId();
+  const filename = manager.getSessionFile();
+  t.after(() => rmSync(filename, { force: true }));
+  const bytes = readFileSync(filename);
+  const { handlers } = await captureHandlers();
+  const detail = await handlers["sessions.get"]({ id: sessionId });
+  assert.equal(detail.context.messages.length, 2);
+  assert.equal(detail.unavailableWorkingDirectory, project);
+  for (const command of [
+    { type: "get_tools" },
+    { type: "get_commands" },
+    { type: "prompt", message: "Must not be sent" },
+  ]) {
+    await assert.rejects(handlers["agent.command"]({ sessionId, command }), {
+      code: "SESSION_CWD_UNAVAILABLE",
+      detail: { cwd: project },
+    });
+  }
+  assert.deepEqual(await handlers["agent.state"]({ sessionId }), { running: false });
+  assert.deepEqual(readFileSync(filename), bytes);
+  mkdirSync(project);
+  assert.equal((await handlers["sessions.get"]({ id: sessionId })).unavailableWorkingDirectory, undefined);
+});
+
 test("model connection tests use isolated configuration and preserve success and provider errors", async (t) => {
   const { handlers } = await captureHandlers();
   const calls = [];
