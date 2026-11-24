@@ -136,7 +136,7 @@ test("forking to a new directory preserves the entire source tree and execution 
 
   const fork = await f.handlers.forkToDirectory({ id: f.id, cwd: f.destination });
   assert.notEqual(fork.id, f.id);
-  assert.equal(fork.cwd, realpathSync(f.destination));
+  assert.equal(fork.cwd, realpathSync.native(f.destination));
   assert.equal(fork.parentSessionId, f.id);
   assert.equal(fork.name, "Existing conversation");
   assert.equal(path.dirname(fork.path), sessions);
@@ -1181,37 +1181,47 @@ test("copying without hard links releases the permission lock and preserves a co
   assert.deepEqual(readFileSync(f.filename), f.bytes);
 });
 
-test("moving the active root during fallback preparation rolls back only the fork's reserved file", async (t) => {
-  const f = fixture(),
-    previous = process.env.PI_CODING_AGENT_SESSION_DIR;
-  t.after(() => {
-    process.env.PI_CODING_AGENT_SESSION_DIR = previous;
+for (const relocation of process.platform === "win32" ? ["alias"] : ["rename", "alias"]) {
+  test(`active root relocation during fallback preparation rolls back only the fork's reserved file (${relocation})`, async (t) => {
+    const f = fixture(),
+      previous = process.env.PI_CODING_AGENT_SESSION_DIR;
+    t.after(() => {
+      process.env.PI_CODING_AGENT_SESSION_DIR = previous;
+    });
+    const base = mkdtempSync(path.join(root, "live-root-")),
+      former = path.join(base, "former"),
+      current = path.join(base, "current"),
+      name = path.basename(f.filename);
+    // Windows holds the physical directory while its child is open. A junction
+    // lets the old path be reassigned while the file handle stays on the original tree.
+    if (relocation === "alias") {
+      mkdirSync(current);
+      fs.symlinkSync(current, former, process.platform === "win32" ? "junction" : "dir");
+    } else mkdirSync(former);
+    fs.copyFileSync(f.filename, path.join(former, name));
+    process.env.PI_CODING_AGENT_SESSION_DIR = former;
+    const oldPolicy = readFileSync(policyFile),
+      oldLogs = readdirSync(historyRoot).sort();
+    const track = DirectoryForkWorkspace.prototype.trackFallback;
+    t.mock.method(fs, "linkSync", () => {
+      throw Object.assign(new Error("different volume"), { code: "EXDEV" });
+    });
+    t.mock.method(DirectoryForkWorkspace.prototype, "trackFallback", function (identity) {
+      track.call(this, identity);
+      if (relocation === "alias") fs.unlinkSync(former);
+      else renameSync(former, current);
+      mkdirSync(former);
+      writeFileSync(path.join(former, "unrelated"), "untouched");
+      process.env.PI_CODING_AGENT_SESSION_DIR = current;
+    });
+    await assert.rejects(f.handlers.forkToDirectory({ id: f.id, cwd: f.destination }), { code: "CONFLICT" });
+    assert.deepEqual(readdirSync(current), [name]);
+    assert.deepEqual(readFileSync(path.join(current, name)), f.bytes);
+    assert.equal(readFileSync(path.join(former, "unrelated"), "utf8"), "untouched");
+    assert.deepEqual(readFileSync(policyFile), oldPolicy);
+    assert.deepEqual(readdirSync(historyRoot).sort(), oldLogs);
   });
-  const former = mkdtempSync(path.join(root, "live-root-")),
-    current = former + "-moved",
-    name = path.basename(f.filename);
-  fs.copyFileSync(f.filename, path.join(former, name));
-  process.env.PI_CODING_AGENT_SESSION_DIR = former;
-  const oldPolicy = readFileSync(policyFile),
-    oldLogs = readdirSync(historyRoot).sort();
-  const track = DirectoryForkWorkspace.prototype.trackFallback;
-  t.mock.method(fs, "linkSync", () => {
-    throw Object.assign(new Error("different volume"), { code: "EXDEV" });
-  });
-  t.mock.method(DirectoryForkWorkspace.prototype, "trackFallback", function (identity) {
-    track.call(this, identity);
-    renameSync(former, current);
-    mkdirSync(former);
-    writeFileSync(path.join(former, "unrelated"), "untouched");
-    process.env.PI_CODING_AGENT_SESSION_DIR = current;
-  });
-  await assert.rejects(f.handlers.forkToDirectory({ id: f.id, cwd: f.destination }), { code: "CONFLICT" });
-  assert.deepEqual(readdirSync(current), [name]);
-  assert.deepEqual(readFileSync(path.join(current, name)), f.bytes);
-  assert.equal(readFileSync(path.join(former, "unrelated"), "utf8"), "untouched");
-  assert.deepEqual(readFileSync(policyFile), oldPolicy);
-  assert.deepEqual(readdirSync(historyRoot).sort(), oldLogs);
-});
+}
 
 test("foreign history written in place at a fallback destination is neither published as the fork nor removed", async (t) => {
   const f = fixture(),

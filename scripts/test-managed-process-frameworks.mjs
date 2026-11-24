@@ -289,6 +289,11 @@ try {
 
   const springApp = path.join(javaUnicodeFixture, "spring-app");
   await cp(springRoot, springApp, { recursive: true });
+  // Spring Initializr chooses the Maven distribution independently of the pinned Boot version.
+  await cp(
+    new URL("./fixtures/spring-maven-wrapper.properties", import.meta.url),
+    path.join(springApp, ".mvn", "wrapper", "maven-wrapper.properties"),
+  );
   const springPort = await reservePort();
   const springProperties = path.join(springApp, "src", "main", "resources", "application.properties");
   await mkdir(path.dirname(springProperties), { recursive: true });
