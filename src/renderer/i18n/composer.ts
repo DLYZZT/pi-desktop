@@ -1,6 +1,7 @@
 // Translation entries owned by the composer domain.
 export const enUS: Record<string, string> = {
   attachLocalFiles: "Add images or local file references",
+  attachedImagePreview: "View attached image",
   attachLocalFilesDescription:
     "Add images or local file references. The agent reads absolute paths on this computer; moved files, remote agents, or sandboxes may not be able to access them.",
   draftPersistenceFailed:
@@ -81,6 +82,7 @@ export const enUS: Record<string, string> = {
 
 export const zhCN: Record<string, string> = {
   attachLocalFiles: "添加图片或本地文件引用",
+  attachedImagePreview: "查看附件图片大图",
   attachLocalFilesDescription:
     "添加图片或本地文件引用。Agent 会读取本机绝对路径；文件移动后、远程 Agent 或沙箱环境可能无法访问。",
   draftPersistenceFailed: "草稿未能保存到此设备。当前内容仍保留在页面中，请检查可用存储空间。",
@@ -159,6 +161,7 @@ export const zhCN: Record<string, string> = {
 
 export const zhTW: Record<string, string> = {
   attachLocalFiles: "新增圖片或本機檔案參考",
+  attachedImagePreview: "檢視附件圖片大圖",
   attachLocalFilesDescription:
     "新增圖片或本機檔案參考。Agent 會讀取本機絕對路徑；檔案移動後、遠端 Agent 或沙盒環境可能無法存取。",
   draftPersistenceFailed: "草稿未能儲存到此裝置。目前內容仍保留在頁面中，請檢查可用的儲存空間。",

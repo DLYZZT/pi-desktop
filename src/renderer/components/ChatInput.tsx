@@ -12,6 +12,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
 import { localFilePathKey, splitLocalFileReferenceMarkdown } from "@/lib/file-url";
 import { Button } from "@/components/ui/Button";
+import { EnlargableImage } from "./ImageLightbox";
 
 export type { AttachedImage } from "@/hooks/useComposerDraft";
 
@@ -826,9 +827,10 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
           <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
             {attachedImages.map((img, i) => (
               <div key={i} style={{ position: "relative", flexShrink: 0 }}>
-                <img
+                <EnlargableImage
                   src={img.previewUrl}
                   alt=""
+                  aria-label={t("attachedImagePreview", "View attached image")}
                   style={{
                     width: 56,
                     height: 56,
