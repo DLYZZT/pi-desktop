@@ -242,6 +242,32 @@ test("ask requests open the question dialog and forward collected answers", asyn
   assert.equal(fixture.current.extensionDialog, null);
 });
 
+test("goal snapshots flow through the runtime gate in order", async (t) => {
+  const fixture = await mount(t);
+  const goalState = {
+    goal: "Ship it",
+    criteria: [],
+    status: "working",
+    continuations: 0,
+    maxContinuations: 8,
+    checkpointEvery: 4,
+    report: null,
+  };
+  const older = fixture.runtimeGate.capture();
+  await act(async () =>
+    fixture.current.applyExtensionSnapshot(
+      { goalState: { ...goalState, goal: "Newer" } },
+      fixture.runtimeGate.capture(),
+    ),
+  );
+  assert.equal(fixture.current.goalState.goal, "Newer");
+  await act(async () => fixture.current.applyExtensionSnapshot({ goalState }, older));
+  assert.equal(fixture.current.goalState.goal, "Newer", "an older snapshot must not overwrite a newer goal");
+
+  await act(async () => fixture.current.applyExtensionSnapshot({ goalState: null }, fixture.runtimeGate.capture()));
+  assert.equal(fixture.current.goalState, null);
+});
+
 test("a resolved signal from another client closes the matching dialog", async (t) => {
   const fixture = await mount(t);
   const questions = [{ question: "Which auth?", options: [{ label: "OAuth" }] }];

@@ -47,6 +47,7 @@ export interface BuiltinAgentCommands {
   extension_ui_response: Command<ExtensionUiResponse, null>;
   extension_ui_input: Command<{ id: string; data: string }, null>;
   set_auto_retry: Command<{ enabled: boolean }, null>;
+  goal_resolve: Command<{ action: "accept" | "reject" | "stop" | "extend"; feedback?: string }, null>;
 }
 
 export type BuiltinAgentCommand = {

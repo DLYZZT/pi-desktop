@@ -23,6 +23,7 @@ import {
 import { MessageView } from "./MessageView";
 import { AskUserDialog, AskUserPanel } from "./AskUserDialog";
 import { TodoPanel } from "./TodoPanel";
+import { GoalPanel } from "./GoalPanel";
 import { ProcessDetailsGroup } from "./ProcessDetailsGroup";
 import { SessionProfiler } from "./SessionProfiler";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
@@ -246,6 +247,7 @@ export function ChatWindow({
     extensionStatuses,
     extensionWidgets,
     todoPlan,
+    goalState,
     respondToExtensionUi,
     sendExtensionCustomInput,
     isAutoModelSelection,
@@ -257,6 +259,7 @@ export function ChatWindow({
     lastUserMsgRef,
     handleSend,
     handleAbort,
+    resolveGoal,
     handleFork,
     handleNavigate,
     handleModelChange,
@@ -417,6 +420,22 @@ export function ChatWindow({
   const visibleTodoPlan = todoPlan && todoPlanKey !== dismissedPlanKey ? todoPlan : null;
   const dismissTodoPlan = (plan: NonNullable<typeof todoPlan>) =>
     setDismissedPlanKey(plan.items.map((item) => `${item.status}:${item.content}`).join("\n"));
+
+  // Same rule for the goal card: status, budget and report changes bring it
+  // back; hiding only lasts until the goal moves on.
+  const [dismissedGoalKey, setDismissedGoalKey] = useState<string | null>(null);
+  const goalPanelKey = goalState
+    ? `${goalState.status}:${goalState.continuations}:${
+        goalState.report?.criteria.map((criterion) => `${criterion.met}:${criterion.criterion}`).join("|") ?? ""
+      }`
+    : null;
+  const visibleGoalState = goalState && goalPanelKey !== dismissedGoalKey ? goalState : null;
+  const dismissGoal = (state: NonNullable<typeof goalState>) =>
+    setDismissedGoalKey(
+      `${state.status}:${state.continuations}:${
+        state.report?.criteria.map((criterion) => `${criterion.met}:${criterion.criterion}`).join("|") ?? ""
+      }`,
+    );
 
   if (loading) {
     return <div className="flex h-full items-center justify-center text-text-muted">Loading session...</div>;
@@ -634,6 +653,40 @@ export function ChatWindow({
                       }}
                     >
                       {t("todoPlanTitle", "Plan")} {todoPlan.completed}/{todoPlan.items.length}
+                    </span>
+                    <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
+                  </Button>
+                </div>
+              ) : null}
+              {visibleGoalState ? (
+                <div className="todo-plan-slot" style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                  <GoalPanel
+                    state={visibleGoalState}
+                    onAction={resolveGoal}
+                    onDismiss={() => dismissGoal(visibleGoalState)}
+                  />
+                </div>
+              ) : goalState ? (
+                // Dismissed but the goal is still active: keep a small handle.
+                <div className="todo-plan-slot" style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDismissedGoalKey(null)}
+                    title={t("goalRestore", "Show goal")}
+                    aria-label={t("goalRestore", "Show goal")}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      height: 24,
+                      padding: "2px 8px",
+                      borderRadius: 999,
+                      pointerEvents: "auto",
+                    }}
+                  >
+                    <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>
+                      {t("goalRestore", "Show goal")}
                     </span>
                     <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
                   </Button>

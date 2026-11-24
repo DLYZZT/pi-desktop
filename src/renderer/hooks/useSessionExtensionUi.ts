@@ -4,6 +4,7 @@ import type {
   ExtensionStatusItem,
   ExtensionWidgetItem,
   ExtensionUiRequest,
+  GoalState,
   TodoPlanState,
 } from "@/lib/types";
 import type { SessionRuntimeState } from "@contract/types";
@@ -43,6 +44,7 @@ export function useSessionExtensionUi({
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [todoPlan, setTodoPlan] = useState<TodoPlanState | null>(null);
+  const [goalState, setGoalState] = useState<GoalState | null>(null);
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
   const dialogOwnerRef = useRef<RequestOwner<DialogRequest> | null>(null);
   const customOwnerRef = useRef<RequestOwner<CustomRequest> | null>(null);
@@ -85,6 +87,8 @@ export function useSessionExtensionUi({
       if (state.extensionWidgets !== undefined && runtimeGate.accept(ticket, "widgets"))
         setExtensionWidgets(state.extensionWidgets ?? []);
       if (state.todoPlan !== undefined && runtimeGate.accept(ticket, "todoPlan")) setTodoPlan(state.todoPlan ?? null);
+      if (state.goalState !== undefined && runtimeGate.accept(ticket, "goalState"))
+        setGoalState(state.goalState ?? null);
     },
     [getViewSignal, runtimeGate, t],
   );
@@ -236,6 +240,7 @@ export function useSessionExtensionUi({
     extensionStatuses,
     extensionWidgets,
     todoPlan,
+    goalState,
     notices: noticeState.visible,
     addNotice,
     applyExtensionSnapshot,

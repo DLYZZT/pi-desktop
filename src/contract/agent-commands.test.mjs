@@ -32,6 +32,10 @@ for (const separator of ["/", "\\"])
       const fork = await sendAgentCommand('session', {type: 'fork', entryId: 'entry'});
       if (!fork.cancelled) {const id: string = fork.newSessionId;}
       await sendAgentCommand('session', {type: 'extension_ui_response', id: 'request', cancelled: true});
+      const goal = await sendAgentCommand('session', {type: 'goal_resolve', action: 'reject', feedback: 'tests fail'});
+      if (goal !== null) throw new Error('goal_resolve returns null');
+      // @ts-expect-error goal actions are a closed union
+      await sendAgentCommand('session', {type: 'goal_resolve', action: 'approve'});
       await sendAgentCommand('session', {type: 'prompt', message: '/extension-custom', images: [{type: 'image', data: 'a', mimeType: 'image/png'}]});
       // @ts-expect-error model selection requires modelId as well as provider
       await sendAgentCommand('session', {type: 'set_model', provider: 'fixture'});

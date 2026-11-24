@@ -1,11 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const TOOLCHAIN_SECTION = /\n*<pi-desktop-toolchain revision="\d+">[\s\S]*?<\/pi-desktop-toolchain>\n*/g;
+const GOAL_SECTION = /\n*<pi-desktop-goal>[\s\S]*?<\/pi-desktop-goal>\n*/g;
 
 /** Session-local prompt policy. The SDK owns the transcript and provider prompt. */
 export class SessionPromptPolicy {
   private forceEmpty: boolean;
   private toolchainPrompt = "";
+  private goalPrompt = "";
 
   constructor(forceEmpty: boolean) {
     this.forceEmpty = forceEmpty;
@@ -23,11 +25,18 @@ export class SessionPromptPolicy {
     ].join("\n");
   }
 
+  /** Goal-mode block; `null` clears it once the goal is accepted or stopped. */
+  setGoalSection(section: string | null): void {
+    this.goalPrompt = section ? ["<pi-desktop-goal>", section, "</pi-desktop-goal>"].join("\n") : "";
+  }
+
   resolve(systemPrompt: string): string {
     if (this.forceEmpty) return "";
-    if (!this.toolchainPrompt) return systemPrompt;
-    const base = systemPrompt.replace(TOOLCHAIN_SECTION, "").trimEnd();
-    return `${base}\n\n${this.toolchainPrompt}`.trim();
+    if (!this.toolchainPrompt && !this.goalPrompt) return systemPrompt;
+    let resolved = systemPrompt.replace(TOOLCHAIN_SECTION, "").replace(GOAL_SECTION, "").trimEnd();
+    if (this.toolchainPrompt) resolved = `${resolved}\n\n${this.toolchainPrompt}`.trim();
+    if (this.goalPrompt) resolved = `${resolved}\n\n${this.goalPrompt}`.trim();
+    return resolved;
   }
 }
 

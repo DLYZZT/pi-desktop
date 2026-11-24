@@ -7,6 +7,7 @@ import { createLegacyChannelContextExtension } from "./legacy-channel-context";
 import { desktopMcpExtensions } from "./mcp/extensions";
 import { sessionOrchestrationExtensions } from "./session-orchestration";
 import { createAgentSettlementExtension } from "./agent-settlement";
+import { createGoalModeExtension } from "./goal-mode";
 
 export function desktopSessionExtensions(
   policy: SessionToolPolicy,
@@ -21,6 +22,7 @@ export function desktopSessionExtensions(
     ...sessionOrchestrationExtensions(undefined, { isAllowed: () => policy.isAllowed("codemode"), history }),
     ...desktopMcpExtensions(policy, running, history),
     createLegacyChannelContextExtension(),
+    createGoalModeExtension(prompt),
     createDesktopPromptExtension(prompt),
   ];
 }

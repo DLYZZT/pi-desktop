@@ -5,6 +5,7 @@ import type {
   DeferredContentRef,
   ExtensionStatusItem,
   ExtensionWidgetItem,
+  GoalState,
   ImageContent,
   SessionTreeNode,
   TextContent,
@@ -90,6 +91,8 @@ export interface SessionRuntimeState {
   extensionWidgets?: ExtensionWidgetItem[];
   /** Plan written by `todo_write` on this branch; omitted when there is none. */
   todoPlan?: TodoPlanState | null;
+  /** Goal-mode state on this branch; omitted when there is no goal. */
+  goalState?: GoalState | null;
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
   [key: string]: unknown;
 }

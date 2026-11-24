@@ -1,7 +1,7 @@
 import { sessionModelForDisplay, sessionStatsForDisplay } from "@shared/session-model-display";
 import type { ThinkingLevelOption } from "@shared/thinking-levels";
 import { useState, useCallback, useRef, useEffect, useReducer } from "react";
-import type { AgentMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
+import type { AgentMessage, ExtensionUiRequest, GoalResolveAction, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { AgentEvent, SessionDetail, SessionRuntimeState } from "@contract/types";
 import type { SlashCommandInfo } from "@contract/agent-commands";
 export type { SlashCommandInfo } from "@contract/agent-commands";
@@ -186,6 +186,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     extensionStatuses,
     extensionWidgets,
     todoPlan,
+    goalState,
     notices,
     addNotice,
     applyExtensionSnapshot,
@@ -317,6 +318,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     },
     [applyExtensionSnapshot, runtimeGate],
   );
+  /** Pull the runtime snapshot on demand (goal-panel actions change host state
+   * without starting or settling a turn). */
+  const refreshRuntimeState = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid || !isActive()) return;
+    const ticket = runtimeGate.capture();
+    try {
+      const data = await agentState(sid);
+      if (!isActive() || sessionIdRef.current !== sid || !runtimeGate.isCurrentRun(ticket)) return;
+      const state = (data.state ?? undefined) as AgentStateResponse | undefined;
+      applyRuntimeSnapshot({ running: data.running, state }, ticket);
+    } catch {
+      // The next reconcile or settlement refresh will pick it up.
+    }
+  }, [applyRuntimeSnapshot, isActive, runtimeGate]);
   const applySessionSnapshot = useCallback(
     (d: SessionDetail, ticket = runtimeGate.capture()) => {
       setSessionStatsOverride(null);
@@ -883,6 +899,29 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, []);
 
+  /** User decision from the goal panel; refreshes state without starting a turn. */
+  const resolveGoal = useCallback(
+    async (action: GoalResolveAction, feedback?: string) => {
+      const sid = sessionIdRef.current;
+      if (!sid || !isActive()) return;
+      try {
+        await sendAgentCommand(sid, {
+          type: "goal_resolve",
+          action,
+          ...(feedback && feedback.trim() ? { feedback: feedback.trim() } : {}),
+        });
+        await refreshRuntimeState();
+      } catch (error) {
+        console.error("Failed to resolve goal:", error);
+        addNotice({
+          type: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+    [addNotice, isActive, refreshRuntimeState],
+  );
+
   const handleFork = useCallback(
     async (entryId: string) => {
       const sid = sessionIdRef.current;
@@ -1371,6 +1410,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     extensionStatuses,
     extensionWidgets,
     todoPlan,
+    goalState,
     respondToExtensionUi,
     sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
@@ -1391,6 +1431,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // Actions
     handleSend,
     handleAbort,
+    resolveGoal,
     handleFork,
     handleNavigate,
     handleModelChange,

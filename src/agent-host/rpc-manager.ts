@@ -52,6 +52,15 @@ import { createDesktopSessionTools } from "./desktop-session-tools";
 import { SessionModelSelection } from "./session-model-selection";
 import { extensionUiResolvedRequest, normalizeExtensionUiResponse } from "./extension-ui-requests";
 import { readSessionTodoPlan } from "./todo-plan";
+import {
+  EXTEND_STEP,
+  GOAL_CUSTOM_TYPE,
+  MAX_GOAL_FEEDBACK_LENGTH,
+  isGoalResolveAction,
+  readSessionGoalState,
+  syncGoalPromptSection,
+  type GoalEntry,
+} from "./goal-state";
 
 // ============================================================================
 // Types
@@ -604,6 +613,9 @@ export class AgentSessionWrapper {
         return null;
 
       case "get_state": {
+        // Keep the goal block in the reported prompt even before extensions
+        // finish binding a resumed session (session_start covers the rest).
+        syncGoalPromptSection(this.promptPolicy, this.inner.sessionManager);
         const model = this.inner.model;
         const contextUsage = this.inner.getContextUsage();
         return {
@@ -633,6 +645,7 @@ export class AgentSessionWrapper {
           extensionStatuses: this.getExtensionStatuses(),
           extensionWidgets: this.getExtensionWidgets(),
           todoPlan: readSessionTodoPlan(this.inner.sessionManager),
+          goalState: readSessionGoalState(this.inner.sessionManager),
         };
       }
 
@@ -832,6 +845,56 @@ export class AgentSessionWrapper {
 
       case "set_auto_retry": {
         this.inner.setAutoRetryEnabled(command.enabled as boolean);
+        return null;
+      }
+
+      case "goal_resolve": {
+        const action = command.action;
+        if (!isGoalResolveAction(action)) throw new Error(`Invalid goal action: ${String(action)}`);
+        const feedback =
+          typeof command.feedback === "string" && command.feedback.trim()
+            ? command.feedback.trim().slice(0, MAX_GOAL_FEEDBACK_LENGTH)
+            : undefined;
+        const entry: GoalEntry = {
+          kind: "resolve",
+          action,
+          ...(feedback ? { feedback } : {}),
+          ...(action === "extend" ? { extra: EXTEND_STEP } : {}),
+        };
+        this.inner.sessionManager.appendCustomEntry(GOAL_CUSTOM_TYPE, entry);
+        syncGoalPromptSection(this.promptPolicy, this.inner.sessionManager);
+        if (action === "stop") {
+          if (this.isRunning()) await this.withFinalRunningNotification(() => this.inner.abort());
+          return null;
+        }
+        if ((action === "reject" || action === "extend") && !this.isRunning()) {
+          // Fire-and-forget: this starts the next goal turn and the run events
+          // report progress, exactly like an extension-sent message.
+          void this.inner
+            .sendCustomMessage(
+              {
+                customType: "pi-desktop-goal-resume",
+                display: false,
+                content:
+                  action === "reject"
+                    ? [
+                        "The user sent the goal back for more work.",
+                        feedback
+                          ? `Feedback: ${feedback}`
+                          : "Address the unmet acceptance criteria, then call goal_report again.",
+                        "Continue working toward the goal.",
+                      ].join("\n")
+                    : "The user extended the goal's auto-continuation budget. Continue working toward the goal.",
+              },
+              { triggerTurn: true },
+            )
+            .catch((error) => {
+              this.emit({
+                type: "extension_error",
+                message: error instanceof Error ? error.message : String(error),
+              });
+            });
+        }
         return null;
       }
 

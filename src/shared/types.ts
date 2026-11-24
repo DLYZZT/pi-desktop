@@ -303,6 +303,39 @@ export interface TodoPlanState {
   completed: number;
 }
 
+/** One acceptance criterion as reported by the model through `goal_report`. */
+export interface GoalCriterionReport {
+  criterion: string;
+  met: boolean;
+  evidence: string;
+}
+
+export interface GoalReportState {
+  summary?: string;
+  criteria: GoalCriterionReport[];
+}
+
+/** `working` runs autonomously; the other states wait for or record a user decision. */
+export type GoalStatus = "working" | "awaiting_acceptance" | "budget_exhausted" | "accepted" | "stopped";
+
+/** Decisions the goal panel can send back to the agent host. */
+export type GoalResolveAction = "accept" | "reject" | "stop" | "extend";
+
+/** Active `/goal` mode state derived from the session branch; `null` when none. */
+export interface GoalState {
+  goal: string;
+  /** Criteria the user supplied with `/goal`; may be empty. */
+  criteria: string[];
+  status: GoalStatus;
+  continuations: number;
+  maxContinuations: number;
+  checkpointEvery: number;
+  /** Latest self-check report; only present while awaiting acceptance. */
+  report: GoalReportState | null;
+  /** Feedback from the latest send-back; cleared once the goal moves on. */
+  feedback?: string | null;
+}
+
 export interface ExtensionStatusItem {
   key: string;
   text: string;
