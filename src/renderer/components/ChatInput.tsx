@@ -57,22 +57,41 @@ type SlashCommandPaletteItem =
 
 type SlashCommandSource = SlashCommandPaletteItem["source"];
 
-const BUILTIN_SLASH_COMMANDS: SlashCommandPaletteItem[] = [
-  { name: "compact", description: "Compress context, optionally with instructions", source: "builtin" },
-  { name: "reload", description: "Reload extensions, skills, prompts, and tools", source: "builtin" },
-  { name: "name", description: "Set the session display name", source: "builtin" },
-  { name: "session", description: "Show session message, token, and cost stats", source: "builtin" },
-  { name: "copy", description: "Copy the last assistant message", source: "builtin" },
+type SlashDescriptionT = (key: string, fallback: string) => string;
+
+/** Built-in commands carry no literal description: i18n supplies the visible text. */
+const BUILTIN_SLASH_COMMANDS: Array<{ name: string; source: "builtin" }> = [
+  { name: "compact", source: "builtin" },
+  { name: "reload", source: "builtin" },
+  { name: "name", source: "builtin" },
+  { name: "session", source: "builtin" },
+  { name: "copy", source: "builtin" },
 ];
 
-const SLASH_SOURCES: SlashCommandSource[] = ["builtin", "extension", "prompt", "skill"];
+function builtinSlashDescription(name: string, t: SlashDescriptionT): string {
+  if (name === "compact") return t("slashCommandCompact", "Compress context, optionally with instructions");
+  if (name === "reload") return t("slashCommandReload", "Reload extensions, skills, prompts, and tools");
+  if (name === "name") return t("slashCommandName", "Set the session display name");
+  if (name === "session") return t("slashCommandSession", "Show session message, token, and cost stats");
+  return t("slashCommandCopy", "Copy the last assistant message");
+}
 
-const SLASH_SOURCE_GROUP_LABEL: Record<SlashCommandSource, string> = {
-  builtin: "Built-in",
-  extension: "Extensions",
-  prompt: "Prompts",
-  skill: "Skills",
-};
+/** Host extensions shipped with Desktop are internal: translate them too. */
+function internalSlashDescription(source: SlashCommandSource, name: string, t: SlashDescriptionT): string | null {
+  if (source !== "extension") return null;
+  if (name === "goal") return t("slashCommandGoal", "Work toward a goal with acceptance criteria until verified");
+  if (name === "mcp") return t("slashCommandMcp", "Manage MCP servers in Desktop Settings");
+  return null;
+}
+
+function slashSourceGroupLabel(source: SlashCommandSource, t: SlashDescriptionT): string {
+  if (source === "builtin") return t("slashGroupBuiltin", "Built-in");
+  if (source === "extension") return t("slashGroupExtension", "Extensions");
+  if (source === "prompt") return t("slashGroupPrompt", "Prompts");
+  return t("slashGroupSkill", "Skills");
+}
+
+const SLASH_SOURCES: SlashCommandSource[] = ["builtin", "extension", "prompt", "skill"];
 
 const SLASH_SOURCE_ORDER: Record<SlashCommandSource, number> = {
   builtin: 0,
@@ -291,10 +310,22 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1)) ? value.slice(1).toLowerCase() : null;
 
+  const localizedSlashCommands: SlashCommandPaletteItem[] = [
+    ...(isStreaming
+      ? []
+      : BUILTIN_SLASH_COMMANDS.map((command) => ({
+          ...command,
+          description: builtinSlashDescription(command.name, t),
+        }))),
+    ...(slashCommands ?? []).map((command) => {
+      const localized = internalSlashDescription(command.source, command.name, t);
+      return localized === null ? command : { ...command, description: localized };
+    }),
+  ];
+
   const filteredSlashCommands = (() => {
     if (slashQuery === null) return [];
-    const commands = [...(isStreaming ? [] : BUILTIN_SLASH_COMMANDS), ...(slashCommands ?? [])];
-    return [...commands]
+    return [...localizedSlashCommands]
       .filter((command) => {
         const name = command.name.toLowerCase();
         const description = command.description?.toLowerCase() ?? "";
@@ -426,48 +457,6 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
     [setValue],
   );
 
-  const getNextSlashIndex = useCallback(
-    (direction: "up" | "down" | "left" | "right") => {
-      const lastIndex = filteredSlashCommands.length - 1;
-      if (lastIndex < 0) return 0;
-
-      if (direction === "left") return Math.max(0, slashActiveIndex - 1);
-      if (direction === "right") return Math.min(lastIndex, slashActiveIndex + 1);
-
-      const currentNode = slashItemRefs.current[slashActiveIndex];
-      if (!currentNode) {
-        return direction === "down" ? Math.min(lastIndex, slashActiveIndex + 1) : Math.max(0, slashActiveIndex - 1);
-      }
-
-      const currentRect = currentNode.getBoundingClientRect();
-      const currentX = currentRect.left + currentRect.width / 2;
-      const currentY = currentRect.top + currentRect.height / 2;
-      let bestIndex = -1;
-      let bestScore = Number.POSITIVE_INFINITY;
-
-      for (let index = 0; index <= lastIndex; index += 1) {
-        if (index === slashActiveIndex) continue;
-        const node = slashItemRefs.current[index];
-        if (!node) continue;
-        const rect = node.getBoundingClientRect();
-        const candidateY = rect.top + rect.height / 2;
-        const verticalDelta = candidateY - currentY;
-        if (direction === "down" ? verticalDelta <= 4 : verticalDelta >= -4) continue;
-
-        const candidateX = rect.left + rect.width / 2;
-        const score = Math.abs(verticalDelta) * 1000 + Math.abs(candidateX - currentX);
-        if (score < bestScore) {
-          bestIndex = index;
-          bestScore = score;
-        }
-      }
-
-      if (bestIndex >= 0) return bestIndex;
-      return direction === "down" ? Math.min(lastIndex, slashActiveIndex + 1) : Math.max(0, slashActiveIndex - 1);
-    },
-    [filteredSlashCommands.length, slashActiveIndex],
-  );
-
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       const nativeEvent = e.nativeEvent;
@@ -482,22 +471,12 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
       if (slashMenuOpen && slashQuery !== null) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          setSlashActiveIndex(getNextSlashIndex("down"));
+          setSlashActiveIndex((index) => Math.min(Math.max(0, filteredSlashCommands.length - 1), index + 1));
           return;
         }
         if (e.key === "ArrowUp") {
           e.preventDefault();
-          setSlashActiveIndex(getNextSlashIndex("up"));
-          return;
-        }
-        if (e.key === "ArrowRight") {
-          e.preventDefault();
-          setSlashActiveIndex(getNextSlashIndex("right"));
-          return;
-        }
-        if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          setSlashActiveIndex(getNextSlashIndex("left"));
+          setSlashActiveIndex((index) => Math.max(0, index - 1));
           return;
         }
         if (e.key === "Escape") {
@@ -558,7 +537,6 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
       applySlashCommand,
       sendQueued,
       handleSend,
-      getNextSlashIndex,
       atMenuOpen,
       atQuery,
       atMatches,
@@ -1019,14 +997,14 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
                           textTransform: "uppercase",
                         }}
                       >
-                        <span>{SLASH_SOURCE_GROUP_LABEL[group.source]}</span>
+                        <span>{slashSourceGroupLabel(group.source, t)}</span>
                         <span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>{group.items.length}</span>
                       </div>
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                          gap: 8,
+                          gridTemplateColumns: "1fr",
+                          gap: 4,
                         }}
                       >
                         {group.items.map(({ command, index }) => {
@@ -1046,22 +1024,19 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
                               style={{
                                 width: "100%",
                                 minWidth: 0,
-                                minHeight: 58,
+                                minHeight: 34,
                                 display: "flex",
-                                flexDirection: "column",
-                                gap: 4,
-                                justifyContent: "center",
-                                padding: "9px 10px",
+                                flexDirection: "row",
+                                alignItems: "center",
+                                gap: 10,
+                                justifyContent: "flex-start",
+                                padding: "6px 10px",
                                 border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
                                 borderRadius: 7,
                                 background: active ? "var(--bg-selected)" : "var(--bg-panel)",
                                 color: "var(--text)",
                                 cursor: "pointer",
                                 textAlign: "left",
-                                /* .pi-btn sets nowrap for single-line labels; these cards
-                                   need wrapping so the name can break and the description
-                                   line-clamp takes effect. */
-                                whiteSpace: "normal",
                                 boxShadow: active
                                   ? "0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent)"
                                   : "none",
@@ -1071,8 +1046,11 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
                                 style={{
                                   fontSize: scaledChatFont(13),
                                   fontFamily: "var(--font-mono)",
-                                  overflowWrap: "anywhere",
-                                  wordBreak: "break-word",
+                                  flexShrink: 0,
+                                  maxWidth: "46%",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
                                 }}
                               >
                                 /{command.name}
@@ -1080,12 +1058,12 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
                               {command.description && (
                                 <span
                                   style={{
-                                    display: "-webkit-box",
-                                    WebkitBoxOrient: "vertical",
-                                    WebkitLineClamp: 2,
+                                    flex: "1 1 0",
+                                    minWidth: 0,
                                     overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
                                     fontSize: scaledChatFont(11),
-                                    lineHeight: 1.35,
                                     color: "var(--text-dim)",
                                   }}
                                 >
