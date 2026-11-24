@@ -13,6 +13,7 @@ export function toolActionInput(toolName: string, value: unknown): ActionInput |
   const input = value as ActionInput;
   const keys = ["path", "file_path", "pattern", "query", "url"];
   if (toolName === "bash" || toolName === "powershell") keys.push("description", "command");
+  if (toolName.startsWith("browser_")) keys.push("action");
   const entries = keys.flatMap((key) => {
     const text = shortText(input[key]);
     return text ? [[key, text]] : [];
@@ -50,10 +51,34 @@ export function toolActionTitle(toolName: string, input: ActionInput | undefined
     case "browser_open":
     case "browser_navigate":
       return target(t("toolActionBrowserOpen", "Open web page"), input?.url);
-    case "browser_inspect":
+    case "browser_tab":
+      if (input?.action === "open" || input?.action === "navigate") {
+        return target(t("toolActionBrowserOpen", "Open web page"), input?.url);
+      }
       return t("toolActionBrowserInspect", "Inspect web page");
+    case "browser_device":
+      return t("toolActionBrowserInspect", "Inspect web page");
+    case "browser_inspect":
+    case "browser_read":
+      return t("toolActionBrowserInspect", "Inspect web page");
+    case "browser_pointer":
+    case "browser_input":
+    case "browser_wait":
+    case "browser_request_user_help":
+    case "browser_upload":
+    case "browser_downloads":
+    case "browser_network":
+    case "browser_console":
+    case "browser_js":
+    case "browser_clipboard":
+    case "browser_header_rules":
+    case "browser_get_cookies":
+    case "browser_send_cdp_command":
+      return t("toolActionCall", "Call tool: {tool}").replace("{tool}", shortText(toolName));
     case "browser_screenshot":
       return t("toolActionBrowserScreenshot", "Take page screenshot");
+    case "browser_batch":
+      return t("toolActionCodemode", "Run a batch of operations");
     case "codemode":
       return t("toolActionCodemode", "Run a batch of operations");
     default:

@@ -379,6 +379,14 @@ export function installDesktopIpc(options: DesktopIpcOptions): void {
     (browser, requestId: string, decision: BrowserAgentAuthorizationDecision) =>
       browser.respondAgentAuthorization(requestId, decision),
   );
+  browserHandler(
+    "desktop:browser:respond-handoff",
+    (
+      browser,
+      handoffId: string,
+      decision: { outcome: "completed" | "cancelled"; accept?: boolean; promptText?: string; note?: string },
+    ) => browser.respondUserHandoff(handoffId, decision),
+  );
   browserHandler("desktop:browser:list-profiles", (browser) => browser.listProfiles());
   browserHandler("desktop:browser:create-profile", (browser, input: BrowserCreateProfileInput) =>
     browser.createProfile(input),

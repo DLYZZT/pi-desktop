@@ -2,10 +2,11 @@ import { getNativeLanguage } from "../native-language";
 import path from "node:path";
 import fs from "node:fs";
 import { createHmac, randomBytes } from "node:crypto";
-import { app, dialog, safeStorage, session, shell, type BrowserWindow, type Session } from "electron";
+import { app, clipboard, dialog, safeStorage, session, shell, type BrowserWindow, type Session } from "electron";
 import type {
   BrowserCapabilitySnapshot,
   BrowserAgentAuthorizationDecision,
+  BrowserBatchMethod,
   BrowserConfirmationKind,
   BrowserConfirmationProof,
   BrowserCookiePage,
@@ -14,7 +15,9 @@ import type {
   BrowserCreateTabInput,
   BrowserDataType,
   BrowserDiagnostics,
+  BrowserDownloadInfo,
   BrowserEvent,
+  BrowserHandoffKind,
   BrowserHeaderRule,
   BrowserHeaderRuleDirection,
   BrowserHostMethod,
@@ -37,6 +40,8 @@ import { BrowserAuthorizationCoordinator } from "./browser-authorization-coordin
 import { BrowserDownloadManager } from "./browser-download-manager.ts";
 import { BrowserError, asBrowserError } from "./browser-error.ts";
 import { BrowserHeaderRuleStore } from "./browser-header-rule-store.ts";
+import { BrowserHandoffCoordinator } from "./browser-handoff-coordinator.ts";
+import { isAllowedExternalProtocolUrl } from "./browser-external-protocols.ts";
 import { validateHeaderRules } from "./browser-header-rules.ts";
 import { BrowserAgentHeaderRuleRegistry } from "./browser-agent-header-rule-registry.ts";
 import { BrowserNetworkInterceptor } from "./browser-network-interceptor.ts";
@@ -75,6 +80,7 @@ export class BrowserService {
   private readonly settingsStore: BrowserSettingsStore;
   private readonly policy: BrowserPolicyEngine;
   private readonly authorization: BrowserAuthorizationCoordinator;
+  private readonly handoff: BrowserHandoffCoordinator;
   private readonly runtimeGrants = new Map<string, BrowserRuntimeSessionGrant>();
   private readonly confirmations = new BrowserConfirmationManager();
   private readonly secrets: BrowserSecretVault;
@@ -134,6 +140,21 @@ export class BrowserService {
       },
       emitResolved: (requestId, outcome) => this.emit({ type: "agent-authorization-resolved", requestId, outcome }),
     });
+    this.handoff = new BrowserHandoffCoordinator({
+      isRendererAvailable: () => {
+        const win = options.getWindow();
+        return !!win && !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isLoadingMainFrame();
+      },
+      emitRequest: (request) => {
+        const win = options.getWindow();
+        if (win && !win.isDestroyed()) {
+          if (win.isMinimized()) win.restore();
+          if (!win.isVisible()) win.show();
+        }
+        this.emit({ type: "user-handoff-request", request });
+      },
+      emitResolved: (handoffId, outcome) => this.emit({ type: "user-handoff-resolved", handoffId, outcome }),
+    });
     this.secrets = new BrowserSecretVault(
       path.join(options.userDataDir, "browser-secrets.json"),
       options.secretCodec ?? {
@@ -162,6 +183,8 @@ export class BrowserService {
       emit: (event) => this.emit(event),
       confirmSensitiveAction: (description) =>
         options.confirmSensitiveAction?.(description) ?? this.defaultSensitiveActionConfirmation(description),
+      requestUserHandoff: (input) => this.handoff.request(input),
+      cancelUserHandoff: (tabId) => this.handoff.cancelTab(tabId),
       openExternal: (url) => this.openExternalWithConfirmation(url),
       confirmPrivateNetwork: (url) =>
         options.confirmPrivateNetwork?.(url) ?? this.defaultPrivateNetworkConfirmation(url),
@@ -186,6 +209,7 @@ export class BrowserService {
       permissionRequests: [...this.interceptors.values()].flatMap((interceptor) =>
         interceptor.listPermissionRequests(),
       ),
+      handoffs: this.handoff.list(),
       runtimeSessionGrants: Object.fromEntries(
         [...this.runtimeGrants.entries()]
           .filter(([, grant]) => grant.expiresAt > Date.now() && settings.settings.enabled)
@@ -242,6 +266,7 @@ export class BrowserService {
       before.advancedBrowserMode.enabled !== parsed.settings.advancedBrowserMode.enabled;
     if (capabilityBoundaryChanged) {
       this.authorization.cancelAll();
+      this.handoff.cancelAll();
       this.policy.revokeAll();
       this.runtimeGrants.clear();
     } else if (persistentDefaultChanged) {
@@ -350,6 +375,7 @@ export class BrowserService {
 
   revokeSession(sessionId: string): void {
     this.clearAgentHeaderRules(sessionId);
+    this.handoff.cancelSession(sessionId);
     this.policy.revokeSession(sessionId);
     this.runtimeGrants.delete(sessionId);
     this.authorization.cancelSession(sessionId);
@@ -362,6 +388,46 @@ export class BrowserService {
 
   respondAgentAuthorization(requestId: string, decision: BrowserAgentAuthorizationDecision): void {
     this.authorization.respond(requestId, decision);
+  }
+
+  respondUserHandoff(
+    handoffId: string,
+    decision: {
+      outcome: "completed" | "cancelled";
+      accept?: boolean;
+      promptText?: string;
+      note?: string;
+    },
+  ): void {
+    this.handoff.respond(handoffId, decision);
+  }
+
+  listDownloads(sessionId: string, tabId?: string): BrowserDownloadInfo[] {
+    return [...this.downloads.values()]
+      .flatMap((manager) => manager.list())
+      .filter((download) => download.sessionId === sessionId && (!tabId || download.tabId === tabId));
+  }
+
+  async waitForDownload(
+    sessionId: string,
+    input: { tabId?: string; downloadId?: string; timeoutMs?: number } = {},
+  ): Promise<BrowserDownloadInfo> {
+    const timeoutMs = Math.max(1_000, Math.min(120_000, input.timeoutMs ?? 30_000));
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const downloads = this.listDownloads(sessionId, input.tabId);
+      const found = input.downloadId
+        ? downloads.find((download) => download.id === input.downloadId)
+        : downloads[downloads.length - 1];
+      if (found && ["completed", "cancelled", "interrupted"].includes(found.state)) return found;
+      if (Date.now() >= deadline) {
+        throw new BrowserError("DOWNLOAD_TIMEOUT", "Timed out waiting for the Browser download", {
+          retryable: true,
+          recovery: { reason: "transient-network", remediation: "wait-and-retry-once", retryAfterMs: 250 },
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   }
 
   listProfiles(): BrowserProfileInfo[] {
@@ -566,6 +632,7 @@ export class BrowserService {
   onHostStopped(): void {
     this.clearAgentHeaderRules();
     this.authorization.cancelAll();
+    this.handoff.cancelAll();
     this.policy.revokeAll();
     this.runtimeGrants.clear();
     this.tabs.revokeAgentActions();
@@ -588,6 +655,7 @@ export class BrowserService {
     this.confirmations.clear();
     this.clearAgentHeaderRules(undefined, false);
     this.authorization.cancelAll();
+    this.handoff.cancelAll();
     this.policy.revokeAll();
     this.runtimeGrants.clear();
     this.tabs.dispose();
@@ -623,7 +691,7 @@ export class BrowserService {
       resolveSecret: (ref) => this.secrets.get(ref),
       emit: (event) => this.emit(event),
       onBlockedRequest: (url, code) => {
-        if (code === "UNSUPPORTED_PROTOCOL" && /^mailto:/i.test(url)) {
+        if (code === "UNSUPPORTED_PROTOCOL" && isAllowedExternalProtocolUrl(url)) {
           void this.openExternalWithConfirmation(url).catch(() => undefined);
         }
       },
@@ -813,6 +881,58 @@ export class BrowserService {
         const body = params as BrowserHostParams<"browser.inspect">;
         return (await this.tabs.inspect(body.sessionId, body)) as BrowserHostResult<M>;
       }
+      case "browser.read": {
+        const body = params as BrowserHostParams<"browser.read">;
+        return (await this.tabs.read(body.tabId, body.sessionId, body)) as BrowserHostResult<M>;
+      }
+      case "browser.batch": {
+        const body = params as BrowserHostParams<"browser.batch">;
+        if (!Array.isArray(body.operations) || body.operations.length === 0 || body.operations.length > 8) {
+          throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser batch requires between 1 and 8 operations");
+        }
+        const results = await Promise.all(
+          body.operations.map(async (operation) => {
+            try {
+              if (!operation || typeof operation !== "object" || !isBatchMethod(operation.method)) {
+                throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser batch operation is invalid");
+              }
+              const operationParams = operation.params && typeof operation.params === "object" ? operation.params : {};
+              switch (operation.method) {
+                case "inspect":
+                  return {
+                    ok: true as const,
+                    result: await this.tabs.inspect(body.sessionId, {
+                      ...operationParams,
+                      tabId: operation.tabId,
+                    } as never),
+                  };
+                case "snapshot":
+                  return {
+                    ok: true as const,
+                    result: await this.tabs.snapshot(operation.tabId, body.sessionId, operationParams as never),
+                  };
+                case "screenshot":
+                  return {
+                    ok: true as const,
+                    result: await this.tabs.screenshot(operation.tabId, body.sessionId, operationParams as never),
+                  };
+                case "read":
+                  return {
+                    ok: true as const,
+                    result: await this.tabs.read(operation.tabId, body.sessionId, operationParams as never),
+                  };
+              }
+            } catch (error) {
+              const browserError = asBrowserError(error);
+              return {
+                ok: false as const,
+                error: { code: browserError.code, message: browserError.message.slice(0, 512) },
+              };
+            }
+          }),
+        );
+        return { results, untrustedWebContent: true } as BrowserHostResult<M>;
+      }
       case "browser.screenshot": {
         const body = params as BrowserHostParams<"browser.screenshot">;
         return (await this.tabs.screenshot(body.tabId, body.sessionId, body)) as BrowserHostResult<M>;
@@ -860,6 +980,47 @@ export class BrowserService {
         await this.tabs.press(body.tabId, body.sessionId, body.key, body.modifiers);
         return { ok: true } as BrowserHostResult<M>;
       }
+      case "browser.hover": {
+        const body = params as BrowserHostParams<"browser.hover">;
+        return (await this.tabs.hover(
+          body.tabId,
+          body.sessionId,
+          body.ref,
+          body.snapshotId,
+          body.generation,
+        )) as BrowserHostResult<M>;
+      }
+      case "browser.drag": {
+        const body = params as BrowserHostParams<"browser.drag">;
+        return (await this.tabs.drag(
+          body.tabId,
+          body.sessionId,
+          body.fromRef,
+          body.toRef,
+          body.snapshotId,
+          body.generation,
+          body.steps,
+        )) as BrowserHostResult<M>;
+      }
+      case "browser.select": {
+        const body = params as BrowserHostParams<"browser.select">;
+        return (await this.tabs.select(body.tabId, body.sessionId, body.ref, body.snapshotId, body.generation, {
+          ...(body.value === undefined ? {} : { value: body.value }),
+          ...(body.label === undefined ? {} : { label: body.label }),
+          ...(body.index === undefined ? {} : { index: body.index }),
+        })) as BrowserHostResult<M>;
+      }
+      case "browser.clipboard": {
+        const body = params as BrowserHostParams<"browser.clipboard">;
+        if (body.action === "read") {
+          return { ok: true, text: clipboard.readText().slice(0, 100_000) } as BrowserHostResult<M>;
+        }
+        if (body.action !== "write" || typeof body.text !== "string" || body.text.length > 100_000) {
+          throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser clipboard write payload is invalid");
+        }
+        clipboard.writeText(body.text);
+        return { ok: true } as BrowserHostResult<M>;
+      }
       case "browser.scroll": {
         const body = params as BrowserHostParams<"browser.scroll">;
         await this.tabs.scroll(body.tabId, body.sessionId, body);
@@ -886,6 +1047,41 @@ export class BrowserService {
         const body = params as BrowserHostParams<"browser.close">;
         this.tabs.close(body.tabId, body.sessionId);
         return { ok: true } as BrowserHostResult<M>;
+      }
+      case "browser.requestUserHelp": {
+        const body = params as BrowserHostParams<"browser.requestUserHelp">;
+        if (!isAgentHandoffKind(body.kind)) {
+          throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser handoff kind is invalid");
+        }
+        const outcome = await this.tabs.requestUserHelp(
+          body.tabId,
+          body.sessionId,
+          body.kind,
+          body.message,
+          body.timeoutMs,
+        );
+        const inspection =
+          outcome === "completed" ? await this.tabs.inspect(body.sessionId, { tabId: body.tabId }) : undefined;
+        return { outcome, ...(inspection ? { inspection } : {}) } as BrowserHostResult<M>;
+      }
+      case "browser.uploadFiles": {
+        const body = params as BrowserHostParams<"browser.uploadFiles">;
+        return (await this.tabs.uploadFiles(
+          body.tabId,
+          body.sessionId,
+          body.ref,
+          body.snapshotId,
+          body.generation,
+          body.paths,
+        )) as BrowserHostResult<M>;
+      }
+      case "browser.downloadList": {
+        const body = params as BrowserHostParams<"browser.downloadList">;
+        return { downloads: this.listDownloads(body.sessionId, body.tabId) } as BrowserHostResult<M>;
+      }
+      case "browser.downloadWait": {
+        const body = params as BrowserHostParams<"browser.downloadWait">;
+        return (await this.waitForDownload(body.sessionId, body)) as BrowserHostResult<M>;
       }
       case "browser.executeJavaScript": {
         const body = params as BrowserHostParams<"browser.executeJavaScript">;
@@ -1285,7 +1481,7 @@ export class BrowserService {
   }
 
   private async confirmAndOpenExternal(url: string): Promise<void> {
-    if (!/^mailto:/i.test(url) || url.length > 8_192 || /[\0\r\n]/.test(url)) {
+    if (!isAllowedExternalProtocolUrl(url)) {
       throw new BrowserError("UNSUPPORTED_PROTOCOL", "External Browser protocol is not allowed");
     }
     const approved =
@@ -1294,7 +1490,7 @@ export class BrowserService {
         await dialog.showMessageBox(this.options.getWindow() ?? undefined!, {
           type: "question",
           title: "Open external application?",
-          message: "This website requested to open your default mail application.",
+          message: "This website requested to open an external application.",
           detail: url.slice(0, 512),
           buttons: ["Cancel", "Open"],
           defaultId: 0,
@@ -1370,8 +1566,13 @@ function requiredPermission(method: BrowserHostMethod): "read" | "interact" | "a
     method === "browser.clickAt" ||
     method === "browser.type" ||
     method === "browser.press" ||
+    method === "browser.hover" ||
+    method === "browser.drag" ||
+    method === "browser.select" ||
+    method === "browser.clipboard" ||
     method === "browser.scroll" ||
-    method === "browser.setDeviceMode"
+    method === "browser.setDeviceMode" ||
+    method === "browser.uploadFiles"
   ) {
     return "interact";
   }
@@ -1395,6 +1596,20 @@ function requiredPermission(method: BrowserHostMethod): "read" | "interact" | "a
     return "advanced";
   }
   return "read";
+}
+
+function isBatchMethod(value: unknown): value is BrowserBatchMethod {
+  return value === "inspect" || value === "snapshot" || value === "screenshot" || value === "read";
+}
+
+function isAgentHandoffKind(value: unknown): value is BrowserHandoffKind {
+  return (
+    value === "login" ||
+    value === "captcha" ||
+    value === "two-factor" ||
+    value === "consent" ||
+    value === "agent-request"
+  );
 }
 
 function previewSnippetResult(value: unknown): string | undefined {

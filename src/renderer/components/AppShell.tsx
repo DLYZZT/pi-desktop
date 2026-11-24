@@ -404,6 +404,12 @@ export function AppShell({
   useEffect(
     () =>
       window.piBridge.onBrowserEvent((event) => {
+        if (event.type === "user-handoff-request") {
+          dispatchFileTab({ type: "select", tabId: BROWSER_TAB_ID });
+          openRightPanel();
+          void window.piBridge.browserActivateTab(event.request.tabId).catch(() => undefined);
+          return;
+        }
         if (event.type !== "tab-created" || !event.tab.ownerSessionId) return;
         void window.piBridge.browserGetSettings().then((settings) => {
           if (!settings.settings.panel.openOnAgentUse) return;

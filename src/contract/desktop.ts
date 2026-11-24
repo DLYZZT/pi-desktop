@@ -253,6 +253,10 @@ export interface PiBridge {
   browserSetSurfaceVisible: (input: { tabId?: string; visible: boolean }) => Promise<void>;
   browserRevokeTemporarySessionPermission: (sessionId: string) => Promise<void>;
   browserRespondAgentAuthorization: (requestId: string, decision: BrowserAgentAuthorizationDecision) => Promise<void>;
+  browserRespondHandoff: (
+    handoffId: string,
+    decision: { outcome: "completed" | "cancelled"; accept?: boolean; promptText?: string; note?: string },
+  ) => Promise<void>;
   browserListProfiles: () => Promise<BrowserProfileInfo[]>;
   browserCreateProfile: (input: BrowserCreateProfileInput) => Promise<BrowserProfileInfo>;
   browserRenameProfile: (profileId: string, name: string) => Promise<BrowserProfileInfo>;

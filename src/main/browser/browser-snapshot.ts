@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { WebContents, WebFrameMain } from "electron";
 import type {
+  BrowserBlocker,
   BrowserPageSnapshot,
   BrowserSnapshotNode,
   BrowserTabInfo,
@@ -45,6 +46,7 @@ export async function collectBrowserSnapshot(
   const generation = target.info().generation;
   const contexts = await collectFrameContexts(target.contents);
   const nodes: BrowserSnapshotNode[] = [];
+  const blockers: BrowserBlocker[] = [];
   const textParts: string[] = [];
   const frameRefs = new Map<string, { frame: WebFrameMain; offsetX: number; offsetY: number }>();
   let textLength = 0;
@@ -72,6 +74,13 @@ export async function collectBrowserSnapshot(
       continue;
     }
     const parsed = validateSnapshotResult(result);
+    for (const blocker of parsed.blockers) {
+      const existing = blockers.find((candidate) => candidate.kind === blocker.kind);
+      if (!existing) blockers.push(blocker);
+      else if (existing.confidence === "medium" && blocker.confidence === "high") {
+        Object.assign(existing, blocker);
+      }
+    }
     const frameId = `f${frameIndex}`;
     for (const node of parsed.nodes) {
       const adjusted: BrowserSnapshotNode = {
@@ -121,6 +130,7 @@ export async function collectBrowserSnapshot(
       title: target.info().title,
       text: textParts.join("\n").slice(0, maxTextChars),
       nodes,
+      ...(blockers.length ? { blockers } : {}),
       truncated: textTruncated || nodesTruncated,
       untrustedWebContent: true,
     },
@@ -171,6 +181,7 @@ async function collectFrameContexts(
 function validateSnapshotResult(value: unknown): {
   text: string;
   nodes: BrowserSnapshotNode[];
+  blockers: BrowserBlocker[];
   textTruncated: boolean;
   nodesTruncated: boolean;
 } {
@@ -179,6 +190,7 @@ function validateSnapshotResult(value: unknown): {
   const result = value as {
     text?: unknown;
     nodes?: unknown;
+    blockers?: unknown;
     textTruncated?: unknown;
     nodesTruncated?: unknown;
   };
@@ -192,9 +204,26 @@ function validateSnapshotResult(value: unknown): {
       typeof candidate.ref === "string" && typeof candidate.role === "string" && typeof candidate.name === "string"
     );
   });
+  const blockers = Array.isArray(result.blockers)
+    ? result.blockers.filter((blocker): blocker is BrowserBlocker => {
+        if (!blocker || typeof blocker !== "object") return false;
+        const candidate = blocker as Partial<BrowserBlocker>;
+        return (
+          (candidate.kind === "login" ||
+            candidate.kind === "captcha" ||
+            candidate.kind === "two-factor" ||
+            candidate.kind === "consent" ||
+            candidate.kind === "dialog" ||
+            candidate.kind === "file-picker") &&
+          (candidate.confidence === "high" || candidate.confidence === "medium") &&
+          typeof candidate.evidence === "string"
+        );
+      })
+    : [];
   return {
     text: result.text,
     nodes,
+    blockers,
     textTruncated: result.textTruncated === true,
     nodesTruncated: result.nodesTruncated === true,
   };

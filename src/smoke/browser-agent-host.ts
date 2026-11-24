@@ -134,12 +134,15 @@ function managedProcessContinuation(context: Context) {
 
 function browserResponses(origin: string, managedCommand: string) {
   return [
-    fauxAssistantMessage(fauxToolCall("browser_open", { url: origin, profileId: "temporary", activate: true }), {
-      stopReason: "toolUse",
-    }),
+    fauxAssistantMessage(
+      fauxToolCall("browser_tab", { action: "open", url: origin, profileId: "temporary", activate: true }),
+      {
+        stopReason: "toolUse",
+      },
+    ),
     (context: Context) => {
-      const opened = lastToolResult(context, "browser_open") as { id?: unknown };
-      if (typeof opened.id !== "string") throw new Error("browser_open did not return a tab ID");
+      const opened = lastToolResult(context, "browser_tab") as { id?: unknown };
+      if (typeof opened.id !== "string") throw new Error("browser_tab open did not return a tab ID");
       return fauxAssistantMessage(fauxToolCall("browser_inspect", { tabId: opened.id }), {
         stopReason: "toolUse",
       });
@@ -193,7 +196,8 @@ function browserResponses(origin: string, managedCommand: string) {
         throw new Error("interactive Agent response could not use the fresh Browser inspection reference");
       }
       return fauxAssistantMessage(
-        fauxToolCall("browser_click", {
+        fauxToolCall("browser_pointer", {
+          action: "click",
           tabId: inspection.tabId,
           snapshotId: inspection.snapshot.snapshotId,
           generation: inspection.snapshot.generation,
@@ -203,12 +207,12 @@ function browserResponses(origin: string, managedCommand: string) {
       );
     },
     (context: Context) => {
-      const clicked = lastToolResult(context, "browser_click") as { tabId?: unknown; action?: unknown };
+      const clicked = lastToolResult(context, "browser_pointer") as { tabId?: unknown; action?: unknown };
       if (typeof clicked.tabId !== "string" || clicked.action !== "clicked") {
-        throw new Error("browser_click did not complete through the Agent tool adapter");
+        throw new Error("browser_pointer click did not complete through the Agent tool adapter");
       }
       return fauxAssistantMessage(
-        fauxToolCall("browser_set_device_mode", {
+        fauxToolCall("browser_device", {
           tabId: clicked.tabId,
           device: { mode: "preset", presetId: "galaxy-a55" },
         }),
@@ -216,7 +220,7 @@ function browserResponses(origin: string, managedCommand: string) {
       );
     },
     (context: Context) => {
-      const configured = lastToolResult(context, "browser_set_device_mode") as {
+      const configured = lastToolResult(context, "browser_device") as {
         id?: string;
         device?: { mode?: string; width?: number; height?: number };
       };
@@ -228,10 +232,11 @@ function browserResponses(origin: string, managedCommand: string) {
       ) {
         throw new Error("Agent device tool did not apply the mobile preset");
       }
-      return fauxAssistantMessage("interact-complete:assertion=browser_click:clicked");
+      return fauxAssistantMessage("interact-complete:assertion=browser_pointer:clicked");
     },
     fauxAssistantMessage(
-      fauxToolCall("browser_open", {
+      fauxToolCall("browser_tab", {
+        action: "open",
         url: "file:///tmp/pi-phase9-denied",
         profileId: "temporary",
         activate: false,
@@ -270,13 +275,13 @@ function browserResponses(origin: string, managedCommand: string) {
         throw new Error("process_start did not return a managed endpoint");
       }
       return fauxAssistantMessage(
-        fauxToolCall("browser_open", { url: endpoint, profileId: "temporary", activate: true }),
+        fauxToolCall("browser_tab", { action: "open", url: endpoint, profileId: "temporary", activate: true }),
         { stopReason: "toolUse" },
       );
     },
     (context: Context) => {
-      const opened = lastToolResult(context, "browser_open") as { id?: unknown };
-      if (typeof opened.id !== "string") throw new Error("managed endpoint browser_open did not return a tab ID");
+      const opened = lastToolResult(context, "browser_tab") as { id?: unknown };
+      if (typeof opened.id !== "string") throw new Error("managed endpoint browser_tab open did not return a tab ID");
       return fauxAssistantMessage(fauxToolCall("browser_inspect", { tabId: opened.id }), { stopReason: "toolUse" });
     },
     (context: Context) => {

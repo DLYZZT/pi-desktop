@@ -88,7 +88,7 @@ export async function applyBrowserDevice(
   await applyBrowserDeviceMetrics(cdp, tabId, device, scale);
 }
 
-async function applyBrowserDeviceInput(
+export async function applyBrowserDeviceInput(
   cdp: Pick<BrowserCdpCoordinator, "sendCommand">,
   tabId: string,
   device: BrowserDeviceMode,

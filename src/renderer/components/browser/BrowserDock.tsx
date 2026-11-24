@@ -22,6 +22,7 @@ import { browserSurfaceBounds } from "./browser-surface-bounds";
 import type {
   BrowserDownloadInfo,
   BrowserEvent,
+  BrowserHandoffRequest,
   BrowserPermissionRequest,
   BrowserRendererState,
 } from "../../../contract/browser";
@@ -414,7 +415,10 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
         />
       )}
 
-      {(error || state.permissionRequests.length > 0 || activeDownload(state.downloads)) && (
+      {(error ||
+        (state.handoffs?.length ?? 0) > 0 ||
+        state.permissionRequests.length > 0 ||
+        activeDownload(state.downloads)) && (
         <div
           style={{
             display: "grid",
@@ -425,6 +429,9 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
             fontSize: 10,
           }}
         >
+          {(state.handoffs ?? []).map((request) => (
+            <HandoffPrompt key={request.id} request={request} onRespond={refresh} />
+          ))}
           {error && <div style={{ color: "var(--danger)" }}>{error}</div>}
           {state.permissionRequests.map((request) => (
             <PermissionPrompt key={request.id} request={request} onRespond={refresh} />
@@ -473,7 +480,9 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
           <span>
             {activeTab.control === "agent"
               ? t("browserAgentControl", "Agent is controlling this tab — click or type to take over")
-              : t("browserUserControl", "User control")}
+              : activeTab.control === "waiting-for-user"
+                ? t("browserHandoffWaiting", "The Agent paused until you finish.")
+                : t("browserUserControl", "User control")}
           </span>
           <span>·</span>
           <span>
@@ -486,6 +495,58 @@ export function BrowserDock({ visible, ownerSessionId }: { visible: boolean; own
           ) : null}
         </div>
       )}
+    </div>
+  );
+}
+
+function HandoffPrompt({ request, onRespond }: { request: BrowserHandoffRequest; onRespond: () => Promise<void> }) {
+  const { t } = useI18n();
+  const [text, setText] = useState(request.dialog?.defaultPrompt ?? "");
+  const isDialog = Boolean(request.dialog);
+  const respond = (outcome: "completed" | "cancelled", accept?: boolean) =>
+    void window.piBridge
+      .browserRespondHandoff(request.id, {
+        outcome,
+        ...(accept === undefined ? {} : { accept }),
+        ...(text ? { promptText: text } : {}),
+      })
+      .then(onRespond)
+      .catch(() => undefined);
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 5,
+        padding: "6px 7px",
+        borderRadius: 5,
+        border: "1px solid var(--warning)",
+        background: "var(--bg)",
+      }}
+    >
+      <div style={{ display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" }}>
+        <strong style={{ color: "var(--text)" }}>{t("browserHandoffTitle", "Agent needs you")}</strong>
+        <span style={{ color: "var(--text-dim)" }}>{request.origin}</span>
+      </div>
+      <div style={{ color: "var(--text-muted)" }}>{request.message}</div>
+      <div style={{ color: "var(--text-dim)" }}>{t("browserHandoffWaiting", "The Agent paused until you finish.")}</div>
+      {request.dialog?.type === "prompt" && (
+        <Input
+          size="sm"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          placeholder={t("browserHandoffPrompt", "Enter a value for the page prompt")}
+          aria-label={t("browserHandoffPrompt", "Enter a value for the page prompt")}
+        />
+      )}
+      <div style={{ display: "flex", gap: 5 }}>
+        <Button size="sm" variant="primary" onClick={() => respond("completed", isDialog ? true : undefined)}>
+          {isDialog ? t("browserHandoffAccept", "Accept") : t("browserHandoffDone", "I'm done")}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => respond("cancelled", isDialog ? false : undefined)}>
+          {isDialog ? t("browserHandoffDismiss", "Dismiss") : t("browserHandoffCancel", "Cancel")}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -609,6 +670,16 @@ function applyBrowserEvent(state: BrowserRendererState, event: BrowserEvent): Br
     return {
       ...state,
       permissionRequests: state.permissionRequests.filter((request) => request.id !== event.requestId),
+    };
+  if (event.type === "user-handoff-request")
+    return {
+      ...state,
+      handoffs: [...(state.handoffs ?? []).filter((request) => request.id !== event.request.id), event.request],
+    };
+  if (event.type === "user-handoff-resolved")
+    return {
+      ...state,
+      handoffs: (state.handoffs ?? []).filter((request) => request.id !== event.handoffId),
     };
   if (event.type === "download")
     return {

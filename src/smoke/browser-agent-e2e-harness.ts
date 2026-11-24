@@ -369,12 +369,12 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
   const sessionId = created.sessionId;
 
   let status = await hostManager.call<BrowserAgentFixtureStatus>("browserAgentE2e.status", { sessionId });
-  assert.ok(status.activeTools.includes("browser_open"), "read Browser tool was not promptable");
-  assert.ok(status.activeTools.includes("browser_click"), "interactive Browser tool was not promptable");
+  assert.ok(status.activeTools.includes("browser_tab"), "read Browser tool was not promptable");
+  assert.ok(status.activeTools.includes("browser_pointer"), "interactive Browser tool was not promptable");
   assert.ok(status.activeTools.includes("process_start"), "managed process start tool was not promptable");
   assert.ok(status.activeTools.includes("process_stop"), "managed process stop tool was not promptable");
   assert.ok(
-    !status.activeTools.includes("browser_execute_javascript"),
+    !status.activeTools.includes("browser_js"),
     "advanced Browser tool was promptable while Advanced Browser Mode was disabled",
   );
   log("base Browser tools are promptable without an eager grant");
@@ -403,7 +403,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
       !value.isStreaming &&
       value.assistantTexts.some((text) => text.startsWith("read-complete:")),
   );
-  assert.ok(status.toolResults.includes("browser_open"), "Agent did not execute browser_open");
+  assert.ok(status.toolResults.includes("browser_tab"), "Agent did not execute browser_tab");
   assert.ok(status.toolResults.includes("browser_inspect"), "Agent did not execute browser_inspect");
   const readMetrics = { ...status.browserMetrics };
   const ownedTabs = browserService.listTabs(sessionId);
@@ -411,7 +411,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
   assert.ok(ownedTabs[0]?.url.startsWith(fixtureOrigin), "Agent Browser tab did not load the fixture origin");
   browserService.setBounds({ tabId: ownedTabs[0]!.id, rect: { x: 0, y: 0, width: 800, height: 600 } });
   browserService.setSurfaceVisible({ tabId: ownedTabs[0]!.id, visible: true });
-  log("Agent executed browser_open → browser_inspect through Main");
+  log("Agent executed browser_tab → browser_inspect through Main");
 
   const interactCommand = hostManager.call(
     "agent.command",
@@ -434,10 +434,10 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
       value.fauxCallCount >= 6 &&
       !value.isRunning &&
       !value.isStreaming &&
-      value.assistantTexts.includes("interact-complete:assertion=browser_click:clicked"),
+      value.assistantTexts.includes("interact-complete:assertion=browser_pointer:clicked"),
   );
-  assert.ok(status.toolResults.includes("browser_click"), "Agent did not execute browser_click");
-  assert.ok(status.toolResults.includes("browser_set_device_mode"), "Agent did not execute the device tool");
+  assert.ok(status.toolResults.includes("browser_pointer"), "Agent did not execute browser_pointer");
+  assert.ok(status.toolResults.includes("browser_device"), "Agent did not execute the device tool");
   assert.equal(browserService.listTabs(sessionId)[0]?.device?.mode, "mobile");
   assert.equal(browserCalls.get("browser.setDeviceMode"), 1);
   const interactMetrics = { ...status.browserMetrics };
@@ -448,7 +448,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
   assert.equal(browserCalls.get("browser.wait") ?? 0, 0, "unexpected browser.wait Parent RPC count");
   assert.equal(browserCalls.get("browser.requestAuthorization"), 2, "unexpected authorization preflight count");
   assert.ok((browserCalls.get("browser.capabilities") ?? 0) >= 6, "Browser tools bypassed capability leases");
-  log("Agent executed the authorized browser_click exactly once");
+  log("Agent executed the authorized browser_pointer exactly once");
 
   const bypassCommand = hostManager.call(
     "agent.command",
@@ -517,7 +517,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
     "process_write",
     "process_wait",
     "process_restart",
-    "browser_open",
+    "browser_tab",
     "browser_inspect",
   ]) {
     assert.ok(status.toolResults.includes(toolName), `managed Agent flow did not execute ${toolName}`);
@@ -600,7 +600,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.clos
   status = await waitFor(
     "Browser promptable tools after revocation",
     () => hostManager!.call<BrowserAgentFixtureStatus>("browserAgentE2e.status", { sessionId }),
-    (value) => value.activeTools.includes("browser_open") && value.activeTools.includes("browser_click"),
+    (value) => value.activeTools.includes("browser_tab") && value.activeTools.includes("browser_pointer"),
   );
   assert.equal(browserService.getCapabilitySnapshot().sessionPermissions[sessionId], undefined);
   assert.ok(!hostStatuses.some(({ status: value }) => value === "crashed"), "Agent Host crashed during the E2E flow");

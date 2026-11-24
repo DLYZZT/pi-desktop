@@ -1,5 +1,7 @@
 import {
   typeBrowserText,
+  dragBrowserPoints,
+  hoverBrowserPoint,
   pressBrowserKey,
   scrollBrowserPage,
   sendBrowserMouseClick,
@@ -32,12 +34,15 @@ import { withTimeout, abortableDelay } from "./browser-action-timing.ts";
 import { clampInteger } from "./browser-bounds.ts";
 import {
   SNAPSHOT_WORLD_ID,
+  createReadScript,
   externalProtocolGuardScript,
   elementPointScript,
   elementHighlightScript,
+  selectOptionScript,
 } from "./browser-dom-scripts.ts";
 import { captureBrowserScreenshot, compareScreenshots } from "./browser-screenshot.ts";
 import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { WebContentsView, type BrowserWindow, type Session, type WebContents } from "electron";
 import type {
@@ -51,6 +56,10 @@ import type {
   BrowserCreateTabInput,
   BrowserErrorCode,
   BrowserEvent,
+  BrowserHandoffDialog,
+  BrowserHandoffKind,
+  BrowserHandoffOutcome,
+  BrowserHandoffResolution,
   BrowserIdentityProfile,
   BrowserInputModifier,
   BrowserInspectResult,
@@ -62,6 +71,8 @@ import type {
   BrowserNetworkSummary,
   BrowserPageSnapshot,
   BrowserProfileInfo,
+  BrowserReadMode,
+  BrowserReadResult,
   BrowserScreenshotMode,
   BrowserScreenshotOptions,
   BrowserScreenshotResult,
@@ -74,6 +85,7 @@ import type {
 import type { BrowserDeviceMode, BrowserDeviceModeInput } from "../../contract/browser-device.ts";
 import {
   applyBrowserDevice,
+  applyBrowserDeviceInput,
   applyBrowserDeviceMetrics,
   BROWSER_DEVICE_KEEP,
   browserDevicePresentation,
@@ -82,15 +94,19 @@ import {
 } from "./browser-device-mode.ts";
 import { BrowserCdpCoordinator } from "./browser-cdp-coordinator.ts";
 import { BrowserConsoleBuffer } from "./browser-console-buffer.ts";
+import { BrowserDialogController } from "./browser-dialog-controller.ts";
+import { isAllowedExternalProtocolUrl } from "./browser-external-protocols.ts";
 import { isBrowserDevToolsShortcut } from "./browser-devtools-shortcut.ts";
 import { BrowserError } from "./browser-error.ts";
 import { BrowserIdentityManager } from "./browser-identity-manager.ts";
 import { BrowserInspectionStore } from "./browser-inspection-store.ts";
 import { BrowserNetworkRecorder } from "./browser-network-recorder.ts";
+import { BrowserNetworkIdleProbe } from "./browser-network-idle.ts";
 import { BrowserNetworkPolicy, createSessionNetworkPolicyOptions } from "./browser-network-policy.ts";
 import { redactBrowserUrl } from "./browser-redaction.ts";
-import type { BrowserProfileManager } from "./browser-profile-manager.ts";
+import { BrowserProfileManager } from "./browser-profile-manager.ts";
 import { canResumeSensitiveAgentControl } from "./browser-sensitive-control.ts";
+import { validateUploadPaths } from "./browser-upload-paths.ts";
 const MAX_INSPECTION_SCREENSHOT_BYTES = 1_500_000;
 const MAX_INSPECTION_NODE_CHARS = 40_000;
 const DEFAULT_INSPECTION_MAX_NODES = 100;
@@ -120,6 +136,8 @@ type TabRecord = {
   lastLoadFailure?: BrowserLoadFailure;
   activeClickCapture?: { observation?: ClickNavigationObservation };
   pendingFileUpload?: { snapshotId: string; ref: string; generation: number };
+  /** True while the user is expected to interact with the page. */
+  handoff?: boolean;
 };
 
 type ClickNavigationObservation =
@@ -135,6 +153,17 @@ export interface BrowserTabManagerOptions {
   networkBodyRoot: string;
   emit: (event: BrowserEvent) => void;
   confirmSensitiveAction?: (description: string) => Promise<boolean>;
+  requestUserHandoff?: (input: {
+    tabId: string;
+    sessionId: string;
+    kind: BrowserHandoffKind;
+    origin: string;
+    title: string;
+    message: string;
+    dialog?: BrowserHandoffDialog;
+    timeoutMs?: number;
+  }) => Promise<BrowserHandoffResolution>;
+  cancelUserHandoff?: (tabId: string) => void;
   openExternal?: (url: string) => Promise<void>;
   confirmPrivateNetwork?: (url: string) => Promise<boolean>;
   approvePrivateOrigin?: (profileId: string, origin: string) => void;
@@ -158,12 +187,27 @@ export class BrowserTabManager {
   private readonly locallyApprovedPrivateOrigins = new Set<string>();
   private readonly cdp = new BrowserCdpCoordinator();
   private readonly identity = new BrowserIdentityManager(this.cdp);
+  private readonly dialogs: BrowserDialogController;
   private readonly inspections = new BrowserInspectionStore();
+  private readonly networkIdle = new BrowserNetworkIdleProbe(this.cdp);
   private readonly nativeSessionUserAgents = new Map<string, string>();
   private disposed = false;
 
   constructor(options: BrowserTabManagerOptions) {
     this.options = options;
+    this.dialogs = new BrowserDialogController({
+      cdp: this.cdp,
+      getContext: (tabId) => {
+        const record = this.tabs.get(tabId);
+        if (!record?.info.ownerSessionId) return undefined;
+        return {
+          sessionId: record.info.ownerSessionId,
+          origin: tabOrigin(record.info.url),
+          title: record.info.title,
+        };
+      },
+      requestHandoff: (input) => this.requestUserHandoff(input),
+    });
   }
 
   list(sessionId?: string): BrowserTabInfo[] {
@@ -179,6 +223,132 @@ export class BrowserTabManager {
 
   getOwnedTabUrl(tabId: string, sessionId: string): string {
     return this.requireOwnedTab(tabId, sessionId).info.url;
+  }
+
+  getOwnedTabInfo(tabId: string, sessionId: string): BrowserTabInfo {
+    return structuredClone(this.requireOwnedTab(tabId, sessionId).info);
+  }
+
+  /**
+   * Pause the Agent and ask the local user to handle something only a human can
+   * do (login, captcha, 2FA, consent). The page stays interactive; the Agent
+   * resumes with a fresh snapshot after the user finishes.
+   */
+  async requestUserHelp(
+    tabId: string,
+    sessionId: string,
+    kind: BrowserHandoffKind,
+    message: string,
+    timeoutMs?: number,
+  ): Promise<BrowserHandoffOutcome> {
+    if (kind === "dialog" || kind === "file-picker" || kind === "external-protocol") {
+      throw new BrowserError("INVALID_BROWSER_REQUEST", "This Browser handoff kind is reserved for internal flows");
+    }
+    const record = this.requireOwnedTab(tabId, sessionId);
+    const resolution = await this.requestUserHandoff({
+      tabId,
+      sessionId,
+      kind,
+      origin: tabOrigin(record.info.url),
+      title: record.info.title,
+      message,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    });
+    return resolution.outcome;
+  }
+
+  async uploadFiles(
+    tabId: string,
+    sessionId: string,
+    ref: string,
+    snapshotId: string,
+    generation: number,
+    rawPaths: string[],
+  ): Promise<{ ok: true; files: Array<{ name: string; size: number }> }> {
+    const record = this.requireOwnedTab(tabId, sessionId);
+    return this.runAction(record, sessionId, "interact", async () => {
+      record.pendingFileUpload = undefined;
+      this.assertSnapshotRef(record, ref, snapshotId, generation);
+      const node = record.snapshot?.nodes.get(ref);
+      if (!node || node.role !== "file-upload") {
+        throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser ref is not a file upload input");
+      }
+      const paths = validateUploadPaths(rawPaths);
+      await this.approveSensitiveAction(
+        record,
+        `Upload ${paths.length === 1 ? path.basename(paths[0]!) : `${paths.length} files`} to ${tabOrigin(record.info.url)}`,
+      );
+      const releaseDebugger = this.cdp.acquire(record.info.id);
+      try {
+        const document = await this.cdp.sendCommand<{ root?: { nodeId?: number } }>(record.info.id, "DOM.getDocument", {
+          depth: -1,
+          pierce: true,
+        });
+        const found = await this.cdp.sendCommand<{ nodeId?: number }>(record.info.id, "DOM.querySelector", {
+          nodeId: document.root?.nodeId,
+          selector: `input[type="file"][data-pi-browser-ref="${snapshotId}:${ref}"]`,
+        });
+        if (!found.nodeId) {
+          throw new BrowserError("STALE_ELEMENT_REF", "Browser file input is no longer available", {
+            recovery: { reason: "stale-state", remediation: "refresh-inspection", retryable: false },
+          });
+        }
+        await this.cdp.sendCommand(record.info.id, "DOM.setFileInputFiles", {
+          files: paths,
+          nodeId: found.nodeId,
+        });
+      } finally {
+        releaseDebugger();
+      }
+      return {
+        ok: true as const,
+        files: paths.map((file) => ({ name: path.basename(file), size: fs.statSync(file).size })),
+      };
+    });
+  }
+
+  private async requestUserHandoff(input: {
+    tabId: string;
+    sessionId: string;
+    kind: BrowserHandoffKind;
+    origin: string;
+    title: string;
+    message: string;
+    dialog?: BrowserHandoffDialog;
+    timeoutMs?: number;
+  }): Promise<BrowserHandoffResolution> {
+    const record = this.tabs.get(input.tabId);
+    if (!record || record.info.ownerSessionId !== input.sessionId) {
+      return { handoffId: randomUUID(), outcome: "cancelled" };
+    }
+    this.beginUserHandoff(record);
+    try {
+      if (!this.options.requestUserHandoff) {
+        return { handoffId: randomUUID(), outcome: "cancelled" };
+      }
+      return await this.options.requestUserHandoff(input);
+    } finally {
+      this.endUserHandoff(record);
+    }
+  }
+
+  private beginUserHandoff(record: TabRecord): void {
+    record.handoff = true;
+    record.controlGeneration += 1;
+    record.info.control = "waiting-for-user";
+    this.emitUpdate(record);
+  }
+
+  private endUserHandoff(record: TabRecord): void {
+    record.handoff = false;
+    if (!this.tabs.has(record.info.id)) return;
+    // The user may have navigated, logged in, or changed page state. Old refs
+    // must not survive the handoff.
+    record.info.generation += 1;
+    record.snapshot = undefined;
+    this.inspections.clearTab(record.info.id);
+    this.setUserControl(record);
+    this.emitUpdate(record);
   }
 
   countCapturedRequests(): number {
@@ -592,6 +762,34 @@ export class BrowserTabManager {
     });
   }
 
+  async read(
+    tabId: string,
+    sessionId: string,
+    input: { mode: BrowserReadMode; maxChars?: number; maxRows?: number },
+  ): Promise<BrowserReadResult> {
+    if (!["article", "tables", "links", "forms"].includes(input.mode)) {
+      throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser read mode is invalid");
+    }
+    const record = this.requireOwnedTab(tabId, sessionId);
+    const maxChars = clampInteger(input.maxChars ?? 12_000, 500, 60_000);
+    const maxRows = clampInteger(input.maxRows ?? 50, 1, 500);
+    return this.runAction(record, sessionId, "read", async () => {
+      const result = (await record.view.webContents.executeJavaScript(
+        createReadScript(input.mode, maxChars, maxRows),
+      )) as { content?: unknown; truncated?: unknown };
+      return {
+        tabId: record.info.id,
+        generation: record.info.generation,
+        url: redactBrowserUrl(record.info.url),
+        title: record.info.title.slice(0, 512),
+        mode: input.mode,
+        content: typeof result?.content === "string" ? result.content.slice(0, maxChars) : "",
+        truncated: result?.truncated === true,
+        untrustedWebContent: true,
+      };
+    });
+  }
+
   async inspect(
     sessionId: string,
     input: {
@@ -656,6 +854,7 @@ export class BrowserTabManager {
                 loading: record.info.loading,
                 text: snapshot.text,
                 nodes: snapshot.nodes,
+                blockers: snapshot.blockers ?? [],
               }),
             )
             .digest("hex");
@@ -668,8 +867,14 @@ export class BrowserTabManager {
             generation: startGeneration,
             contentHash,
             viewportHash,
+            nodes: snapshot.nodes,
+            text: snapshot.text,
             sinceInspectionId: input.sinceInspectionId,
           });
+          const delta = state.delta;
+          const hasDelta = Boolean(
+            delta && (delta.added.length || delta.changed.length || delta.removed.length || delta.textChanged),
+          );
           const ownedTabs = this.list(sessionId);
           const tabs = ownedTabs.slice(0, 20).map(tabSummary);
           return {
@@ -682,7 +887,8 @@ export class BrowserTabManager {
             loading: record.info.loading,
             device: record.info.device ?? { mode: "desktop" },
             changed: state.changed,
-            ...(state.changed ? { snapshot } : {}),
+            ...(snapshot.blockers?.length ? { blockers: snapshot.blockers } : {}),
+            ...(state.changed ? (hasDelta && delta ? { delta } : { snapshot }) : {}),
             ...(state.changed && screenshot && !screenshotTruncated ? { screenshot } : {}),
             truncated: {
               text: captured.truncated.text,
@@ -807,10 +1013,11 @@ export class BrowserTabManager {
         signal,
       );
       if (!isPoint(point)) throw new BrowserError("STALE_ELEMENT_REF", "Browser element is no longer actionable");
+      if (node?.role !== "file-upload") assertActionablePoint(point);
       point.x += frameContext.offsetX;
       point.y += frameContext.offsetY;
       if (point.externalUrl) {
-        if (!/^mailto:/i.test(point.externalUrl)) {
+        if (!isAllowedExternalProtocolUrl(point.externalUrl)) {
           throw new BrowserError("UNSUPPORTED_PROTOCOL", "External Browser protocol is not allowed");
         }
         await (this.options.openExternal?.(point.externalUrl) ?? Promise.resolve());
@@ -1002,24 +1209,160 @@ export class BrowserTabManager {
     );
   }
 
+  async hover(
+    tabId: string,
+    sessionId: string,
+    ref: string,
+    snapshotId: string,
+    generation: number,
+  ): Promise<{ ok: true }> {
+    const record = this.requireOwnedTab(tabId, sessionId);
+    return this.runAction(record, sessionId, "interact", async (signal) => {
+      const point = await this.resolveActionPoint(record, ref, snapshotId, generation, signal);
+      await hoverBrowserPoint(this.inputTarget(record), point.x, point.y, signal);
+      return { ok: true as const };
+    });
+  }
+
+  async drag(
+    tabId: string,
+    sessionId: string,
+    fromRef: string,
+    toRef: string,
+    snapshotId: string,
+    generation: number,
+    steps = 8,
+  ): Promise<{ ok: true }> {
+    const stepCount = clampInteger(steps, 2, 50);
+    const record = this.requireOwnedTab(tabId, sessionId);
+    return this.runAction(record, sessionId, "interact", async (signal) => {
+      const from = await this.resolveActionPoint(record, fromRef, snapshotId, generation, signal);
+      const to = await this.resolveActionPoint(record, toRef, snapshotId, generation, signal);
+      await dragBrowserPoints(this.inputTarget(record), from, to, stepCount, signal);
+      return { ok: true as const };
+    });
+  }
+
+  async select(
+    tabId: string,
+    sessionId: string,
+    ref: string,
+    snapshotId: string,
+    generation: number,
+    choice: { value?: string; label?: string; index?: number },
+  ): Promise<{ ok: true; value: string; label: string }> {
+    if (
+      (typeof choice.value !== "string" || !choice.value) &&
+      (typeof choice.label !== "string" || !choice.label) &&
+      !Number.isInteger(choice.index)
+    ) {
+      throw new BrowserError("INVALID_BROWSER_REQUEST", "A select value, label, or index is required");
+    }
+    const record = this.requireOwnedTab(tabId, sessionId);
+    return this.runAction(record, sessionId, "interact", async () => {
+      this.assertSnapshotRef(record, ref, snapshotId, generation);
+      const frameContext = record.snapshot?.frames.get(ref);
+      if (!frameContext) throw new BrowserError("STALE_ELEMENT_REF", "Browser frame is no longer available");
+      const node = record.snapshot?.nodes.get(ref);
+      if (node && node.role !== "combobox") {
+        throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser ref is not a select element");
+      }
+      const result = (await frameContext.frame.executeJavaScript(selectOptionScript(snapshotId, ref, choice))) as {
+        ok?: unknown;
+        reason?: unknown;
+        value?: unknown;
+        label?: unknown;
+      };
+      if (result?.ok !== true) {
+        if (result?.reason === "stale") {
+          throw new BrowserError("STALE_ELEMENT_REF", "Browser select element is no longer available");
+        }
+        throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser select option was not found");
+      }
+      return { ok: true as const, value: String(result.value ?? ""), label: String(result.label ?? "") };
+    });
+  }
+
+  private async resolveActionPoint(
+    record: TabRecord,
+    ref: string,
+    snapshotId: string,
+    generation: number,
+    signal: AbortSignal,
+  ): Promise<{ x: number; y: number }> {
+    this.assertSnapshotRef(record, ref, snapshotId, generation);
+    const frameContext = record.snapshot?.frames.get(ref);
+    if (!frameContext) throw new BrowserError("STALE_ELEMENT_REF", "Browser frame is no longer available");
+    const point = await withTimeout(
+      frameContext.frame.executeJavaScript(elementPointScript(snapshotId, ref, false)),
+      this.options.getSettings().navigation.actionTimeoutMs,
+      "ACTION_TIMEOUT",
+      signal,
+    );
+    if (!isPoint(point)) throw new BrowserError("STALE_ELEMENT_REF", "Browser element is no longer actionable");
+    assertActionablePoint(point);
+    return { x: point.x + frameContext.offsetX, y: point.y + frameContext.offsetY };
+  }
+
   async wait(
     tabId: string,
     sessionId: string,
-    input: { timeoutMs?: number; condition?: "load" | "network-idle" | "selector" | "text"; value?: string },
+    input: {
+      timeoutMs?: number;
+      condition?: "load" | "network-idle" | "dom-stable" | "selector" | "text" | "actionable";
+      value?: string;
+      ref?: string;
+      snapshotId?: string;
+      generation?: number;
+    },
   ): Promise<number> {
     const record = this.requireOwnedTab(tabId, sessionId);
     const timeout = clampInteger(input.timeoutMs ?? this.options.getSettings().navigation.actionTimeoutMs, 50, 120_000);
     const started = Date.now();
     await this.runAction(record, sessionId, "read", async (signal) => {
-      if (!input.condition || input.condition === "load" || input.condition === "network-idle") {
+      const deadline = Date.now() + timeout;
+      if (!input.condition || input.condition === "load") {
         await this.waitForLoad(record, timeout, signal);
-        if (input.condition === "network-idle") await abortableDelay(300, signal);
         return;
+      }
+      if (input.condition === "network-idle") {
+        await this.waitForLoad(record, Math.max(1_000, deadline - Date.now()), signal);
+        const probed = await this.networkIdle.wait(record.info.id, {
+          timeoutMs: Math.max(1_000, deadline - Date.now()),
+          signal,
+        });
+        // If the Network domain is unavailable, keep the previous bounded
+        // settle behavior instead of failing the whole wait.
+        if (!probed) await abortableDelay(300, signal);
+        return;
+      }
+      if (input.condition === "dom-stable") {
+        await this.waitForDomStable(record, Math.max(1_000, deadline - Date.now()), signal);
+        return;
+      }
+      if (input.condition === "actionable") {
+        if (!input.ref || !input.snapshotId || input.generation === undefined) {
+          throw new BrowserError("INVALID_BROWSER_REQUEST", "Actionable wait requires ref, snapshotId and generation");
+        }
+        this.assertSnapshotRef(record, input.ref, input.snapshotId, input.generation);
+        const frameContext = record.snapshot?.frames.get(input.ref);
+        if (!frameContext) throw new BrowserError("STALE_ELEMENT_REF", "Browser frame is no longer available");
+        while (Date.now() < deadline) {
+          if (signal.aborted) throw new BrowserError("USER_TOOK_CONTROL", "User took control of the Browser tab");
+          const point = await frameContext.frame.executeJavaScript(
+            elementPointScript(input.snapshotId, input.ref, false),
+          );
+          if (isPoint(point) && point.actionable !== false) return;
+          await abortableDelay(100, signal);
+        }
+        throw new BrowserError("ACTION_TIMEOUT", "Browser element did not become actionable", {
+          retryable: true,
+          recovery: { reason: "stale-state", remediation: "refresh-inspection" },
+        });
       }
       if (typeof input.value !== "string" || !input.value || input.value.length > 4_096) {
         throw new BrowserError("INVALID_BROWSER_REQUEST", "Browser wait value is invalid");
       }
-      const deadline = Date.now() + timeout;
       while (Date.now() < deadline) {
         if (signal.aborted) throw new BrowserError("USER_TOOK_CONTROL", "User took control of the Browser tab");
         const code =
@@ -1032,6 +1375,23 @@ export class BrowserTabManager {
       throw new BrowserError("ACTION_TIMEOUT", "Browser wait timed out", { retryable: true });
     });
     return Date.now() - started;
+  }
+
+  private async waitForDomStable(record: TabRecord, timeout: number, signal: AbortSignal): Promise<void> {
+    const code = `(() => new Promise((resolve) => {
+      const quietMs = 400;
+      let settleTimer;
+      const done = () => { observer.disconnect(); clearTimeout(settleTimer); resolve(true); };
+      const observer = new MutationObserver(() => { clearTimeout(settleTimer); settleTimer = setTimeout(done, quietMs); });
+      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+      settleTimer = setTimeout(done, quietMs);
+    }))()`;
+    await withTimeout(
+      record.view.webContents.executeJavaScriptInIsolatedWorld(SNAPSHOT_WORLD_ID, [{ code }]),
+      timeout,
+      "ACTION_TIMEOUT",
+      signal,
+    );
   }
 
   async executeJavaScript(
@@ -1274,6 +1634,7 @@ export class BrowserTabManager {
       throw new BrowserError("TAB_NOT_OWNED", "Browser tab belongs to another session");
     }
     this.tabs.delete(tabId);
+    this.options.cancelUserHandoff?.(tabId);
     this.cancelAgentActions(record, "TAB_NOT_FOUND", "Browser tab was closed");
     const win = this.options.getWindow();
     if (win && !win.isDestroyed()) {
@@ -1284,6 +1645,7 @@ export class BrowserTabManager {
       }
     }
     this.inspections.clearTab(tabId);
+    this.dialogs.detach(tabId);
     void record.consoleBuffer?.stop();
     void record.networkRecorder?.stop();
     this.cdp.disposeTab(tabId);
@@ -1304,6 +1666,13 @@ export class BrowserTabManager {
   }
 
   revokeAgentActions(sessionId?: string): void {
+    if (sessionId) {
+      for (const record of this.tabs.values()) {
+        if (record.info.ownerSessionId === sessionId) this.dialogs.detach(record.info.id);
+      }
+    } else {
+      this.dialogs.detachAll();
+    }
     for (const record of this.tabs.values()) {
       if (sessionId && record.info.ownerSessionId !== sessionId) continue;
       this.cancelAgentActions(record, "CAPABILITY_LEASE_EXPIRED", "Browser capability was revoked");
@@ -1319,6 +1688,7 @@ export class BrowserTabManager {
   }
 
   async clearAdvancedState(): Promise<void> {
+    this.dialogs.detachAll();
     const cleanup: Promise<void>[] = [];
     for (const record of [...this.tabs.values()]) {
       record.info.advanced = false;
@@ -1351,6 +1721,9 @@ export class BrowserTabManager {
       this.emitUpdate(record);
     }
     await Promise.all(cleanup);
+    // Advanced cleanup resets identity to native. Reapply the safe
+    // Chrome-compatible default without holding a CDP session.
+    for (const record of this.tabs.values()) this.applyDefaultIdentity(record);
   }
 
   countAttachedDebuggers(): number {
@@ -1384,6 +1757,7 @@ export class BrowserTabManager {
   dispose(): void {
     if (this.disposed) return;
     this.closeAll();
+    this.dialogs.detachAll();
     this.cdp.dispose();
     this.disposed = true;
     this.networkPolicies.clear();
@@ -1402,7 +1776,7 @@ export class BrowserTabManager {
         const result = this.openManagedPopup(record, details);
         this.captureClickNavigation(record, { kind: "new-tab", result });
         void result;
-      } else if (/^mailto:/i.test(details.url)) {
+      } else if (isAllowedExternalProtocolUrl(details.url)) {
         void this.options.openExternal?.(details.url).catch(() => undefined);
       }
       return { action: "deny" };
@@ -1413,7 +1787,12 @@ export class BrowserTabManager {
         return;
       }
       event.preventDefault();
-      if (/^mailto:/i.test(url)) void this.options.openExternal?.(url).catch(() => undefined);
+      if (isAllowedExternalProtocolUrl(url)) void this.options.openExternal?.(url).catch(() => undefined);
+    });
+    wc.on("will-prevent-unload", (event) => {
+      // Agent navigation must not stall on a page that tries to keep the user.
+      // Let the unload proceed; the navigation is already policy-checked.
+      if (record.info.ownerSessionId) event.preventDefault();
     });
     wc.on("did-start-navigation", (details) => {
       if (!details.isMainFrame) return;
@@ -1470,7 +1849,7 @@ export class BrowserTabManager {
       const prefix = `pi-browser-external:${record.externalProtocolToken}:`;
       if (!message.startsWith(prefix)) return;
       const url = message.slice(prefix.length);
-      if (/^mailto:/i.test(url)) void this.options.openExternal?.(url).catch(() => undefined);
+      if (isAllowedExternalProtocolUrl(url)) void this.options.openExternal?.(url).catch(() => undefined);
     });
     wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
       if (!isMainFrame || errorCode === -3) return;
@@ -1578,7 +1957,9 @@ export class BrowserTabManager {
   }
 
   private handleUserInput(record: TabRecord): void {
-    if (record.syntheticInput > 0 || record.info.control === "user") return;
+    // During a handoff the user is supposed to interact with the page. Do not
+    // treat that input as a takeover that cancels the waiting Agent.
+    if (record.syntheticInput > 0 || record.handoff || record.info.control === "user") return;
     record.pendingFileUpload = undefined;
     this.setUserControl(record);
     record.info.generation += 1;
@@ -1610,6 +1991,30 @@ export class BrowserTabManager {
     if (!accepted) throw new BrowserError("PERMISSION_DENIED", "Sensitive Browser action was not approved");
   }
 
+  private applyDefaultIdentity(record: TabRecord): void {
+    const settings = this.options.getSettings().advancedBrowserMode;
+    const contents = record.view.webContents;
+    if (!contents || contents.isDestroyed() || settings.identityMode === "native") {
+      record.identityProfile = undefined;
+      return;
+    }
+    if (typeof contents.isLoading === "function" && contents.isLoading()) {
+      // setUserAgent during a pending navigation aborts that navigation.
+      contents.once("did-stop-loading", () => {
+        if (this.tabs.has(record.info.id)) this.applyDefaultIdentity(record);
+      });
+      return;
+    }
+    try {
+      const profile = this.identity.buildProfile(settings, record.nativeUserAgent);
+      contents.setUserAgent(profile.ua);
+      record.session.setUserAgent(profile.ua, profile.acceptLanguage);
+      record.identityProfile = profile;
+    } catch {
+      record.identityProfile = undefined;
+    }
+  }
+
   private async prepareAdvancedRecord(record: TabRecord): Promise<void> {
     const settings = this.options.getSettings().advancedBrowserMode;
     const contents = record.view.webContents;
@@ -1621,6 +2026,7 @@ export class BrowserTabManager {
       record.networkRecorder = undefined;
       record.identityProfile = undefined;
       await this.identity.clear(record.info.id, contents, record.session, record.nativeUserAgent);
+      this.applyDefaultIdentity(record);
       if (record.deviceIdentity) {
         await this.identity.applyTabOverride(record.info.id, record.deviceIdentity);
         contents.setUserAgent(record.deviceIdentity.ua);
@@ -1803,6 +2209,25 @@ export class BrowserTabManager {
         rejectResult(new BrowserError(cancellation.code, cancellation.message));
         return;
       }
+      if (record.handoff) {
+        record.pendingActions.delete(abort);
+        rejectResult(
+          new BrowserError("USER_TOOK_CONTROL", "Browser is waiting for the user to finish the handoff", {
+            retryable: false,
+            recovery: { reason: "stale-state", remediation: "ask-user" },
+          }),
+        );
+        return;
+      }
+      const dialogTabId = record.info.ownerSessionId ? record.info.id : undefined;
+      if (dialogTabId) {
+        await this.dialogs.beginAction(dialogTabId).catch(() => undefined);
+        // Page.enable can reinitialize the renderer widget and drop the touch
+        // emulation applied by device mode. Re-assert it before the action.
+        if (record.info.device?.mode === "mobile") {
+          await applyBrowserDeviceInput(this.cdp, record.info.id, record.info.device).catch(() => undefined);
+        }
+      }
       record.activeAbort = abort;
       record.info.control = "agent";
       if (permission === "advanced") record.info.advanced = true;
@@ -1822,6 +2247,7 @@ export class BrowserTabManager {
         if (record.activeAbort === abort) record.activeAbort = undefined;
         this.setUserControl(record);
         record.info.advanced = false;
+        if (dialogTabId) this.dialogs.endAction(dialogTabId);
         this.emitUpdate(record);
       }
     };
@@ -1904,6 +2330,27 @@ export function createSecureView(
       spellcheck: true,
       webviewTag: false,
       navigateOnDragDrop: false,
+    },
+  });
+}
+
+function tabOrigin(value: string): string {
+  try {
+    const parsed = new URL(value);
+    return parsed.origin === "null" ? parsed.protocol : parsed.origin;
+  } catch {
+    return "about:blank";
+  }
+}
+
+function assertActionablePoint(point: { actionable?: boolean; reason?: string; coveredBy?: string }): void {
+  if (point.actionable !== false) return;
+  throw new BrowserError("ELEMENT_NOT_ACTIONABLE", "Browser element cannot receive input", {
+    retryable: false,
+    recovery: { reason: "stale-state", remediation: "refresh-inspection" },
+    details: {
+      ...(point.reason ? { reason: point.reason } : {}),
+      ...(point.coveredBy ? { coveredBy: point.coveredBy } : {}),
     },
   });
 }

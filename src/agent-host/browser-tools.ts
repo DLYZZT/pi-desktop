@@ -15,38 +15,25 @@ export { getBrowserSessionSource, setBrowserSessionSource } from "./session-sour
 import { getBrowserSessionSource } from "./session-source";
 
 export const BROWSER_TOOL_PERMISSIONS = {
-  browser_open: "read",
-  browser_list_tabs: "read",
-  browser_set_device_mode: "interact",
-  browser_navigate: "read",
-  browser_snapshot: "read",
+  browser_tab: "read",
+  browser_device: "interact",
   browser_inspect: "read",
+  browser_read: "read",
   browser_screenshot: "read",
-  browser_visual_compare: "read",
-  browser_click: "interact",
-  browser_click_at: "interact",
-  browser_type: "interact",
-  browser_press: "interact",
-  browser_scroll: "interact",
+  browser_pointer: "interact",
+  browser_input: "interact",
   browser_wait: "read",
-  browser_back: "read",
-  browser_forward: "read",
-  browser_reload: "read",
-  browser_close: "read",
-  browser_execute_javascript: "advanced",
+  browser_request_user_help: "read",
+  browser_upload: "interact",
+  browser_downloads: "read",
+  browser_batch: "read",
+  browser_js: "advanced",
   browser_get_cookies: "advanced",
-  browser_set_request_header_rules: "advanced",
-  browser_set_response_header_rules: "advanced",
+  browser_header_rules: "advanced",
   browser_send_cdp_command: "advanced",
-  browser_network_list: "advanced",
-  browser_network_wait: "advanced",
-  browser_network_body: "advanced",
-  browser_network_replay: "advanced",
-  browser_network_summary: "advanced",
-  browser_console_list: "advanced",
-  browser_console_wait: "advanced",
-  browser_page_code_list: "advanced",
-  browser_page_code_get: "advanced",
+  browser_network: "advanced",
+  browser_console: "advanced",
+  browser_clipboard: "advanced",
 } as const satisfies Record<string, BrowserPermissionLevel>;
 
 export const BROWSER_TOOL_NAMES = Object.keys(BROWSER_TOOL_PERMISSIONS) as Array<keyof typeof BROWSER_TOOL_PERMISSIONS>;
@@ -67,8 +54,9 @@ export function browserToolNamesForSnapshot(snapshot: BrowserCapabilitySnapshot)
     const required = BROWSER_TOOL_PERMISSIONS[name];
     if (required !== "advanced") return true;
     if (!snapshot.advancedEnabled) return false;
-    // Page JavaScript has its own fine-grained switch in Agent access.
-    if (name === "browser_execute_javascript") return snapshot.agentJavaScriptEnabled === true;
+    // The merged JavaScript tool exposes execute/list/get; it stays hidden
+    // until the Agent-JavaScript switch is on.
+    if (name === "browser_js") return snapshot.agentJavaScriptEnabled === true;
     return true;
   });
 }
@@ -103,8 +91,6 @@ async function browserCall<
       },
       70_000,
     );
-    // Refresh from the revisioned capability channel after the user decision.
-    // The original target method is still invoked exactly once below.
     capabilities = await callMain<BrowserHostResult<"browser.capabilities">>("browser.capabilities", { sessionId });
   }
   if (!capabilities.lease) throw new Error("CAPABILITY_DISABLED: Browser authorization did not issue a lease");
@@ -122,16 +108,7 @@ async function browserCall<
   for (;;) {
     const attempt = browserAgentRuntime.beforeCall(sessionId, method, policyRequest, capabilities.snapshot.revision);
     try {
-      const result = await callMain<BrowserHostResult<M>>(
-        method,
-        request,
-        method === "browser.wait" ||
-          method === "browser.networkWait" ||
-          method === "browser.consoleWait" ||
-          method === "browser.executeJavaScript"
-          ? 125_000
-          : 35_000,
-      );
+      const result = await callMain<BrowserHostResult<M>>(method, request, callTimeoutMs(method, params));
       browserAgentRuntime.afterSuccess(sessionId, attempt.attemptKey, result, method, policyRequest);
       return result;
     } catch (error) {
@@ -161,11 +138,7 @@ function tool(
   name: keyof typeof BROWSER_TOOL_PERMISSIONS,
   description: string,
   parameters: ReturnType<typeof Type.Object>,
-  method: Exclude<
-    BrowserHostMethod,
-    "browser.capabilities" | "browser.requestAuthorization" | "browser.sessionEnded" | "browser.requestRouteBypass"
-  >,
-  project: (input: Record<string, unknown>) => Record<string, unknown> = (input) => input,
+  execute: (input: Record<string, unknown>, ctx: ToolContext) => Promise<ReturnType<typeof textResult>>,
 ): ToolDefinition {
   return defineTool({
     name,
@@ -176,14 +149,38 @@ function tool(
     parameters,
     executionMode: "sequential",
     async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
-      const result = await browserCall(method as never, project(input as Record<string, unknown>) as never, ctx);
-      return textResult(result, ctx.sessionManager.getSessionId());
+      return execute(input as Record<string, unknown>, ctx);
     },
   });
 }
 
 function permissionRank(permission: BrowserPermissionLevel): number {
   return { none: 0, read: 1, interact: 2, advanced: 3 }[permission];
+}
+
+function callTimeoutMs(
+  method: Exclude<
+    BrowserHostMethod,
+    "browser.capabilities" | "browser.requestAuthorization" | "browser.sessionEnded" | "browser.requestRouteBypass"
+  >,
+  params: Record<string, unknown>,
+): number {
+  if (method === "browser.requestUserHelp") {
+    const requested = typeof params.timeoutMs === "number" ? params.timeoutMs : 5 * 60_000;
+    return Math.min(30 * 60_000 + 15_000, requested + 15_000);
+  }
+  if (
+    method === "browser.wait" ||
+    method === "browser.networkWait" ||
+    method === "browser.consoleWait" ||
+    method === "browser.executeJavaScript" ||
+    method === "browser.downloadWait" ||
+    method === "browser.uploadFiles" ||
+    method === "browser.batch"
+  ) {
+    return 125_000;
+  }
+  return 35_000;
 }
 
 function requiredPermissionForHostMethod(
@@ -197,8 +194,12 @@ function requiredPermissionForHostMethod(
     method === "browser.clickAt" ||
     method === "browser.type" ||
     method === "browser.press" ||
+    method === "browser.hover" ||
+    method === "browser.drag" ||
+    method === "browser.select" ||
     method === "browser.scroll" ||
-    method === "browser.setDeviceMode"
+    method === "browser.setDeviceMode" ||
+    method === "browser.uploadFiles"
   ) {
     return "interact";
   }
@@ -217,7 +218,8 @@ function requiredPermissionForHostMethod(
     method === "browser.consoleList" ||
     method === "browser.consoleWait" ||
     method === "browser.pageCodeList" ||
-    method === "browser.pageCodeGet"
+    method === "browser.pageCodeGet" ||
+    method === "browser.clipboard"
   ) {
     return "advanced";
   }
@@ -235,19 +237,32 @@ const snapshotId = Type.String({
   minLength: 36,
   maxLength: 36,
   pattern: uuidPattern,
-  description: "Full snapshot UUID from the most recent browser_snapshot result",
+  description: "Full snapshot UUID from the most recent browser_inspect result",
 });
 const elementRef = Type.String({
   minLength: 2,
   maxLength: 32,
   pattern: "^e[1-9][0-9]*$",
-  description: "Element ref from the most recent browser_snapshot result",
+  description: "Element ref from the most recent browser_inspect result",
 });
 const snapshotGeneration = Type.Integer({
   minimum: 0,
-  description: "Generation from the same browser_snapshot result as snapshotId and ref",
+  description: "Generation from the same browser_inspect result as snapshotId and ref",
 });
-const url = Type.String({ minLength: 1, maxLength: 8192, description: "Absolute http(s) URL" });
+const url = Type.String({
+  minLength: 1,
+  maxLength: 8192,
+  description: "Absolute http(s) URL; browser_tab open accepts https or a bare host",
+});
+
+function requireValue<T>(value: T | undefined, name: string): T {
+  if (value === undefined) throw new Error(`INVALID_BROWSER_REQUEST: ${name} is required for this action`);
+  return value;
+}
+
+function requireTab(value: unknown): string {
+  return requireValue(typeof value === "string" ? value : undefined, "tabId");
+}
 
 function deviceModeSchema() {
   const { minSize, maxSize, minDpr, maxDpr } = BROWSER_DEVICE_LIMITS;
@@ -273,51 +288,107 @@ function deviceModeSchema() {
   ]);
 }
 
+function inputModifiers() {
+  return Type.Optional(
+    Type.Array(
+      Type.Union([Type.Literal("alt"), Type.Literal("control"), Type.Literal("meta"), Type.Literal("shift")]),
+      { maxItems: 4, uniqueItems: true },
+    ),
+  );
+}
+
+function visualCompareTarget() {
+  return Type.Object({
+    tabId,
+    snapshotId: Type.Optional(snapshotId),
+    ref: Type.Optional(elementRef),
+    generation: Type.Optional(snapshotGeneration),
+  });
+}
+
+function consoleLevels() {
+  return Type.Array(
+    Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info"), Type.Literal("debug")]),
+    { maxItems: 4, uniqueItems: true },
+  );
+}
+
 export function createBrowserToolDefinitions(): ToolDefinition[] {
-  const tools: ToolDefinition[] = [
+  return [
     tool(
-      "browser_open",
-      "Open a URL in a managed Pi Desktop Browser tab. Advanced mode returns only the count of saved experiences for that site, never their source.",
+      "browser_tab",
+      "Manage owned tabs. Actions: open, list, navigate, back, forward, reload, close.",
       Type.Object({
-        url,
+        action: Type.Union([
+          Type.Literal("open"),
+          Type.Literal("list"),
+          Type.Literal("navigate"),
+          Type.Literal("back"),
+          Type.Literal("forward"),
+          Type.Literal("reload"),
+          Type.Literal("close"),
+        ]),
+        tabId: Type.Optional(tabId),
+        url: Type.Optional(url),
         profileId: Type.Optional(Type.String({ maxLength: 128 })),
         activate: Type.Optional(Type.Boolean()),
       }),
-      "browser.open",
+      async (input, ctx) => {
+        const sessionId = ctx.sessionManager.getSessionId();
+        const action = input.action;
+        if (action === "open") {
+          const result = await browserCall(
+            "browser.open",
+            {
+              url: requireValue(input.url as string | undefined, "url"),
+              ...(input.profileId === undefined ? {} : { profileId: input.profileId as string }),
+              ...(input.activate === undefined ? {} : { activate: input.activate as boolean }),
+            },
+            ctx,
+          );
+          return textResult(result, sessionId);
+        }
+        if (action === "list") return textResult(await browserCall("browser.listTabs", {}, ctx), sessionId);
+        if (action === "navigate") {
+          return textResult(
+            await browserCall(
+              "browser.navigate",
+              { tabId: requireTab(input.tabId), url: requireValue(input.url as string | undefined, "url") },
+              ctx,
+            ),
+            sessionId,
+          );
+        }
+        if (action === "back" || action === "forward" || action === "reload") {
+          const method =
+            action === "back" ? "browser.back" : action === "forward" ? "browser.forward" : "browser.reload";
+          return textResult(await browserCall(method, { tabId: requireTab(input.tabId) }, ctx), sessionId);
+        }
+        if (action === "close") {
+          return textResult(await browserCall("browser.close", { tabId: requireTab(input.tabId) }, ctx), sessionId);
+        }
+        throw new Error("INVALID_BROWSER_REQUEST: tab action is invalid");
+      },
     ),
     tool(
-      "browser_list_tabs",
-      "List Browser tabs owned by this Agent session, including their device modes.",
-      Type.Object({}),
-      "browser.listTabs",
-    ),
-    tool(
-      "browser_set_device_mode",
-      "Change an owned tab's device preview without reloading. Use a phone preset, custom CSS dimensions/DPR, rotate, or restore desktop. Inspect again before interacting; old element references expire after a change. Refresh explicitly if a site needs a new request to serve mobile content.",
+      "browser_device",
+      "Change an owned tab's device preview without reloading: desktop, phone preset, custom CSS size/DPR, rotate, or touch.",
       Type.Object({ tabId, device: deviceModeSchema() }),
-      "browser.setDeviceMode",
-    ),
-    tool(
-      "browser_navigate",
-      "Navigate an owned Browser tab to a URL.",
-      Type.Object({ tabId, url }),
-      "browser.navigate",
-    ),
-    tool(
-      "browser_snapshot",
-      "Compatibility tool for a standalone page snapshot. Prefer browser_inspect for the first observation and refresh after stale refs.",
-      Type.Object({
-        tabId,
-        maxNodes: Type.Optional(Type.Integer({ minimum: 1, maximum: 2000 })),
-        maxTextChars: Type.Optional(Type.Integer({ minimum: 1000, maximum: 200000 })),
-      }),
-      "browser.snapshot",
+      async (input, ctx) =>
+        textResult(
+          await browserCall(
+            "browser.setDeviceMode",
+            { tabId: requireTab(input.tabId), device: input.device as never },
+            ctx,
+          ),
+          ctx.sessionManager.getSessionId(),
+        ),
     ),
     defineTool({
       name: "browser_inspect",
       label: "browser inspect",
       description:
-        "Atomically inspect owned tabs with compact page text and element refs. The default has no screenshot; enable one only for visual evidence. Reuse sinceInspectionId for subsequent checks on the same page.",
+        "Atomically inspect owned tabs with compact page text and element refs. The default has no screenshot; enable one only for visual evidence. Reuse sinceInspectionId for deltas.",
       promptSnippet: "browser_inspect: compact page state first, then reuse sinceInspectionId for deltas",
       promptGuidelines: [...BROWSER_CANONICAL_GUIDELINES],
       parameters: Type.Object({
@@ -362,126 +433,266 @@ export function createBrowserToolDefinitions(): ToolDefinition[] {
         };
       },
     }),
+    tool(
+      "browser_read",
+      "Read a page as structured content: article text, tables, links, or form fields. Prefer this over parsing flattened body text.",
+      Type.Object({
+        tabId,
+        mode: Type.Union([
+          Type.Literal("article"),
+          Type.Literal("tables"),
+          Type.Literal("links"),
+          Type.Literal("forms"),
+        ]),
+        maxChars: Type.Optional(Type.Integer({ minimum: 500, maximum: 60_000 })),
+        maxRows: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
+      }),
+      async (input, ctx) =>
+        textResult(
+          await browserCall(
+            "browser.read",
+            {
+              tabId: requireTab(input.tabId),
+              mode: input.mode as "article" | "tables" | "links" | "forms",
+              ...(input.maxChars === undefined ? {} : { maxChars: input.maxChars as number }),
+              ...(input.maxRows === undefined ? {} : { maxRows: input.maxRows as number }),
+            },
+            ctx,
+          ),
+          ctx.sessionManager.getSessionId(),
+        ),
+    ),
     defineTool({
       name: "browser_screenshot",
       label: "browser screenshot",
       description:
-        "Capture an owned Browser tab in viewport, bounded full-page, or latest-snapshot element mode. Prefer inspect deltas unless a dedicated image is necessary.",
-      promptSnippet: "browser_screenshot: capture viewport, bounded full page, or one element",
+        "Capture an owned tab (viewport, bounded full page, or element) or compare two captures. Prefer inspect deltas unless a dedicated image is necessary.",
+      promptSnippet: "browser_screenshot: capture an owned tab or compare two captures",
       promptGuidelines: [...BROWSER_CANONICAL_GUIDELINES],
       parameters: Type.Object({
-        tabId,
+        action: Type.Union([Type.Literal("capture"), Type.Literal("compare")]),
+        tabId: Type.Optional(tabId),
         mode: Type.Optional(Type.Union([Type.Literal("viewport"), Type.Literal("full-page"), Type.Literal("element")])),
         format: Type.Optional(Type.Union([Type.Literal("png"), Type.Literal("jpeg")])),
         quality: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
         snapshotId: Type.Optional(snapshotId),
         ref: Type.Optional(elementRef),
         generation: Type.Optional(snapshotGeneration),
-      }),
-      executionMode: "sequential",
-      async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
-        const result = await browserCall("browser.screenshot", input as never, ctx);
-        const text = `Screenshot of Browser tab ${result.tabId} (${result.width}×${result.height}, ${result.mode}, generation ${result.generation})`;
-        browserAgentRuntime.recordResultText(ctx.sessionManager.getSessionId(), text.length);
-        return {
-          content: [
-            { type: "text", text },
-            { type: "image", data: result.base64, mimeType: result.mime },
-          ],
-          details: undefined,
-        };
-      },
-    }),
-    defineTool({
-      name: "browser_visual_compare",
-      label: "browser visual compare",
-      description:
-        "Compare two owned Browser captures with the same viewport/full-page/element parameters and return bounded pixel-difference evidence.",
-      promptSnippet: "browser_visual_compare: compare two managed Browser captures",
-      promptGuidelines: [...BROWSER_CANONICAL_GUIDELINES],
-      parameters: Type.Object({
-        left: visualCompareTarget(),
-        right: visualCompareTarget(),
-        mode: Type.Optional(Type.Union([Type.Literal("viewport"), Type.Literal("full-page"), Type.Literal("element")])),
+        left: Type.Optional(visualCompareTarget()),
+        right: Type.Optional(visualCompareTarget()),
         threshold: Type.Optional(Type.Integer({ minimum: 0, maximum: 255 })),
         includeDiff: Type.Optional(Type.Boolean()),
       }),
       executionMode: "sequential",
       async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
-        const result = await browserCall("browser.visualCompare", input as never, ctx);
-        const { diff, ...metadata } = result;
-        const text = JSON.stringify(metadata, null, 2);
-        browserAgentRuntime.recordResultText(ctx.sessionManager.getSessionId(), text.length);
+        const sessionId = ctx.sessionManager.getSessionId();
+        if (input.action === "compare") {
+          const result = await browserCall(
+            "browser.visualCompare",
+            {
+              left: requireValue(input.left, "left"),
+              right: requireValue(input.right, "right"),
+              ...(input.mode === undefined ? {} : { mode: input.mode }),
+              ...(input.threshold === undefined ? {} : { threshold: input.threshold }),
+              ...(input.includeDiff === undefined ? {} : { includeDiff: input.includeDiff }),
+            } as never,
+            ctx,
+          );
+          const { diff, ...metadata } = result;
+          const text = JSON.stringify(metadata, null, 2);
+          browserAgentRuntime.recordResultText(sessionId, text.length);
+          return {
+            content: [
+              { type: "text" as const, text },
+              ...(diff ? [{ type: "image" as const, data: diff.base64, mimeType: diff.mime }] : []),
+            ],
+            details: undefined,
+          };
+        }
+        const result = await browserCall(
+          "browser.screenshot",
+          {
+            tabId: requireTab(input.tabId),
+            ...(input.mode === undefined ? {} : { mode: input.mode }),
+            ...(input.format === undefined ? {} : { format: input.format }),
+            ...(input.quality === undefined ? {} : { quality: input.quality }),
+            ...(input.snapshotId === undefined ? {} : { snapshotId: input.snapshotId }),
+            ...(input.ref === undefined ? {} : { ref: input.ref }),
+            ...(input.generation === undefined ? {} : { generation: input.generation }),
+          } as never,
+          ctx,
+        );
+        const text = `Screenshot of Browser tab ${result.tabId} (${result.width}×${result.height}, ${result.mode}, generation ${result.generation})`;
+        browserAgentRuntime.recordResultText(sessionId, text.length);
         return {
           content: [
-            { type: "text", text },
-            ...(diff ? [{ type: "image" as const, data: diff.base64, mimeType: diff.mime }] : []),
+            { type: "text" as const, text },
+            { type: "image" as const, data: result.base64, mimeType: result.mime },
           ],
           details: undefined,
         };
       },
     }),
     tool(
-      "browser_click",
-      "Click an element reference from the latest Browser snapshot. Returns whether the click stayed on the page, navigated the current tab, opened a new tab, or encountered a load failure.",
+      "browser_pointer",
+      "Pointer and wheel actions on an owned tab. Actions: click, clickAt, hover, drag, scroll.",
       Type.Object({
+        action: Type.Union([
+          Type.Literal("click"),
+          Type.Literal("clickAt"),
+          Type.Literal("hover"),
+          Type.Literal("drag"),
+          Type.Literal("scroll"),
+        ]),
         tabId,
-        ref: elementRef,
-        snapshotId,
-        generation: snapshotGeneration,
-        button: Type.Optional(Type.Union([Type.Literal("left"), Type.Literal("middle"), Type.Literal("right")])),
-        clickCount: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2)])),
-        modifiers: inputModifiers(),
-      }),
-      "browser.click",
-    ),
-    tool(
-      "browser_click_at",
-      "Click viewport coordinates through Chromium's trusted input pipeline. Use for Canvas or challenge controls only when a fresh screenshot makes the target unambiguous.",
-      Type.Object({
-        tabId,
-        x: Type.Number({ minimum: 0 }),
-        y: Type.Number({ minimum: 0 }),
-        button: Type.Optional(Type.Union([Type.Literal("left"), Type.Literal("middle"), Type.Literal("right")])),
-        clickCount: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2)])),
-        modifiers: inputModifiers(),
-      }),
-      "browser.clickAt",
-    ),
-    tool(
-      "browser_type",
-      "Focus an element reference and enter text; optionally submit with Enter.",
-      Type.Object({
-        tabId,
-        ref: elementRef,
-        snapshotId,
-        generation: snapshotGeneration,
-        text: Type.String({ maxLength: 65536 }),
-        submit: Type.Optional(Type.Boolean()),
-      }),
-      "browser.type",
-    ),
-    tool(
-      "browser_press",
-      "Send an allowed keyboard key to an owned Browser tab.",
-      Type.Object({ tabId, key: Type.String({ maxLength: 16 }), modifiers: inputModifiers() }),
-      "browser.press",
-    ),
-    tool(
-      "browser_scroll",
-      "Scroll an owned Browser tab using Chromium wheel input.",
-      Type.Object({
-        tabId,
+        ref: Type.Optional(elementRef),
+        snapshotId: Type.Optional(snapshotId),
+        generation: Type.Optional(snapshotGeneration),
+        fromRef: Type.Optional(elementRef),
+        toRef: Type.Optional(elementRef),
+        x: Type.Optional(Type.Number({ minimum: 0 })),
+        y: Type.Optional(Type.Number({ minimum: 0 })),
         deltaX: Type.Optional(Type.Integer({ minimum: -100000, maximum: 100000 })),
-        deltaY: Type.Integer({ minimum: -100000, maximum: 100000 }),
-        x: Type.Optional(Type.Integer({ minimum: 0 })),
-        y: Type.Optional(Type.Integer({ minimum: 0 })),
+        deltaY: Type.Optional(Type.Integer({ minimum: -100000, maximum: 100000 })),
+        button: Type.Optional(Type.Union([Type.Literal("left"), Type.Literal("middle"), Type.Literal("right")])),
+        clickCount: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2)])),
+        modifiers: inputModifiers(),
+        steps: Type.Optional(Type.Integer({ minimum: 2, maximum: 50 })),
       }),
-      "browser.scroll",
+      async (input, ctx) => {
+        const tab = requireTab(input.tabId);
+        let result: unknown;
+        if (input.action === "click") {
+          result = await browserCall(
+            "browser.click",
+            {
+              tabId: tab,
+              ref: requireValue(input.ref as string | undefined, "ref"),
+              snapshotId: requireValue(input.snapshotId as string | undefined, "snapshotId"),
+              generation: requireValue(input.generation as number | undefined, "generation"),
+              ...(input.button === undefined ? {} : { button: input.button }),
+              ...(input.clickCount === undefined ? {} : { clickCount: input.clickCount }),
+              ...(input.modifiers === undefined ? {} : { modifiers: input.modifiers }),
+            } as never,
+            ctx,
+          );
+        } else if (input.action === "clickAt") {
+          result = await browserCall(
+            "browser.clickAt",
+            {
+              tabId: tab,
+              x: requireValue(input.x as number | undefined, "x"),
+              y: requireValue(input.y as number | undefined, "y"),
+              ...(input.button === undefined ? {} : { button: input.button }),
+              ...(input.clickCount === undefined ? {} : { clickCount: input.clickCount }),
+              ...(input.modifiers === undefined ? {} : { modifiers: input.modifiers }),
+            } as never,
+            ctx,
+          );
+        } else if (input.action === "hover") {
+          result = await browserCall(
+            "browser.hover",
+            {
+              tabId: tab,
+              ref: requireValue(input.ref as string | undefined, "ref"),
+              snapshotId: requireValue(input.snapshotId as string | undefined, "snapshotId"),
+              generation: requireValue(input.generation as number | undefined, "generation"),
+            } as never,
+            ctx,
+          );
+        } else if (input.action === "drag") {
+          result = await browserCall(
+            "browser.drag",
+            {
+              tabId: tab,
+              fromRef: requireValue(input.fromRef as string | undefined, "fromRef"),
+              toRef: requireValue(input.toRef as string | undefined, "toRef"),
+              snapshotId: requireValue(input.snapshotId as string | undefined, "snapshotId"),
+              generation: requireValue(input.generation as number | undefined, "generation"),
+              ...(input.steps === undefined ? {} : { steps: input.steps }),
+            } as never,
+            ctx,
+          );
+        } else {
+          result = await browserCall(
+            "browser.scroll",
+            {
+              tabId: tab,
+              deltaY: requireValue(input.deltaY as number | undefined, "deltaY"),
+              ...(input.deltaX === undefined ? {} : { deltaX: input.deltaX }),
+              ...(input.x === undefined ? {} : { x: Math.round(input.x as number) }),
+              ...(input.y === undefined ? {} : { y: Math.round(input.y as number) }),
+            } as never,
+            ctx,
+          );
+        }
+        return textResult(result, ctx.sessionManager.getSessionId());
+      },
+    ),
+    tool(
+      "browser_input",
+      "Text and keyboard actions on an owned tab. Actions: type, press, select.",
+      Type.Object({
+        action: Type.Union([Type.Literal("type"), Type.Literal("press"), Type.Literal("select")]),
+        tabId,
+        ref: Type.Optional(elementRef),
+        snapshotId: Type.Optional(snapshotId),
+        generation: Type.Optional(snapshotGeneration),
+        text: Type.Optional(Type.String({ maxLength: 65536 })),
+        submit: Type.Optional(Type.Boolean()),
+        key: Type.Optional(Type.String({ maxLength: 16 })),
+        modifiers: inputModifiers(),
+        value: Type.Optional(Type.String({ maxLength: 4096 })),
+        label: Type.Optional(Type.String({ maxLength: 4096 })),
+        index: Type.Optional(Type.Integer({ minimum: 0, maximum: 10000 })),
+      }),
+      async (input, ctx) => {
+        const tab = requireTab(input.tabId);
+        let result: unknown;
+        if (input.action === "type") {
+          result = await browserCall(
+            "browser.type",
+            {
+              tabId: tab,
+              ref: requireValue(input.ref as string | undefined, "ref"),
+              snapshotId: requireValue(input.snapshotId as string | undefined, "snapshotId"),
+              generation: requireValue(input.generation as number | undefined, "generation"),
+              text: requireValue(input.text as string | undefined, "text"),
+              ...(input.submit === undefined ? {} : { submit: input.submit }),
+            } as never,
+            ctx,
+          );
+        } else if (input.action === "press") {
+          result = await browserCall(
+            "browser.press",
+            {
+              tabId: tab,
+              key: requireValue(input.key as string | undefined, "key"),
+              ...(input.modifiers === undefined ? {} : { modifiers: input.modifiers }),
+            } as never,
+            ctx,
+          );
+        } else {
+          result = await browserCall(
+            "browser.select",
+            {
+              tabId: tab,
+              ref: requireValue(input.ref as string | undefined, "ref"),
+              snapshotId: requireValue(input.snapshotId as string | undefined, "snapshotId"),
+              generation: requireValue(input.generation as number | undefined, "generation"),
+              ...(input.value === undefined ? {} : { value: input.value }),
+              ...(input.label === undefined ? {} : { label: input.label }),
+              ...(input.index === undefined ? {} : { index: input.index }),
+            } as never,
+            ctx,
+          );
+        }
+        return textResult(result, ctx.sessionManager.getSessionId());
+      },
     ),
     tool(
       "browser_wait",
-      "Wait for page load, network quiet, a selector, or visible text.",
+      "Wait for page load, network quiet, DOM stability, an actionable element, a selector, or visible text.",
       Type.Object({
         tabId,
         timeoutMs: Type.Optional(Type.Integer({ minimum: 50, maximum: 120000 })),
@@ -489,30 +700,144 @@ export function createBrowserToolDefinitions(): ToolDefinition[] {
           Type.Union([
             Type.Literal("load"),
             Type.Literal("network-idle"),
+            Type.Literal("dom-stable"),
             Type.Literal("selector"),
             Type.Literal("text"),
+            Type.Literal("actionable"),
           ]),
         ),
         value: Type.Optional(Type.String({ maxLength: 4096 })),
+        ref: Type.Optional(elementRef),
+        snapshotId: Type.Optional(snapshotId),
+        generation: Type.Optional(snapshotGeneration),
       }),
-      "browser.wait",
+      async (input, ctx) =>
+        textResult(await browserCall("browser.wait", input as never, ctx), ctx.sessionManager.getSessionId()),
     ),
-    tool("browser_back", "Go back in an owned Browser tab.", Type.Object({ tabId }), "browser.back"),
-    tool("browser_forward", "Go forward in an owned Browser tab.", Type.Object({ tabId }), "browser.forward"),
-    tool("browser_reload", "Reload an owned Browser tab.", Type.Object({ tabId }), "browser.reload"),
-    tool("browser_close", "Close an owned Browser tab.", Type.Object({ tabId }), "browser.close"),
     defineTool({
-      name: "browser_execute_javascript",
-      label: "browser execute javascript",
+      name: "browser_request_user_help",
+      label: "browser request user help",
       description:
-        "Advanced Browser Mode: execute JavaScript only after browser_inspect on this tab and after applicable Console/network tools. Declare explore for diagnosis or verify with an expected assertion.",
+        "Pause and ask the local user to complete a step only a human can do: login, captcha, two-factor code, or consent. Use after browser_inspect reports a blocker. The result includes a fresh inspection when the user finishes.",
       promptSnippet:
-        "browser_execute_javascript: Use after same-tab inspection; declare intent=explore or intent=verify with expected.",
+        "browser_request_user_help: pause for a human on login, captcha, 2FA, or consent; re-inspect after the user finishes",
       promptGuidelines: [...BROWSER_CANONICAL_GUIDELINES],
       parameters: Type.Object({
         tabId,
-        source: Type.String({ maxLength: 262144 }),
-        intent: Type.Union([Type.Literal("explore"), Type.Literal("verify")]),
+        kind: Type.Union([
+          Type.Literal("login"),
+          Type.Literal("captcha"),
+          Type.Literal("two-factor"),
+          Type.Literal("consent"),
+          Type.Literal("agent-request"),
+        ]),
+        message: Type.String({ minLength: 1, maxLength: 2_000 }),
+        timeoutMs: Type.Optional(Type.Integer({ minimum: 1_000, maximum: 1_800_000 })),
+      }),
+      executionMode: "sequential",
+      async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
+        const result = await browserCall("browser.requestUserHelp", input as never, ctx);
+        const { inspection, ...metadata } = result;
+        const text = JSON.stringify(metadata);
+        browserAgentRuntime.recordResultText(ctx.sessionManager.getSessionId(), text.length);
+        return {
+          content: [
+            { type: "text" as const, text },
+            ...(inspection ? [{ type: "text" as const, text: JSON.stringify(inspection) }] : []),
+            ...(inspection?.screenshot
+              ? [
+                  {
+                    type: "image" as const,
+                    data: inspection.screenshot.base64,
+                    mimeType: inspection.screenshot.mime,
+                  },
+                ]
+              : []),
+          ],
+          details: undefined,
+        };
+      },
+    }),
+    tool(
+      "browser_upload",
+      "Upload local files to a file input from the latest snapshot after the user approves the file list. Paths must be absolute regular files.",
+      Type.Object({
+        tabId,
+        ref: elementRef,
+        snapshotId,
+        generation: snapshotGeneration,
+        paths: Type.Array(Type.String({ minLength: 1, maxLength: 4_096 }), { minItems: 1, maxItems: 20 }),
+      }),
+      async (input, ctx) =>
+        textResult(
+          await browserCall(
+            "browser.uploadFiles",
+            {
+              tabId: requireTab(input.tabId),
+              ref: input.ref as string,
+              snapshotId: input.snapshotId as string,
+              generation: input.generation as number,
+              paths: input.paths as string[],
+            },
+            ctx,
+          ),
+          ctx.sessionManager.getSessionId(),
+        ),
+    ),
+    tool(
+      "browser_downloads",
+      "List or wait for Browser downloads owned by this Agent session. Actions: list, wait.",
+      Type.Object({
+        action: Type.Union([Type.Literal("list"), Type.Literal("wait")]),
+        tabId: Type.Optional(tabId),
+        downloadId: Type.Optional(Type.String({ minLength: 36, maxLength: 36, pattern: uuidPattern })),
+        timeoutMs: Type.Optional(Type.Integer({ minimum: 1_000, maximum: 120_000 })),
+      }),
+      async (input, ctx) => {
+        const params = {
+          ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
+          ...(input.downloadId === undefined ? {} : { downloadId: input.downloadId }),
+          ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+        };
+        const result =
+          input.action === "list"
+            ? await browserCall("browser.downloadList", params as never, ctx)
+            : await browserCall("browser.downloadWait", params as never, ctx);
+        return textResult(result, ctx.sessionManager.getSessionId());
+      },
+    ),
+    tool(
+      "browser_batch",
+      "Run up to 8 read-only observations (inspect, snapshot, screenshot, read) across owned tabs in parallel. Use for comparing several pages without serial round trips.",
+      Type.Object({
+        operations: Type.Array(
+          Type.Object({
+            tabId,
+            method: Type.Union([
+              Type.Literal("inspect"),
+              Type.Literal("snapshot"),
+              Type.Literal("screenshot"),
+              Type.Literal("read"),
+            ]),
+            params: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+          }),
+          { minItems: 1, maxItems: 8 },
+        ),
+      }),
+      async (input, ctx) =>
+        textResult(
+          await browserCall("browser.batch", { operations: input.operations } as never, ctx),
+          ctx.sessionManager.getSessionId(),
+        ),
+    ),
+    tool(
+      "browser_js",
+      "Advanced Browser Mode JavaScript. Actions: execute (intent=explore|verify), list saved experiences, get one saved experience chunk.",
+      Type.Object({
+        action: Type.Union([Type.Literal("execute"), Type.Literal("list"), Type.Literal("get")]),
+        tabId,
+        source: Type.Optional(Type.String({ maxLength: 262144 })),
+        intent: Type.Optional(Type.Union([Type.Literal("explore"), Type.Literal("verify")])),
         expected: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
         timeoutMs: Type.Optional(Type.Integer({ minimum: 50, maximum: 120000 })),
         world: Type.Optional(Type.Union([Type.Literal("main"), Type.Literal("isolated")])),
@@ -520,15 +845,55 @@ export function createBrowserToolDefinitions(): ToolDefinition[] {
         returnByValue: Type.Optional(Type.Boolean()),
         purpose: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
         remember: Type.Optional(Type.Boolean()),
+        snippetId: Type.Optional(Type.String({ minLength: 36, maxLength: 36, pattern: uuidPattern })),
+        offset: Type.Optional(Type.Integer({ minimum: 0 })),
+        maxChars: Type.Optional(Type.Integer({ minimum: 1, maximum: 4000 })),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
       }),
-      executionMode: "sequential",
-      async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
-        const runtimeInput = input as Record<string, unknown>;
-        const { intent: _intent, expected: _expected, ...mainInput } = runtimeInput;
-        const result = await browserCall("browser.executeJavaScript", mainInput as never, ctx, runtimeInput);
+      async (input, ctx) => {
+        const tab = requireTab(input.tabId);
+        let result: unknown;
+        if (input.action === "execute") {
+          if (input.intent === undefined) throw new Error("INVALID_BROWSER_REQUEST: intent is required for execute");
+          const runtimeInput = input;
+          result = await browserCall(
+            "browser.executeJavaScript",
+            {
+              tabId: tab,
+              source: requireValue(input.source as string | undefined, "source"),
+              intent: input.intent,
+              ...(input.expected === undefined ? {} : { expected: input.expected }),
+              ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+              ...(input.world === undefined ? {} : { world: input.world }),
+              ...(input.awaitPromise === undefined ? {} : { awaitPromise: input.awaitPromise }),
+              ...(input.returnByValue === undefined ? {} : { returnByValue: input.returnByValue }),
+              ...(input.purpose === undefined ? {} : { purpose: input.purpose }),
+              ...(input.remember === undefined ? {} : { remember: input.remember }),
+            } as never,
+            ctx,
+            runtimeInput,
+          );
+        } else if (input.action === "list") {
+          result = await browserCall(
+            "browser.pageCodeList",
+            { tabId: tab, ...(input.limit === undefined ? {} : { limit: input.limit }) } as never,
+            ctx,
+          );
+        } else {
+          result = await browserCall(
+            "browser.pageCodeGet",
+            {
+              tabId: tab,
+              snippetId: requireValue(input.snippetId as string | undefined, "snippetId"),
+              ...(input.offset === undefined ? {} : { offset: input.offset }),
+              ...(input.maxChars === undefined ? {} : { maxChars: input.maxChars }),
+            } as never,
+            ctx,
+          );
+        }
         return textResult(result, ctx.sessionManager.getSessionId());
       },
-    }),
+    ),
     tool(
       "browser_get_cookies",
       "Advanced Browser Mode: request cookies subject to the fail-closed sensitive-result persistence gate.",
@@ -538,10 +903,39 @@ export function createBrowserToolDefinitions(): ToolDefinition[] {
         cursor: Type.Optional(Type.String()),
         pageSize: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
       }),
-      "browser.getCookies",
+      async (input, ctx) =>
+        textResult(await browserCall("browser.getCookies", input as never, ctx), ctx.sessionManager.getSessionId()),
     ),
-    headerRuleTool("browser_set_request_header_rules", "browser.setRequestHeaderRules"),
-    headerRuleTool("browser_set_response_header_rules", "browser.setResponseHeaderRules"),
+    tool(
+      "browser_header_rules",
+      "Advanced Browser Mode: replace Profile-scoped URL-matched request or response header rules.",
+      Type.Object({
+        direction: Type.Union([Type.Literal("request"), Type.Literal("response")]),
+        profileId: Type.String({ maxLength: 128 }),
+        rules: Type.Array(
+          Type.Object({
+            id: Type.String(),
+            enabled: Type.Boolean(),
+            profileId: Type.String(),
+            urlPattern: Type.String({ maxLength: 1024 }),
+            resourceTypes: Type.Optional(Type.Array(Type.String())),
+            header: Type.String(),
+            operation: Type.Union([Type.Literal("set"), Type.Literal("remove"), Type.Literal("append")]),
+            value: Type.Optional(Type.String({ maxLength: 16384 })),
+            secretRef: Type.Optional(Type.String()),
+          }),
+          { maxItems: 100 },
+        ),
+      }),
+      async (input, ctx) => {
+        const method =
+          input.direction === "request" ? "browser.setRequestHeaderRules" : "browser.setResponseHeaderRules";
+        return textResult(
+          await browserCall(method as never, { profileId: input.profileId, rules: input.rules } as never, ctx),
+          ctx.sessionManager.getSessionId(),
+        );
+      },
+    ),
     tool(
       "browser_send_cdp_command",
       "Advanced Browser Mode: send a Chrome DevTools Protocol command.",
@@ -550,61 +944,44 @@ export function createBrowserToolDefinitions(): ToolDefinition[] {
         method: Type.String({ maxLength: 128 }),
         commandParams: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
       }),
-      "browser.sendCdpCommand",
+      async (input, ctx) =>
+        textResult(
+          await browserCall(
+            "browser.sendCdpCommand",
+            {
+              tabId: requireTab(input.tabId),
+              method: input.method as string,
+              ...(input.commandParams === undefined ? {} : { commandParams: input.commandParams }),
+            } as never,
+            ctx,
+          ),
+          ctx.sessionManager.getSessionId(),
+        ),
     ),
     tool(
-      "browser_network_summary",
-      "Advanced Browser Mode: summarize request/status/type distributions and a small redacted failure/recent set before expanding individual requests.",
+      "browser_network",
+      "Advanced Browser Mode network evidence. Actions: summary, list, wait, body, replay.",
       Type.Object({
+        action: Type.Union([
+          Type.Literal("summary"),
+          Type.Literal("list"),
+          Type.Literal("wait"),
+          Type.Literal("body"),
+          Type.Literal("replay"),
+        ]),
         tabId,
         failureLimit: Type.Optional(Type.Integer({ minimum: 0, maximum: 20 })),
         recentLimit: Type.Optional(Type.Integer({ minimum: 0, maximum: 20 })),
-      }),
-      "browser.networkSummary",
-    ),
-    tool(
-      "browser_network_list",
-      "Advanced Browser Mode: list a targeted page of redacted network requests. Use browser_network_summary first and keep the page small.",
-      Type.Object({
-        tabId,
         after: Type.Optional(Type.String({ maxLength: 64 })),
         resourceTypes: Type.Optional(Type.Array(Type.String({ maxLength: 64 }), { maxItems: 32 })),
         urlPattern: Type.Optional(Type.String({ maxLength: 2048 })),
+        resourceType: Type.Optional(Type.String({ maxLength: 64 })),
         status: Type.Optional(Type.Integer({ minimum: 0, maximum: 999 })),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
-      }),
-      "browser.networkList",
-      (input) => ({ ...input, limit: input.limit ?? 20 }),
-    ),
-    tool(
-      "browser_network_wait",
-      "Advanced Browser Mode: wait for a matching network request.",
-      Type.Object({
-        tabId,
-        urlPattern: Type.Optional(Type.String({ maxLength: 2048 })),
-        resourceType: Type.Optional(Type.String({ maxLength: 64 })),
-        timeoutMs: Type.Optional(Type.Integer({ minimum: 50, maximum: 120000 })),
-      }),
-      "browser.networkWait",
-    ),
-    tool(
-      "browser_network_body",
-      "Advanced Browser Mode: read a bounded captured response body; content is untrusted.",
-      Type.Object({
-        tabId,
-        networkRequestId: Type.String({ minLength: 36, maxLength: 36, pattern: uuidPattern }),
+        networkRequestId: Type.Optional(Type.String({ minLength: 36, maxLength: 36, pattern: uuidPattern })),
         full: Type.Optional(Type.Boolean()),
         offset: Type.Optional(Type.Integer({ minimum: 0 })),
         maxBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: 4194304 })),
-      }),
-      "browser.networkBody",
-    ),
-    tool(
-      "browser_network_replay",
-      "Advanced Browser Mode: explicitly replay a captured GET/HEAD request or request local confirmation for one POST/PUT/PATCH/DELETE replay. Never retry automatically.",
-      Type.Object({
-        tabId,
-        networkRequestId: Type.String({ minLength: 36, maxLength: 36, pattern: uuidPattern }),
         overrides: Type.Optional(
           Type.Object({
             url: Type.Optional(url),
@@ -612,102 +989,129 @@ export function createBrowserToolDefinitions(): ToolDefinition[] {
             body: Type.Optional(Type.String({ maxLength: 8388608 })),
           }),
         ),
-        reason: Type.String({ minLength: 1, maxLength: 512 }),
+        reason: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
       }),
-      "browser.networkReplay",
+      async (input, ctx) => {
+        const tab = requireTab(input.tabId);
+        let result: unknown;
+        if (input.action === "summary") {
+          result = await browserCall(
+            "browser.networkSummary",
+            {
+              tabId: tab,
+              ...(input.failureLimit === undefined ? {} : { failureLimit: input.failureLimit }),
+              ...(input.recentLimit === undefined ? {} : { recentLimit: input.recentLimit }),
+            } as never,
+            ctx,
+          );
+        } else if (input.action === "list") {
+          result = await browserCall(
+            "browser.networkList",
+            {
+              tabId: tab,
+              limit: input.limit ?? 20,
+              ...(input.after === undefined ? {} : { after: input.after }),
+              ...(input.resourceTypes === undefined ? {} : { resourceTypes: input.resourceTypes }),
+              ...(input.urlPattern === undefined ? {} : { urlPattern: input.urlPattern }),
+              ...(input.status === undefined ? {} : { status: input.status }),
+            } as never,
+            ctx,
+          );
+        } else if (input.action === "wait") {
+          result = await browserCall(
+            "browser.networkWait",
+            {
+              tabId: tab,
+              ...(input.urlPattern === undefined ? {} : { urlPattern: input.urlPattern }),
+              ...(input.resourceType === undefined ? {} : { resourceType: input.resourceType }),
+              ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+            } as never,
+            ctx,
+          );
+        } else if (input.action === "body") {
+          result = await browserCall(
+            "browser.networkBody",
+            {
+              tabId: tab,
+              networkRequestId: requireValue(input.networkRequestId as string | undefined, "networkRequestId"),
+              ...(input.full === undefined ? {} : { full: input.full }),
+              ...(input.offset === undefined ? {} : { offset: input.offset }),
+              ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
+            } as never,
+            ctx,
+          );
+        } else {
+          result = await browserCall(
+            "browser.networkReplay",
+            {
+              tabId: tab,
+              networkRequestId: requireValue(input.networkRequestId as string | undefined, "networkRequestId"),
+              ...(input.overrides === undefined ? {} : { overrides: input.overrides }),
+              reason: requireValue(input.reason as string | undefined, "reason"),
+            } as never,
+            ctx,
+          );
+        }
+        return textResult(result, ctx.sessionManager.getSessionId());
+      },
     ),
     tool(
-      "browser_console_list",
-      "Advanced Browser Mode: list a bounded page of redacted Console errors, warnings, info, or debug entries without injecting JavaScript hooks.",
+      "browser_console",
+      "Advanced Browser Mode Console evidence. Actions: list, wait.",
       Type.Object({
+        action: Type.Union([Type.Literal("list"), Type.Literal("wait")]),
         tabId,
         after: Type.Optional(Type.String({ minLength: 36, maxLength: 36, pattern: uuidPattern })),
         levels: Type.Optional(consoleLevels()),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
-      }),
-      "browser.consoleList",
-    ),
-    tool(
-      "browser_console_wait",
-      "Advanced Browser Mode: wait for a new matching redacted Console entry.",
-      Type.Object({
-        tabId,
-        after: Type.Optional(Type.String({ minLength: 36, maxLength: 36, pattern: uuidPattern })),
-        levels: Type.Optional(consoleLevels()),
         timeoutMs: Type.Optional(Type.Integer({ minimum: 50, maximum: 120000 })),
       }),
-      "browser.consoleWait",
+      async (input, ctx) => {
+        const tab = requireTab(input.tabId);
+        const result =
+          input.action === "list"
+            ? await browserCall(
+                "browser.consoleList",
+                {
+                  tabId: tab,
+                  ...(input.after === undefined ? {} : { after: input.after }),
+                  ...(input.levels === undefined ? {} : { levels: input.levels }),
+                  ...(input.limit === undefined ? {} : { limit: input.limit }),
+                } as never,
+                ctx,
+              )
+            : await browserCall(
+                "browser.consoleWait",
+                {
+                  tabId: tab,
+                  ...(input.after === undefined ? {} : { after: input.after }),
+                  ...(input.levels === undefined ? {} : { levels: input.levels }),
+                  ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+                } as never,
+                ctx,
+              );
+        return textResult(result, ctx.sessionManager.getSessionId());
+      },
     ),
     tool(
-      "browser_page_code_list",
-      "Advanced Browser Mode: list saved JavaScript experience metadata for the current site without returning source.",
-      Type.Object({ tabId, limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
-      "browser.pageCodeList",
-    ),
-    tool(
-      "browser_page_code_get",
-      "Advanced Browser Mode: retrieve a bounded source chunk for one saved JavaScript experience on the current site.",
+      "browser_clipboard",
+      "Advanced Browser Mode: read or write the local system clipboard.",
       Type.Object({
-        tabId,
-        snippetId: Type.String({ minLength: 36, maxLength: 36, pattern: uuidPattern }),
-        offset: Type.Optional(Type.Integer({ minimum: 0 })),
-        maxChars: Type.Optional(Type.Integer({ minimum: 1, maximum: 4000 })),
+        action: Type.Union([Type.Literal("read"), Type.Literal("write")]),
+        text: Type.Optional(Type.String({ maxLength: 100000 })),
       }),
-      "browser.pageCodeGet",
+      async (input, ctx) =>
+        textResult(
+          await browserCall(
+            "browser.clipboard",
+            {
+              action: input.action,
+              ...(input.text === undefined ? {} : { text: input.text }),
+            } as never,
+            ctx,
+          ),
+          ctx.sessionManager.getSessionId(),
+        ),
     ),
   ];
-  return tools;
-}
-
-function headerRuleTool(
-  name: "browser_set_request_header_rules" | "browser_set_response_header_rules",
-  method: "browser.setRequestHeaderRules" | "browser.setResponseHeaderRules",
-): ToolDefinition {
-  return tool(
-    name,
-    "Advanced Browser Mode: replace Profile-scoped URL-matched header rules.",
-    Type.Object({
-      profileId: Type.String({ maxLength: 128 }),
-      rules: Type.Array(
-        Type.Object({
-          id: Type.String(),
-          enabled: Type.Boolean(),
-          profileId: Type.String(),
-          urlPattern: Type.String({ maxLength: 1024 }),
-          resourceTypes: Type.Optional(Type.Array(Type.String())),
-          header: Type.String(),
-          operation: Type.Union([Type.Literal("set"), Type.Literal("remove"), Type.Literal("append")]),
-          value: Type.Optional(Type.String({ maxLength: 16384 })),
-          secretRef: Type.Optional(Type.String()),
-        }),
-        { maxItems: 100 },
-      ),
-    }),
-    method,
-  );
-}
-
-function inputModifiers() {
-  return Type.Optional(
-    Type.Array(
-      Type.Union([Type.Literal("alt"), Type.Literal("control"), Type.Literal("meta"), Type.Literal("shift")]),
-      { maxItems: 4, uniqueItems: true },
-    ),
-  );
-}
-
-function visualCompareTarget() {
-  return Type.Object({
-    tabId,
-    snapshotId: Type.Optional(snapshotId),
-    ref: Type.Optional(elementRef),
-    generation: Type.Optional(snapshotGeneration),
-  });
-}
-
-function consoleLevels() {
-  return Type.Array(
-    Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info"), Type.Literal("debug")]),
-    { maxItems: 4, uniqueItems: true },
-  );
 }

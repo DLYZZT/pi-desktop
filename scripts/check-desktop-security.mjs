@@ -824,8 +824,9 @@ const checks = [
       browserAgentRuntime.includes("hashRouteValue(target.origin)") &&
       browserAgentRuntime.includes("BROWSER_RETRY_BLOCKED") &&
       browserAgentRuntime.includes("BROWSER_CALL_BUDGET_EXCEEDED") &&
-      browserAgentRuntime.includes("const REPLAN_CALLS = 30") &&
-      browserAgentRuntime.includes("const MAX_CALLS = 60") &&
+      browserAgentRuntime.includes("const REPLAN_CALLS = 50") &&
+      browserAgentRuntime.includes("const MAX_CALLS = 100") &&
+      browserAgentRuntime.includes("BROWSER_LOOP_DETECTED") &&
       rpcManager.includes("createDesktopSessionTools(") &&
       desktopSessionTools.includes("browserAgentRuntime.guardBash") &&
       toolchainBash.includes("await beforeExec?.(command)"),
@@ -834,7 +835,7 @@ const checks = [
   [
     browserTools.includes("promptGuidelines: [...BROWSER_CANONICAL_GUIDELINES]") &&
       browserAgentRuntime.includes("Observe once with browser_inspect") &&
-      browserAgentRuntime.includes("browser_network_summary before network_list/body") &&
+      browserAgentRuntime.includes("browser_network summary before list/body") &&
       browserService.includes('workflowGuardScope: "obvious-workflow-bypass-only"') &&
       !/"(?:playwright|puppeteer)"\s*:/.test(packageJson),
     "Browser tools must share canonical efficiency guidance and label the workflow guard as narrower than an OS sandbox without bundling a second browser",

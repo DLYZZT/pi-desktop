@@ -21,6 +21,21 @@ export function browserErrorMessage(error: unknown): string {
   if (message.includes("ACTION_TIMEOUT")) {
     return translate("browserErrorActionTimeout", "The Browser action timed out.");
   }
+  if (message.includes("HANDOFF_TIMEOUT")) {
+    return translate("browserErrorHandoffTimeout", "The user handoff timed out.");
+  }
+  if (message.includes("DIALOG_BLOCKED")) {
+    return translate("browserErrorDialogBlocked", "The page dialog was not completed.");
+  }
+  if (message.includes("UPLOAD_PATH_DENIED") || message.includes("UPLOAD_DENIED")) {
+    return translate("browserErrorUploadDenied", "The upload files were not approved.");
+  }
+  if (message.includes("DOWNLOAD_TIMEOUT")) {
+    return translate("browserErrorDownloadTimeout", "The download did not finish in time.");
+  }
+  if (message.includes("ELEMENT_NOT_ACTIONABLE")) {
+    return translate("browserErrorNotActionable", "The target element is not actionable; inspect the page again.");
+  }
   if (message.includes("JAVASCRIPT_EXECUTION_FAILED")) {
     return translate(
       "browserErrorJavaScriptFailed",

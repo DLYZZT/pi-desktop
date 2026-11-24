@@ -17,7 +17,7 @@ test("managed process tools activate only with a non-empty local tool selection"
     getAllTools() {
       return [
         { name: "read" },
-        { name: "browser_open" },
+        { name: "browser_tab" },
         { name: "process_start" },
         { name: "process_stop" },
         { name: "extension_tool" },

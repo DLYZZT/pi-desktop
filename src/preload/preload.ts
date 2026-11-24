@@ -130,6 +130,8 @@ if (typeof preloadLocation === "string" && isTrustedPreloadLocation(preloadLocat
       ipcRenderer.invoke("desktop:browser:revoke-temporary-session-permission", sessionId),
     browserRespondAgentAuthorization: (requestId, decision) =>
       ipcRenderer.invoke("desktop:browser:respond-agent-authorization", requestId, decision),
+    browserRespondHandoff: (handoffId, decision) =>
+      ipcRenderer.invoke("desktop:browser:respond-handoff", handoffId, decision),
     browserListProfiles: () => ipcRenderer.invoke("desktop:browser:list-profiles"),
     browserCreateProfile: (input) => ipcRenderer.invoke("desktop:browser:create-profile", input),
     browserRenameProfile: (profileId, name) => ipcRenderer.invoke("desktop:browser:rename-profile", profileId, name),

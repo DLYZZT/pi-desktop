@@ -7,9 +7,42 @@ export type BrowserPermissionLevel = "none" | "read" | "interact" | "advanced";
 export type BrowserPersistentDefaultPermission = "ask" | "deny" | "read" | "interact";
 export type BrowserPersistentSessionPermission = "inherit" | "ask" | "deny" | "read" | "interact" | "advanced";
 export type BrowserAgentAuthorizationDecision = "deny" | "allow-session";
-export type BrowserControlState = "user" | "agent" | "waiting-for-approval";
+export type BrowserControlState = "user" | "agent" | "waiting-for-approval" | "waiting-for-user";
 export type BrowserNetworkIsolation = "best-effort" | "strict";
 export type BrowserInputModifier = "alt" | "control" | "meta" | "shift";
+
+export type BrowserHandoffKind =
+  "login" | "captcha" | "two-factor" | "consent" | "dialog" | "file-picker" | "external-protocol" | "agent-request";
+
+export interface BrowserHandoffDialog {
+  type: "alert" | "confirm" | "prompt" | "beforeunload";
+  defaultPrompt?: string;
+}
+
+export interface BrowserHandoffRequest {
+  id: string;
+  sessionId: string;
+  tabId: string;
+  kind: BrowserHandoffKind;
+  origin: string;
+  title: string;
+  message: string;
+  createdAt: number;
+  expiresAt: number;
+  dialog?: BrowserHandoffDialog;
+}
+
+export type BrowserHandoffOutcome = "completed" | "cancelled" | "timeout";
+
+export interface BrowserHandoffResolution {
+  handoffId: string;
+  outcome: BrowserHandoffOutcome;
+  /** For dialog handoffs: accept vs dismiss the page dialog. */
+  accept?: boolean;
+  /** For prompt handoffs: the text the user supplied. */
+  promptText?: string;
+  note?: string;
+}
 
 export type BrowserErrorCode =
   | "BROWSER_DISABLED"
@@ -37,6 +70,7 @@ export type BrowserErrorCode =
   | "BROWSER_ROUTE_BYPASS_BLOCKED"
   | "BROWSER_REPLAN_REQUIRED"
   | "BROWSER_CALL_BUDGET_EXCEEDED"
+  | "BROWSER_LOOP_DETECTED"
   | "JAVASCRIPT_TIMEOUT"
   | "JAVASCRIPT_EXECUTION_FAILED"
   | "RESULT_TOO_LARGE"
@@ -54,6 +88,12 @@ export type BrowserErrorCode =
   | "PROFILE_DELETE_RETRY_REQUIRED"
   | "CONSOLE_CURSOR_EXPIRED"
   | "VISUAL_COMPARE_UNAVAILABLE"
+  | "HANDOFF_TIMEOUT"
+  | "HANDOFF_CANCELLED"
+  | "DIALOG_BLOCKED"
+  | "UPLOAD_PATH_DENIED"
+  | "DOWNLOAD_TIMEOUT"
+  | "ELEMENT_NOT_ACTIONABLE"
   | "INVALID_BROWSER_REQUEST";
 
 export type BrowserRecoveryReason =
@@ -373,6 +413,15 @@ export interface BrowserSnapshotNode {
   frameUrl?: string;
 }
 
+export type BrowserBlockerKind = "login" | "captcha" | "two-factor" | "consent" | "dialog" | "file-picker";
+
+export interface BrowserBlocker {
+  kind: BrowserBlockerKind;
+  confidence: "high" | "medium";
+  evidence: string;
+  refs?: string[];
+}
+
 export interface BrowserPageSnapshot {
   tabId: string;
   snapshotId: string;
@@ -381,6 +430,7 @@ export interface BrowserPageSnapshot {
   title: string;
   text: string;
   nodes: BrowserSnapshotNode[];
+  blockers?: BrowserBlocker[];
   truncated: boolean;
   untrustedWebContent: true;
 }
@@ -429,7 +479,9 @@ export interface BrowserInspectResult {
   title: string;
   loading: boolean;
   changed: boolean;
+  delta?: BrowserInspectionDelta;
   snapshot?: BrowserPageSnapshot;
+  blockers?: BrowserBlocker[];
   screenshot?: BrowserScreenshotResult;
   truncated: {
     text: boolean;
@@ -437,6 +489,39 @@ export interface BrowserInspectResult {
     screenshot: boolean;
     tabs: boolean;
   };
+  untrustedWebContent: true;
+}
+
+export interface BrowserInspectionDelta {
+  added: BrowserSnapshotNode[];
+  changed: BrowserSnapshotNode[];
+  removed: Array<{ ref: string; key: string }>;
+  textChanged: boolean;
+}
+
+export type BrowserReadMode = "article" | "tables" | "links" | "forms";
+
+export interface BrowserReadResult {
+  tabId: string;
+  generation: number;
+  url: string;
+  title: string;
+  mode: BrowserReadMode;
+  content: string;
+  truncated: boolean;
+  untrustedWebContent: true;
+}
+
+export type BrowserBatchMethod = "inspect" | "snapshot" | "screenshot" | "read";
+
+export interface BrowserBatchOperation {
+  tabId: string;
+  method: BrowserBatchMethod;
+  params?: Record<string, unknown>;
+}
+
+export interface BrowserBatchResult {
+  results: Array<{ ok: true; result: unknown } | { ok: false; error: { code: string; message: string } }>;
   untrustedWebContent: true;
 }
 
@@ -701,6 +786,7 @@ export interface BrowserRendererState {
   surfaceVisible: boolean;
   downloads: BrowserDownloadInfo[];
   permissionRequests: BrowserPermissionRequest[];
+  handoffs: BrowserHandoffRequest[];
   runtimeSessionGrants: Record<string, BrowserRuntimeSessionGrant>;
   diagnostics: BrowserDiagnostics;
 }
@@ -719,6 +805,8 @@ export type BrowserEvent =
   | { type: "active-tab-changed"; tabId: string | null }
   | { type: "permission-request"; request: BrowserPermissionRequest }
   | { type: "permission-resolved"; requestId: string }
+  | { type: "user-handoff-request"; request: BrowserHandoffRequest }
+  | { type: "user-handoff-resolved"; handoffId: string; outcome: BrowserHandoffOutcome }
   | { type: "agent-authorization-request"; request: BrowserAgentAuthorizationRequest }
   | {
       type: "agent-authorization-resolved";
@@ -782,6 +870,19 @@ export interface BrowserHostRpc {
     };
     result: BrowserInspectResult;
   };
+  "browser.read": {
+    params: BrowserHostRequestContext & {
+      tabId: string;
+      mode: BrowserReadMode;
+      maxChars?: number;
+      maxRows?: number;
+    };
+    result: BrowserReadResult;
+  };
+  "browser.batch": {
+    params: BrowserHostRequestContext & { operations: BrowserBatchOperation[] };
+    result: BrowserBatchResult;
+  };
   "browser.screenshot": {
     params: BrowserHostRequestContext & { tabId: string } & BrowserScreenshotOptions;
     result: BrowserScreenshotResult;
@@ -824,6 +925,33 @@ export interface BrowserHostRpc {
     params: BrowserHostRequestContext & { tabId: string; key: string; modifiers?: BrowserInputModifier[] };
     result: { ok: true };
   };
+  "browser.hover": {
+    params: BrowserHostRequestContext & { tabId: string; ref: string; snapshotId: string; generation: number };
+    result: { ok: true };
+  };
+  "browser.drag": {
+    params: BrowserHostRequestContext & {
+      tabId: string;
+      fromRef: string;
+      toRef: string;
+      snapshotId: string;
+      generation: number;
+      steps?: number;
+    };
+    result: { ok: true };
+  };
+  "browser.select": {
+    params: BrowserHostRequestContext & {
+      tabId: string;
+      ref: string;
+      snapshotId: string;
+      generation: number;
+      value?: string;
+      label?: string;
+      index?: number;
+    };
+    result: { ok: true; value: string; label: string };
+  };
   "browser.scroll": {
     params: BrowserHostRequestContext & {
       tabId: string;
@@ -838,8 +966,11 @@ export interface BrowserHostRpc {
     params: BrowserHostRequestContext & {
       tabId: string;
       timeoutMs?: number;
-      condition?: "load" | "network-idle" | "selector" | "text";
+      condition?: "load" | "network-idle" | "dom-stable" | "selector" | "text" | "actionable";
       value?: string;
+      ref?: string;
+      snapshotId?: string;
+      generation?: number;
     };
     result: { ok: true; elapsedMs: number };
   };
@@ -847,6 +978,37 @@ export interface BrowserHostRpc {
   "browser.forward": { params: BrowserHostRequestContext & { tabId: string }; result: BrowserTabInfo };
   "browser.reload": { params: BrowserHostRequestContext & { tabId: string }; result: BrowserTabInfo };
   "browser.close": { params: BrowserHostRequestContext & { tabId: string }; result: { ok: true } };
+  "browser.requestUserHelp": {
+    params: BrowserHostRequestContext & {
+      tabId: string;
+      kind: BrowserHandoffKind;
+      message: string;
+      timeoutMs?: number;
+    };
+    result: { outcome: BrowserHandoffOutcome; inspection?: BrowserInspectResult };
+  };
+  "browser.uploadFiles": {
+    params: BrowserHostRequestContext & {
+      tabId: string;
+      ref: string;
+      snapshotId: string;
+      generation: number;
+      paths: string[];
+    };
+    result: { ok: true; files: Array<{ name: string; size: number }> };
+  };
+  "browser.downloadList": {
+    params: BrowserHostRequestContext & { tabId?: string };
+    result: { downloads: BrowserDownloadInfo[] };
+  };
+  "browser.downloadWait": {
+    params: BrowserHostRequestContext & { tabId?: string; downloadId?: string; timeoutMs?: number };
+    result: BrowserDownloadInfo;
+  };
+  "browser.clipboard": {
+    params: BrowserHostRequestContext & { action: "read" | "write"; text?: string };
+    result: { ok: true; text?: string };
+  };
   "browser.executeJavaScript": {
     params: BrowserHostRequestContext & {
       tabId: string;
@@ -986,17 +1148,27 @@ export const BROWSER_HOST_METHODS: ReadonlySet<BrowserHostMethod> = new Set<Brow
   "browser.navigate",
   "browser.snapshot",
   "browser.inspect",
+  "browser.read",
+  "browser.batch",
   "browser.screenshot",
   "browser.click",
   "browser.clickAt",
   "browser.type",
   "browser.press",
+  "browser.hover",
+  "browser.drag",
+  "browser.select",
+  "browser.clipboard",
   "browser.scroll",
   "browser.wait",
   "browser.back",
   "browser.forward",
   "browser.reload",
   "browser.close",
+  "browser.requestUserHelp",
+  "browser.uploadFiles",
+  "browser.downloadList",
+  "browser.downloadWait",
   "browser.executeJavaScript",
   "browser.getCookies",
   "browser.setCookies",

@@ -48,10 +48,46 @@ String toolActionTitle(String toolName, Map<dynamic, dynamic>? input) {
     case 'browser_open':
     case 'browser_navigate':
       return target('打开网页', input?['url']);
-    case 'browser_inspect':
+    case 'browser_tab':
+      if (input?['action'] == 'open' || input?['action'] == 'navigate') {
+        return target('打开网页', input?['url']);
+      }
       return '查看网页内容';
+    case 'browser_device':
+      return '切换设备预览';
+    case 'browser_inspect':
+    case 'browser_read':
+      return '查看网页内容';
+    case 'browser_pointer':
+      return '操作网页';
+    case 'browser_input':
+      return '输入网页内容';
+    case 'browser_wait':
+      return '等待网页';
+    case 'browser_request_user_help':
+      return '等待你操作';
+    case 'browser_upload':
+      return '上传文件';
+    case 'browser_downloads':
+      return '查看下载';
+    case 'browser_network':
+      return '查看网络请求';
+    case 'browser_console':
+      return '查看控制台';
+    case 'browser_js':
+      return '运行页面脚本';
+    case 'browser_clipboard':
+      return '使用剪贴板';
+    case 'browser_header_rules':
+      return '修改请求头';
+    case 'browser_get_cookies':
+      return '读取 Cookie';
+    case 'browser_send_cdp_command':
+      return '发送 CDP 命令';
     case 'browser_screenshot':
-      return '截取网页截图';
+      return input?['action'] == 'compare' ? '对比网页截图' : '截取网页截图';
+    case 'browser_batch':
+      return '批量执行操作';
     case 'codemode':
       return '批量执行操作';
     default:

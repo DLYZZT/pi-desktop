@@ -9,6 +9,22 @@ import { clampInteger } from "./browser-bounds.ts";
 const KEY_PATTERN =
   /^(Enter|Tab|Escape|Backspace|Delete|Arrow(Up|Down|Left|Right)|Home|End|Page(Up|Down)|F[1-9]|F1[0-2]|[A-Za-z0-9])$/;
 
+/**
+ * Focus emulation and Page.enable can reset Chromium's touch overrides. Reassert
+ * them immediately before a touch-capable input sequence.
+ */
+async function ensureTouchEmulation(target: BrowserInputTarget): Promise<void> {
+  if (!target.device?.touch) return;
+  await target.cdp.sendCommand(target.tabId, "Emulation.setEmitTouchEventsForMouse", {
+    enabled: true,
+    configuration: "mobile",
+  });
+  await target.cdp.sendCommand(target.tabId, "Emulation.setTouchEmulationEnabled", {
+    enabled: true,
+    maxTouchPoints: 5,
+  });
+}
+
 // The tab owner supplies the input scope and action cancellation. This module
 // sends input through the existing WebContents/CDP pair without owning tab state.
 export interface BrowserInputTarget {
@@ -42,6 +58,16 @@ export async function typeBrowserText(
 ): Promise<"key-events" | "mixed-insert-text"> {
   const point = await frameContext.frame.executeJavaScript(elementPointScript(snapshotId, ref, true));
   if (!isPoint(point)) throw new BrowserError("STALE_ELEMENT_REF", "Browser element is no longer editable");
+  if (point.actionable === false) {
+    throw new BrowserError("ELEMENT_NOT_ACTIONABLE", "Browser element cannot receive text input", {
+      retryable: false,
+      recovery: { reason: "stale-state", remediation: "refresh-inspection" },
+      details: {
+        ...(point.reason ? { reason: point.reason } : {}),
+        ...(point.coveredBy ? { coveredBy: point.coveredBy } : {}),
+      },
+    });
+  }
   point.x += frameContext.offsetX;
   point.y += frameContext.offsetY;
   return target.withSyntheticInput(async () => {
@@ -50,6 +76,7 @@ export async function typeBrowserText(
     let usedInsertText = false;
     try {
       await target.cdp.sendCommand(target.tabId, "Emulation.setFocusEmulationEnabled", { enabled: true });
+      await ensureTouchEmulation(target);
       focusEmulationEnabled = true;
       target.contents.focus();
       await sendBrowserMouseClick(target, point.x, point.y, "left", 1, signal, [], true);
@@ -151,6 +178,7 @@ export async function scrollBrowserPage(
   let focusEmulationEnabled = false;
   try {
     await target.cdp.sendCommand(target.tabId, "Emulation.setFocusEmulationEnabled", { enabled: true });
+    await ensureTouchEmulation(target);
     focusEmulationEnabled = true;
     await target.withSyntheticInput(async () => {
       target.contents.focus();
@@ -195,6 +223,7 @@ export async function sendBrowserMouseClick(
   let focusEmulationEnabled = false;
   try {
     await target.cdp.sendCommand(target.tabId, "Emulation.setFocusEmulationEnabled", { enabled: true });
+    await ensureTouchEmulation(target);
     focusEmulationEnabled = true;
     if (target.device?.touch && button === "left" && modifiers.length === 0) {
       for (let index = 0; index < clickCount; index += 1) {
@@ -293,7 +322,110 @@ export async function sendBrowserMouseClick(
   }
 }
 
-export function isPoint(value: unknown): value is { x: number; y: number; externalUrl?: string } {
+export async function hoverBrowserPoint(
+  target: BrowserInputTarget,
+  x: number,
+  y: number,
+  signal: AbortSignal,
+): Promise<void> {
+  const scale = target.device?.scale ?? 1;
+  const release = target.cdp.acquire(target.tabId);
+  let focusEmulationEnabled = false;
+  try {
+    await target.cdp.sendCommand(target.tabId, "Emulation.setFocusEmulationEnabled", { enabled: true });
+    await ensureTouchEmulation(target);
+    focusEmulationEnabled = true;
+    await target.withSyntheticInput(async () => {
+      target.contents.focus();
+      await target.cdp.sendCommand(target.tabId, "Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: Math.round(x * scale),
+        y: Math.round(y * scale),
+      });
+      await abortableDelay(target.humanized() ? randomBetween(24, 60) : 16, signal);
+    });
+  } finally {
+    if (focusEmulationEnabled) {
+      await target.cdp
+        .sendCommand(target.tabId, "Emulation.setFocusEmulationEnabled", { enabled: false })
+        .catch(() => undefined);
+    }
+    release();
+  }
+}
+
+export async function dragBrowserPoints(
+  target: BrowserInputTarget,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  steps: number,
+  signal: AbortSignal,
+): Promise<void> {
+  const scale = target.device?.scale ?? 1;
+  const startX = Math.round(from.x * scale);
+  const startY = Math.round(from.y * scale);
+  const endX = Math.round(to.x * scale);
+  const endY = Math.round(to.y * scale);
+  const release = target.cdp.acquire(target.tabId);
+  let focusEmulationEnabled = false;
+  try {
+    await target.cdp.sendCommand(target.tabId, "Emulation.setFocusEmulationEnabled", { enabled: true });
+    await ensureTouchEmulation(target);
+    focusEmulationEnabled = true;
+    await target.withSyntheticInput(async () => {
+      target.contents.focus();
+      await target.cdp.sendCommand(target.tabId, "Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: startX,
+        y: startY,
+      });
+      await target.cdp.sendCommand(target.tabId, "Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: startX,
+        y: startY,
+        button: "left",
+        buttons: 1,
+        clickCount: 1,
+      });
+      for (let index = 1; index <= steps; index += 1) {
+        const progress = index / steps;
+        await target.cdp.sendCommand(target.tabId, "Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x: Math.round(startX + (endX - startX) * progress),
+          y: Math.round(startY + (endY - startY) * progress),
+          button: "left",
+          buttons: 1,
+        });
+        if (target.humanized()) await abortableDelay(randomBetween(10, 28), signal);
+      }
+      await target.cdp.sendCommand(target.tabId, "Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: endX,
+        y: endY,
+        button: "left",
+        buttons: 0,
+        clickCount: 1,
+      });
+      await abortableDelay(32, signal);
+    });
+  } finally {
+    if (focusEmulationEnabled) {
+      await target.cdp
+        .sendCommand(target.tabId, "Emulation.setFocusEmulationEnabled", { enabled: false })
+        .catch(() => undefined);
+    }
+    release();
+  }
+}
+
+export function isPoint(value: unknown): value is {
+  x: number;
+  y: number;
+  externalUrl?: string;
+  actionable?: boolean;
+  reason?: string;
+  coveredBy?: string;
+} {
   return (
     !!value &&
     typeof value === "object" &&

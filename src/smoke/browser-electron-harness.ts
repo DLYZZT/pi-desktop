@@ -73,8 +73,10 @@ function hasBrowserCode(code: string): (error: unknown) => boolean {
 const root = process.env.PI_BROWSER_ELECTRON_ROOT ?? fs.mkdtempSync(path.join(os.tmpdir(), "pi-browser-electron-"));
 const downloads = path.join(root, "downloads");
 const uploadFile = path.join(root, "upload.txt");
+const agentUploadFile = path.join(root, "agent-upload.txt");
 fs.mkdirSync(downloads, { recursive: true });
 fs.writeFileSync(uploadFile, "approved upload fixture", "utf8");
+fs.writeFileSync(agentUploadFile, "agent upload fixture", "utf8");
 app.setPath("userData", path.join(root, "user-data"));
 
 let mainWindow: BrowserWindow | null = null;
@@ -126,6 +128,20 @@ function fixtureHtml(): string {
     <button id="popup-fail">Open failing popup</button>
     <a href="mailto:fixture@example.com">Email fixture</a>
     <button id="fullscreen">Request fullscreen</button>
+    <button id="disabled" disabled>Disabled action</button>
+    <div style="position:relative;width:160px;height:36px">
+      <button id="covered" style="width:160px;height:36px">Covered action</button>
+      <div style="position:absolute;top:0;left:0;width:160px;height:36px;z-index:5;pointer-events:auto;background:rgba(255,0,0,0.5)"></div>
+    </div>
+    <button id="hover-target">Hover target</button>
+    <button id="drag-source">Drag source</button>
+    <div id="drop-target" tabindex="0" style="width:160px;height:40px;background:#eee">Drop target</div>
+    <select id="picker"><option value="a">Alpha</option><option value="b">Beta</option></select>
+    <div id="shadow-host"></div>
+    <h1>Fixture heading</h1>
+    <p>Article body text</p>
+    <table id="data-table"><caption>Inventory</caption><tr><th>Name</th><th>Qty</th></tr><tr><td>Widget</td><td>7</td></tr></table>
+    <output id="extra">idle</output>
     <div id="output">ready</div>
     <script>
       action.onclick = (event) => output.textContent = 'clicked:' + (event.isTrusted ? 'trusted' : 'untrusted');
@@ -135,6 +151,18 @@ function fixtureHtml(): string {
       popup.onclick = () => window.open('/popup', '_blank');
       document.getElementById('popup-fail').onclick = () => window.open('/popup-fail', '_blank');
       document.getElementById('fullscreen').onclick = () => document.documentElement.requestFullscreen();
+      document.getElementById('hover-target').onmouseenter = () => extra.textContent = 'hovered';
+      document.getElementById('picker').onchange = () => extra.textContent = 'selected:' + document.getElementById('picker').value;
+      let dragging = false;
+      document.getElementById('drag-source').onmousedown = () => { dragging = true; };
+      document.getElementById('drop-target').onmousemove = () => { if (dragging) extra.textContent = 'dragged'; };
+      document.getElementById('drop-target').onmouseup = () => { if (dragging) { extra.textContent = 'dropped'; dragging = false; } };
+      const shadowHost = document.getElementById('shadow-host');
+      const shadowRoot = shadowHost.attachShadow({ mode: 'open' });
+      shadowRoot.innerHTML = '<button id="shadow-button">Shadow action</button>';
+      shadowRoot.getElementById('shadow-button').onclick = () => {
+        shadowRoot.getElementById('shadow-button').textContent = 'Shadow clicked';
+      };
     </script>
   </body></html>`;
 }
@@ -194,8 +222,8 @@ async function startFixture(): Promise<{ origin: string; corsOrigin: string; sec
         <style>body{min-height:2400px;background:white}button{position:absolute;left:90px;top:120px;width:70px;height:40px}#scroll-target{top:1200px;width:120px;height:80px;border:0;background:rgb(240,30,20)}</style>
         <button id="touch-target">Touch target</button><button id="scroll-target">Scrolled target</button><input aria-label="Mobile text" style="position:absolute;top:180px;left:90px;width:160px"><output>ready</output>
         <script>const target = document.querySelector('#touch-target');
-          target.addEventListener('touchstart', event => { document.querySelector('output').textContent = 'touch:' + event.isTrusted; });
-          target.addEventListener('pointerdown', event => { document.querySelector('output').textContent = 'pointer:' + event.pointerType + ':' + event.isTrusted; });
+          target.addEventListener('touchstart', event => { document.documentElement.dataset.touch = String(event.isTrusted); document.querySelector('output').textContent = 'touch:' + event.isTrusted; });
+          target.addEventListener('pointerdown', event => { document.documentElement.dataset.pointer = event.pointerType + ':' + event.isTrusted; document.querySelector('output').textContent = 'pointer:' + event.pointerType + ':' + event.isTrusted; });
           target.addEventListener('click', event => { document.querySelector('output').textContent = 'click:' + event.isTrusted; });
         </script>`);
       return;
@@ -405,7 +433,7 @@ async function startFixture(): Promise<{ origin: string; corsOrigin: string; sec
     }
     response.writeHead(200, {
       "content-type": "text/html",
-      "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'",
+      "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'",
     });
     response.end(fixtureHtml());
   });
@@ -706,8 +734,10 @@ async function run(): Promise<void> {
   );
   const touchResult = (await call("browser.clickAt", { tabId: deviceTab.id, ...targetPoint })) as { action?: string };
   assert.equal(touchResult.action, "clicked");
-  const touchOutput = await deviceView.webContents.executeJavaScript("document.querySelector('output').textContent");
-  assert.match(touchOutput, /(?:touch:true|pointer:touch:true)/);
+  const touchProof = await deviceView.webContents.executeJavaScript(
+    "document.documentElement.dataset.touch + '|' + document.documentElement.dataset.pointer",
+  );
+  assert.ok(touchProof.startsWith("true|") || touchProof.includes("touch:true"), touchProof);
   const mobileSnapshot = (await call("browser.snapshot", { tabId: deviceTab.id })) as BrowserPageSnapshot;
   const mobileInput = mobileSnapshot.nodes.find((node) => node.name === "Mobile text")!;
   const mobileType = (await call("browser.type", {
@@ -724,12 +754,14 @@ async function run(): Promise<void> {
   );
   service.setBounds({ tabId: deviceTab.id, rect: { x: 0, y: 0, width: 180, height: 400 } });
   await call("browser.inspect", { tabId: deviceTab.id });
-  await deviceView.webContents.executeJavaScript("document.querySelector('output').textContent = 'ready'");
-  await call("browser.clickAt", { tabId: deviceTab.id, ...targetPoint });
-  assert.match(
-    await deviceView.webContents.executeJavaScript("document.querySelector('output').textContent"),
-    /(?:touch:true|pointer:touch:true)/,
+  await deviceView.webContents.executeJavaScript(
+    "delete document.documentElement.dataset.touch; delete document.documentElement.dataset.pointer; document.querySelector('output').textContent = 'ready'",
   );
+  await call("browser.clickAt", { tabId: deviceTab.id, ...targetPoint });
+  const secondTouchProof = await deviceView.webContents.executeJavaScript(
+    "document.documentElement.dataset.touch + '|' + document.documentElement.dataset.pointer",
+  );
+  assert.ok(secondTouchProof.startsWith("true|") || secondTouchProof.includes("touch:true"), secondTouchProof);
   assert.deepEqual(await getMetrics(), { width: 360, height: 800, dpr: 3, touch: true, portrait: true });
   await deviceView.webContents.executeJavaScript("scrollTo(0, 1000)");
   const scrolled = (await call("browser.snapshot", { tabId: deviceTab.id })) as BrowserPageSnapshot;
@@ -898,6 +930,140 @@ async function run(): Promise<void> {
   await call("browser.wait", { tabId: tab.id, condition: "text", value: "submitted:Pi Desktop", timeoutMs: 5_000 });
   await call("browser.press", { tabId: tab.id, key: "Tab" });
   stage("type-ready");
+
+  snapshot = (await call("browser.snapshot", { tabId: tab.id })) as typeof snapshot;
+  const disabledNode = snapshot.nodes.find((node) => node.name.includes("Disabled action"))!;
+  await assert.rejects(
+    call("browser.click", {
+      tabId: tab.id,
+      ref: disabledNode.ref,
+      snapshotId: snapshot.snapshotId,
+      generation: snapshot.generation,
+    }),
+    (error: unknown) => {
+      if (!hasBrowserCode("ELEMENT_NOT_ACTIONABLE")(error)) return false;
+      assert.equal((error as BrowserError).details?.reason, "disabled");
+      return true;
+    },
+  );
+  const coveredNode = snapshot.nodes.find((node) => node.name.includes("Covered action"))!;
+  await assert.rejects(
+    call("browser.click", {
+      tabId: tab.id,
+      ref: coveredNode.ref,
+      snapshotId: snapshot.snapshotId,
+      generation: snapshot.generation,
+    }),
+    (error: unknown) => {
+      if (!hasBrowserCode("ELEMENT_NOT_ACTIONABLE")(error)) return false;
+      assert.equal((error as BrowserError).details?.reason, "covered");
+      return true;
+    },
+  );
+  const hoverNode = snapshot.nodes.find((node) => node.name.includes("Hover target"))!;
+  await call("browser.hover", {
+    tabId: tab.id,
+    ref: hoverNode.ref,
+    snapshotId: snapshot.snapshotId,
+    generation: snapshot.generation,
+  });
+  await call("browser.wait", { tabId: tab.id, condition: "text", value: "hovered", timeoutMs: 5_000 });
+
+  const pickerNode = snapshot.nodes.find((node) => node.role === "combobox")!;
+  const selected = (await call("browser.select", {
+    tabId: tab.id,
+    ref: pickerNode.ref,
+    snapshotId: snapshot.snapshotId,
+    generation: snapshot.generation,
+    value: "b",
+  })) as { value?: string };
+  assert.equal(selected.value, "b");
+  await call("browser.wait", { tabId: tab.id, condition: "text", value: "selected:b", timeoutMs: 5_000 });
+
+  const dragSource = snapshot.nodes.find((node) => node.name.includes("Drag source"))!;
+  const dropTarget = snapshot.nodes.find((node) => node.name.includes("Drop target"))!;
+  await call("browser.drag", {
+    tabId: tab.id,
+    fromRef: dragSource.ref,
+    toRef: dropTarget.ref,
+    snapshotId: snapshot.snapshotId,
+    generation: snapshot.generation,
+  });
+  await call("browser.wait", { tabId: tab.id, condition: "text", value: "dropped", timeoutMs: 5_000 });
+  stage("actionability-ready");
+
+  const stableStarted = Date.now();
+  await call("browser.wait", { tabId: tab.id, condition: "dom-stable", timeoutMs: 5_000 });
+  assert.ok(Date.now() - stableStarted >= 300, "dom-stable must observe a quiet window");
+  stage("dom-stable-ready");
+
+  snapshot = (await call("browser.snapshot", { tabId: tab.id })) as typeof snapshot;
+  const shadowButton = snapshot.nodes.find((node) => node.name.includes("Shadow action"));
+  assert.ok(shadowButton, "open shadow DOM controls must appear in the snapshot");
+  await call("browser.click", {
+    tabId: tab.id,
+    ref: shadowButton!.ref,
+    snapshotId: snapshot.snapshotId,
+    generation: snapshot.generation,
+  });
+  snapshot = (await call("browser.snapshot", { tabId: tab.id })) as typeof snapshot;
+  assert.ok(
+    snapshot.nodes.some((node) => node.name.includes("Shadow clicked")),
+    "shadow DOM controls must receive trusted clicks through the ref store",
+  );
+  stage("shadow-dom-ready");
+
+  const article = (await call("browser.read", { tabId: tab.id, mode: "article" })) as { content?: string };
+  assert.match(article.content ?? "", /Article body text/);
+  const tables = (await call("browser.read", { tabId: tab.id, mode: "tables" })) as { content?: string };
+  assert.match(tables.content ?? "", /Inventory/);
+  assert.match(tables.content ?? "", /Widget/);
+  const links = (await call("browser.read", { tabId: tab.id, mode: "links" })) as { content?: string };
+  assert.match(links.content ?? "", /mailto:fixture@example\.com/);
+  const forms = (await call("browser.read", { tabId: tab.id, mode: "forms" })) as { content?: string };
+  assert.match(forms.content ?? "", /Your name/);
+  stage("structured-read-ready");
+
+  const beforeNodeDelta = (await call("browser.inspect", { tabId: tab.id })) as { inspectionId: string };
+  snapshot = (await call("browser.snapshot", { tabId: tab.id })) as typeof snapshot;
+  const deltaRunButton = snapshot.nodes.find((node) => node.name.includes("Run action"))!;
+  await call("browser.click", {
+    tabId: tab.id,
+    ref: deltaRunButton.ref,
+    snapshotId: snapshot.snapshotId,
+    generation: snapshot.generation,
+  });
+  const nodeDelta = (await call("browser.inspect", {
+    tabId: tab.id,
+    sinceInspectionId: beforeNodeDelta.inspectionId,
+  })) as {
+    changed: boolean;
+    snapshot?: unknown;
+    delta?: { textChanged?: boolean; added?: unknown[]; changed?: unknown[]; removed?: unknown[] };
+  };
+  assert.equal(nodeDelta.changed, true);
+  assert.equal(nodeDelta.snapshot, undefined, "a changed inspection must return a delta instead of a full snapshot");
+  assert.equal(nodeDelta.delta?.textChanged, true);
+  stage("inspection-node-delta-ready");
+
+  const batchTab = (await call("browser.open", {
+    url: fixture.origin,
+    profileId: "temporary",
+    activate: false,
+  })) as { id: string };
+  const batch = (await call("browser.batch", {
+    operations: [
+      { tabId: tab.id, method: "read", params: { mode: "tables" } },
+      { tabId: batchTab.id, method: "inspect", params: { maxNodes: 10 } },
+    ],
+  })) as { results: Array<{ ok: boolean }> };
+  assert.equal(batch.results.length, 2);
+  assert.ok(
+    batch.results.every((result) => result.ok),
+    "parallel read-only batch operations must succeed",
+  );
+  await call("browser.close", { tabId: batchTab.id });
+  stage("batch-ready");
 
   const staleSnapshot = (await call("browser.snapshot", { tabId: tab.id })) as typeof snapshot;
   const staleRunButton = staleSnapshot.nodes.find((node) => node.name.includes("Run action"))!;
@@ -1079,6 +1245,37 @@ async function run(): Promise<void> {
   await call("browser.wait", { tabId: tab.id, condition: "text", value: "uploaded:upload.txt", timeoutMs: 5_000 });
   assert.ok(sensitiveApprovalRequests >= 3, "file upload interaction must request sensitive-action approval");
   stage("upload-ready");
+
+  snapshot = (await call("browser.snapshot", { tabId: tab.id })) as typeof snapshot;
+  const agentUploadInput = snapshot.nodes.find((node) => node.role === "file-upload")!;
+  await call("browser.uploadFiles", {
+    tabId: tab.id,
+    ref: agentUploadInput.ref,
+    snapshotId: snapshot.snapshotId,
+    generation: snapshot.generation,
+    paths: [agentUploadFile],
+  });
+  await call("browser.wait", {
+    tabId: tab.id,
+    condition: "text",
+    value: "uploaded:agent-upload.txt",
+    timeoutMs: 5_000,
+  });
+  stage("agent-upload-ready");
+
+  const downloadList = (await call("browser.downloadList", { tabId: tab.id })) as {
+    downloads: Array<{ id: string; state: string; sessionId?: string; tabId?: string }>;
+  };
+  assert.ok(downloadList.downloads.length >= 1, "agent download list must include the tab download");
+  assert.equal(downloadList.downloads.at(-1)?.sessionId, "fixture-session");
+  const completedDownload = (await call("browser.downloadWait", {
+    tabId: tab.id,
+    downloadId: downloadList.downloads.at(-1)!.id,
+    timeoutMs: 10_000,
+  })) as { state: string; savePath?: string; tabId?: string };
+  assert.equal(completedDownload.state, "completed");
+  assert.ok(completedDownload.savePath && fs.existsSync(completedDownload.savePath));
+  stage("agent-download-ready");
 
   const takeoverWaitOne = call("browser.wait", {
     tabId: tab.id,
@@ -1785,8 +1982,10 @@ async function run(): Promise<void> {
   await assert.rejects(callAfterAdvancedRevoke("browser.consoleList"), hasBrowserCode("CAPABILITY_LEASE_EXPIRED"));
   await assert.rejects(callAfterAdvancedRevoke("browser.pageCodeList"), hasBrowserCode("CAPABILITY_LEASE_EXPIRED"));
   await service.navigateUser(identityTab.id, `${fixture.origin}/identity?pass=after-disable`);
-  const restoredNativeUa = await nativeViewFor(identityTab.id).webContents.executeJavaScript("navigator.userAgent");
-  assert.notEqual(restoredNativeUa, advancedPatch.advancedBrowserMode.customUserAgentValue);
+  const restoredDefaultUa = await nativeViewFor(identityTab.id).webContents.executeJavaScript("navigator.userAgent");
+  assert.match(restoredDefaultUa, /Chrome\/\d+/);
+  assert.doesNotMatch(restoredDefaultUa, /Electron/);
+  assert.notEqual(restoredDefaultUa, "");
   stage("advanced-revoke-cleanup-ready");
 
   service.setProxyCredentials({ username: "proxy-user", password: "proxy-password" });

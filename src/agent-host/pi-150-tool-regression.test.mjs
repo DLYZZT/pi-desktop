@@ -124,15 +124,15 @@ test("native Desktop schemas keep existing coercion while errors and revoked acc
       true,
     ],
     [
-      browser.find((tool) => tool.name === "browser_scroll"),
-      { tabId: id, deltaY: 3.9 },
-      { tabId: id, deltaY: 3 },
+      browser.find((tool) => tool.name === "browser_pointer"),
+      { action: "scroll", tabId: id, deltaY: 3.9 },
+      { action: "scroll", tabId: id, deltaY: 3 },
       false,
     ],
     [
-      browser.find((tool) => tool.name === "browser_snapshot"),
-      { tabId: id, maxNodes: 2000.7 },
-      { tabId: id, maxNodes: 2000 },
+      browser.find((tool) => tool.name === "browser_inspect"),
+      { tabId: id, maxNodes: 999.7 },
+      { tabId: id, maxNodes: 999 },
       false,
     ],
     [

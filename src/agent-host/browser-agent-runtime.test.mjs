@@ -76,10 +76,10 @@ test("attempt ledger blocks equivalent non-retryable navigation and allows only 
   );
 });
 
-test("Browser budgets issue one replan checkpoint and stop before call 61", () => {
+test("Browser budgets issue one replan checkpoint and stop before call 101", () => {
   const runtime = new BrowserAgentRuntime();
   runtime.beginTurn("session", "local");
-  for (let index = 0; index < 30; index += 1) {
+  for (let index = 0; index < 50; index += 1) {
     const attempt = runtime.beforeCall("session", "browser.listTabs", { marker: index }, 1);
     runtime.afterSuccess("session", attempt.attemptKey, { ok: true });
   }
@@ -87,12 +87,12 @@ test("Browser budgets issue one replan checkpoint and stop before call 61", () =
     () => runtime.beforeCall("session", "browser.listTabs", { marker: "replan" }, 1),
     (error) => error.code === "BROWSER_REPLAN_REQUIRED",
   );
-  for (let index = 30; index < 60; index += 1) {
+  for (let index = 50; index < 100; index += 1) {
     const attempt = runtime.beforeCall("session", "browser.listTabs", { marker: index }, 1);
     runtime.afterSuccess("session", attempt.attemptKey, { ok: true });
   }
   assert.throws(
-    () => runtime.beforeCall("session", "browser.listTabs", { marker: 61 }, 1),
+    () => runtime.beforeCall("session", "browser.listTabs", { marker: 101 }, 1),
     (error) => error.code === "BROWSER_CALL_BUDGET_EXCEEDED",
   );
   runtime.beginTurn("session", "channel");
@@ -104,6 +104,26 @@ test("Browser budgets issue one replan checkpoint and stop before call 61", () =
   const resumed = runtime.beforeCall("session", "browser.listTabs", {}, 1);
   runtime.afterSuccess("session", resumed.attemptKey, { ok: true });
   assert.equal(runtime.getMetrics("session").callCount, 1);
+});
+
+test("identical mutating actions are rejected as a loop", () => {
+  const runtime = new BrowserAgentRuntime();
+  runtime.beginTurn("session", "local");
+  for (let index = 0; index < 2; index += 1) {
+    const params = { tabId: "tab", ref: "e1", snapshotId: `snapshot-${index}`, generation: index };
+    const attempt = runtime.beforeCall("session", "browser.click", params, 1);
+    runtime.afterSuccess("session", attempt.attemptKey, { ok: true });
+  }
+  assert.throws(
+    () =>
+      runtime.beforeCall(
+        "session",
+        "browser.click",
+        { tabId: "tab", ref: "e1", snapshotId: "snapshot-2", generation: 2 },
+        1,
+      ),
+    (error) => error.code === "BROWSER_LOOP_DETECTED",
+  );
 });
 
 test("browser inspect is screenshot-free by default and requires deltas after two full observations", () => {
@@ -278,11 +298,11 @@ test("specialized Browser tools must precede JavaScript and detailed network acc
         { tabId: "tab", source: "fetch('/api')", intent: "explore" },
         1,
       ),
-    (error) => error.code === "BROWSER_REPLAN_REQUIRED" && error.details.specializedTool === "browser_network_summary",
+    (error) => error.code === "BROWSER_REPLAN_REQUIRED" && error.details.specializedTool === "browser_network",
   );
   assert.throws(
     () => runtime.beforeCall("session", "browser.networkList", { tabId: "tab" }, 1),
-    (error) => error.details.specializedTool === "browser_network_summary",
+    (error) => error.details.specializedTool === "browser_network",
   );
   const summaryParams = { tabId: "tab" };
   const summary = runtime.beforeCall("session", "browser.networkSummary", summaryParams, 1);
@@ -300,7 +320,7 @@ test("specialized Browser tools must precede JavaScript and detailed network acc
         { tabId: "tab", source: "window.onerror = () => true", intent: "explore" },
         1,
       ),
-    (error) => error.details.specializedTool === "browser_console_list",
+    (error) => error.details.specializedTool === "browser_console",
   );
   const consoleParams = { tabId: "tab" };
   const consoleList = runtime.beforeCall("session", "browser.consoleList", consoleParams, 1);
