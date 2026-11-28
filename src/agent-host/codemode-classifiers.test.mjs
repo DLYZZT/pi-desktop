@@ -105,8 +105,9 @@ async function fixture(t, { systemOne = false, textOnly = false } = {}) {
           );
       res.writeHead(200, { "content-type": "application/json" }).end(
         JSON.stringify({
+          ...(systemOne ? { id: "fixture-generation-161" } : {}),
           answers: malformed ? {} : wireAnswers,
-          usage: { input_tokens: 4, output_tokens: 8 },
+          usage: { input_tokens: 4, output_tokens: 8, ...(systemOne ? { cost: 0.01234, is_byok: false } : {}) },
         }),
       );
     })().catch((error) => {
@@ -130,7 +131,7 @@ async function fixture(t, { systemOne = false, textOnly = false } = {}) {
       },
     },
   });
-  const provider = systemOne ? "typesafe" : "openai";
+  const provider = systemOne ? "openrouter" : "openai";
   runtime.registerProvider(provider, {
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
     apiKey: "sk-classifier-fixture",
@@ -221,7 +222,16 @@ for (const systemOne of [false, true]) {
   test(`classifier ${systemOne ? "System One" : "Decisions"} HTTP calls preserve questions, answers, branch history and usage`, async (t) => {
     const f = await fixture(t, { systemOne });
     assert.ok(!f.runtime.getModels().some((m) => m.id === "fixture-decider"));
-    const result = await run(f, classifyCode());
+    const code = classifyCode();
+    const result = await run(
+      f,
+      systemOne
+        ? code.replace(
+            "text(r.answers);",
+            'if(r.responseId!=="fixture-generation-161")throw Error("Missing response ID");text(r.answers);',
+          )
+        : code,
+    );
     assert.equal(result.isError, false, JSON.stringify(result.content));
     assert.equal(f.requests.length, 1);
     assert.equal(f.requests[0].path, systemOne ? "/v1/systemone" : "/v1/decisions");
@@ -234,11 +244,18 @@ for (const systemOne of [false, true]) {
     assert.deepEqual(child.arguments.value.questions, questions);
     assert.equal(child.arguments.value.state.text, "PRIVATE_CLASSIFIER_INPUT");
     assert.deepEqual(child.result.value.details.answers, answers);
+    if (systemOne) {
+      assert.equal(child.result.value.details.responseId, "fixture-generation-161");
+      assert.equal(child.result.value.details.usage.cost.totalFromProvider, true);
+      assert.equal(result.details.classifierResponses[0].responseId, "fixture-generation-161");
+    }
     assert.equal(result.usage.input, 4);
     assert.equal(result.usage.output, 8);
     assert.ok(
-      Math.abs(buildSessionStats(f.manager.getEntries(), { sessionId: f.manager.getSessionId() }).cost - 0.00002) <
-        1e-12,
+      Math.abs(
+        buildSessionStats(f.manager.getEntries(), { sessionId: f.manager.getSessionId() }).cost -
+          (systemOne ? 0.01234 : 0.00002),
+      ) < 1e-12,
     );
     assert.ok(!readFileSync(f.manager.getSessionFile(), "utf8").includes("sk-classifier-fixture"));
     const reopened = new SessionExecutionHistory(f.manager, path.join(f.root, "desktop"));

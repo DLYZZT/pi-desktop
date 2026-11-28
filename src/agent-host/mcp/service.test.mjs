@@ -886,3 +886,27 @@ test("MCP connection catalogs cannot activate tools in Desktop's empty-tool mode
   assert.equal(f.active.size, 0);
   assert.equal(f.service.tools("session")[0].active, false);
 });
+
+test("Codemode sees the MCP result envelope with the server's structured field types", async (t) => {
+  const f = await fixture(t, {
+    catalog: [
+      {
+        name: "echo",
+        inputSchema: { type: "object" },
+        outputSchema: {
+          type: "object",
+          properties: { amount: { $ref: "#/$defs/Amount" } },
+          $defs: { Amount: { type: "number" } },
+        },
+      },
+    ],
+  });
+  const schema = f.definitions.get("mcp__fixture__echo").outputSchema;
+  assert.equal(
+    schema.properties.structuredContent.properties.amount.$ref,
+    "#/properties/structuredContent/$defs/Amount",
+  );
+  assert.equal(schema.properties.structuredContent.$defs.Amount.type, "number");
+  assert.ok(schema.properties.content);
+  assert.ok(schema.properties.isError);
+});

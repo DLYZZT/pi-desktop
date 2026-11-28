@@ -23,6 +23,12 @@ export function createDesktopCodemodeExtension(access: CodemodeModelAccess): Ext
           ],
           execute: async (toolCallId, args, signal, onUpdate, ctx) => {
             let sequence = 0;
+            const classifierResponses: Array<{
+              toolCallId: string;
+              provider: string;
+              model: string;
+              responseId: string;
+            }> = [];
             const pending = new Set<Promise<unknown>>();
             const assertAllowed = () => {
               signal?.throwIfAborted();
@@ -54,6 +60,13 @@ export function createDesktopCodemodeExtension(access: CodemodeModelAccess): Ext
                   const startedAt = performance.now();
                   const result = await invoke();
                   const durationMs = Math.round(performance.now() - startedAt);
+                  if (kind === "classifier" && result.responseId)
+                    classifierResponses.push({
+                      toolCallId: event.toolCallId,
+                      provider: result.provider,
+                      model: result.model,
+                      responseId: result.responseId,
+                    });
                   const { output, ...details } =
                     "output" in result
                       ? result
@@ -157,7 +170,10 @@ export function createDesktopCodemodeExtension(access: CodemodeModelAccess): Ext
               },
             });
             try {
-              return await definition.execute(toolCallId, args, signal, onUpdate, modelContext);
+              const result = await definition.execute(toolCallId, args, signal, onUpdate, modelContext);
+              return classifierResponses.length && result.details && typeof result.details === "object"
+                ? { ...result, details: Object.assign({}, result.details, { classifierResponses }) }
+                : result;
             } finally {
               // An aborted sandbox must not leave model calls writing history after session teardown.
               while (pending.size) await Promise.allSettled([...pending]);

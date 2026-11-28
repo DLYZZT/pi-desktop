@@ -1,6 +1,10 @@
+import { supersededAttempts, withoutSupersededFailure } from "./retried-messages";
+import { branchTranscriptNotices } from "./transcript-notices";
+import { noticeKeys, type NoticePreferences, type TranscriptNotice } from "../shared/transcript-notices";
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { abortedAssistantEntryIds } from "./agent-settlement";
+import { readImagePlaceholderModel } from "../shared/normalize";
 import type { HistoryWindow, PagedContextInfo } from "../contract/types";
 import type {
   AgentMessage,
@@ -100,7 +104,7 @@ export function decodeHistoryCursor(cursor: string): HistoryCursorPayload {
   }
 }
 
-function buildEntryPath(entries: SessionEntry[], leafId?: string | null): SessionEntry[] {
+export function buildEntryPath(entries: SessionEntry[], leafId?: string | null): SessionEntry[] {
   if (leafId === null) return [];
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
   let current = leafId ? byId.get(leafId) : entries.at(-1);
@@ -128,9 +132,10 @@ function deriveContextSettings(path: SessionEntry[]): Pick<PagedContextInfo, "th
   return { thinkingLevel, model };
 }
 
-function projectDisplayMessages(path: SessionEntry[]): ProjectedMessage[] {
+function projectDisplayMessages(path: SessionEntry[], notices?: Map<string, TranscriptNotice[]>): ProjectedMessage[] {
   const projected: ProjectedMessage[] = [];
   const aborted = abortedAssistantEntryIds(path);
+  const superseded = supersededAttempts(path);
   let pendingChannelSource: ReturnType<typeof parseChannelSourceMarker> = null;
   path.forEach((entry, pathIndex) => {
     if (entry.type === "custom" && entry.customType === "pi-desktop-channel-source") {
@@ -143,8 +148,18 @@ function projectDisplayMessages(path: SessionEntry[]): ProjectedMessage[] {
       if (!runId || pendingChannelSource?.runId === runId) pendingChannelSource = null;
       return;
     }
-    let message = entryToUiMessage(entry);
+    let message = withoutSupersededFailure(entryToUiMessage(entry), superseded.has(entry.id));
+    const annotations = notices?.get(entry.id);
+    if (!message && annotations)
+      message = {
+        role: "custom",
+        customType: "pi-desktop-transcript-notice",
+        display: true,
+        content: "",
+        timestamp: Date.parse(entry.timestamp),
+      };
     if (!message) return;
+    if (annotations) message = { ...message, transcriptNotices: annotations };
     if (message.role === "assistant" && aborted.has(entry.id)) message = { ...message, stopReason: "aborted" };
     if (message.role === "user") {
       message = withUserMessageSource(message, pendingChannelSource?.channel, pendingChannelSource?.attachments);
@@ -155,11 +170,15 @@ function projectDisplayMessages(path: SessionEntry[]): ProjectedMessage[] {
   return projected;
 }
 
+function startsHistoryTurn(message: AgentMessage): boolean {
+  return message.role === "user" || message.role === "bashExecution";
+}
+
 function groupTurns(messages: ProjectedMessage[]): ProjectedMessage[][] {
   const turns: ProjectedMessage[][] = [];
   let current: ProjectedMessage[] = [];
   for (const item of messages) {
-    if (item.message.role === "user" && current.some((candidate) => candidate.message.role === "user")) {
+    if (startsHistoryTurn(item.message) && current.some((candidate) => startsHistoryTurn(candidate.message))) {
       turns.push(current);
       current = [];
     }
@@ -202,6 +221,10 @@ function collectContentCandidates(messages: AgentMessage[], entryIds: string[]):
         bytes,
         details: true,
         defer: () => {
+          if (message.role === "toolResult" && !message.readImagePlaceholderModel) {
+            const model = readImagePlaceholderModel(message.toolName, message.details);
+            if (model) message.readImagePlaceholderModel = model;
+          }
           delete message.details;
           message.deferredDetails = deferredDetails;
         },
@@ -388,8 +411,12 @@ export function buildSessionHistoryPage(options: {
   historyWindow?: HistoryWindow;
   historyRevision: string;
   cursor?: HistoryCursorPayload;
+  noticeSettings?: NoticePreferences;
 }): PagedContextInfo {
-  const { entries, historyWindow, historyRevision, cursor } = options;
+  const { entries, historyWindow, cursor, noticeSettings } = options;
+  const enabled = noticeSettings && noticeKeys.filter((key) => noticeSettings[key]);
+  // A changed projection invalidates pages already loaded with other settings.
+  const historyRevision = enabled?.length ? options.historyRevision + "/" + enabled.join(",") : options.historyRevision;
   const anchorLeafId = cursor?.anchorLeafId ?? options.leafId ?? entries.at(-1)?.id ?? null;
   const path = buildEntryPath(entries, anchorLeafId);
   const selection = path.findLast((entry) => entry.type === "model_change");
@@ -402,8 +429,14 @@ export function buildSessionHistoryPage(options: {
     if (!path.some((entry) => entry.id === cursor.beforeEntryId)) throw new StaleHistoryCursorError();
   }
 
+  const annotations = enabled?.length && noticeSettings ? branchTranscriptNotices(path, noticeSettings) : undefined;
   if (!historyWindow && !cursor) {
     const context = buildSessionContext(entries, options.leafId);
+    if (annotations?.size) {
+      const items = projectDisplayMessages(path, annotations);
+      context.messages = items.map((item) => item.message);
+      context.entryIds = items.map((item) => item.entryId);
+    }
     return {
       ...context,
       selectedModel,
@@ -415,14 +448,14 @@ export function buildSessionHistoryPage(options: {
   }
 
   const settings = deriveContextSettings(path);
-  const allMessages = projectDisplayMessages(path);
+  const allMessages = projectDisplayMessages(path, annotations);
   const beforePathIndex = cursor ? path.findIndex((entry) => entry.id === cursor.beforeEntryId) : path.length;
   if (beforePathIndex < 0) throw new StaleHistoryCursorError();
   const available = allMessages.filter((item) => item.pathIndex < beforePathIndex);
   const turns = groupTurns(available);
   // A cursor that does not start at a user message leaves only the head of a split turn before it.
   const cursorMessage = allMessages.find((item) => item.pathIndex >= beforePathIndex)?.message;
-  const continuesSplitTurn = cursorMessage !== undefined && cursorMessage.role !== "user";
+  const continuesSplitTurn = cursorMessage !== undefined && !startsHistoryTurn(cursorMessage);
   const maxTurns = Math.max(1, Math.floor(historyWindow?.maxTurns ?? DEFAULT_MAX_TURNS));
   const maxBytes = Math.max(32 * 1024, Math.floor(historyWindow?.maxBytes ?? DEFAULT_MAX_BYTES));
   let selected: ProjectedMessage[] = [];

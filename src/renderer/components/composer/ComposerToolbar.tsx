@@ -1,6 +1,6 @@
 import { type ReactNode, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { ModelCatalogStatus } from "@contract/types";
+import type { ModelCatalogStatus, ModelImageInput } from "@contract/types";
 import { useI18n } from "@/i18n";
 import { scaledChatFont } from "@/lib/chat-appearance";
 import type { ToolPreset, SelectableToolPreset } from "@shared/tool-presets";
@@ -17,6 +17,7 @@ export interface ComposerToolbarOptions {
   isStreaming: boolean;
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
+  modelImageInputs?: Record<string, ModelImageInput>;
   modelNames?: Record<string, string>;
   modelStatus?: ReactNode;
   modelList?: { id: string; name: string; provider: string }[];
@@ -25,6 +26,7 @@ export interface ComposerToolbarOptions {
   onModelChange?: (provider: string, modelId: string) => void;
   onModelsRefresh?: () => Promise<void> | void;
   onModelsRefreshCancel?: () => void;
+  hasCompactContext?: boolean;
   onCompact?: () => void;
   onAbortCompaction?: () => void;
   isCompacting?: boolean;
@@ -75,6 +77,7 @@ function ComposerToolbarView({
     model,
     isAutoModelSelection,
     modelNames,
+    modelImageInputs,
     modelStatus,
     modelList,
     modelCatalog,
@@ -83,6 +86,7 @@ function ComposerToolbarView({
     onModelsRefresh,
     onModelsRefreshCancel,
     onCompact,
+    hasCompactContext = true,
     onAbortCompaction,
     isCompacting,
     compactError,
@@ -96,6 +100,7 @@ function ComposerToolbarView({
     soundEnabled,
     onSoundToggle,
   } = options;
+  const compactDisabled = !isCompacting && (isStreaming || !hasCompactContext);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const [toolDropdownOpen, setToolDropdownOpen] = useState(false);
@@ -493,6 +498,7 @@ function ComposerToolbarView({
                           )}
                           {group.options.map((opt) => {
                             const isActive = opt.modelId === model?.modelId && opt.provider === model?.provider;
+                            const imageInput = modelImageInputs?.[`${opt.provider}:${opt.modelId}`];
                             return (
                               <button
                                 key={`${opt.provider}:${opt.modelId}`}
@@ -540,6 +546,15 @@ function ComposerToolbarView({
                                   <span style={{ width: 10, flexShrink: 0 }} />
                                 )}
                                 {opt.name}
+                                {imageInput && (
+                                  <small style={{ color: "var(--text-muted)", marginLeft: "auto" }}>
+                                    {imageInput === "image"
+                                      ? t("modelSupportsImages", "Supports images")
+                                      : imageInput === "text"
+                                        ? t("modelTextOnly", "Text only")
+                                        : t("modelRoutedImages", "Depends on routed model")}
+                                  </small>
+                                )}
                               </button>
                             );
                           })}
@@ -939,7 +954,7 @@ function ComposerToolbarView({
                   if (isCompacting) onAbortCompaction?.();
                   else onCompact();
                 }}
-                disabled={isStreaming && !isCompacting}
+                disabled={compactDisabled}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -952,13 +967,13 @@ function ComposerToolbarView({
                   border: `1px solid ${isCompacting ? "rgba(239,68,68,0.3)" : "var(--border)"}`,
                   borderRadius: 9,
                   color: isCompacting ? "var(--danger)" : "var(--text-muted)",
-                  cursor: isStreaming && !isCompacting ? "not-allowed" : "pointer",
+                  cursor: compactDisabled ? "not-allowed" : "pointer",
                   fontSize: scaledChatFont(12),
-                  opacity: isStreaming && !isCompacting ? 0.5 : 1,
+                  opacity: compactDisabled ? 0.5 : 1,
                   transition: "background 0.12s, color 0.12s",
                 }}
                 onMouseEnter={(e) => {
-                  if (isStreaming && !isCompacting) return;
+                  if (compactDisabled) return;
                   e.currentTarget.style.background = isCompacting ? "rgba(239,68,68,0.16)" : "var(--bg-hover)";
                   e.currentTarget.style.color = isCompacting ? "var(--danger)" : "var(--text)";
                 }}
@@ -966,7 +981,18 @@ function ComposerToolbarView({
                   e.currentTarget.style.background = isCompacting ? "rgba(239,68,68,0.08)" : "var(--bg-panel)";
                   e.currentTarget.style.color = isCompacting ? "var(--danger)" : "var(--text-muted)";
                 }}
-                title={isCompacting ? t("stopCompaction", "Stop compaction") : t("compact", "Compact context")}
+                title={
+                  !isCompacting && !hasCompactContext
+                    ? t("compactEmpty", "Send a message before compacting the conversation.")
+                    : isCompacting
+                      ? t("stopCompaction", "Stop compaction")
+                      : t("compact", "Compact context")
+                }
+                aria-description={
+                  !isCompacting && !hasCompactContext
+                    ? t("compactEmpty", "Send a message before compacting the conversation.")
+                    : undefined
+                }
                 aria-label={isCompacting ? t("stopCompaction", "Stop compaction") : t("compact", "Compact context")}
               >
                 {isCompacting ? (

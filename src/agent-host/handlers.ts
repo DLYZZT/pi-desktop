@@ -1,3 +1,4 @@
+import { readNoticeSettings, writeNoticeSetting } from "./transcript-settings";
 import { modelSettingsHandlers } from "./handlers/model-settings";
 /**
  * Register all Api handlers on the RPC server.
@@ -34,7 +35,13 @@ import { createSessionEventBindings } from "./session-event-bindings";
 import { createHostShutdown } from "./host-shutdown";
 import { RpcError } from "../contract/types";
 
-import { disposeAllRpcSessions, subscribeRunningSessions, syncDesktopToolsForAllSessions } from "./rpc-manager";
+import {
+  disposeAllRpcSessions,
+  getRpcSession,
+  refreshSessionNoticeSettings,
+  subscribeRunningSessions,
+  syncDesktopToolsForAllSessions,
+} from "./rpc-manager";
 
 import { createFileWatchService, stopAllFileWatches } from "./file-watch";
 import { createAuthLoginService } from "./auth-login";
@@ -89,13 +96,14 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
   };
 
   // Running sessions stream + tray badge signal to main via parentPort
-  const stopRunning = subscribeRunningSessions((ids) => {
+  const stopRunning = subscribeRunningSessions((ids, waiting) => {
     if (closing) return;
     // Both fields remain in the current stream contract for renderer compatibility.
     server.emit("agent.running", "*", {
       type: "running",
       sessionIds: ids,
       runningSessionIds: ids,
+      waitingSessionIds: waiting,
     } as never);
     try {
       process.parentPort?.postMessage({ type: "running-sessions", sessionIds: ids });
@@ -128,6 +136,14 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
       }
       return result;
     };
+
+  const noticeScope = (params?: { cwd?: string; sessionId?: string } | void) => {
+    const live = params?.sessionId ? getRpcSession(params.sessionId) : undefined;
+    return {
+      reportErrors: true,
+      sessionTrusted: live && live.cwd === params?.cwd ? live.inner.settingsManager.isProjectTrusted() : undefined,
+    };
+  };
 
   server.handle({
     "mcp.config.get": guard(mcpHandlers["mcp.config.get"]),
@@ -225,6 +241,8 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
     "sessions.contextPage": guard(sessionHandlers.contextPage),
 
+    "sessions.searchMessages": guard(sessionHandlers.searchMessages),
+    "sessions.bashOutput": guard(sessionHandlers.bashOutput),
     "sessions.entryContent": guard(sessionHandlers.entryContent),
     "sessions.entryDetails": guard(sessionHandlers.entryDetails),
     "sessions.forkToDirectory": guard(sessionHandlers.forkToDirectory),
@@ -248,6 +266,7 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
     "agent.new": guard(agentHandlers.new),
 
     "agent.command": guard(agentHandlers.command),
+    "agent.editorDraft": guard(agentHandlers.editorDraft),
 
     "agent.state": guard(agentHandlers.state),
 
@@ -299,6 +318,14 @@ export function registerHandlers(server: RpcServer): () => Promise<void> {
 
     "files.index": guard(fileHandlers.index),
 
+    "settings.notices.get": guard(async (params) => readNoticeSettings(params?.cwd, noticeScope(params))),
+    "settings.notices.set": guard(async (params) => {
+      if (!params) throw new RpcError({ code: "BAD_REQUEST", message: "Transcript notice setting required" });
+      const status = await writeNoticeSetting(params.key, params.shown, params.cwd, noticeScope(params));
+      refreshSessionNoticeSettings();
+      server.emit("sessions.changed", "*", { cwd: null, fullRefresh: true });
+      return status;
+    }),
     "settings.getAgentShell": guard(resourceHandlers.getAgentShell),
     "settings.setAgentShell": guard(resourceHandlers.setAgentShell),
     "settings.getCacheWarming": guard(resourceHandlers.getCacheWarming),

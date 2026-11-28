@@ -39,7 +39,11 @@ export function sessionDateGroup(modified: string, now = new Date()): SessionDat
   return "older";
 }
 
-export function filterSessionsForQuery(sessions: SessionInfo[], rawQuery: string): SessionInfo[] {
+export function filterSessionsForQuery(
+  sessions: SessionInfo[],
+  rawQuery: string,
+  bodyMatches?: ReadonlyMap<string, string>,
+): SessionInfo[] {
   const query = rawQuery.trim().toLocaleLowerCase();
   if (!query) return sessions;
 
@@ -51,7 +55,7 @@ export function filterSessionsForQuery(sessions: SessionInfo[], rawQuery: string
       .filter(Boolean)
       .join("\n")
       .toLocaleLowerCase();
-    if (!searchText.includes(query)) continue;
+    if (!searchText.includes(query) && !bodyMatches?.has(session.id)) continue;
 
     visibleIds.add(session.id);
     let parentId = session.parentSessionId;

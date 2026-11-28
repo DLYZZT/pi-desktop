@@ -58,6 +58,7 @@ const { useSessionHistory, MessageView, testApi, testPerf } = await importTestBu
         `
                 : `
           const queues = new Map();
+          export const call = (method, args) => take(method, args);
           export const calls = [];
           export function enqueue(method, value) { const queue = queues.get(method) ?? []; queue.push(value); queues.set(method, queue); }
           async function take(method, args) {
@@ -405,6 +406,42 @@ test("a delayed content response cannot poison a new revision's cache or delete 
     await duplicate;
   });
   assert.equal(fixture.current.messages[0].content[0].text, "NEW");
+});
+
+test("an overlapping refresh retains expanded CLI output for the same revision and drops it for a changed transcript", async (t) => {
+  const fixture = await mount(t);
+  const preview = (revision) => {
+    const page = detail("a", revision, "fixture");
+    page.context.entryIds = ["cli"];
+    page.context.messages = [
+      {
+        role: "bashExecution",
+        exitCode: 0,
+        content: [
+          { type: "text", text: "echo fixture" },
+          { type: "text", text: "preview", deferredContent: { entryId: "cli", blockIndex: 1, originalBytes: 150000 } },
+        ],
+      },
+    ];
+    return page;
+  };
+  await fixture.load(preview("r1"));
+  const refresh = createDeferred();
+  testApi.enqueue("session", refresh.promise);
+  let request;
+  await act(async () => {
+    request = fixture.current.loadSession("a");
+  });
+  testApi.enqueue("content", { content: { type: "text", text: "FULL CLI OUTPUT" } });
+  await act(async () => fixture.current.loadDeferredContent("cli", 1));
+  assert.equal(fixture.current.messages[0].content[1].text, "FULL CLI OUTPUT");
+  await act(async () => {
+    refresh.resolve(preview("r1"));
+    await request;
+  });
+  assert.equal(fixture.current.messages[0].content[1].text, "FULL CLI OUTPUT");
+  await fixture.load(preview("r2"));
+  assert.equal(fixture.current.messages[0].content[1].text, "preview");
 });
 
 test("loading deferred details restores them without touching content blocks", async (t) => {

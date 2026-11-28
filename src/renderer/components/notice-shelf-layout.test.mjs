@@ -6,7 +6,7 @@ const chatWindowSource = readFileSync(new URL("./ChatWindow.tsx", import.meta.ur
 const cssSource = readFileSync(new URL("../globals.css", import.meta.url), "utf8");
 
 const noticeShelfStart = chatWindowSource.indexOf("function NoticeShelf(");
-const noticeShelfEnd = chatWindowSource.indexOf("type ExtensionDialogRequest", noticeShelfStart);
+const noticeShelfEnd = chatWindowSource.indexOf("\n}\n", noticeShelfStart);
 assert.notEqual(noticeShelfStart, -1);
 assert.notEqual(noticeShelfEnd, -1);
 const noticeShelfSource = chatWindowSource.slice(noticeShelfStart, noticeShelfEnd);

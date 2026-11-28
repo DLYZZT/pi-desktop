@@ -1,3 +1,4 @@
+import { resolveConfigValue, clearConfigValueCacheEntry } from "./pi-sdk-core";
 import path from "node:path";
 import { ModelRuntime, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
@@ -42,7 +43,10 @@ export class DesktopModelCredentials implements CredentialStore {
     options?.signal?.throwIfAborted();
     const data = await this.load();
     options?.signal?.throwIfAborted();
-    return structuredClone(data[provider] as Credential | undefined);
+    const credential = structuredClone(data[provider] as Credential | undefined);
+    if (credential?.type === "api_key" && typeof credential.key === "string")
+      return { ...credential, key: resolveConfigValue(credential.key, credential.env) };
+    return credential;
   }
   async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
     options?.signal?.throwIfAborted();
@@ -72,7 +76,10 @@ export class DesktopModelCredentials implements CredentialStore {
       this.closing.signal.removeEventListener("abort", cancelShutdown);
       controller.signal.throwIfAborted();
       const next = await fn(data[provider] as Credential | undefined);
-      if (next !== undefined) await save({ ...data, [provider]: next });
+      if (next !== undefined) {
+        await save({ ...data, [provider]: next });
+        if (next.type === "api_key" && next.key) clearConfigValueCacheEntry(next.key);
+      }
       return next ?? (data[provider] as Credential | undefined);
     }, controller.signal).finally(() => {
       options?.signal?.removeEventListener("abort", cancelCaller);

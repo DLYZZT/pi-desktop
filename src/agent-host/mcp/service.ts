@@ -7,7 +7,7 @@ import {
   type AgentToolResult,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type Tool, McpTimeoutError, McpConnectionClosedError } from "@earendil-works/pi-mcp";
+import { createMcpResultSchema, type Tool, McpTimeoutError, McpConnectionClosedError } from "@earendil-works/pi-mcp";
 import type {
   McpInstanceSnapshot,
   McpServerConfig,
@@ -900,7 +900,7 @@ export class McpService {
         label: `${connection.snapshot.name}: ${tool.name}`,
         description: tool.description ?? tool.name,
         parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema),
-        outputSchema: Type.Any(),
+        outputSchema: Type.Unsafe(createMcpResultSchema(tool.outputSchema)),
         exposure: exposure === "codemode" ? "deferred" : exposure,
         namespace: {
           name: mcpNamespace(connection.snapshot.name),

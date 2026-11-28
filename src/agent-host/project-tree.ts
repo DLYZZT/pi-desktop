@@ -73,10 +73,13 @@ function treeEntryPreview(entry: Record<string, unknown>): SessionTreeNode["entr
   const message =
     entry.message && typeof entry.message === "object" ? (entry.message as Record<string, unknown>) : null;
   const role =
-    message && ["user", "assistant", "toolResult", "custom"].includes(String(message.role))
+    message && ["user", "assistant", "toolResult", "custom", "bashExecution"].includes(String(message.role))
       ? (message.role as SessionTreeNode["entry"]["role"])
       : undefined;
-  const content = message?.content;
+  const content =
+    role === "bashExecution" && typeof message?.command === "string"
+      ? (message.excludeFromContext ? "!!" : "!") + message.command
+      : message?.content;
   const text =
     typeof content === "string"
       ? content

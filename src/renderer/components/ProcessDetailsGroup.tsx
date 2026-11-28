@@ -2,16 +2,25 @@ import { useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { useI18n } from "@/i18n";
 import type { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
 import { scaledChatFont } from "@/lib/chat-appearance";
+import { ReadImageWarning } from "./ToolResultImages";
 
 interface Props {
   messageCount: number;
   toolCallCount: number;
+  readWarnings?: readonly string[];
   children: ReactNode;
   stateKey: string;
   expansionStore: ThinkingExpansionStore;
 }
 
-export function ProcessDetailsGroup({ messageCount, toolCallCount, children, stateKey, expansionStore }: Props) {
+export function ProcessDetailsGroup({
+  messageCount,
+  toolCallCount,
+  readWarnings,
+  children,
+  stateKey,
+  expansionStore,
+}: Props) {
   const getSnapshot = useMemo(() => () => expansionStore.getSnapshot(stateKey), [expansionStore, stateKey]);
   const expanded = useSyncExternalStore(expansionStore.subscribe, getSnapshot, getSnapshot);
   const { language, t } = useI18n();
@@ -72,7 +81,11 @@ export function ProcessDetailsGroup({ messageCount, toolCallCount, children, sta
           {parts.join(" · ")}
         </span>
       </button>
-      {expanded && <div style={{ marginTop: 8 }}>{children}</div>}
+      {expanded ? (
+        <div style={{ marginTop: 8 }}>{children}</div>
+      ) : (
+        readWarnings?.map((model) => <ReadImageWarning key={model} model={model} />)
+      )}
     </div>
   );
 }

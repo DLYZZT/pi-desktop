@@ -79,6 +79,7 @@ export interface ChannelMessageAttachment {
 export interface AssistantMessage {
   thinkingLevel?: string;
   role: "assistant";
+  diagnostics?: readonly { type: string; details?: unknown }[];
   content: AssistantContentBlock[];
   model: string;
   provider: string;
@@ -110,6 +111,8 @@ export interface ToolResultMessage {
   content: (TextContent | ImageContent)[];
   isError?: boolean;
   details?: unknown;
+  /** Display metadata kept when a history page defers the SDK's full read details. */
+  readImagePlaceholderModel?: string;
   /** UI transport metadata for oversized `details` omitted from a history page. */
   deferredDetails?: DeferredContentRef;
   usage?: Usage;
@@ -127,7 +130,27 @@ export interface CustomMessage {
   timestamp?: number;
 }
 
-export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | CustomMessage;
+/** Pi CLI's persisted ! / !! command. Unlike chat messages it has no content blocks. */
+export interface BashExecutionMessage {
+  role: "bashExecution";
+  command: string;
+  output: string;
+  exitCode?: number | null;
+  cancelled: boolean;
+  truncated: boolean;
+  fullOutputPath?: string;
+  fullOutputError?: string;
+  excludeFromContext?: boolean;
+  timestamp?: number;
+}
+
+/** Command and output occupy separate blocks so large history pages can defer and reload either one. */
+export type BashHistoryMessage = Omit<BashExecutionMessage, "command" | "output"> & { content: TextContent[] };
+
+export type AgentMessage = (UserMessage | AssistantMessage | ToolResultMessage | CustomMessage | BashHistoryMessage) & {
+  /** Derived from persisted branch entries for presentation only. */
+  transcriptNotices?: import("./transcript-notices").TranscriptNotice[];
+};
 
 /** Raw Pi transcript metadata; never rendered as a chat message. */
 export interface SessionSystemMessage {
@@ -155,17 +178,23 @@ export interface Usage {
   };
 }
 
+export type DialogBlockedKind = "permission" | "question" | "auth";
+
 export type ExtensionUiConfirmLocalization =
   | { id: "herdr.closeWorkspace"; target: string; paneCount: number }
   | { id: "herdr.closePane"; target: string }
   | { id: "herdr.closeAgentPane"; paneId: string; agentKind: string }
   | { id: "mcp.authorize"; servers: string; tools: string; toolCount: number };
 
+export type ExtensionDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
+
 export type ExtensionUiRequest =
+  | { type: "extension_ui_request"; id: string; method: "dialog_closed" }
   | {
       type: "extension_ui_request";
       id: string;
       method: "select";
+      blockedKind?: DialogBlockedKind;
       title: string;
       options: string[];
       timeout?: number;
@@ -175,6 +204,7 @@ export type ExtensionUiRequest =
       type: "extension_ui_request";
       id: string;
       method: "confirm";
+      blockedKind?: DialogBlockedKind;
       title: string;
       message: string;
       localization?: ExtensionUiConfirmLocalization;
@@ -185,6 +215,7 @@ export type ExtensionUiRequest =
       type: "extension_ui_request";
       id: string;
       method: "input";
+      blockedKind?: DialogBlockedKind;
       title: string;
       placeholder?: string;
       timeout?: number;
@@ -230,8 +261,15 @@ export type ExtensionUiRequest =
   | {
       type: "extension_ui_request";
       id: string;
-      method: "set_editor_text";
+      method: import("./extension-editor").EditorMethod;
       text: string;
+      editorVersion?: import("./extension-editor").EditorVersion;
+    }
+  | {
+      type: "extension_ui_request";
+      id: string;
+      method: "restore_editor_draft";
+      edit: import("./extension-editor").PendingEditorEdit;
     }
   | {
       type: "extension_ui_request";
@@ -259,7 +297,7 @@ export interface ExtensionWidgetItem {
 
 export interface SessionMessageEntry extends SessionEntryBase {
   type: "message";
-  message: AgentMessage | SessionSystemMessage;
+  message: Exclude<AgentMessage, BashHistoryMessage> | BashExecutionMessage | SessionSystemMessage;
 }
 
 export interface ThinkingLevelChangeEntry extends SessionEntryBase {

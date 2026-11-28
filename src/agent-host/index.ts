@@ -42,6 +42,23 @@ function log(message: string): void {
 // Electron utilityProcess parent messaging
 const parentPort = process.parentPort;
 if (parentPort) {
+  let stopping = false;
+  function shutdown() {
+    if (stopping) return;
+    stopping = true;
+
+    stopWatcher();
+    restoreGitRunner();
+    void stopHandlers().then(
+      () => process.exit(0),
+      () => {
+        log("Host handler cleanup failed");
+        process.exit(1);
+      },
+    );
+  }
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
   parentPort.on("message", (event) => {
     const msg = event.data as {
       type?: string;
@@ -124,17 +141,7 @@ if (parentPort) {
       }
       return;
     }
-    if (msg?.type === "shutdown") {
-      stopWatcher();
-      restoreGitRunner();
-      void stopHandlers().then(
-        () => process.exit(0),
-        () => {
-          log("Host handler cleanup failed");
-          process.exit(1);
-        },
-      );
-    }
+    if (msg?.type === "shutdown") shutdown();
   });
 
   parentPort.postMessage({ type: "ready", ts: Date.now(), piVersion: piRuntimeVersion });

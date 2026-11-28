@@ -69,10 +69,10 @@
     "test:windows-powershell": "node --test scripts/test-windows-powershell.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "1.5.2",
-    "@earendil-works/pi-coding-agent": "1.5.2",
-    "@earendil-works/pi-mcp": "1.5.2",
-    "@earendil-works/pi-telemetry": "1.5.2",
+    "@earendil-works/pi-ai": "1.6.1",
+    "@earendil-works/pi-coding-agent": "1.6.1",
+    "@earendil-works/pi-mcp": "1.6.1",
+    "@earendil-works/pi-telemetry": "1.6.1",
     "@larksuiteoapi/node-sdk": "^1.71.1",
     "@lobehub/icons": "^5.6.0",
     "@rc-component/qrcode": "^2.0.0",
@@ -82,6 +82,7 @@
     "katex": "^0.16.47",
     "mammoth": "^1.12.3",
     "mermaid": "^11.17.2",
+    "minimatch": "10.2.5",
     "proper-lockfile": "4.1.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -100,11 +101,11 @@
     "yauzl": "3.4.0"
   },
   "overrides": {
-    "@earendil-works/pi-agent-core": "1.5.2",
-    "@earendil-works/pi-codemode": "1.5.2",
-    "@earendil-works/pi-schema": "1.5.2",
-    "@earendil-works/pi-telemetry": "1.5.2",
-    "@earendil-works/pi-tui": "1.5.2",
+    "@earendil-works/pi-agent-core": "1.6.1",
+    "@earendil-works/pi-codemode": "1.6.1",
+    "@earendil-works/pi-schema": "1.6.1",
+    "@earendil-works/pi-telemetry": "1.6.1",
+    "@earendil-works/pi-tui": "1.6.1",
     "@xmldom/xmldom": "0.8.15"
   },
   "devDependencies": {

@@ -1,3 +1,4 @@
+import { clearConfigValueCacheEntry } from "./pi-sdk-core";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { CredentialSynchronizationError, getAgentDir, type ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -73,6 +74,7 @@ export class CredentialMutations {
       },
       signal,
     );
+    if (credential.type === "api_key" && credential.key) clearConfigValueCacheEntry(credential.key);
     await this.synchronize(runtime, provider, "login", credential);
     return credential;
   }

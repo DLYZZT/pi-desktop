@@ -1,5 +1,6 @@
 // Translation entries owned by the models domain.
 export const enUS: Record<string, string> = {
+  modelStoredKeyUnresolved: "Saved credential could not be resolved",
   modelProviderNameRequired: "Provider name cannot be empty.",
   modelProviderNameReserved: "Provider name “{name}” is reserved.",
   modelProviderNameTaken: "Provider name “{name}” already exists.",
@@ -175,6 +176,7 @@ export const enUS: Record<string, string> = {
 };
 
 export const zhCN: Record<string, string> = {
+  modelStoredKeyUnresolved: "已保存的凭据无法解析",
   modelProviderNameRequired: "服务商名称不能为空。",
   modelProviderNameReserved: "“{name}”是保留名称，请换一个名称。",
   modelProviderNameTaken: "已存在名为“{name}”的服务商。",
@@ -340,6 +342,7 @@ export const zhCN: Record<string, string> = {
 };
 
 export const zhTW: Record<string, string> = {
+  modelStoredKeyUnresolved: "無法解析已儲存的憑證",
   modelProviderNameRequired: "服務商名稱不能為空。",
   modelProviderNameReserved: "「{name}」是保留名稱，請換一個名稱。",
   modelProviderNameTaken: "已存在名為「{name}」的服務商。",

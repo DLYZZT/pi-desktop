@@ -344,7 +344,7 @@ export function ModelsConfig({
     if (configDirty && savedOk) setSavedOk(false);
   }, [configDirty, savedOk]);
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
-  const activeApiKey = apiKeyProviders.filter((p) => p.configured);
+  const activeApiKey = apiKeyProviders.filter((p) => p.configured || p.storedAuthType === "api_key");
 
   const providerOverrides = (id: string) => (
     <ModelOverridesField

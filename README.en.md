@@ -154,6 +154,14 @@ Managed background processes support macOS, Linux, and Windows 11 x64. Windows A
 
 On the development branch, run `npm run check:models-config` for a read-only configuration preflight. Invalid fields disable the whole custom configuration; Models settings preserve its content for repair. OpenRouter's personalized catalog shares the Pi CLI cache without credential or endpoint partitioning. With different credentials, especially offline, the list may reflect another runtime; it is not proof of authorization for the current key.
 
+### Upgrading the source build to Pi 1.6.1
+
+The source build bundles Pi 1.6.1. New sessions use Pi's resolved default model. When a saved model has retired, select a replacement before continuing. A `find` pattern such as `src/*.ts` matches the immediate `src` directory under the search root. Use `**/src/*.ts` to include nested projects.
+
+Settings → General → Global chat notices controls cache misses, warming costs, compaction costs and dropped reasoning independently. Trusted projects can override individual switches in `.pi/settings.json`. Back up shared settings when using an older CLI. Saving global Pi settings migrates the legacy switch in `~/.pi/agent/settings.json`, including when changing cache warming or global plugins. CLI versions 1.5.2 and 1.6.0 return to their default of hiding notices on their next reload.
+
+Extension components receive read-only lines from `render()`. Return `[...super.render(width), footer]` to append a footer. Custom Chat Completions reasoning models that require the `developer` role can set `compat.supportsDeveloperRole: true`. Non-reasoning models use `system`.
+
 ### Auto virtual model and routing
 
 Enable Auto in Settings → Models → Auto routing, choose a fast model, a capable model, and their thinking levels, then save and select **Auto** in the chat model picker.

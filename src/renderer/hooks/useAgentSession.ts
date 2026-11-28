@@ -5,8 +5,9 @@ import type { AgentMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode } f
 import type { AgentEvent, SessionDetail, SessionRuntimeState } from "@contract/types";
 import type { SlashCommandInfo } from "@contract/agent-commands";
 export type { SlashCommandInfo } from "@contract/agent-commands";
-import { normalizeToolCalls } from "@/lib/normalize";
+import { normalizeIncomingMessage } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
+import type { ChatInputHandle } from "../components/ChatInput";
 import { agentState, newAgent } from "@/lib/api-client";
 import { getPresetFromTools } from "@/lib/tool-presets";
 import type { ToolPreset } from "@shared/tool-presets";
@@ -131,13 +132,6 @@ function userMessageKey(message: Partial<AgentMessage>): string {
   });
 }
 
-export interface ChatInputHandle {
-  insertText: (text: string) => void;
-  insertIfEmpty: (content: string) => void;
-  prependText: (text: string) => void;
-  addFiles: (files: File[]) => void;
-}
-
 export interface AttachedImage {
   data: string;
   mimeType: string;
@@ -167,6 +161,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const loadSessionRef = useRef<((sid: string) => Promise<unknown>) | null>(null);
   const {
     ensureEventsConnected,
+    connectEvents,
     eventUnsubRef,
     handleAgentEventRef,
     isActive,
@@ -179,6 +174,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   });
   const {
     extensionDialog,
+    editor,
     extensionCustomUi,
     extensionStatuses,
     extensionWidgets,
@@ -230,6 +226,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const {
     modelNames,
+    modelImageInputs,
     modelList,
     modelCatalog,
     modelRefreshing,
@@ -284,12 +281,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (liveState.thinkingLevel !== undefined && runtimeGate.accept(ticket, "thinking"))
           setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
         applyExtensionSnapshot(liveState, ticket);
+        if (liveState.retryInfo !== undefined && runtimeGate.accept(ticket, "retry"))
+          dispatchTurn({ type: "retry-snapshot", retryInfo: liveState.retryInfo });
         if (liveState.isCompacting !== undefined && runtimeGate.accept(ticket, "compaction"))
           dispatchTurn({ type: "compaction-state", isCompacting: liveState.isCompacting });
         if (liveState.queuedMessages !== undefined && runtimeGate.accept(ticket, "queue"))
           dispatchTurn({ type: "queue-snapshot", queuedMessages: normalizeQueuedMessages(liveState.queuedMessages) });
-      } else if (snapshot && !snapshot.running && runtimeGate.accept(ticket, "queue"))
-        dispatchTurn({ type: "queue-snapshot", queuedMessages: { steering: [], followUp: [] } });
+      } else if (snapshot && !snapshot.running) {
+        applyExtensionSnapshot({ pendingDialogs: [] }, ticket);
+        if (runtimeGate.accept(ticket, "retry")) dispatchTurn({ type: "retry-snapshot", retryInfo: null });
+        if (runtimeGate.accept(ticket, "queue"))
+          dispatchTurn({ type: "queue-snapshot", queuedMessages: { steering: [], followUp: [] } });
+      }
     },
     [applyExtensionSnapshot, runtimeGate],
   );
@@ -410,11 +413,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (ensuringNewSessionRef.current) return ensuringNewSessionRef.current;
 
     const promise = (async () => {
-      const selectedModel = newSessionModel ?? newSessionDefaultModel;
+      const selectedModel = newSessionModel;
       if (selectedModel) setPendingModel(selectedModel);
       const toolNames = await initialToolNames();
       const result = await newAgent({
         cwd: newSessionCwd,
+        editorDraft: opts.chatInputRef?.current?.getEditorDraft?.(),
         type: "ensure_session",
         toolNames,
         ...(selectedModel
@@ -428,6 +432,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       });
       const realId = result.sessionId;
       sessionIdRef.current = realId;
+      if (isActive() && opts.chatInputRef?.current?.getEditorDraft) {
+        await connectEvents(realId);
+        editor.attach();
+      }
       return realId;
     })();
 
@@ -437,7 +445,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       ensuringNewSessionRef.current = null;
     }
-  }, [isNew, newSessionCwd, newSessionModel, newSessionDefaultModel, initialToolNames, thinkingLevel]);
+  }, [
+    isNew,
+    newSessionCwd,
+    newSessionModel,
+    initialToolNames,
+    thinkingLevel,
+    opts.chatInputRef,
+    isActive,
+    connectEvents,
+    editor,
+  ]);
 
   const loadSlashCommands = useCallback(async () => {
     const ownsView = captureCommandView(),
@@ -612,6 +630,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (event.type === "prompt_done" || event.type === "channel_turn_end" || event.type === "channel_turn_error")
         runtimeGate.touch("run");
       if (event.type === "queue_update") runtimeGate.touch("queue");
+      if (event.retryInfo !== undefined || event.type === "auto_retry_start" || event.type === "auto_retry_end")
+        runtimeGate.touch("retry");
       if (["auto_compaction_start", "compaction_start", "auto_compaction_end", "compaction_end"].includes(event.type))
         runtimeGate.touch("compaction");
       dispatchTurn({ type: "event", event });
@@ -677,7 +697,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             // messages. The run's initial prompt also emits one, but handleSend
             // already appended it optimistically. Consume only the still-adjacent
             // optimistic bubble; later same-text queue deliveries must render.
-            const delivered = normalizeToolCalls(completed);
+            const delivered = normalizeIncomingMessage(completed);
             const deliveredKey = userMessageKey(delivered);
             const optimisticKey = optimisticUserMessageKeyRef.current;
             optimisticUserMessageKeyRef.current = null;
@@ -689,7 +709,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               return appendLocalHistoryMessage(current, delivered);
             });
           } else if (completed) {
-            updateHistory((current) => appendLocalHistoryMessage(current, normalizeToolCalls(completed)));
+            updateHistory((current) => appendLocalHistoryMessage(current, normalizeIncomingMessage(completed)));
           }
           break;
         }
@@ -780,7 +800,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             // Auto-title the brand-new session from its first message. Fire and
             // forget: generation is a silent background LLM request and the Host
             // applies it with a rename guard (a manual rename always wins).
-            const titleModel = newSessionModel ?? newSessionDefaultModel;
+            const titleModel = newSessionModel;
             if (shouldAutoTitleMessage(trimmedMessage)) {
               void requestAutoSessionTitle({
                 sessionId: sid,
@@ -831,7 +851,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       captureCommandView,
       newSessionCwd,
       newSessionModel,
-      newSessionDefaultModel,
       session,
       t,
       isActive,
@@ -1303,6 +1322,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   return {
     // State
+    onEditorDraftChange: editor.publish,
     sessionId: sessionIdRef.current,
     data,
     loading,
@@ -1313,6 +1333,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     streamState,
     agentRunning,
     modelNames,
+    modelImageInputs,
     modelList,
     modelCatalog,
     modelRefreshing,

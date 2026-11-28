@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { ApiHandler, RpcServer } from "../../contract/rpc";
 import { RpcError } from "../../contract/types";
 import { isAgentCommand } from "../../contract/agent-commands";
+import { readEditorDraft, syncEditorDraft } from "../extension-editor";
 import { getRpcSession, startRpcSession } from "../rpc-manager";
 import { resolveSessionPath } from "../session-reader";
 import { readSessionSnapshot } from "../session-readonly";
@@ -17,6 +18,7 @@ export function createAgentNewLockKey(): string {
 type AgentHandlers = {
   new: NonNullable<ApiHandler["agent.new"]>;
   command: NonNullable<ApiHandler["agent.command"]>;
+  editorDraft: NonNullable<ApiHandler["agent.editorDraft"]>;
   state: NonNullable<ApiHandler["agent.state"]>;
 };
 export function createAgentHandlers({
@@ -39,7 +41,7 @@ export function createAgentHandlers({
         thinkingLevel?: string;
         [key: string]: unknown;
       };
-      const { cwd, provider, modelId, modelSelectionExplicit, toolNames, thinkingLevel, ...rest } = body;
+      const { cwd, provider, modelId, modelSelectionExplicit, toolNames, thinkingLevel, editorDraft, ...rest } = body;
       if (modelSelectionExplicit !== undefined && typeof modelSelectionExplicit !== "boolean")
         throw new RpcError({ code: "BAD_REQUEST", message: "modelSelectionExplicit must be a boolean" });
       if (!cwd || typeof cwd !== "string") {
@@ -50,17 +52,19 @@ export function createAgentHandlers({
       }
 
       const tempKey = createAgentNewLockKey();
-      const { session, realSessionId } = await startRpcSession(tempKey, "", cwd, toolNames);
+      const { session, realSessionId } = await startRpcSession(
+        tempKey,
+        "",
+        cwd,
+        toolNames,
+        editorDraft === undefined ? undefined : readEditorDraft(editorDraft),
+      );
       allowFileRoot(cwd);
 
       // ISSUE-003: single event-binding entry only (ensureSessionEvents)
       bindEvents(session, realSessionId);
 
-      if (
-        provider &&
-        modelId &&
-        (modelSelectionExplicit !== false || !session.modelSelection.snapshot(session.inner)?.requiresChoice)
-      ) {
+      if (provider && modelId && modelSelectionExplicit !== false) {
         await session.send({ type: "set_model", provider, modelId });
       }
       if (thinkingLevel) {
@@ -100,6 +104,10 @@ export function createAgentHandlers({
       return session.send(command);
     },
 
+    editorDraft: async ({ sessionId, ...update }, context) => {
+      const session = getRpcSession(sessionId);
+      return syncEditorDraft(sessionId, session?.isAlive() ? session.editor : undefined, update, context);
+    },
     state: async (params) => {
       const { sessionId } = params as { sessionId: string };
       const session = getRpcSession(sessionId);

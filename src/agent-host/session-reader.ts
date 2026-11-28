@@ -1,3 +1,4 @@
+import { supersededAttempts, withoutSupersededFailure } from "./retried-messages";
 import {
   SessionManager,
   buildSessionContext as piBuildSessionContext,
@@ -13,7 +14,7 @@ import type {
   UserMessage,
 } from "../shared/types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
-import { normalizeToolCalls } from "../shared/normalize";
+import { normalizeIncomingMessage } from "../shared/normalize";
 import { resolveProject, type ProjectInfo } from "../shared/worktree";
 import { skillInvocationCommandText } from "../shared/skill-invocation";
 import { sessionIndex } from "./session-index";
@@ -115,7 +116,7 @@ function findCachedSessionId(filePath: string): string | undefined {
   return undefined;
 }
 
-function getMessageTextContent(message: unknown): string {
+export function getMessageTextContent(message: unknown): string {
   if (!message || typeof message !== "object") return "";
   const content = (message as { content?: unknown }).content;
   if (typeof content === "string") return content;
@@ -229,6 +230,7 @@ export function buildSessionContext(entries: SessionEntry[], leafId?: string | n
   const messages: AgentMessage[] = [];
   const entryIds: string[] = [];
   const aborted = abortedAssistantEntryIds(path);
+  const superseded = supersededAttempts(path);
   let pendingChannelSource: ChannelSourceMarker | null = null;
   for (const e of path) {
     if (e.type === "custom" && e.customType === "pi-desktop-channel-source") {
@@ -242,7 +244,7 @@ export function buildSessionContext(entries: SessionEntry[], leafId?: string | n
       continue;
     }
 
-    let m = entryToUiMessage(e);
+    let m = withoutSupersededFailure(entryToUiMessage(e), superseded.has(e.id));
     if (m) {
       if (m.role === "assistant" && aborted.has(e.id)) m = { ...m, stopReason: "aborted" };
       if (m.role === "user") {
@@ -363,7 +365,7 @@ export function entryToUiMessage(entry: SessionEntry): AgentMessage | null {
   switch (entry.type) {
     case "message":
       if (entry.message.role === "system") return null;
-      return normalizeToolCalls(entry.message);
+      return normalizeIncomingMessage(entry.message);
     case "compaction":
       return {
         role: "custom",

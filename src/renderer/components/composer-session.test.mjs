@@ -38,6 +38,7 @@ const { ChatInput, useAgentSession, api } = await importTestBundle("composer-ses
         return new Promise((resolve,reject) => requests.push({method,params,commandType,resolve,reject,settled:false}));
       }
       export const newAgent = params => pending('agent.new', params, 'ensure_session');
+      export const syncEditorDraft = async () => null;
       export async function agentCommand(sessionId, command) {
         if(command.type === 'get_tools'){toolReadRequests.push(sessionId);return [];}
         if(command.type === 'get_commands')return {commands:[]};

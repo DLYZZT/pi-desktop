@@ -23,7 +23,7 @@ import { ToolMessageIndex } from "@/lib/tool-message-index";
 import { useI18n } from "@/i18n";
 import type { ThinkingExpansionStore } from "@/lib/thinking-expansion-store";
 import { skillInvocationCommandText } from "@shared/skill-invocation";
-import { localizedExtensionConfirmCopy } from "@/lib/extension-ui-copy";
+import { ExtensionDialog } from "./ExtensionDialog";
 import { SessionDirectoryNotice } from "./SessionDirectoryNotice";
 
 interface Props {
@@ -81,7 +81,7 @@ export function ChatWindow({
   onSessionCreated,
   onSessionForked,
   modelsRefreshKey,
-  chatInputRef,
+  chatInputRef: externalChatInputRef,
   onBranchDataChange,
   onSystemPromptChange,
   presentationStore,
@@ -90,6 +90,8 @@ export function ChatWindow({
   thinkingExpansionStore,
   processDetailsExpansionStore,
 }: Props) {
+  const localChatInputRef = useRef<ChatInputHandle | null>(null);
+  const chatInputRef = externalChatInputRef ?? localChatInputRef;
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
   const { t } = useI18n();
@@ -123,6 +125,7 @@ export function ChatWindow({
     streamState,
     agentRunning,
     modelNames,
+    modelImageInputs,
     modelList,
     modelCatalog,
     modelRefreshing,
@@ -131,6 +134,7 @@ export function ChatWindow({
     toolPreset,
     thinkingLevel,
     retryInfo,
+    onEditorDraftChange,
     forkingEntryId,
     isCompacting,
     compactError,
@@ -261,6 +265,7 @@ export function ChatWindow({
   const chatInputElement = (
     <ChatInput
       ref={chatInputRef}
+      onEditorDraftChange={onEditorDraftChange}
       onSend={handleSend}
       onAbort={handleAbort}
       onSteer={agentRunning ? handleSteer : undefined}
@@ -272,12 +277,16 @@ export function ChatWindow({
       isAutoModelSelection={isAutoModelSelection}
       modelNames={modelNames}
       modelList={modelList}
+      modelImageInputs={modelImageInputs}
       modelCatalog={modelCatalog}
       modelRefreshing={modelRefreshing}
       onModelChange={handleModelChange}
       onModelsRefresh={refreshModels}
       onModelsRefreshCancel={cancelModelRefresh}
       onCompact={session || isNew ? handleCompact : undefined}
+      hasCompactContext={messages.some(
+        (m) => m.role === "user" || m.role === "assistant" || (m.role === "bashExecution" && !m.excludeFromContext),
+      )}
       onAbortCompaction={handleAbortCompaction}
       isCompacting={isCompacting}
       compactError={compactError}
@@ -404,7 +413,14 @@ export function ChatWindow({
         </div>
       )}
 
-      {extensionDialog && <ExtensionDialog request={extensionDialog} onRespond={respondToExtensionUi} />}
+      {extensionDialog && (
+        <ExtensionDialog
+          key={extensionDialog.id}
+          request={extensionDialog}
+          onStop={handleAbort}
+          onRespond={respondToExtensionUi}
+        />
+      )}
 
       {extensionCustomUi && <ExtensionCustomPanel request={extensionCustomUi} onInput={sendExtensionCustomInput} />}
 
@@ -533,6 +549,8 @@ export function ChatWindow({
 
                   <SessionMessageList
                     messages={messages}
+                    retryInfo={retryInfo}
+                    sessionId={session?.id ?? sessionDetail?.sessionId}
                     entryIds={entryIds}
                     agentRunning={agentRunning}
                     isStreaming={streamState.isStreaming}
@@ -794,218 +812,6 @@ function NoticeShelf({
           </div>
         );
       })}
-    </div>
-  );
-}
-
-type ExtensionDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
-
-function ExtensionDialog({
-  request,
-  onRespond,
-}: {
-  request: ExtensionDialogRequest;
-  onRespond: (
-    request: ExtensionDialogRequest,
-    response: { value: string } | { confirmed: boolean } | { cancelled: true },
-  ) => void;
-}) {
-  const { t } = useI18n();
-  const [value, setValue] = useState(request.method === "editor" ? (request.prefill ?? "") : "");
-  const confirmCopy = request.method === "confirm" ? localizedExtensionConfirmCopy(request, t) : null;
-
-  useEffect(() => {
-    setValue(request.method === "editor" ? (request.prefill ?? "") : "");
-  }, [request]);
-
-  const submitValue = () => {
-    if (request.method === "confirm") {
-      onRespond(request, { confirmed: true });
-    } else {
-      onRespond(request, { value });
-    }
-  };
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 90,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 20,
-        background: "rgba(0,0,0,0.18)",
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        style={{
-          width: "min(560px, 100%)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          background: "var(--bg)",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.28)",
-          overflow: "hidden",
-        }}
-      >
-        <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ color: "var(--text)", fontSize: scaledChatFont(14), fontWeight: 650 }}>
-            {confirmCopy?.title ?? request.title}
-          </div>
-          <div
-            style={{
-              marginTop: 3,
-              color: "var(--text-dim)",
-              fontSize: scaledChatFont(11),
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            {confirmCopy?.subtitle ?? t("extensionRequest", "Extension request")}
-          </div>
-        </div>
-
-        <div style={{ padding: 14, maxHeight: "55vh", overflowY: "auto" }}>
-          {request.method === "confirm" && (
-            <div
-              style={{
-                color: "var(--text-muted)",
-                fontSize: scaledChatFont(13),
-                lineHeight: 1.6,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {confirmCopy?.message ?? request.message}
-            </div>
-          )}
-          {request.method === "select" && (
-            <div style={{ display: "grid", gap: 8 }}>
-              {request.options.map((option) => (
-                <button
-                  key={option}
-                  onClick={() => onRespond(request, { value: option })}
-                  style={{
-                    width: "100%",
-                    padding: "9px 10px",
-                    borderRadius: 7,
-                    border: "1px solid var(--border)",
-                    background: "var(--bg-panel)",
-                    color: "var(--text)",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    fontSize: scaledChatFont(13),
-                  }}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
-          )}
-          {request.method === "input" && (
-            <input
-              autoFocus
-              value={value}
-              placeholder={request.placeholder}
-              onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") submitValue();
-                if (e.key === "Escape") onRespond(request, { cancelled: true });
-              }}
-              style={{
-                width: "100%",
-                padding: "9px 10px",
-                borderRadius: 7,
-                border: "1px solid var(--border)",
-                background: "var(--bg-panel)",
-                color: "var(--text)",
-                outline: "none",
-                fontSize: scaledChatFont(13),
-              }}
-            />
-          )}
-          {request.method === "editor" && (
-            <textarea
-              autoFocus
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") onRespond(request, { cancelled: true });
-                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submitValue();
-              }}
-              style={{
-                width: "100%",
-                minHeight: 220,
-                padding: 10,
-                borderRadius: 7,
-                border: "1px solid var(--border)",
-                background: "var(--bg-panel)",
-                color: "var(--text)",
-                outline: "none",
-                resize: "vertical",
-                fontSize: scaledChatFont(13),
-                lineHeight: 1.55,
-                fontFamily: "var(--font-mono)",
-              }}
-            />
-          )}
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 8,
-            padding: "10px 14px",
-            borderTop: "1px solid var(--border)",
-            background: "var(--bg-panel)",
-          }}
-        >
-          <button
-            onClick={() => onRespond(request, { cancelled: true })}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 6,
-              border: "1px solid var(--border)",
-              background: "var(--bg)",
-              color: "var(--text-muted)",
-              cursor: "pointer",
-            }}
-          >
-            {t("cancel", "Cancel")}
-          </button>
-          {request.method === "confirm" ? (
-            <button
-              onClick={submitValue}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 6,
-                border: "1px solid var(--accent)",
-                background: "var(--accent)",
-                color: "#fff",
-                cursor: "pointer",
-              }}
-            >
-              {confirmCopy?.confirmLabel ?? t("confirm", "Confirm")}
-            </button>
-          ) : request.method !== "select" ? (
-            <button
-              onClick={submitValue}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 6,
-                border: "1px solid var(--accent)",
-                background: "var(--accent)",
-                color: "#fff",
-                cursor: "pointer",
-              }}
-            >
-              {t("submit", "Submit")}
-            </button>
-          ) : null}
-        </div>
-      </div>
     </div>
   );
 }

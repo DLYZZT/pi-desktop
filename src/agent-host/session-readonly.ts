@@ -87,7 +87,7 @@ export function readSessionSnapshot(
     if (!initial.isFile()) throw new Error("Session source must be a regular file");
     const decoder = new StringDecoder("utf8");
     const buffer = Buffer.allocUnsafe(READ_BUFFER_BYTES);
-    let pending = "";
+    const fragments: string[] = [];
     let position = 0;
     // Bound reads to the initial size; a concurrently growing log cannot keep us reading forever.
     while (position < initial.size) {
@@ -96,15 +96,18 @@ export function readSessionSnapshot(
       position += count;
       const bytes = buffer.subarray(0, count);
       integrity.hash?.update(bytes);
-      pending += decoder.write(bytes);
-      const end = pending.lastIndexOf("\n");
-      if (end >= 0) {
-        appendEntries(pending.slice(0, end));
-        pending = pending.slice(end + 1);
+      const text = decoder.write(bytes);
+      const end = text.lastIndexOf("\n");
+      if (end < 0) fragments.push(text);
+      else {
+        fragments.push(text.slice(0, end));
+        appendEntries(fragments.join(""));
+        fragments.length = 0;
+        fragments.push(text.slice(end + 1));
       }
     }
-    pending += decoder.end();
-    appendEntries(pending);
+    fragments.push(decoder.end());
+    appendEntries(fragments.join(""));
     const after = fstatSync(fd);
     if (
       position !== initial.size ||

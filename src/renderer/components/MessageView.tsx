@@ -2,6 +2,7 @@ import { formatTime } from "@/lib/message-metadata";
 import { memo, useState, useRef, useEffect, useMemo, useSyncExternalStore } from "react";
 import { MarkdownBody } from "./MarkdownBody";
 import { ToolResultImages } from "./ToolResultImages";
+import { BashHistoryCard } from "./BashHistoryCard";
 import { ReplyImage } from "./ReplyImage";
 import { DeferredContentActions } from "./DeferredContentActions";
 import { AssistantOutcome } from "./AssistantOutcome";
@@ -33,6 +34,7 @@ import type {
 
 interface Props {
   message: AgentMessage;
+  sessionId?: string;
   isStreaming?: boolean;
   toolResults?: ReadonlyMap<string, ToolResultMessage>;
   toolCallDurations?: ReadonlyMap<string, number>;
@@ -54,6 +56,7 @@ interface Props {
 
 export const MessageView = memo(function MessageView({
   message,
+  sessionId,
   isStreaming,
   toolResults,
   toolCallDurations,
@@ -107,6 +110,8 @@ export const MessageView = memo(function MessageView({
       />
     );
   }
+  if (message.role === "bashExecution")
+    return <BashHistoryCard sessionId={sessionId} entryId={entryId} message={message} onLoad={onLoadDeferredContent} />;
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
     return null;
@@ -1191,7 +1196,7 @@ function ToolCallBlock({
             collapsed={!expanded}
           />
         ))}
-      {result && <ToolResultImages content={result.content} />}
+      {result && <ToolResultImages toolName={block.toolName} result={result} />}
       {result && result.details !== undefined && !resultDiff && (
         <div style={{ borderTop: "1px solid var(--tool-border)" }}>
           <button

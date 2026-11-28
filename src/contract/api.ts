@@ -1,3 +1,4 @@
+import type { NoticeKey, NoticeSettingsStatus } from "../shared/transcript-notices";
 import type { AgentShell, AgentShellSettings } from "../shared/agent-shell";
 import type { AdvancedModelSettings, AutoRoutingConfig, CatalogModel, ModelSettingsSnapshot } from "./model-settings";
 import type {
@@ -230,7 +231,7 @@ export interface Api {
   // Sessions & projects
   "sessions.list": {
     params: { cwd?: string } | void;
-    result: { sessions: SessionInfo[]; runningSessionIds: string[] };
+    result: { sessions: SessionInfo[]; runningSessionIds: string[]; waitingSessionIds?: string[] };
   };
   "sessions.get": {
     params: { id: string; includeState?: boolean; traceId?: string; historyWindow?: HistoryWindow };
@@ -243,6 +244,14 @@ export interface Api {
   "sessions.contextPage": {
     params: { id: string; cursor: string; maxTurns?: number; maxBytes?: number };
     result: { context: PagedContextInfo };
+  };
+  "sessions.bashOutput": {
+    params: { id: string; entryId: string; offset: number };
+    result: import("./types").BashOutputPage;
+  };
+  "sessions.searchMessages": {
+    params: { ids: string[]; query: string };
+    result: { matches: { id: string; snippet: string }[]; unreadable: number };
   };
   "sessions.entryContent": {
     params: { id: string; entryId: string; blockIndex?: number };
@@ -297,8 +306,9 @@ export interface Api {
       message?: string;
       provider?: string;
       modelId?: string;
-      /** False for an automatically displayed default; it must not dismiss a restore warning. */
+      /** False for a preview. Only a user choice may replace the SDK default or dismiss a restore warning. */
       modelSelectionExplicit?: boolean;
+      editorDraft?: import("../shared/extension-editor").EditorDraft;
       toolNames?: string[];
       thinkingLevel?: string;
       [key: string]: unknown;
@@ -308,6 +318,10 @@ export interface Api {
   "agent.command": {
     params: { sessionId: string; command: AgentCommand };
     result: unknown;
+  };
+  "agent.editorDraft": {
+    params: { sessionId: string } & import("../shared/extension-editor").EditorDraftSync;
+    result: import("../shared/extension-editor").PendingEditorEdit | null;
   };
   "agent.state": {
     params: { sessionId: string };
@@ -420,6 +434,11 @@ export interface Api {
   };
 
   // Config
+  "settings.notices.get": { params: { cwd?: string; sessionId?: string } | void; result: NoticeSettingsStatus };
+  "settings.notices.set": {
+    params: { key: NoticeKey; shown: boolean; cwd?: string; sessionId?: string };
+    result: NoticeSettingsStatus;
+  };
   "settings.getAgentShell": { params: void; result: AgentShellSettings };
   "settings.setAgentShell": { params: { shell: AgentShell }; result: AgentShellSettings };
   "settings.getCacheWarming": {

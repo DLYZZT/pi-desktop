@@ -36,7 +36,9 @@ export class SessionModelSelection {
     );
     const provider = services.settingsManager.getDefaultProvider(),
       modelId = services.settingsManager.getDefaultModel();
-    this.requested = saved ?? (provider ? { provider, modelId: modelId ?? "" } : undefined);
+    this.requested =
+      saved ??
+      (provider && (modelId || provider === LEGACY_AZURE_PROVIDER) ? { provider, modelId: modelId ?? "" } : undefined);
     if (saved) {
       const renamed = this.resolveProvider(saved.provider, saved.modelId, manager);
       if (renamed !== saved.provider) {

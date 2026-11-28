@@ -1,3 +1,6 @@
+import { readBashOutputPage } from "../bash-output-preview";
+import { searchSessionMessages } from "../session-body-search";
+import { historyNoticePreferences } from "../transcript-settings";
 import { readFileSync, statSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -7,7 +10,7 @@ import { ExecutionLogStore } from "../execution-log-store";
 import { validateExecutionQuery } from "../../contract/executions";
 import { RpcError, type HistoryWindow, type SessionDetail, type SessionRuntimeState } from "../../contract/types";
 import type { SessionTreeNode } from "../../shared/types";
-import { getRpcSession, getRunningRpcSessionIds } from "../rpc-manager";
+import { getRpcSession, getRunningRpcSessionIds, getWaitingRpcSessionIds } from "../rpc-manager";
 import { readSessionSnapshot, assertSessionWritable } from "../session-readonly";
 import { getDesktopSessionToolNames } from "../session-tool-store";
 import { canonicalPathForComparison, validateExistingDirectory } from "../directory-validation";
@@ -50,6 +53,8 @@ type SessionHandlers = {
   get: NonNullable<ApiHandler["sessions.get"]>;
   context: NonNullable<ApiHandler["sessions.context"]>;
   contextPage: NonNullable<ApiHandler["sessions.contextPage"]>;
+  bashOutput: NonNullable<ApiHandler["sessions.bashOutput"]>;
+  searchMessages: NonNullable<ApiHandler["sessions.searchMessages"]>;
   entryContent: NonNullable<ApiHandler["sessions.entryContent"]>;
   entryDetails: NonNullable<ApiHandler["sessions.entryDetails"]>;
   forkToDirectory: NonNullable<ApiHandler["sessions.forkToDirectory"]>;
@@ -122,7 +127,7 @@ export function createSessionHandlers({
           invalidFiles: indexMetrics.invalidFiles,
           indexRefreshMs: indexMetrics.totalMs,
         });
-        return { sessions, runningSessionIds: getRunningRpcSessionIds() };
+        return { sessions, runningSessionIds: getRunningRpcSessionIds(), waitingSessionIds: getWaitingRpcSessionIds() };
       } catch (error) {
         logSessionPerformance("sessions.list", {
           traceId,
@@ -174,7 +179,13 @@ export function createSessionHandlers({
         const leafId = sm.getLeafId();
         const tree = projectSessionTreeForResponse(sm.getTree() as never) as SessionTreeNode[];
         const historyRevision = buildHistoryRevision(filePath, id);
-        const context = buildSessionHistoryPage({ entries, leafId, historyWindow, historyRevision });
+        const context = buildSessionHistoryPage({
+          entries,
+          leafId,
+          historyWindow,
+          historyRevision,
+          noticeSettings: historyNoticePreferences(sm.getHeader()?.cwd, getRpcSession(id)?.inner?.settingsManager),
+        });
         const contextMs = performance.now() - contextStartedAt;
 
         const infoStartedAt = performance.now();
@@ -236,8 +247,9 @@ export function createSessionHandlers({
       const { id, leafId, historyWindow } = params as { id: string; leafId?: string; historyWindow?: HistoryWindow };
       const filePath = await resolveSessionPath(id);
       if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
-      const { entries } = getSessionContentSnapshot(filePath);
+      const { manager, entries } = getSessionContentSnapshot(filePath);
       const context = buildSessionHistoryPage({
+        noticeSettings: historyNoticePreferences(manager.getHeader()?.cwd, getRpcSession(id)?.inner?.settingsManager),
         entries,
         leafId,
         historyWindow,
@@ -255,9 +267,10 @@ export function createSessionHandlers({
       };
       const filePath = await resolveSessionPath(id);
       if (!filePath) throw new RpcError({ code: "NOT_FOUND", message: "Session not found" });
-      const { entries } = getSessionContentSnapshot(filePath);
+      const { manager, entries } = getSessionContentSnapshot(filePath);
       try {
         const context = buildSessionHistoryPage({
+          noticeSettings: historyNoticePreferences(manager.getHeader()?.cwd, getRpcSession(id)?.inner?.settingsManager),
           entries,
           historyWindow: { maxTurns, maxBytes },
           historyRevision: buildHistoryRevision(filePath, id),
@@ -275,6 +288,20 @@ export function createSessionHandlers({
       }
     },
 
+    searchMessages: searchSessionMessages,
+    bashOutput: async ({ id, entryId, offset }) => {
+      const filename = await resolveSessionPath(id);
+      if (!filename) return { status: "missing" };
+      const entry = getSessionContentSnapshot(filename).entries.find((item) => item.id === entryId);
+      if (
+        entry?.type !== "message" ||
+        entry.message.role !== "bashExecution" ||
+        !entry.message.truncated ||
+        typeof entry.message.fullOutputPath !== "string"
+      )
+        return { status: "unavailable" };
+      return readBashOutputPage(entry.message.fullOutputPath, offset);
+    },
     entryContent: async (params) => {
       const { id, entryId, blockIndex = 0 } = params as { id: string; entryId: string; blockIndex?: number };
       const filePath = await resolveSessionPath(id);

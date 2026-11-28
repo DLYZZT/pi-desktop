@@ -1,3 +1,4 @@
+import { useExtensionDialogs } from "./useExtensionDialogs";
 import { useCallback, useEffect, useReducer, useRef, useState, type RefObject } from "react";
 import type { ExtensionStatusItem, ExtensionWidgetItem, ExtensionUiRequest } from "@/lib/types";
 import type { SessionRuntimeState } from "@contract/types";
@@ -6,11 +7,15 @@ import { NOTICE_VISIBLE_MS, noticeExpiryDelay, noticeReducer, type NoticeType } 
 import type { RuntimeSnapshotTicket, SessionRuntimeGate } from "@/lib/session-runtime-gate";
 import { useI18n } from "@/i18n";
 import { modelSelectionNoticeText } from "@/lib/model-selection-notice";
+import { useExtensionEditor, type ComposerEditorHandle } from "./useExtensionEditor";
 
 type DialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 type CustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
 type RequestOwner<T> = { request: T; sessionId: string; signal: AbortSignal; expiresAt?: number };
 
+// A mounted chat can be replaced during reconnection or resource reload.
+const reportedDiagnostics = new Set<string>();
+const runtimeDiagnosticKey = /^pi-runtime-(?:warning|error)-[0-9a-f]{24}$/;
 function createNoticeId(): string {
   return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
@@ -27,17 +32,24 @@ export function useSessionExtensionUi({
   sessionIdRef: RefObject<string | null>;
   getViewSignal: () => AbortSignal;
   runtimeGate: SessionRuntimeGate;
-  chatInputRef?: RefObject<{ insertText: (text: string) => void } | null>;
+  chatInputRef?: RefObject<ComposerEditorHandle | null>;
 }) {
   const { t } = useI18n();
-  const [extensionDialog, setExtensionDialog] = useState<DialogRequest | null>(null);
+  const editor = useExtensionEditor(sessionIdRef, getViewSignal, chatInputRef);
+  const {
+    dialog: extensionDialog,
+    respond: respondToExtensionUi,
+    open,
+    close,
+    restore,
+  } = useExtensionDialogs(sessionIdRef, getViewSignal, runtimeGate);
   const [extensionCustomUi, setExtensionCustomUi] = useState<CustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
-  const dialogOwnerRef = useRef<RequestOwner<DialogRequest> | null>(null);
   const customOwnerRef = useRef<RequestOwner<CustomRequest> | null>(null);
   const customRequestsRef = useRef(new WeakMap<CustomRequest, RequestOwner<CustomRequest>>());
+  const clearedDiagnostics = useRef(new Map<string, number>());
 
   const owns = useCallback(
     (owner: RequestOwner<DialogRequest | CustomRequest>) =>
@@ -63,37 +75,44 @@ export function useSessionExtensionUi({
     [getViewSignal],
   );
 
+  const reportDiagnostic = useCallback(
+    (key: string, message: string) => {
+      const type = key.startsWith("pi-runtime-error-") ? "error" : "warning";
+      // A Host that predates the picker fix can replay these as plain, possibly truncated runtime warnings.
+      if (type === "warning" && message.startsWith('No models match pattern "')) return;
+      const id = `${sessionIdRef.current}:${key}`;
+      if (reportedDiagnostics.has(id)) return;
+      if (reportedDiagnostics.size >= 2048) reportedDiagnostics.delete(reportedDiagnostics.values().next().value!);
+      reportedDiagnostics.add(id);
+      addNotice({ id, message, type });
+    },
+    [sessionIdRef, addNotice],
+  );
   const applyExtensionSnapshot = useCallback(
     (state: SessionRuntimeState, ticket: RuntimeSnapshotTicket) => {
       if (getViewSignal().aborted) return;
-      if (state.extensionStatuses !== undefined && runtimeGate.accept(ticket, "statuses"))
+      if (state.pendingDialogs) restore(state.pendingDialogs, ticket);
+      if (state.pendingEditorEdit && runtimeGate.isCurrentRun(ticket)) editor.restore(state.pendingEditorEdit);
+      if (state.extensionStatuses !== undefined && runtimeGate.accept(ticket, "diagnostics")) {
+        for (const [key, sequence] of clearedDiagnostics.current) {
+          if (ticket.sequence > sequence) clearedDiagnostics.current.delete(key);
+        }
+        for (const { key, text } of state.extensionStatuses ?? []) {
+          if (runtimeDiagnosticKey.test(key) && !clearedDiagnostics.current.has(key)) reportDiagnostic(key, text);
+        }
+      }
+      if (state.extensionStatuses !== undefined && runtimeGate.accept(ticket, "statuses")) {
         setExtensionStatuses([
-          ...(state.extensionStatuses ?? []),
+          ...(state.extensionStatuses ?? []).filter(({ key }) => !runtimeDiagnosticKey.test(key)),
           ...(state.modelSelectionNotice
             ? [{ key: "pi-model-selection", text: modelSelectionNoticeText(state.modelSelectionNotice, t) }]
             : []),
         ]);
+      }
       if (state.extensionWidgets !== undefined && runtimeGate.accept(ticket, "widgets"))
         setExtensionWidgets(state.extensionWidgets ?? []);
     },
-    [getViewSignal, runtimeGate, t],
-  );
-
-  const respondToExtensionUi = useCallback(
-    async (request: DialogRequest, response: { value: string } | { confirmed: boolean } | { cancelled: true }) => {
-      const owner = dialogOwnerRef.current;
-      if (!owner || owner.request !== request || !owns(owner)) return;
-      // Consume before awaiting RPC, so double clicks can produce only one answer.
-      dialogOwnerRef.current = null;
-      setExtensionDialog(null);
-      if (owner.expiresAt !== undefined && owner.expiresAt <= Date.now()) return;
-      try {
-        await sendAgentCommand(owner.sessionId, { type: "extension_ui_response", id: request.id, ...response });
-      } catch (error) {
-        console.error("Failed to send extension UI response:", error);
-      }
-    },
-    [owns],
+    [getViewSignal, runtimeGate, t, reportDiagnostic, editor, restore],
   );
 
   const sendExtensionCustomInput = useCallback(
@@ -118,17 +137,22 @@ export function useSessionExtensionUi({
         case "select":
         case "confirm":
         case "input":
-        case "editor": {
-          const expiresAt = request.expiresAt ?? (request.timeout ? Date.now() + request.timeout : undefined);
-          if (expiresAt !== undefined && expiresAt <= Date.now()) return;
-          dialogOwnerRef.current = { request, sessionId: sid, signal, expiresAt };
-          setExtensionDialog(request);
+        case "editor":
+          open(request);
           break;
-        }
+        case "dialog_closed":
+          close(request.id);
+          break;
         case "notify":
           addNotice({ id: request.id, message: request.message, type: request.notifyType ?? "info" });
           break;
         case "setStatus":
+          if (runtimeDiagnosticKey.test(request.statusKey)) {
+            // A pending snapshot can still carry the cleared key alongside other, current diagnostics.
+            if (request.statusText) reportDiagnostic(request.statusKey, request.statusText);
+            else clearedDiagnostics.current.set(request.statusKey, runtimeGate.capture().sequence);
+            break;
+          }
           runtimeGate.touch("statuses");
           setExtensionStatuses((prev) => {
             const rest = prev.filter((item) => item.key !== request.statusKey);
@@ -155,7 +179,11 @@ export function useSessionExtensionUi({
           if (request.title) document.title = request.title;
           break;
         case "set_editor_text":
-          chatInputRef?.current?.insertText(request.text);
+        case "paste_editor_text":
+          editor.edit(request.method, request.text, request.editorVersion);
+          break;
+        case "restore_editor_draft":
+          editor.restore(request.edit);
           break;
         case "custom": {
           const previous = customOwnerRef.current;
@@ -180,22 +208,8 @@ export function useSessionExtensionUi({
         }
       }
     },
-    [addNotice, chatInputRef, getViewSignal, owns, runtimeGate, sessionIdRef],
+    [reportDiagnostic, addNotice, editor, getViewSignal, owns, runtimeGate, sessionIdRef, open, close],
   );
-
-  useEffect(() => {
-    const owner = dialogOwnerRef.current;
-    if (!extensionDialog || !owner || owner.expiresAt === undefined) return;
-    const timer = setTimeout(
-      () => {
-        if (dialogOwnerRef.current !== owner) return;
-        dialogOwnerRef.current = null;
-        setExtensionDialog(null);
-      },
-      Math.max(0, owner.expiresAt - Date.now()),
-    );
-    return () => clearTimeout(timer);
-  }, [extensionDialog]);
 
   useEffect(() => {
     if (noticeState.visible.length === 0) return;
@@ -210,6 +224,7 @@ export function useSessionExtensionUi({
   }, [noticeState.visible]);
 
   return {
+    editor,
     extensionDialog,
     extensionCustomUi,
     extensionStatuses,

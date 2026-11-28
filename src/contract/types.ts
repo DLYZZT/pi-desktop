@@ -77,7 +77,22 @@ export interface EntryDetailsResult {
   deferredContent: DeferredContentRef;
 }
 
+export type BashOutputPage =
+  | { status: "ready"; text: string; offset: number; totalBytes: number; nextOffset?: number }
+  | { status: "missing" | "untrusted" | "unavailable" };
+
+export interface SessionRetryInfo {
+  failedMessageTimestamp?: number;
+  attempt: number;
+  maxAttempts: number;
+  errorMessage?: string;
+  modelSwitch?: { from: string; to: string };
+}
+
 export interface SessionRuntimeState {
+  retryInfo?: SessionRetryInfo | null;
+  pendingDialogs?: import("../shared/types").ExtensionDialogRequest[];
+  pendingEditorEdit?: import("../shared/extension-editor").PendingEditorEdit;
   model?: { provider: string; id: string };
   agentSettled?: { aborted: boolean };
   modelSelectionNotice?: ModelSelectionNotice;
@@ -152,7 +167,10 @@ export interface ModelCatalogStatus {
   warnings: ModelCatalogWarning[];
 }
 
+export type ModelImageInput = "image" | "text" | "routed";
+
 export interface ModelsListResult {
+  imageInputs?: Record<string, ModelImageInput>;
   models: ModelInfo[];
   defaultModel: { provider: string; modelId: string } | null;
   thinkingLevels: Record<string, string[]>;
@@ -251,10 +269,12 @@ export interface AgentCommand {
 
 export interface AgentEvent {
   type: string;
+  retryInfo?: SessionRetryInfo | null;
   [key: string]: unknown;
 }
 
 export interface RunningStateEvent {
+  waitingSessionIds?: string[];
   type: "running";
   sessionIds: string[];
 }

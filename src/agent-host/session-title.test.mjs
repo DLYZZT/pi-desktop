@@ -50,3 +50,9 @@ test("takeCodePoints splits by code points, not UTF-16 units", () => {
   assert.equal(takeCodePoints("abc", 2), "ab");
   assert.equal(takeCodePoints("abc", 0), "");
 });
+
+test("answer-only titles and first-person process narration fall back to the user's task", () => {
+  for (const candidate of ["43", "43。", "我先读取 order.txt 的内容", "讓我先查看檔案", "I'll first read the file"])
+    assert.equal(sanitizeGeneratedTitle(candidate), null);
+  for (const topic of ["HTTP 503", "2026 年预算", "Read order.txt"]) assert.equal(sanitizeGeneratedTitle(topic), topic);
+});

@@ -282,3 +282,39 @@ test("mapped reasoning labels retain the selected Pi level and show the raw prov
   await act(async () => choice.props.onClick());
   assert.deepEqual(f.actions.at(-1), ["thinking", "minimal"]);
 });
+
+test("empty-history compaction explains its disabled state and active compaction can still be stopped", async (t) => {
+  const f = await mount(t);
+  await f.update({
+    hasCompactContext: false,
+    onCompact: () => f.actions.push(["compact"]),
+    onAbortCompaction: () => f.actions.push(["cancel compact"]),
+  });
+  const compact = () => f.root.findByProps({ "aria-label": "Compact context" });
+  assert.equal(compact().props.disabled, true);
+  assert.match(compact().props["aria-description"], /Send a message/);
+  await f.update({ hasCompactContext: true });
+  assert.equal(compact().props.disabled, false);
+  await f.clickLabel("Compact context");
+  await f.update({ hasCompactContext: false, isStreaming: true, isCompacting: true });
+  assert.equal(f.root.findByProps({ "aria-label": "Stop compaction" }).props.disabled, false);
+  await f.clickLabel("Stop compaction");
+  assert.deepEqual(f.actions, [["compact"], ["cancel compact"]]);
+});
+
+test("image input capabilities distinguish providers sharing a model ID and virtual routes", async (t) => {
+  const f = await mount(t);
+  await f.update({
+    modelList: [
+      { provider: "first", id: "same-id", name: "Chosen model" },
+      { provider: "second", id: "same-id", name: "Other model" },
+      { provider: "router", id: "auto", name: "Auto" },
+    ],
+    modelImageInputs: { "first:same-id": "text", "second:same-id": "image", "router:auto": "routed" },
+  });
+  await f.clickText("Chosen model");
+  const labels = f.root.findAllByType("button").map(text);
+  assert.ok(labels.includes("Chosen modelText only"));
+  assert.ok(labels.includes("Other modelSupports images"));
+  assert.ok(labels.includes("AutoDepends on routed model"));
+});

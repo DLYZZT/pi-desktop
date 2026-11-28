@@ -65,6 +65,11 @@ export function validatePiRuntimeAssets({ graph, readPackage, exists }) {
     // models-config-validation reads the published schema for every supported SDK version.
     if (manifest.name === "@earendil-works/pi-coding-agent") {
       required.add(`${root}/schemas/models.schema.json`);
+      if (semver.gte(manifest.version, "1.6.1")) {
+        required.add(`${root}/dist/core/model-resolver.js`);
+        required.add(`${root}/dist/core/cache-stats.js`);
+        required.add(`${root}/dist/core/resolve-config-value.js`);
+      }
       if (semver.gte(manifest.version, "1.5.0")) required.add(`${root}/dist/core/extensions/pi-ai-extension-view.js`);
     }
     if (manifest.name === "@earendil-works/pi-schema") required.add(`${root}/dist/formats/index.js`);

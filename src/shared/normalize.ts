@@ -1,7 +1,12 @@
-import type { AgentMessage, AssistantMessage, ToolCallContent } from "./types";
+import type { AgentMessage, AssistantMessage, BashExecutionMessage, ToolCallContent } from "./types";
 
 function isObject(val: unknown): val is Record<string, unknown> {
   return typeof val === "object" && val !== null && !Array.isArray(val);
+}
+
+export function readImagePlaceholderModel(toolName: string | undefined, details: unknown): string | undefined {
+  if (toolName !== "read" || !isObject(details)) return;
+  return typeof details.imageUnsupportedByModel === "string" ? details.imageUnsupportedByModel : undefined;
 }
 
 function normalizeToolCallBlock(block: unknown): ToolCallContent | null {
@@ -28,4 +33,22 @@ export function normalizeToolCalls(msg: AgentMessage): AgentMessage {
     return result ?? block;
   });
   return { ...msg, content: normalized } as AgentMessage;
+}
+
+/** Transcript annotations belong to the Desktop projection, not to persisted or live SDK messages. */
+export function normalizeIncomingMessage(message: AgentMessage | BashExecutionMessage): AgentMessage {
+  if (message.role === "bashExecution" && !("content" in message)) {
+    const { command, output, ...metadata } = message;
+    message = {
+      ...metadata,
+      content: [
+        { type: "text", text: command },
+        { type: "text", text: output },
+      ],
+    };
+  }
+  if (!Object.hasOwn(message, "transcriptNotices")) return normalizeToolCalls(message);
+  const raw = { ...message };
+  delete raw.transcriptNotices;
+  return normalizeToolCalls(raw);
 }

@@ -136,6 +136,60 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+test("the composer mirrors manual edits and selections, accepts full replacements and clears without sending", async () => {
+  const ref = createRef(),
+    updates = [],
+    sent = [];
+  const node = {
+    value: "",
+    selectionStart: 0,
+    selectionEnd: 0,
+    style: {},
+    scrollHeight: 24,
+    setSelectionRange(start, end) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+    },
+    focus() {},
+  };
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(
+        createElement(ChatInput, {
+          ref,
+          isStreaming: false,
+          onAbort() {},
+          onSend(text) {
+            sent.push(text);
+          },
+          onEditorDraftChange(draft) {
+            updates.push(draft);
+          },
+        }),
+        { createNodeMock: (el) => (el.type === "textarea" ? node : null) },
+      );
+    });
+    const textarea = renderer.root.findByType("textarea");
+    Object.assign(node, { value: "before after", selectionStart: 6, selectionEnd: 7 });
+    await act(async () => textarea.props.onChange({ target: node }));
+    assert.deepEqual(ref.current.getEditorDraft(), { text: "before after", start: 6, end: 7 });
+    node.setSelectionRange(2, 6);
+    await act(async () => textarea.props.onSelect({ currentTarget: node }));
+    assert.deepEqual(updates.at(-1), { text: "before after", start: 2, end: 6 });
+    await act(async () => {
+      ref.current.applyEditorDraft({ text: "first", start: 2, end: 2 });
+      assert.deepEqual(ref.current.getEditorDraft(), { text: "first", start: 2, end: 2 });
+      ref.current.applyEditorDraft({ text: "", start: 0, end: 0 });
+    });
+    assert.equal(renderer.root.findByType("textarea").props.value, "");
+    assert.deepEqual(updates.at(-1), { text: "", start: 0, end: 0 });
+    assert.deepEqual(sent, []);
+  } finally {
+    if (renderer) await act(async () => renderer.unmount());
+  }
+});
+
 test("@ project file autocomplete survives component state and sends the completed reference", async () => {
   const sent = [];
   const textareaNode = {

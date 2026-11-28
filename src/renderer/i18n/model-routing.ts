@@ -53,6 +53,7 @@ export const enUS = {
   modelTestUsageHint:
     "Tests send a small decision request or generate one sample image using your provider credentials and may incur usage charges.",
   modelRoutedTo: "Last routed model",
+  modelRetrySwitch: "Auto switched from {from} to {to} after the failed attempt",
   modelUsageBreakdown: "Usage by actual model",
   modelUnattributedUsage: "Tools and summaries",
   reload: "Reload",
@@ -110,6 +111,7 @@ export const zhCN = {
   modelTestRequest: "发送测试请求",
   modelTestUsageHint: "测试会使用该服务商凭据发送一次简单决策请求或生成一张示例图片，可能产生用量费用。",
   modelRoutedTo: "最近实际使用的模型",
+  modelRetrySwitch: "上次请求失败，Auto 已从 {from} 切换到 {to}",
   modelUsageBreakdown: "按实际模型统计用量",
   modelUnattributedUsage: "工具与摘要",
   reload: "重新加载",
@@ -167,6 +169,7 @@ export const zhTW = {
   modelTestRequest: "傳送測試請求",
   modelTestUsageHint: "測試會使用該服務商憑據傳送一次簡單決策請求或產生一張範例圖片，可能產生用量費用。",
   modelRoutedTo: "最近實際使用的模型",
+  modelRetrySwitch: "上次請求失敗，Auto 已從 {from} 切換到 {to}",
   modelUsageBreakdown: "依實際模型統計用量",
   modelUnattributedUsage: "工具與摘要",
   reload: "重新載入",

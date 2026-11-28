@@ -1,5 +1,14 @@
 // Translation entries owned by the settings domain.
 export const enUS: Record<string, string> = {
+  noticesProjectReadFailed: "Project overrides could not be read. The switches show global settings.",
+  noticesTitle: "Global chat notices",
+  noticesCacheMisses: "Cache misses",
+  noticesCacheWarming: "Cache warming costs",
+  noticesCompactionCosts: "Compaction and branch summary costs",
+  noticesReasoningDrops: "Dropped reasoning",
+  noticesProjectOn: "Enabled by this project",
+  noticesProjectOff: "Disabled by this project",
+  noticesSettingsError: "Could not read or save the global chat notice settings.",
   agentShell: "Default Agent shell",
   agentShellHint: "Used by new sessions when command execution is allowed. Existing sessions keep their shell.",
   agentShellUnavailable: "The selected shell is unavailable. Configure its executable in Developer tools.",
@@ -220,6 +229,15 @@ export const enUS: Record<string, string> = {
 };
 
 export const zhCN: Record<string, string> = {
+  noticesProjectReadFailed: "无法读取项目覆盖设置。开关显示全局值。",
+  noticesTitle: "全局聊天提示",
+  noticesCacheMisses: "缓存未命中",
+  noticesCacheWarming: "缓存预热费用",
+  noticesCompactionCosts: "压缩和分支摘要费用",
+  noticesReasoningDrops: "历史推理丢弃",
+  noticesProjectOn: "此项目覆盖为开启",
+  noticesProjectOff: "此项目覆盖为关闭",
+  noticesSettingsError: "无法读取或保存全局聊天提示设置。",
   agentShell: "Agent 默认 Shell",
   agentShellHint: "新会话获准执行命令时使用此 Shell，已有会话保持原有选择。",
   agentShellUnavailable: "所选 Shell 当前不可用，请在开发工具中配置其可执行文件。",
@@ -428,6 +446,15 @@ export const zhCN: Record<string, string> = {
 };
 
 export const zhTW: Record<string, string> = {
+  noticesProjectReadFailed: "無法讀取專案覆寫設定。開關顯示全域值。",
+  noticesTitle: "全域聊天提示",
+  noticesCacheMisses: "快取未命中",
+  noticesCacheWarming: "快取預熱費用",
+  noticesCompactionCosts: "壓縮與分支摘要費用",
+  noticesReasoningDrops: "歷史推理捨棄",
+  noticesProjectOn: "此專案覆寫為開啟",
+  noticesProjectOff: "此專案覆寫為關閉",
+  noticesSettingsError: "無法讀取或儲存全域聊天提示設定。",
   agentShell: "Agent 預設 Shell",
   agentShellHint: "新工作階段獲准執行命令時使用此 Shell，既有工作階段保留原有選擇。",
   agentShellUnavailable: "所選 Shell 目前無法使用，請在開發工具中設定其執行檔。",

@@ -55,6 +55,7 @@ const { useAgentSession, testApi, SessionPresentationStore } = await importTestB
             return await result;
           }
           export const newAgent = (params) => sendAgentCommand(null, params);
+          export const syncEditorDraft = async () => null;
           export const call = async () => ({codingTools: []});
           export let historyReads = 0;
           export function resetCommands() { pendingCommands.clear(); commands.length = connections.length = historyReads = 0; }
@@ -609,7 +610,9 @@ for (const action of ["recall", "stats", "tools"]) {
   test(`a late ${action} result cannot mutate the next view's shared UI`, async (t) => {
     const effects = [],
       pending = createDeferred();
-    const input = { current: { prependText: (text) => effects.push(text) } };
+    const input = {
+      current: { getEditorDraft: () => ({ text: "", start: 0, end: 0 }), prependText: (text) => effects.push(text) },
+    };
     const fixture = await mountRuntime(t, runtimeDetail({ running: false }), {
       chatInputRef: input,
       onSessionStatsPanelOpen: () => effects.push("open stats"),
@@ -628,7 +631,7 @@ for (const action of ["recall", "stats", "tools"]) {
             : fixture.current.loadTools("fixture");
     });
     await fixture.unmount();
-    input.current = { prependText: (text) => effects.push("new view: " + text) };
+    input.current = { ...input.current, prependText: (text) => effects.push("new view: " + text) };
     await act(async () => {
       pending.resolve(
         action === "recall" ? { steering: ["old draft"] } : action === "tools" ? [] : { sessionName: "old" },
@@ -699,7 +702,9 @@ test("queue recall restores its text without clearing a newer queue event", asyn
   const restored = [],
     pending = createDeferred();
   const fixture = await mountRuntime(t, runtimeDetail({ running: false }), {
-    chatInputRef: { current: { prependText: (text) => restored.push(text) } },
+    chatInputRef: {
+      current: { getEditorDraft: () => ({ text: "", start: 0, end: 0 }), prependText: (text) => restored.push(text) },
+    },
   });
   testApi.queueCommand("clear_queue", pending.promise);
   let recall;

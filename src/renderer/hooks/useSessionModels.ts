@@ -18,6 +18,7 @@ export interface SessionModelsOptions {
 /** Owns the model catalog, user selection and request lifetimes for one session view. */
 export function useSessionModels({ isNew, cwd, refreshKey, addNotice }: SessionModelsOptions) {
   const { t } = useI18n();
+  const [modelImageInputs, setModelImageInputs] = useState<NonNullable<ModelsListResult["imageInputs"]>>({});
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
   const [modelList, setModelList] = useState<ModelEntry[]>([]);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogStatus>({
@@ -45,6 +46,7 @@ export function useSessionModels({ isNew, cwd, refreshKey, addNotice }: SessionM
           ? nameMap
           : Object.fromEntries(nextList.map((m) => [`${m.provider}:${m.id}`, m.name])),
       );
+      setModelImageInputs(d.imageInputs ?? {});
       setModelThinkingLevels(d.thinkingLevels ?? {});
       setModelThinkingLevelMaps(d.thinkingLevelMaps ?? {});
       modelListSizeRef.current = nextList.length;
@@ -54,8 +56,11 @@ export function useSessionModels({ isNew, cwd, refreshKey, addNotice }: SessionM
         const match = d.defaultModel
           ? nextList.find((m) => m.id === d.defaultModel?.modelId && m.provider === d.defaultModel?.provider)
           : undefined;
-        const displayModel = match ?? (d.defaultModel ? undefined : nextList[0]);
-        setNewSessionDefaultModel(displayModel ? { provider: displayModel.provider, modelId: displayModel.id } : null);
+        const selected = d.defaultModel;
+        const authenticatedDefault = selected && Object.hasOwn(nameMap, `${selected.provider}:${selected.modelId}`);
+        setNewSessionDefaultModel(
+          match ? { provider: match.provider, modelId: match.id } : authenticatedDefault ? selected : null,
+        );
       }
     },
     [isNew],
@@ -157,6 +162,7 @@ export function useSessionModels({ isNew, cwd, refreshKey, addNotice }: SessionM
 
   return {
     modelNames,
+    modelImageInputs,
     modelList,
     modelCatalog,
     modelRefreshing,

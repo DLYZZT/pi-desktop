@@ -1,7 +1,4 @@
-import { constants } from "node:fs";
-import { lstat, open, realpath } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { openSdkOutputFile } from "./sdk-output-file";
 import type { ExecutionPayload } from "../contract/executions";
 import type { ExecutionLogStore } from "./execution-log-store";
 
@@ -12,22 +9,21 @@ export async function captureExecutionOutput(
   result: unknown,
 ): Promise<ExecutionPayload | undefined> {
   if (toolName !== "bash" && toolName !== "powershell" && toolName !== "codemode") return;
-  const details = (result as { details?: { fullOutputPath?: unknown } } | undefined)?.details;
+  const details = (result as { details?: { fullOutputPath?: unknown; fullOutputError?: unknown } } | undefined)
+    ?.details;
   const filename = details?.fullOutputPath;
-  if (typeof filename !== "string") return;
+  if (typeof filename !== "string") {
+    if (toolName === "bash" && typeof details?.fullOutputError === "string")
+      return { complete: false, reason: details.fullOutputError.slice(0, 512) };
+    return;
+  }
   const pattern =
     toolName === "codemode"
       ? /^pi-codemode-[a-f0-9]{16}\.txt$/u
       : new RegExp(`^pi-${toolName}-[a-f0-9]{16}\\.log$`, "u");
   try {
-    if (
-      !path.isAbsolute(filename) ||
-      !pattern.test(path.basename(filename)) ||
-      (await realpath(path.dirname(filename))) !== (await realpath(tmpdir())) ||
-      !(await lstat(filename)).isFile()
-    )
-      return { complete: false, reason: "Output path is not an SDK-owned temporary file" };
-    const handle = await open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const handle = await openSdkOutputFile(filename, pattern);
+    if (!handle) return { complete: false, reason: "Output path is not an SDK-owned temporary file" };
     try {
       const before = await handle.stat();
       if (!before.isFile() || before.size > 32 * 1024 * 1024)

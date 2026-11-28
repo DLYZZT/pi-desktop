@@ -1,3 +1,4 @@
+import { implicitSessionModel } from "../new-session-default";
 import { statSync } from "node:fs";
 import { getAgentDir, type ModelRuntime, type SettingsManager } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -149,25 +150,43 @@ export async function projectModelsList(
     }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.provider.localeCompare(b.provider));
 
+  let defaultModel: { provider: string; modelId: string } | null = null;
+  const provider = settings.getDefaultProvider();
+  const modelId = settings.getDefaultModel();
+  if (provider && modelId) {
+    defaultModel = { provider, modelId };
+  } else {
+    const model = await implicitSessionModel(modelRuntime, settings);
+    if (model) defaultModel = { provider: model.provider, modelId: model.id };
+  }
+
   const nameMap: Record<string, string> = {};
   const thinkingLevels: Record<string, string[]> = {};
   const thinkingLevelMaps: Record<string, Record<string, string | null>> = {};
-  for (const model of visible) {
+  // A valid saved default may be outside the picker filter. Describe it without making an unavailable fallback selectable.
+  const selected = available.find((m) => m.provider === defaultModel?.provider && m.id === defaultModel.modelId);
+  for (const model of selected && !visible.includes(selected) ? [...visible, selected] : visible) {
     const key = `${model.provider}:${model.id}`;
     nameMap[key] = model.name;
     thinkingLevels[key] = getSupportedThinkingLevels(model);
     if (model.thinkingLevelMap) thinkingLevelMaps[key] = model.thinkingLevelMap;
   }
 
-  let defaultModel: { provider: string; modelId: string } | null = null;
-  const provider = settings.getDefaultProvider();
-  const modelId = settings.getDefaultModel();
-  if (provider) {
-    defaultModel = { provider, modelId: modelId ?? "" };
-  }
-
   return {
     models,
+    imageInputs: Object.fromEntries(
+      available.flatMap((m) => {
+        const input =
+          m.api === "pi-virtual"
+            ? "routed"
+            : Array.isArray(m.input)
+              ? m.input.includes("image")
+                ? "image"
+                : "text"
+              : undefined;
+        return input ? [[`${m.provider}:${m.id}`, input]] : [];
+      }),
+    ),
     defaultModel,
     thinkingLevels,
     thinkingLevelMaps,

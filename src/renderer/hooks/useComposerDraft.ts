@@ -406,8 +406,10 @@ export function useComposerDraft({
   );
 
   const getRevision = useCallback(() => inputRevisionRef.current, []);
+  const getText = useCallback(() => valueRef.current, []);
   return {
     value,
+    getText,
     setValue,
     attachedImages,
     attachedFiles,

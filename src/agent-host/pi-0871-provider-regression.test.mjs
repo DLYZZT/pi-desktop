@@ -170,7 +170,7 @@ test("a root pi-ai Faux provider reaches its SDK session without leaking registr
   session.setThinkingLevel("high");
   await session.prompt("Capture the real adapter payload", { source: "rpc" });
   assert.ok(serializedPayload);
-  assert.equal(serializedPayload.messages[0].role, "developer");
+  assert.equal(serializedPayload.messages[0].role, "system");
   assert.match(serializedPayload.messages[0].content, /<tools>[\s\S]*- read:/);
   assert.equal(serializedPayload.tools[0].function.name, "read");
   assert.equal(serializedPayload.tools[0].function.strict, undefined);

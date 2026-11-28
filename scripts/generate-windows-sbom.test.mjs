@@ -165,7 +165,11 @@ test("current production lock includes the complete pinned Pi graph in the Windo
   }
   assert.ok(sbom.components.some((entry) => entry.name === "typebox" && entry.version === "1.3.27"));
   assert.ok(sbom.components.some((entry) => entry.name === "quickjs-wasi" && entry.version === "3.6.2"));
-  assert.ok(sbom.components.some((entry) => entry.name === "openai" && entry.version === "7.19.0"));
+  assert.ok(sbom.components.some((entry) => entry.name === "openai" && entry.version === "7.59.0"));
+  assert.ok(sbom.components.some((entry) => entry.name === "@google/genai" && entry.version === "3.6.1"));
+  assert.ok(
+    sbom.components.some((entry) => entry.name === "@aws-sdk/credential-provider-node" && entry.version === "3.972.82"),
+  );
   for (const name of ["pi-server", "pi-client", "pi-protocol", "chord"]) {
     assert.equal(
       sbom.components.some((entry) => entry.name === "@earendil-works/" + name),

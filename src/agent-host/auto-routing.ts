@@ -9,16 +9,26 @@ import { migrateRoutingSettings, readProviderRenames } from "./provider-renames"
 
 type UsageRecorder = (provider: string, model: string, usage: Usage) => void;
 
-type RouteState = { target: ModelReference; reason: string };
+export type DesktopRouteState = { target: ModelReference; reason: string; retryFrom?: ModelReference };
 
 export async function routeDesktopModel(
   config: AutoRoutingConfig,
-  request: ModelRouteRequest<RouteState>,
+  request: ModelRouteRequest<DesktopRouteState>,
   ctx: ExtensionContext,
   recordUsage: UsageRecorder,
-): Promise<ModelRoute<RouteState>> {
+): Promise<ModelRoute<DesktopRouteState>> {
   request.signal?.throwIfAborted();
-  const choose = (reference: ModelReference | undefined, reason: string): ModelRoute<RouteState> => {
+  for (const ref of [config.fast, config.strong]) {
+    if (ref && !ctx.modelRegistry.find(ref.provider, ref.modelId))
+      throw new Error(
+        `MODEL_SELECTION_REQUIRED: Auto cannot restore ${ref.provider}/${ref.modelId}. Choose a model in Auto routing settings.`,
+      );
+  }
+  const choose = (
+    reference: ModelReference | undefined,
+    reason: string,
+    retryFrom?: ModelReference,
+  ): ModelRoute<DesktopRouteState> => {
     const model = reference && ctx.modelRegistry.find(reference.provider, reference.modelId);
     if (!model || model.api === "pi-virtual")
       throw new Error("Auto requires an available physical model. Review Auto routing settings.");
@@ -26,13 +36,13 @@ export async function routeDesktopModel(
     return {
       model,
       thinkingLevel: (strong ? config.strongThinking : config.fastThinking) as ModelRoute["thinkingLevel"],
-      state: { target: reference!, reason },
+      state: { target: reference!, reason, ...(retryFrom ? { retryFrom } : {}) },
     };
   };
   if (request.reason === "retry" && request.failed && config.retryFallback) {
     const failed = request.failed.model;
     const wasStrong = failed.provider === config.strong?.provider && failed.id === config.strong?.modelId;
-    return choose(wasStrong ? config.fast : config.strong, "retry");
+    return choose(wasStrong ? config.fast : config.strong, "retry", { provider: failed.provider, modelId: failed.id });
   }
   const sticky = request.failed ?? request.previous;
   if (request.reason !== "user" && sticky)
@@ -109,7 +119,7 @@ export function createAutoRoutingExtension(
         }
         return config;
       };
-      pi.registerVirtualModel<RouteState>({
+      pi.registerVirtualModel<DesktopRouteState>({
         provider: AUTO_ROUTING_PROVIDER,
         id: AUTO_ROUTING_MODEL,
         name: "Auto",

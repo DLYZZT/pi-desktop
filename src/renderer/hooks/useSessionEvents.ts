@@ -52,7 +52,9 @@ export function useSessionEvents({
         signal,
         subscribe: (onEvent) => subscribeAgentEvents(sid, onEvent),
         onEvent: (event) => {
-          if (sid === sessionIdRef.current) handleAgentEventRef.current?.(event);
+          if (sid !== sessionIdRef.current) return;
+          if (event.type === "transcript_update") refreshQueueRef.current?.request(100);
+          else handleAgentEventRef.current?.(event);
         },
         timeoutMs: EVENT_STREAM_CONNECT_TIMEOUT_MS,
       });

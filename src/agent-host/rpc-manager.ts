@@ -1,3 +1,8 @@
+import { ExtensionDialogs, type DialogBody } from "./extension-dialogs";
+import { needsTranscriptRefresh } from "./transcript-notices";
+import { applyLiveNoticeSettings } from "./transcript-settings";
+import { disposeSdkSession } from "./session-dispose";
+import { implicitSessionModel } from "./new-session-default";
 import { SessionResourceReload } from "./session-resource-reload";
 import { SessionModelConfig } from "./session-model-config";
 import { loadSessionToolSelection } from "./session-shell";
@@ -26,7 +31,7 @@ import type {
 import { browserToolNamesForSnapshot, isBrowserToolName, setBrowserSessionSource } from "./browser-tools";
 import { browserCapabilityRuntime } from "./browser-capability-runtime";
 import { browserAgentRuntime } from "./browser-agent-runtime";
-import { projectExtensionDiagnostics } from "./extension-diagnostics";
+import { reconcileDiagnosticStatuses } from "./extension-diagnostics";
 import {
   getDesktopSessionExecutionTools,
   setDesktopSessionExecutionTools,
@@ -49,6 +54,10 @@ import { createDesktopAgentSessionServices as createAgentSessionServices } from 
 import { promptChannelTurn, cancelChannelAttachmentContext } from "./channel-attachment-context";
 import { createDesktopSessionTools } from "./desktop-session-tools";
 import { SessionModelSelection } from "./session-model-selection";
+import { projectSessionRetry } from "./session-retry";
+import { ExtensionEditor, mountedEditorDraft } from "./extension-editor";
+import type { EditorDraft } from "../shared/extension-editor";
+import type { SessionRetryInfo } from "../contract/types";
 
 // ============================================================================
 // Types
@@ -61,13 +70,8 @@ export interface AgentEvent {
 
 type EventListener = (event: AgentEvent) => void;
 
-type PendingUiResponse = {
-  resolve: (response: ExtensionUiResponse) => void;
-  cancel: () => void;
-};
-
 type CustomUiComponent = {
-  render: (width: number) => string[];
+  render: (width: number) => readonly string[];
   handleInput?: (data: string) => void;
   dispose?: () => void;
   invalidate?: () => void;
@@ -78,12 +82,6 @@ type ActiveCustomUi = {
   width: number;
   resolve: (value: unknown) => void;
   settled: boolean;
-};
-
-type ExtensionUiRequestBody = Record<string, unknown> & {
-  method: ExtensionUiRequest["method"];
-  timeout?: number;
-  expiresAt?: number;
 };
 
 type ExtensionCommandContextActionsLike = {
@@ -109,18 +107,26 @@ export type ExternalSessionCommand = "compact" | "reload";
 export class AgentSessionWrapper {
   public readonly inner: AgentSessionLike;
   private listeners: EventListener[] = [];
-  private pendingUiResponses = new Map<string, PendingUiResponse>();
+  readonly dialogs = new ExtensionDialogs((request) => {
+    this.emit(request);
+    notifyRunningChange();
+  });
   private pendingUiRequests = new Map<string, AgentEvent>();
   private activeCustomUis = new Map<string, ActiveCustomUi>();
   private extensionStatuses = new Map<string, string>();
+  private setupDiagnostics: readonly AgentSessionRuntimeDiagnostic[] = [];
+  private bindingDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
   private runtimeDiagnosticStatuses = new Map<string, string>();
   private extensionWidgets = new Map<string, ExtensionWidgetItem>();
   private extensionWorkingMessage = "Working";
   private extensionWorkingIndicator = "";
   private extensionWorkingVisible = true;
-  private extensionEditorText = "";
+  readonly editor = new ExtensionEditor((request) => this.emit(request));
+  private lastFailedTimestamp?: number;
+  private retryInfo: SessionRetryInfo | null = null;
   private unsupportedExtensionFeatures = new Set<string>();
   private promptRunning = false;
+  private turnDialogsCancelled = false;
   private agentSettled: { aborted: boolean } | undefined;
   private queuedTurnCount = 0;
   private turnTail: Promise<void> = Promise.resolve();
@@ -186,7 +192,11 @@ export class AgentSessionWrapper {
   isRunning(): boolean {
     return (
       this._alive &&
-      (this.promptRunning || this.queuedTurnCount > 0 || this.inner.isStreaming || this.inner.isCompacting)
+      (this.dialogs.waiting ||
+        this.promptRunning ||
+        this.queuedTurnCount > 0 ||
+        this.inner.isStreaming ||
+        this.inner.isCompacting)
     );
   }
 
@@ -199,6 +209,7 @@ export class AgentSessionWrapper {
       const sourceEvent = this.withExternalChannelSource(event);
       const displayEvent = this.executionHistory?.projectEvent(sourceEvent) ?? sourceEvent;
       this.emit(displayEvent);
+      if (needsTranscriptRefresh(displayEvent, this.inner)) this.emit({ type: "transcript_update" });
       try {
         this.externalTurnProgress?.(displayEvent);
       } catch {
@@ -249,9 +260,13 @@ export class AgentSessionWrapper {
     this.promptPolicy.setToolchainSummary(revision, summary);
   }
 
-  setRuntimeDiagnostics(diagnostics: readonly AgentSessionRuntimeDiagnostic[]): void {
-    this.runtimeDiagnosticStatuses = new Map(
-      projectExtensionDiagnostics(diagnostics).map(({ key, text }) => [key, text]),
+  setRuntimeDiagnostics(diagnostics = this.setupDiagnostics): void {
+    this.setupDiagnostics = diagnostics;
+    this.runtimeDiagnosticStatuses = reconcileDiagnosticStatuses(
+      this.inner,
+      [...diagnostics, ...this.bindingDiagnostics],
+      this.runtimeDiagnosticStatuses,
+      (event) => this.emit(event),
     );
   }
 
@@ -300,13 +315,21 @@ export class AgentSessionWrapper {
               notifyType: "warning",
               message: "Extension requested shutdown, but shutdown is not supported in Pi Desktop.",
             } as ExtensionUiRequest as AgentEvent),
-          onError: (error) =>
-            this.emit({
-              type: "extension_error",
-              extensionPath: error.extensionPath,
-              event: error.event,
-              error: error.error,
-            }),
+          onError: (error) => {
+            if (error.event === "session_start" || error.event === "resources_discover") {
+              this.bindingDiagnostics.push({
+                type: "error",
+                message: `Extension "${error.extensionPath}" (${error.event}): ${error.error}`,
+              });
+              this.setRuntimeDiagnostics();
+            } else
+              this.emit({
+                type: "extension_error",
+                extensionPath: error.extensionPath,
+                event: error.event,
+                error: error.error,
+              });
+          },
         });
       } else {
         this.inner.extensionRunner.setUIContext?.(uiContext, "rpc");
@@ -382,6 +405,16 @@ export class AgentSessionWrapper {
   }
 
   private emit(event: AgentEvent): void {
+    if (event.type === "message_end") {
+      const message = event.message as { role?: string; stopReason?: string; timestamp?: number } | undefined;
+      if (message?.role === "assistant")
+        this.lastFailedTimestamp = message.stopReason === "error" ? message.timestamp : undefined;
+    }
+    const retry = projectSessionRetry(this.retryInfo, event, this.lastFailedTimestamp);
+    if (retry !== this.retryInfo) {
+      this.retryInfo = retry;
+      event = { ...event, retryInfo: retry };
+    }
     for (const l of this.listeners) l(event);
   }
 
@@ -399,6 +432,7 @@ export class AgentSessionWrapper {
           return await task();
         } finally {
           this.promptRunning = false;
+          this.turnDialogsCancelled = false;
           this.queuedTurnCount = Math.max(0, this.queuedTurnCount - 1);
           notifyRunningChange();
         }
@@ -483,6 +517,8 @@ export class AgentSessionWrapper {
       }
       this.extensionsBound = false;
       this.extensionBindingError = null;
+      this.setupDiagnostics = [];
+      this.bindingDiagnostics = [];
       this.extensionStatuses.clear();
       this.extensionWidgets.clear();
       this.extensionsBound = await this.resourceReload.reloadSession(
@@ -492,6 +528,7 @@ export class AgentSessionWrapper {
         () => this._alive,
       );
       await this.ensureExtensionsBound();
+      this.setRuntimeDiagnostics([]);
       this.reapplyToolSelection();
       return recoverConfig ? () => this.modelSelection.restoreAfterConfigRepair(this.inner) : undefined;
     });
@@ -525,7 +562,15 @@ export class AgentSessionWrapper {
 
   onEvent(listener: EventListener): () => void {
     this.listeners.push(listener);
+    for (const dialog of this.dialogs.snapshot()) listener(dialog);
     for (const event of this.pendingUiRequests.values()) listener(event);
+    if (this.editor.pending)
+      listener({
+        type: "extension_ui_request",
+        id: randomUUID(),
+        method: "restore_editor_draft",
+        edit: this.editor.pending,
+      });
     return () => {
       const i = this.listeners.indexOf(listener);
       if (i !== -1) this.listeners.splice(i, 1);
@@ -584,6 +629,8 @@ export class AgentSessionWrapper {
       }
 
       case "abort":
+        this.turnDialogsCancelled = this.promptRunning;
+        this.dialogs.cancelAll();
         await this.withFinalRunningNotification(() => this.inner.abort());
         return null;
 
@@ -599,6 +646,9 @@ export class AgentSessionWrapper {
           isCompacting: this.inner.isCompacting,
           autoCompactionEnabled: this.inner.autoCompactionEnabled,
           autoRetryEnabled: this.inner.autoRetryEnabled,
+          retryInfo: this.retryInfo,
+          pendingDialogs: this.dialogs.snapshot(),
+          ...(this.editor.pending && { pendingEditorEdit: this.editor.pending }),
           model: model ? { id: model.id, provider: model.provider } : undefined,
           modelSelectionNotice: this.modelSelection.snapshot(this.inner),
           messageCount: 0,
@@ -802,7 +852,7 @@ export class AgentSessionWrapper {
       }
 
       case "extension_ui_response": {
-        this.resolveExtensionUiResponse(command as ExtensionUiResponse);
+        this.dialogs.answer(command as ExtensionUiResponse);
         return null;
       }
 
@@ -827,56 +877,13 @@ export class AgentSessionWrapper {
    */
   dispose(options: { abort?: boolean; reason?: string; timeoutMs?: number } = {}): Promise<void> {
     if (this.disposePromise) return this.disposePromise;
-    const abort = options.abort !== false;
-    const reason = options.reason ?? "explicit";
-    const timeoutMs = options.timeoutMs ?? 5_000;
     this.destroy();
-
-    this.disposePromise = (async () => {
-      const teardown = async () => {
-        if (abort) {
-          try {
-            await this.inner.abort();
-          } catch (error) {
-            console.warn(
-              `[pi-desktop] session abort failed during ${reason} for ${this.sessionId}: ${error instanceof Error ? error.name : "UnknownError"}`,
-            );
-          }
-        }
-        const agent = this.inner.agent as { waitForIdle?: () => Promise<void>; dispose?: () => void | Promise<void> };
-        try {
-          await agent.waitForIdle?.();
-        } catch (error) {
-          console.warn(
-            `[pi-desktop] session waitForIdle failed during ${reason} for ${this.sessionId}: ${error instanceof Error ? error.name : "UnknownError"}`,
-          );
-        }
-        try {
-          await this.disposeMcp?.();
-          await agent.dispose?.();
-          await this.executionHistory?.flush();
-        } catch (error) {
-          console.warn(
-            `[pi-desktop] session dispose failed during ${reason} for ${this.sessionId}: ${error instanceof Error ? error.name : "UnknownError"}`,
-          );
-        }
-      };
-
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          teardown(),
-          new Promise<void>((resolve) => {
-            timeout = setTimeout(() => {
-              console.warn(`[pi-desktop] session teardown timed out after ${timeoutMs}ms during ${reason}`);
-              resolve();
-            }, timeoutMs);
-          }),
-        ]);
-      } finally {
-        if (timeout) clearTimeout(timeout);
-      }
-    })();
+    this.disposePromise = disposeSdkSession(
+      this.inner,
+      options,
+      this.disposeMcp,
+      this.executionHistory && (() => this.executionHistory!.flush()),
+    );
     return this.disposePromise;
   }
 
@@ -891,9 +898,8 @@ export class AgentSessionWrapper {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.unsubscribe?.();
     this.unsubscribe = null;
-    for (const pending of this.pendingUiResponses.values()) pending.cancel();
+    this.dialogs.cancelAll();
     for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
-    this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
     this.listeners = [];
     const destroyCallbacks = [...this.destroyCallbacks];
@@ -906,12 +912,6 @@ export class AgentSessionWrapper {
       }
     }
     notifyRunningChange();
-  }
-
-  private resolveExtensionUiResponse(response: ExtensionUiResponse): void {
-    const pending = this.pendingUiResponses.get(response.id);
-    if (!pending) return;
-    pending.resolve(response);
   }
 
   private getExtensionStatuses(): Array<{ key: string; text: string }> {
@@ -970,7 +970,7 @@ export class AgentSessionWrapper {
   private emitCustomUiRender(id: string, custom: ActiveCustomUi): void {
     let lines: string[];
     try {
-      lines = custom.component.render(custom.width);
+      lines = [...custom.component.render(custom.width)];
     } catch (error) {
       lines = [`Extension custom UI render failed: ${error instanceof Error ? error.message : String(error)}`];
     }
@@ -1078,12 +1078,13 @@ export class AgentSessionWrapper {
   }
 
   private requestExtensionUi<T>(
-    request: ExtensionUiRequestBody,
+    request: DialogBody,
     defaultValue: T,
     parseResponse: (response: ExtensionUiResponse) => T,
     timeout?: number,
     signal?: AbortSignal,
   ): Promise<T> {
+    if (!this._alive || this.turnDialogsCancelled) return Promise.resolve(defaultValue);
     if (this.externalTurnActive) {
       this.emit({
         type: "channel_headless_ui_blocked",
@@ -1092,47 +1093,20 @@ export class AgentSessionWrapper {
       });
       return Promise.resolve(defaultValue);
     }
-    if (signal?.aborted) return Promise.resolve(defaultValue);
-
-    const id = randomUUID();
-    const fullRequest = {
-      type: "extension_ui_request",
-      id,
-      ...request,
-      ...(timeout ? { timeout, expiresAt: Date.now() + timeout } : {}),
-    };
-
-    return new Promise((resolve) => {
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      const cleanup = () => {
-        if (timeoutId) clearTimeout(timeoutId);
-        signal?.removeEventListener("abort", onAbort);
-        this.pendingUiRequests.delete(id);
-        this.pendingUiResponses.delete(id);
-      };
-      const settle = (value: T) => {
-        cleanup();
-        resolve(value);
-      };
-      const onAbort = () => settle(defaultValue);
-
-      if (timeout) timeoutId = setTimeout(() => settle(defaultValue), timeout);
-      signal?.addEventListener("abort", onAbort, { once: true });
-
-      this.pendingUiRequests.set(id, fullRequest as AgentEvent);
-      this.pendingUiResponses.set(id, {
-        resolve: (response) => settle(parseResponse(response)),
-        cancel: () => settle(defaultValue),
-      });
-      this.emit(fullRequest as AgentEvent);
-    });
+    return this.dialogs.ask(request, defaultValue, parseResponse, timeout, signal);
   }
 
   private createExtensionUiContext(): ExtensionUiContextLike {
     return {
       select: (title, options, opts) =>
         this.requestExtensionUi(
-          { method: "select", title, options, ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
+          {
+            method: "select",
+            title,
+            options,
+            blockedKind: opts?.blockedKind ?? "question",
+            ...(opts?.timeout ? { timeout: opts.timeout } : {}),
+          },
           undefined,
           (response) => ("value" in response ? response.value : undefined),
           opts?.timeout,
@@ -1140,7 +1114,13 @@ export class AgentSessionWrapper {
         ),
       confirm: (title, message, opts) =>
         this.requestExtensionUi(
-          { method: "confirm", title, message, ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
+          {
+            method: "confirm",
+            title,
+            message,
+            blockedKind: opts?.blockedKind ?? "permission",
+            ...(opts?.timeout ? { timeout: opts.timeout } : {}),
+          },
           false,
           (response) => ("confirmed" in response ? response.confirmed : false),
           opts?.timeout,
@@ -1153,6 +1133,7 @@ export class AgentSessionWrapper {
             title,
             message,
             localization,
+            blockedKind: opts?.blockedKind ?? "permission",
             ...(opts?.timeout ? { timeout: opts.timeout } : {}),
           },
           false,
@@ -1164,6 +1145,7 @@ export class AgentSessionWrapper {
         this.requestExtensionUi(
           {
             method: "input",
+            blockedKind: opts?.blockedKind ?? "question",
             title,
             ...(placeholder !== undefined ? { placeholder } : {}),
             ...(opts?.timeout ? { timeout: opts.timeout } : {}),
@@ -1253,25 +1235,7 @@ export class AgentSessionWrapper {
         } as ExtensionUiRequest as AgentEvent);
       },
       custom: <T = unknown>(factory: unknown, options?: unknown) => this.requestExtensionCustomUi<T>(factory, options),
-      pasteToEditor: (text) => {
-        this.extensionEditorText += text;
-        this.emit({
-          type: "extension_ui_request",
-          id: randomUUID(),
-          method: "set_editor_text",
-          text,
-        } as ExtensionUiRequest as AgentEvent);
-      },
-      setEditorText: (text) => {
-        this.extensionEditorText = text;
-        this.emit({
-          type: "extension_ui_request",
-          id: randomUUID(),
-          method: "set_editor_text",
-          text,
-        } as ExtensionUiRequest as AgentEvent);
-      },
-      getEditorText: () => this.extensionEditorText,
+      ...this.editor.bindings,
       addAutocompleteProvider: () => this.reportUnsupportedExtensionFeature("TUI autocomplete provider"),
       setEditorComponent: () => this.reportUnsupportedExtensionFeature("custom TUI editor component"),
       getEditorComponent: () => undefined,
@@ -1319,40 +1283,27 @@ export class AgentSessionWrapper {
 
 const sessionRegistry = new Map<string, AgentSessionWrapper>();
 const startLocks = new Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>>();
-const runningListeners = new Set<(ids: string[]) => void>();
-let registryCleanupInstalled = false;
-
-function getRegistry(): Map<string, AgentSessionWrapper> {
-  if (!registryCleanupInstalled) {
-    registryCleanupInstalled = true;
-    const cleanup = () => sessionRegistry.forEach((session) => session.destroy());
-    process.once("exit", cleanup);
-    process.once("SIGINT", cleanup);
-    process.once("SIGTERM", cleanup);
-  }
-  return sessionRegistry;
-}
-
-function getLocks(): Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> {
-  return startLocks;
-}
+const runningListeners = new Set<(ids: string[], waiting: string[]) => void>();
+let sessionsClosing = false;
 
 export function getRpcSession(sessionId: string): AgentSessionWrapper | undefined {
-  return getRegistry().get(sessionId);
+  return sessionRegistry.get(sessionId);
 }
 
 export async function disposeAllRpcSessions(reason = "host-shutdown"): Promise<void> {
-  await Promise.all([...getRegistry().values()].map((session) => session.dispose({ abort: true, reason })));
+  sessionsClosing = true;
+  await Promise.allSettled([...startLocks.values()]);
+  await Promise.all([...sessionRegistry.values()].map((session) => session.dispose({ abort: true, reason })));
 }
 
 export function syncDesktopToolsForAllSessions(): void {
-  for (const session of getRegistry().values()) session.syncDesktopToolActivation();
+  for (const session of sessionRegistry.values()) session.syncDesktopToolActivation();
 }
 
 /** Reconcile active SDK timers after a persisted global cache-warming change. */
 export async function syncCacheWarmingForAllSessions(mode: "off" | "streaming" | "idle"): Promise<number> {
   let pendingSessionCount = 0;
-  for (const session of getRegistry().values()) {
+  for (const session of sessionRegistry.values()) {
     if (!session.isAlive()) continue;
     try {
       session.inner.setCacheWarmingMode(mode);
@@ -1367,9 +1318,19 @@ export async function syncCacheWarmingForAllSessions(mode: "off" | "streaming" |
   return pendingSessionCount;
 }
 
+export function refreshSessionNoticeSettings(): void {
+  applyLiveNoticeSettings(sessionRegistry.values());
+}
+
+export function getWaitingRpcSessionIds(): string[] {
+  return [...sessionRegistry.values()]
+    .filter((session) => session.isAlive() && session.dialogs.waiting)
+    .map((session) => session.sessionId);
+}
+
 export function getRunningRpcSessionIds(): string[] {
   const ids = new Set<string>();
-  for (const [sessionId, session] of getRegistry()) {
+  for (const [sessionId, session] of sessionRegistry) {
     if (session.isRunning()) ids.add(session.sessionId || sessionId);
   }
   return [...ids];
@@ -1383,12 +1344,12 @@ export function getRunningRpcSessionIds(): string[] {
 // MessagePort updates instead of polling.
 // ----------------------------------------------------------------------------
 
-function getRunningListeners(): Set<(ids: string[]) => void> {
+function getRunningListeners(): Set<(ids: string[], waiting: string[]) => void> {
   return runningListeners;
 }
 
 /** Subscribe to running-session-id changes. Returns an unsubscribe function. */
-export function subscribeRunningSessions(listener: (ids: string[]) => void): () => void {
+export function subscribeRunningSessions(listener: (ids: string[], waiting: string[]) => void): () => void {
   const listeners = getRunningListeners();
   listeners.add(listener);
   return () => {
@@ -1404,12 +1365,13 @@ let lastRunningSnapshot = "";
  */
 export function notifyRunningChange(): void {
   const ids = getRunningRpcSessionIds();
-  const snapshot = JSON.stringify([...ids].sort());
+  const waiting = getWaitingRpcSessionIds();
+  const snapshot = JSON.stringify([[...ids].sort(), [...waiting].sort()]);
   if (snapshot === lastRunningSnapshot) return;
   lastRunningSnapshot = snapshot;
   for (const listener of getRunningListeners()) {
     try {
-      listener(ids);
+      listener(ids, waiting);
     } catch {
       /* ignore listener errors */
     }
@@ -1426,10 +1388,12 @@ export async function startRpcSession(
   sessionFile: string,
   cwd: string,
   toolNames?: string[],
+  editorDraft?: EditorDraft,
 ): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
   if (toolNames !== undefined) validateDesktopToolNames(toolNames, process.platform);
-  const registry = getRegistry();
-  const locks = getLocks();
+  if (sessionsClosing) throw new Error("Agent Host is shutting down");
+  const registry = sessionRegistry;
+  const locks = startLocks;
 
   const existing = registry.get(sessionId);
   if (existing?.isAlive()) return { session: existing, realSessionId: sessionId };
@@ -1490,7 +1454,13 @@ export async function startRpcSession(
       executionHistory,
       { shell },
     );
-    const model = modelSelection.prepare(services, sessionManager);
+    const model =
+      modelSelection.prepare(services, sessionManager) ??
+      (!sessionFile &&
+      !(services.settingsManager.getDefaultProvider() && services.settingsManager.getDefaultModel()) &&
+      services.settingsManager.getEnabledModels()?.length
+        ? await implicitSessionModel(services.modelRuntime, services.settingsManager)
+        : undefined);
     const { session: inner, modelFallbackMessage } = await createAgentSessionFromServices({
       services,
       sessionManager,
@@ -1498,33 +1468,45 @@ export async function startRpcSession(
       excludeTools: [...excludedPiTools(process.platform)],
       ...(model ? { model } : {}),
     });
-    modelSelection.finish(inner, modelFallbackMessage);
-    const realSessionId = inner.sessionId as string;
-    const sessionToolNames = await activateInitialSessionTools(inner, selection, toolPolicy, promptPolicy);
+    const realSessionId = inner.sessionId;
+    const detachMcp = () => peekMcpService()?.detach(realSessionId) ?? Promise.resolve();
+    let wrapper: AgentSessionWrapper | undefined;
+    try {
+      modelSelection.finish(inner, modelFallbackMessage);
+      const sessionToolNames = await activateInitialSessionTools(inner, selection, toolPolicy, promptPolicy);
 
-    const wrapper = new AgentSessionWrapper(
-      inner,
-      sessionToolNames,
-      undefined,
-      promptPolicy,
-      executionHistory,
-      toolPolicy,
-      () => peekMcpService()?.detach(realSessionId) ?? Promise.resolve(),
-      modelSelection,
-    );
-    wrapper.setRuntimeDiagnostics(services.diagnostics);
-    desktopTools.attach(wrapper, toolPolicy);
-    wrapper.start();
-    wrapper.syncDesktopToolActivation();
+      wrapper = new AgentSessionWrapper(
+        inner,
+        sessionToolNames,
+        undefined,
+        promptPolicy,
+        executionHistory,
+        toolPolicy,
+        detachMcp,
+        modelSelection,
+      );
+      const draft = mountedEditorDraft(realSessionId) ?? editorDraft;
+      if (draft) wrapper.editor.sync(draft);
+      wrapper.setRuntimeDiagnostics(services.diagnostics);
+      desktopTools.attach(wrapper, toolPolicy);
+      wrapper.start();
+      wrapper.syncDesktopToolActivation();
 
-    const realSessionFile = inner.sessionFile as string | undefined;
-    if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);
+      const realSessionFile = inner.sessionFile as string | undefined;
+      if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);
 
-    wrapper.onDestroy(() => registry.delete(realSessionId));
-    registry.set(realSessionId, wrapper);
-    wrapper.beginExtensionBinding({ forceEmptySystemPrompt: sessionToolNames?.length === 0 });
+      wrapper.onDestroy(() => {
+        if (registry.get(realSessionId) === wrapper) registry.delete(realSessionId);
+      });
+      registry.set(realSessionId, wrapper);
+      wrapper.beginExtensionBinding({ forceEmptySystemPrompt: sessionToolNames?.length === 0 });
 
-    return { session: wrapper, realSessionId };
+      return { session: wrapper, realSessionId };
+    } catch (error) {
+      if (wrapper) await wrapper.dispose({ reason: "session setup" });
+      else await disposeSdkSession(inner, { reason: "session setup" }, detachMcp, () => executionHistory.flush());
+      throw error;
+    }
   })().finally(() => locks.delete(sessionId));
 
   locks.set(sessionId, starting);

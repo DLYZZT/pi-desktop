@@ -27,7 +27,13 @@ export function sanitizeGeneratedTitle(raw: string): string | null {
     .trim();
   const stripped = collapsed.replace(/^['"“”‘’「」『』]+|['"“”‘’「」『』]+$/g, "");
   const trimmed = stripped.replace(/[.。!！?？:：;；,\s]+$/u, "").trim();
-  if (!trimmed) return null;
+  if (!trimmed || /^[\p{N}\s.,+−%-]+$/u.test(trimmed)) return null;
+  if (
+    /^(?:我(?:会先|會先|先|将先|將先|来先|來先)|让我先|讓我先|I(?:['’]ll| will) (?:first |start by )|(?:First,? )?(?:let me|I'll go ahead and) )/iu.test(
+      trimmed,
+    )
+  )
+    return null;
   return takeCodePoints(trimmed, AUTO_TITLE_MAX_LENGTH);
 }
 

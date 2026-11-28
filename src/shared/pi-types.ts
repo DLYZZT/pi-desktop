@@ -72,6 +72,7 @@ interface SkillLike {
 }
 
 interface ResourceLoaderLike {
+  getExtensions?(): { errors: { path: string; error: string }[]; warnings?: { path: string; warning: string }[] };
   getSkills(): { skills: SkillLike[] };
 }
 
@@ -85,6 +86,7 @@ interface ExtensionRunnerLike {
 }
 
 type DialogOptionsLike = {
+  blockedKind?: import("./types").DialogBlockedKind;
   signal?: AbortSignal;
   timeout?: number;
 };
@@ -145,6 +147,7 @@ export interface AgentSessionLike {
   readonly sessionName: string | undefined;
   readonly systemPrompt?: string;
   readonly modelRuntime: {
+    getAvailableSnapshot?: import("@earendil-works/pi-coding-agent").ModelRuntime["getAvailableSnapshot"];
     getModel: (provider: string, modelId: string) => ModelLike | undefined;
     refresh?: (options: { allowNetwork: boolean }) => Promise<unknown>;
     getError?: () => string | undefined;
@@ -178,6 +181,7 @@ export interface AgentSessionLike {
     },
     options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
   ): Promise<void>;
+  dispose?: () => void;
   abort(): Promise<void>;
   waitForIdle(): Promise<void>;
   setModel(model: ModelLike): Promise<void>;

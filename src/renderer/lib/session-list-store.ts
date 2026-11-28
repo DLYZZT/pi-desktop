@@ -4,11 +4,13 @@ import { applySessionChangedEvent, type SessionChangedEvent } from "./session-si
 export interface SessionListData {
   sessions: SessionInfo[];
   runningSessionIds?: string[];
+  waitingSessionIds?: string[];
 }
 
 export interface SessionListSnapshot {
   sessions: SessionInfo[];
   runningSessionIds: string[];
+  waitingSessionIds: string[];
   loading: boolean;
   error: unknown;
   live: boolean;
@@ -27,6 +29,7 @@ export class SessionListStore {
   private snapshot: SessionListSnapshot = {
     sessions: [],
     runningSessionIds: [],
+    waitingSessionIds: [],
     loading: true,
     error: null,
     live: false,
@@ -143,7 +146,12 @@ export class SessionListStore {
           let sessions = data.sessions;
           for (const change of read.changes.values()) sessions = applySessionChangedEvent(sessions, change) ?? sessions;
           for (const session of sessions) this.deletedIds.delete(session.id);
-          this.publish({ sessions, runningSessionIds: data.runningSessionIds ?? [], error: null });
+          this.publish({
+            sessions,
+            runningSessionIds: data.runningSessionIds ?? [],
+            waitingSessionIds: data.waitingSessionIds ?? [],
+            error: null,
+          });
         } catch (error) {
           if (this.read !== read || this.scope !== read.scope) break;
           if (read.again) continue;

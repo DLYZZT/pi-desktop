@@ -25,7 +25,18 @@ test("local and external run boundaries invalidate all earlier runtime work", ()
   const previous = gate.capture();
   gate.beginRun();
   assert.equal(gate.isCurrentRun(previous), false);
-  for (const field of ["run", "queue", "compaction", "statuses", "widgets", "thinking", "usage", "systemPrompt"]) {
+  for (const field of [
+    "run",
+    "queue",
+    "retry",
+    "compaction",
+    "statuses",
+    "diagnostics",
+    "widgets",
+    "thinking",
+    "usage",
+    "systemPrompt",
+  ]) {
     assert.equal(gate.accept(previous, field), false);
     assert.equal(gate.accept(gate.capture(), field), true);
   }

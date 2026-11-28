@@ -31,6 +31,32 @@ type DeferredContent =
   | { part: "content"; content: EntryContentResult["content"] }
   | { part: "details"; details: EntryDetailsResult["details"] };
 
+/** A refresh may carry the same deferred references after the user has already opened them. */
+function restoreLoadedParts(
+  message: AgentMessage,
+  key: string,
+  cache: ReadonlyMap<string, DeferredContent>,
+): AgentMessage {
+  let restored = message;
+  if ((message.role === "toolResult" || message.role === "custom") && message.deferredDetails) {
+    const saved = cache.get(key + ":details");
+    if (saved?.part === "details") {
+      const { deferredDetails: _ref, ...rest } = message;
+      restored = { ...rest, details: saved.details };
+    }
+  }
+  if (!Array.isArray(message.content)) return restored;
+  let blocks: EntryContentResult["content"][] | undefined;
+  for (const [position, block] of message.content.entries()) {
+    if (!block.deferredContent) continue;
+    const saved = cache.get(key + ":" + position);
+    if (saved?.part !== "content") continue;
+    blocks ??= [...message.content];
+    blocks[position] = saved.content;
+  }
+  return blocks ? ({ ...restored, content: blocks } as AgentMessage) : restored;
+}
+
 function hasRpcCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
@@ -220,6 +246,17 @@ export function useSessionHistory({
         const previousTrace = pendingSessionLoadTraceRef.current;
         if (previousTrace && previousTrace !== trace) failSessionLoadTrace(previousTrace);
         pendingSessionLoadTraceRef.current = trace;
+        const cache = deferredContentCacheRef.current;
+        const page = detail.context;
+        const incoming =
+          cache.size && page.historyRevision === historyRevisionRef.current
+            ? {
+                ...page,
+                messages: page.messages.map((message, i) =>
+                  restoreLoadedParts(message, sid + ":" + page.entryIds[i], cache),
+                ),
+              }
+            : page;
         const merged = mergeHistoryTail(
           {
             messages: loadedMessagesRef.current,
@@ -227,7 +264,7 @@ export function useSessionHistory({
             revision: historyRevisionRef.current,
             previousCursor: previousCursorRef.current,
           },
-          detail.context,
+          incoming,
           reset,
         );
         if (merged.revision !== historyRevisionRef.current) {
@@ -410,22 +447,11 @@ export function useSessionHistory({
         while (cache.size > DEFERRED_CONTENT_CACHE_SIZE) cache.delete(cache.keys().next().value!);
       }
       if (!ownsContent()) return;
-      const loaded = content;
-      const nextMessages = loadedMessagesRef.current.map((message, index) => {
-        if (loadedEntryIdsRef.current[index] !== entryId) return message;
-        if (loaded.part === "details") {
-          if ((message.role !== "toolResult" && message.role !== "custom") || !message.deferredDetails) return message;
-          const { deferredDetails: _omitted, ...rest } = message;
-          return { ...rest, details: loaded.details } as AgentMessage;
-        }
-        if (!Array.isArray(message.content)) return message;
-        return {
-          ...message,
-          content: message.content.map((block, position) =>
-            position === blockIndex && "deferredContent" in block ? loaded.content : block,
-          ),
-        } as AgentMessage;
-      });
+      const nextMessages = loadedMessagesRef.current.map((message, index) =>
+        loadedEntryIdsRef.current[index] === entryId
+          ? restoreLoadedParts(message, sid + ":" + entryId, deferredContentCacheRef.current)
+          : message,
+      );
       commitHistory(nextMessages, loadedEntryIdsRef.current);
     },
     [commitHistory, isCurrent, sessionIdRef],

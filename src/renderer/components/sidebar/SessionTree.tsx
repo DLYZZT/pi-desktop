@@ -58,6 +58,8 @@ export function SessionTreeItem({
   node,
   selectedSessionId,
   runningSessionIds,
+  waitingSessionIds,
+  snippets,
   unreadSessionIds,
   onSelectSession,
   onRenamed,
@@ -67,6 +69,8 @@ export function SessionTreeItem({
   node: SessionTreeNode;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
+  waitingSessionIds?: Set<string>;
+  snippets?: ReadonlyMap<string, string>;
   unreadSessionIds: Set<string>;
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
@@ -100,6 +104,8 @@ export function SessionTreeItem({
         <SessionItem
           session={node.session}
           isSelected={node.session.id === selectedSessionId}
+          snippet={snippets?.get(node.session.id)}
+          isWaiting={waitingSessionIds?.has(node.session.id)}
           isRunning={runningSessionIds.has(node.session.id)}
           isUnread={unreadSessionIds.has(node.session.id)}
           onClick={selectSession}
@@ -118,6 +124,8 @@ export function SessionTreeItem({
               key={child.session.id}
               node={child}
               selectedSessionId={selectedSessionId}
+              snippets={snippets}
+              waitingSessionIds={waitingSessionIds}
               runningSessionIds={runningSessionIds}
               unreadSessionIds={unreadSessionIds}
               onSelectSession={onSelectSession}
@@ -212,6 +220,8 @@ const SessionItem = memo(function SessionItem({
   session,
   isSelected,
   isRunning,
+  isWaiting,
+  snippet,
   isUnread,
   onClick,
   onRenamed,
@@ -224,6 +234,8 @@ const SessionItem = memo(function SessionItem({
   session: SessionInfo;
   isSelected: boolean;
   isRunning?: boolean;
+  isWaiting?: boolean;
+  snippet?: string;
   isUnread?: boolean;
   onClick: () => void;
   onRenamed?: () => void;
@@ -488,11 +500,13 @@ const SessionItem = memo(function SessionItem({
             }}
             aria-current={isSelected ? "page" : undefined}
             aria-label={
-              isRunning
-                ? `${title} · ${t("agentRunningStatus", "Agent running")}`
-                : isUnread
-                  ? `${title} · ${t("newSessionActivity", "New activity")}`
-                  : title
+              isWaiting
+                ? `${title} · ${t("sessionWaitingForInput", "Waiting for input")}`
+                : isRunning
+                  ? `${title} · ${t("agentRunningStatus", "Agent running")}`
+                  : isUnread
+                    ? `${title} · ${t("newSessionActivity", "New activity")}`
+                    : title
             }
             style={{
               alignSelf: "stretch",
@@ -543,14 +557,20 @@ const SessionItem = memo(function SessionItem({
                   color: "var(--text)",
                 }}
                 title={
-                  isRunning
-                    ? `${title} · ${t("agentRunning", "Agent is running…")}`
-                    : isUnread
-                      ? `${title} · ${t("newSessionActivity", "New activity")}`
-                      : title
+                  isWaiting
+                    ? `${title} · ${t("sessionWaitingForInput", "Waiting for input")}`
+                    : isRunning
+                      ? `${title} · ${t("agentRunning", "Agent is running…")}`
+                      : isUnread
+                        ? `${title} · ${t("newSessionActivity", "New activity")}`
+                        : title
                 }
               >
-                {isRunning ? (
+                {isWaiting ? (
+                  <small style={{ color: "var(--accent)", flexShrink: 0 }}>
+                    {t("sessionWaitingForInput", "Waiting for input")}
+                  </small>
+                ) : isRunning ? (
                   <RunningSessionIndicator />
                 ) : isUnread ? (
                   <UnreadSessionIndicator />
@@ -570,6 +590,11 @@ const SessionItem = memo(function SessionItem({
                   {title}
                 </span>
               </div>
+              {snippet && (
+                <div title={snippet} className="truncate text-xs text-text-muted">
+                  {snippet}
+                </div>
+              )}
               <div
                 style={{
                   marginTop: 2,

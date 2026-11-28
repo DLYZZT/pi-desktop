@@ -212,6 +212,10 @@ export async function agentState(sessionId: string) {
   return call("agent.state", { sessionId });
 }
 
+export function syncEditorDraft(update: ApiParams<"agent.editorDraft">) {
+  return call("agent.editorDraft", update);
+}
+
 export async function getCacheWarmingStatus() {
   return call("settings.getCacheWarming");
 }

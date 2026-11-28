@@ -1,3 +1,4 @@
+import { findWithToolchain } from "./toolchain-find.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -250,42 +251,23 @@ export function createDesktopSearchToolDefinitions(
     return { content: [{ type: "text", text }], details: Object.keys(details).length > 0 ? details : undefined };
   };
 
-  const find = createFindToolDefinition(cwd, {
-    operations: {
-      exists: pathExists,
-      async glob(pattern, searchPath, options) {
-        const args = [
-          "--glob",
-          "--color=never",
-          "--hidden",
-          "--absolute-path",
-          "--print0",
-          "--exclude",
-          ".git",
-          "--exclude",
-          "node_modules",
-        ];
-        if (!(await isInsideGitRepository(searchPath))) args.push("--no-require-git");
-        args.push("--max-results", String(Math.max(1, options.limit)));
-        let effectivePattern = pattern;
-        if (pattern.includes("/")) {
-          args.push("--full-path");
-          if (!pattern.startsWith("/") && !pattern.startsWith("**/") && pattern !== "**") {
-            effectivePattern = `**/${pattern}`;
-          }
-        }
-        args.push("--", effectivePattern, searchPath);
-        const result = await runtime.execFromContext("search.fd", args, context, {
-          cwd,
-          maxBuffer: SEARCH_OUTPUT_LIMIT,
-        });
-        return result.stdout
-          .split("\0")
-          .map((entry) => entry.trim())
-          .filter(Boolean);
+  const find = createFindToolDefinition(cwd);
+  find.execute = (id, input, signal, onUpdate, ctx) =>
+    createFindToolDefinition(cwd, {
+      operations: {
+        exists: pathExists,
+        async glob(pattern, searchPath, { limit }) {
+          return findWithToolchain(
+            pattern,
+            searchPath,
+            limit,
+            await isInsideGitRepository(searchPath),
+            signal,
+            context,
+            runtime,
+          );
+        },
       },
-    },
-  });
-
+    }).execute(id, input, signal, onUpdate, ctx);
   return [grep, find];
 }

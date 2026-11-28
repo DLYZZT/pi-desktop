@@ -18,7 +18,7 @@ const stubs = {
   "herdr/runtime":
     "export const initializeHerdrBridge = () => {init('herdr'); return {subscribeRuntime: () => () => step('herdr-unsubscribe'), shutdown: () => step('herdr-stop')};}; export const clearHerdrBridge = () => step('herdr-clear');",
   "rpc-manager":
-    "export const subscribeRunningSessions = listener => {state.running.add(listener); return () => {state.running.delete(listener); step('running-off');};}; export const disposeAllRpcSessions = () => step('sessions-stop'); export const syncDesktopToolsForAllSessions = () => {}; export const syncCacheWarmingForAllSessions = async () => 0; export const getRunningRpcSessionIds = () => []; export const getRpcSession = () => state.agent; export const startRpcSession = unexpected;",
+    "export const subscribeRunningSessions = listener => {state.running.add(listener); return () => {state.running.delete(listener); step('running-off');};}; export const disposeAllRpcSessions = () => step('sessions-stop'); export const syncDesktopToolsForAllSessions = () => {}; export const syncCacheWarmingForAllSessions = async () => 0; export const refreshSessionNoticeSettings = () => {}; export const getRunningRpcSessionIds = () => []; export const getWaitingRpcSessionIds = () => []; export const getRpcSession = () => state.agent; export const startRpcSession = unexpected;",
   "model-runtime":
     "export const modelCatalogRefreshCoordinator = {cancelAll: () => step('models-stop'), settled: async () => step('models-settled')}; export const getSharedModelRuntime = unexpected; export const reloadSharedModelRuntimeConfig = unexpected;",
   "model-credentials":

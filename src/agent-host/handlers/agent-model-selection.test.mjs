@@ -56,7 +56,7 @@ test("an automatically displayed default cannot dismiss a model restore warning"
   });
   assert.deepEqual(fixture.calls, [{ type: "set_model", provider: "replacement", modelId: "model" }]);
 });
-test("ordinary defaults and explicitly supplied API model choices keep their existing behavior", async () => {
+test("an implicit preview cannot override the SDK default, while explicit API choices still apply", async () => {
   fixture.configure(false);
   await handlers.new({
     cwd: process.cwd(),
@@ -65,7 +65,7 @@ test("ordinary defaults and explicitly supplied API model choices keep their exi
     modelId: "model",
     modelSelectionExplicit: false,
   });
-  assert.equal(fixture.calls.length, 1);
+  assert.deepEqual(fixture.calls, []);
   fixture.configure(true);
   await handlers.new({ cwd: process.cwd(), type: "ensure_session", provider: "explicit-api", modelId: "model" });
   assert.equal(fixture.calls.length, 1);

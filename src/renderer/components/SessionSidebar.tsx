@@ -1,5 +1,6 @@
+import { useSessionBodySearch } from "@/hooks/useSessionBodySearch";
 import { subscribeRunning } from "@/lib/api-client";
-import { useEffect, useState, useCallback, useRef, useSyncExternalStore } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { useI18n } from "@/i18n";
 import {
@@ -69,6 +70,7 @@ export function SessionSidebar({
     loading,
     error: listError,
     runningSessionIds: fallbackRunningIds,
+    waitingSessionIds: fallbackWaitingIds,
     projectInfoRevision,
   } = useSyncExternalStore(sessionList.subscribe, sessionList.getSnapshot, sessionList.getSnapshot);
   const error =
@@ -92,8 +94,10 @@ export function SessionSidebar({
     worktreesRefreshKey,
     projectInfoRevision,
   });
+  const [searchBody, setSearchBody] = useState(false);
   const [sessionFilter, setSessionFilter] = useState("");
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
+  const [waitingSessionIds, setWaitingSessionIds] = useState<Set<string>>(() => new Set());
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
@@ -127,8 +131,10 @@ export function SessionSidebar({
   );
 
   useEffect(() => {
-    if (!streamAuthoritativeRef.current) setRunningSessionIds(new Set(fallbackRunningIds));
-  }, [fallbackRunningIds]);
+    if (streamAuthoritativeRef.current) return;
+    setRunningSessionIds(new Set(fallbackRunningIds));
+    setWaitingSessionIds(new Set(fallbackWaitingIds));
+  }, [fallbackRunningIds, fallbackWaitingIds]);
 
   useEffect(() => {
     if (loading || listError !== null) return;
@@ -152,6 +158,7 @@ export function SessionSidebar({
       if (disposed) return;
       streamAuthoritativeRef.current = true;
       setRunningSessionIds(new Set(event.sessionIds));
+      setWaitingSessionIds(new Set(event.waitingSessionIds));
     })
       .then((off) => {
         if (disposed) off();
@@ -272,10 +279,15 @@ export function SessionSidebar({
   // Sessions of every worktree in the selected project are shown together.
   // Paths come from mixed sources (session files, git output) and may differ
   // in separators/casing on Windows, so compare with worktreePathsEqual.
-  const projectSessions = selectedProject
-    ? allSessions.filter((s) => worktreePathsEqual(s.projectRoot ?? s.cwd, selectedProject))
-    : allSessions;
-  const filteredSessions = filterSessionsForQuery(projectSessions, sessionFilter);
+  const projectSessions = useMemo(
+    () =>
+      selectedProject
+        ? allSessions.filter((s) => worktreePathsEqual(s.projectRoot ?? s.cwd, selectedProject))
+        : allSessions,
+    [allSessions, selectedProject],
+  );
+  const bodySearch = useSessionBodySearch(projectSessions, sessionFilter, searchBody);
+  const filteredSessions = filterSessionsForQuery(projectSessions, sessionFilter, bodySearch.matches);
   // Build parent-child tree within the filtered set
   const sessionTree = buildSessionTree(filteredSessions);
   const sessionGroups: { id: SessionDateGroup; label: string; nodes: SessionTreeNode[] }[] = [
@@ -475,10 +487,12 @@ export function SessionSidebar({
             </svg>
             <input
               type="search"
+              maxLength={256}
               value={sessionFilter}
               onChange={(event) => setSessionFilter(event.target.value)}
-              placeholder={t("searchSessions", "Search sessions")}
+              placeholder={t("sessionSearchMetadata", "Title, first message, path, branch or ID")}
               aria-label={t("searchSessions", "Search sessions")}
+              aria-description={t("sessionSearchMetadata", "Title, first message, path, branch or ID")}
               style={{
                 width: "100%",
                 height: 34,
@@ -516,6 +530,14 @@ export function SessionSidebar({
               </button>
             )}
           </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12 }}>
+            <input type="checkbox" checked={searchBody} onChange={(e) => setSearchBody(e.target.checked)} />
+            {t("sessionSearchIncludeBody", "Include message text")}
+          </label>
+          {bodySearch.pending && <span role="status">{t("searching", "Searching…")}</span>}
+          {bodySearch.incomplete && (
+            <span role="status">{t("sessionSearchIncomplete", "Some conversations could not be searched.")}</span>
+          )}
         </div>
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
@@ -523,7 +545,7 @@ export function SessionSidebar({
           </div>
         )}
         {error && <div style={{ padding: "12px 14px", color: "var(--danger)", fontSize: 12 }}>{error}</div>}
-        {!loading && !error && filteredSessions.length === 0 && (
+        {!loading && !error && !bodySearch.pending && !bodySearch.incomplete && filteredSessions.length === 0 && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 13 }}>
             {sessionFilter.trim()
               ? t("noMatchingSessions", "No matching sessions")
@@ -552,6 +574,8 @@ export function SessionSidebar({
                         key={node.session.id}
                         node={node}
                         selectedSessionId={selectedSessionId}
+                        snippets={bodySearch.matches}
+                        waitingSessionIds={waitingSessionIds}
                         runningSessionIds={runningSessionIds}
                         unreadSessionIds={unreadSessionIds}
                         onSelectSession={handleSelectSessionFromList}

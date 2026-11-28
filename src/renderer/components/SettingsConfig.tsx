@@ -1,3 +1,4 @@
+import { TranscriptNoticeSettings } from "./TranscriptNoticeSettings";
 import {
   updateStatusColor,
   displayVersion,
@@ -312,6 +313,7 @@ export function SettingsConfig({
           >
             {activeTab === "general" && (
               <GeneralSettings
+                noticeSettings={<TranscriptNoticeSettings key={cwd ?? ""} cwd={cwd} sessionId={sessionId} />}
                 language={language}
                 onLanguageChange={setLanguage}
                 isDark={isDark}
@@ -942,6 +944,7 @@ function AboutRow({ label, value, last = false }: { label: string; value: React.
 }
 
 function GeneralSettings({
+  noticeSettings,
   language,
   onLanguageChange,
   isDark,
@@ -950,6 +953,7 @@ function GeneralSettings({
   chatAppearanceSaving,
   onChatAppearanceChange,
 }: {
+  noticeSettings: React.ReactNode;
   language: AppLanguage;
   onLanguageChange: (language: AppLanguage) => void;
   isDark: boolean;
@@ -1325,6 +1329,7 @@ function GeneralSettings({
                   : t("cacheWarmingSaveFailed", "The Pi cache warming setting could not be saved.")}
             </p>
           )}
+          {noticeSettings}
           <SettingRow label={t("chatFontSize", "Chat text size")} controlId={chatFontSizeControlId}>
             <select
               id={chatFontSizeControlId}

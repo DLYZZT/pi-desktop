@@ -1,3 +1,5 @@
+import { useNativeEditorSelection } from "@/hooks/useNativeEditorSelection";
+import { RetryStatus } from "./composer/RetryStatus";
 import { ComposerToolbar, type ComposerToolbarOptions } from "./composer/ComposerToolbar";
 import { useComposerDraft } from "@/hooks/useComposerDraft";
 import { useComposerSubmission, type ComposerActions } from "@/hooks/useComposerSubmission";
@@ -9,13 +11,17 @@ import { useFileSuggestions } from "@/hooks/useFileSuggestions";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/i18n";
+import type { SessionRetryInfo } from "@contract/types";
+import type { EditorDraft } from "@shared/extension-editor";
+import type { ComposerEditorHandle } from "@/hooks/useExtensionEditor";
 import { localFilePathKey, splitLocalFileReferenceMarkdown } from "@/lib/file-url";
 
 export type { AttachedImage } from "@/hooks/useComposerDraft";
 
 interface Props extends ComposerActions, ComposerToolbarOptions {
+  onEditorDraftChange?: (draft: EditorDraft, attach?: boolean) => void;
   compactResult?: CompactResultInfo | null;
-  retryInfo?: { attempt: number; maxAttempts: number; errorMessage?: string } | null;
+  retryInfo?: SessionRetryInfo | null;
   queuedMessages?: QueuedMessages | null;
   onRecallQueue?: () => void;
   slashCommands?: SlashCommandInfo[];
@@ -28,7 +34,7 @@ interface Props extends ComposerActions, ComposerToolbarOptions {
   cwd?: string | null;
 }
 
-export interface ChatInputHandle {
+export interface ChatInputHandle extends ComposerEditorHandle {
   insertText: (text: string) => void;
   insertIfEmpty: (text: string) => void;
   prependText: (text: string) => void;
@@ -154,6 +160,7 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
     isStreaming,
     compactResult,
     retryInfo,
+    onEditorDraftChange,
     queuedMessages,
     onRecallQueue,
     slashCommands,
@@ -177,6 +184,13 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
   const [atMenuOpen, setAtMenuOpen] = useState(false);
   const [atActiveIndex, setAtActiveIndex] = useState(0);
 
+  const modeId = React.useId();
+  const modeDescription =
+    isStreaming && (onSteer || onFollowUp)
+      ? t("steerOrQueue", "Steer now / queue follow-up…")
+      : isStreaming
+        ? t("agentRunning", "Agent is running…")
+        : t("messagePlaceholder", "Message… Type / for commands, @ for files");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const openAttachmentPicker = useCallback(() => fileInputRef.current?.click(), []);
@@ -190,6 +204,7 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
   const {
     value,
     setValue,
+    getText,
     attachedImages,
     attachedFiles,
     fileInspectionByPath,
@@ -202,11 +217,27 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
     removeFile,
     clearDraft,
   } = draft;
+  const getEditorDraft = useCallback((): EditorDraft => {
+    const ta = textareaRef.current;
+    const text = ta?.value ?? getText();
+    return { text, start: ta?.selectionStart ?? text.length, end: ta?.selectionEnd ?? text.length };
+  }, [getText]);
+  const publishEditorDraft = useCallback(
+    () => onEditorDraftChange?.(getEditorDraft()),
+    [getEditorDraft, onEditorDraftChange],
+  );
+  useNativeEditorSelection(textareaRef, publishEditorDraft);
+  useEffect(() => onEditorDraftChange?.(getEditorDraft(), true), [getEditorDraft, onEditorDraftChange]);
+  useEffect(publishEditorDraft, [publishEditorDraft, value]);
   const clearInput = useCallback(() => {
     clearDraft();
+    onEditorDraftChange?.({ text: "", start: 0, end: 0 });
     setAtQuery(null);
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
-  }, [clearDraft]);
+    if (textareaRef.current) {
+      textareaRef.current.value = "";
+      textareaRef.current.style.height = "auto";
+    }
+  }, [clearDraft, onEditorDraftChange]);
 
   const { handleSend, sendQueued } = useComposerSubmission({
     draft,
@@ -221,6 +252,17 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
   });
 
   useImperativeHandle(ref, () => ({
+    getEditorDraft,
+    applyEditorDraft(snapshot) {
+      setValue(snapshot.text);
+      setAtQuery(null);
+      const ta = textareaRef.current;
+      if (ta) {
+        // Back-to-back extension edits can arrive before React commits the controlled value.
+        ta.value = snapshot.text;
+        ta.setSelectionRange(snapshot.start, snapshot.end);
+      }
+    },
     insertIfEmpty(text: string) {
       const ta = textareaRef.current;
       const current = ta ? ta.value : value;
@@ -733,40 +775,18 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
             ))}
           </div>
         )}
-        {/* Retry banner */}
-        {retryInfo && (
-          <div
-            style={{
-              marginBottom: 8,
-              padding: "5px 10px",
-              background: "rgba(234,179,8,0.08)",
-              border: "1px solid rgba(234,179,8,0.25)",
-              borderRadius: 6,
-              fontSize: scaledChatFont(12),
-              color: "rgba(180,130,0,0.9)",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            <svg
-              width="11"
-              height="11"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              style={{ flexShrink: 0 }}
-            >
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-              <path d="M3 3v5h5" />
-            </svg>
-            {t("retrying", "Retrying")} ({retryInfo.attempt}/{retryInfo.maxAttempts})…
-            {retryInfo.errorMessage && <span style={{ opacity: 0.7, marginLeft: 4 }}>— {retryInfo.errorMessage}</span>}
-          </div>
-        )}
+        {retryInfo && <RetryStatus retryInfo={retryInfo} />}
+        {attachedImages.length > 0 &&
+          toolbarOptions.model &&
+          toolbarOptions.modelImageInputs?.[`${toolbarOptions.model.provider}:${toolbarOptions.model.modelId}`] ===
+            "text" && (
+            <div role="status" className="text-xs text-text-muted">
+              {t(
+                "textModelAttachmentHint",
+                "This model accepts text only. Choose a model that supports images to send the image content.",
+              )}
+            </div>
+          )}
         {imageAttachNotice && (
           <div
             role="alert"
@@ -1317,15 +1337,20 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
               } as React.CSSProperties
             }
           >
+            <span id={modeId} className="sr-only" role="status">
+              {modeDescription}
+            </span>
             <textarea
               ref={textareaRef}
               value={value}
               onChange={(e) => {
                 setValue(e.target.value);
+                publishEditorDraft();
                 updateAtQuery(e.target.value, e.target.selectionStart);
               }}
               onSelect={(e) => {
                 const el = e.currentTarget;
+                publishEditorDraft();
                 updateAtQuery(el.value, el.selectionStart);
               }}
               onKeyDown={handleKeyDown}
@@ -1340,13 +1365,9 @@ const ChatInputComponent = forwardRef<ChatInputHandle, Props>(function ChatInput
               }}
               onInput={handleInput}
               onPaste={handlePaste}
-              placeholder={
-                isStreaming && (onSteer || onFollowUp)
-                  ? t("steerOrQueue", "Steer now / queue follow-up…")
-                  : isStreaming
-                    ? t("agentRunning", "Agent is running…")
-                    : t("messagePlaceholder", "Message… Type / for commands, @ for files")
-              }
+              aria-label={t("composerMessage", "Message input")}
+              aria-describedby={modeId}
+              placeholder={modeDescription}
               rows={1}
               style={{
                 flex: 1,

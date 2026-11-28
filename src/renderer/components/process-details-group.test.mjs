@@ -48,7 +48,7 @@ function renderGroup(expansionStore, stateKey) {
   return create(
     createElement(
       ProcessDetailsGroup,
-      { expansionStore, stateKey, messageCount: 2, toolCallCount: 1 },
+      { expansionStore, stateKey, messageCount: 2, toolCallCount: 1, readWarnings: ["text-only-model"] },
       createElement("span", null, "persisted process content"),
     ),
   );
@@ -61,12 +61,14 @@ test("process details expansion survives a component remount and remains isolate
     renderer = renderGroup(sessionStore, "process-group:user-1:assistant-1");
   });
   assert.equal(renderer.root.findByType("button").props["aria-expanded"], false);
+  assert.equal(renderer.root.findAllByProps({ className: "read-image-warning" }).length, 1);
   assert.equal(renderer.root.findAllByProps({ children: "persisted process content" }).length, 0);
 
   await act(async () => {
     renderer.root.findByType("button").props.onClick();
   });
   assert.equal(renderer.root.findByType("button").props["aria-expanded"], true);
+  assert.equal(renderer.root.findAllByProps({ className: "read-image-warning" }).length, 0);
   assert.equal(renderer.root.findAllByProps({ children: "persisted process content" }).length, 1);
 
   await act(async () => renderer.unmount());

@@ -275,3 +275,33 @@ test("cancelling the second API-key prompt leaves the stored credential unchange
   await service.dispose();
   assert.deepEqual(await getCredentialMutations().snapshot(provider), before);
 });
+
+test("an unresolved stored key stays manageable and saving the same source retries resolution", async (t) => {
+  const { writeFileSync, existsSync } = await import("node:fs");
+  const runtime = await getSharedModelRuntime();
+  const provider = "groq",
+    filename = path.join(agentDir, "fixture-key.txt");
+  // Use the same credential command with cmd, Git Bash, or a POSIX shell.
+  const command = `!node -p "require('node:fs').readFileSync(process.argv[1],'utf8')" "${filename.replaceAll("\\", "/")}"`;
+  const handlers = createAuthHandlers(createAuthLoginService({ emit() {} }));
+  const source = () => handlers.allProviders().then((result) => result.providers.find((row) => row.id === provider));
+  const file = path.join(agentDir, "auth.json");
+  const credentials = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  writeFileSync(file, JSON.stringify({ ...credentials, [provider]: { type: "api_key", key: command } }));
+  t.after(() => rmSync(filename, { force: true }));
+  await runtime.refresh({ allowNetwork: false });
+  const broken = await source();
+  assert.equal(broken.storedAuthType, "api_key");
+  assert.equal(
+    broken.configured,
+    false,
+    JSON.stringify({ sdk: runtime.getProviderAuthStatus(provider), source: broken.source }),
+  );
+  assert.doesNotMatch(JSON.stringify(broken), /fixture-key\.txt/u);
+  writeFileSync(filename, "synthetic-working-key");
+  await handlers.setApiKey({ provider, key: command, expectedVersion: broken.credentialVersion });
+  const repaired = await source();
+  assert.equal(repaired.configured, true);
+  await handlers.deleteApiKey({ provider, expectedVersion: repaired.credentialVersion });
+  assert.equal((await source()).storedAuthType, null);
+});

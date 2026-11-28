@@ -5,33 +5,36 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { MessageView, withGeneratedImageReply } = await importTestBundle("src/renderer/components/message-view", {
-  stdin: {
-    contents:
-      'export { MessageView } from "./MessageView.tsx"; export { withGeneratedImageReply } from "../lib/generated-image-reply.ts";',
-    resolveDir: import.meta.dirname,
-    sourcefile: "message-view-test-entry.tsx",
-    loader: "tsx",
-  },
-  tsconfig: path.join(import.meta.dirname, "../../../tsconfig.renderer.json"),
-  external: ["react", "react-dom", "react-dom/*"],
-  plugins: [
-    {
-      name: "stub-markdown-body",
-      setup(buildApi) {
-        buildApi.onResolve({ filter: /^\.\/MarkdownBody$/ }, () => ({
-          path: "markdown-body",
-          namespace: "message-view-test",
-        }));
-        buildApi.onLoad({ filter: /.*/, namespace: "message-view-test" }, () => ({
-          contents:
-            'import { createElement } from "react"; export function MarkdownBody({ children }) { return createElement("div", null, children); }',
-          loader: "js",
-        }));
-      },
+const { MessageView, withGeneratedImageReply, RetryStatus } = await importTestBundle(
+  "src/renderer/components/message-view",
+  {
+    stdin: {
+      contents:
+        'export { MessageView } from "./MessageView.tsx"; export { RetryStatus } from "./composer/RetryStatus.tsx"; export { withGeneratedImageReply } from "../lib/generated-image-reply.ts";',
+      resolveDir: import.meta.dirname,
+      sourcefile: "message-view-test-entry.tsx",
+      loader: "tsx",
     },
-  ],
-});
+    tsconfig: path.join(import.meta.dirname, "../../../tsconfig.renderer.json"),
+    external: ["react", "react-dom", "react-dom/*"],
+    plugins: [
+      {
+        name: "stub-markdown-body",
+        setup(buildApi) {
+          buildApi.onResolve({ filter: /^\.\/MarkdownBody$/ }, () => ({
+            path: "markdown-body",
+            namespace: "message-view-test",
+          }));
+          buildApi.onLoad({ filter: /.*/, namespace: "message-view-test" }, () => ({
+            contents:
+              'import { createElement } from "react"; export function MarkdownBody({ children }) { return createElement("div", null, children); }',
+            loader: "js",
+          }));
+        },
+      },
+    ],
+  },
+);
 
 test("MessageView is memoized to preserve unchanged historical messages", () => {
   assert.equal(MessageView.$$typeof, Symbol.for("react.memo"));
@@ -197,6 +200,18 @@ function renderToolResult(result) {
   );
 }
 
+test("only an actual Auto switch adds a reason and both model names to the existing retry row", () => {
+  const retryInfo = { attempt: 1, maxAttempts: 3, errorMessage: "503 temporary failure" };
+  const render = (info) => renderToStaticMarkup(createElement(RetryStatus, { retryInfo: info }));
+  const same = render(retryInfo);
+  assert.match(same, /Retrying/);
+  assert.match(same, /503 temporary failure/);
+  assert.doesNotMatch(same, /Auto switched/);
+  const switched = render({ ...retryInfo, modelSwitch: { from: "fixture/fast", to: "fixture/strong" } });
+  assert.match(switched, /Auto switched from fixture\/fast to fixture\/strong after the failed attempt/);
+  assert.equal((switched.match(/role="status"/g) ?? []).length, 1);
+});
+
 function persistedHerdrResult(isError = false, output = "PRIVATE_FIXTURE_OUTPUT") {
   const code = isError && output.includes("HERDR_REQUEST_TIMEOUT") ? "HERDR_REQUEST_TIMEOUT" : null;
   return {
@@ -215,6 +230,68 @@ function persistedHerdrResult(isError = false, output = "PRIVATE_FIXTURE_OUTPUT"
     ...(code ? { details: { errorCode: code } } : {}),
   };
 }
+
+test("CLI command cards show saved output, exit status, cancellation and truncation without running commands", () => {
+  const message = {
+    role: "bashExecution",
+    content: [
+      { type: "text", text: "echo <data>" },
+      { type: "text", text: "tail" },
+    ],
+    exitCode: 0,
+    cancelled: false,
+    truncated: true,
+    fullOutputPath: "/tmp/cli.log",
+  };
+  const render = (extra) => renderToStaticMarkup(createElement(MessageView, { message: { ...message, ...extra } }));
+  const saved = render({});
+  assert.match(saved, /!echo &lt;data&gt;/);
+  assert.match(saved, /tail/);
+  assert.match(saved, /Exit code 0/);
+  assert.match(saved, /Full output saved to \/tmp\/cli.log/);
+  assert.match(saved, /Copy path/);
+  assert.doesNotMatch(saved, /href=|Run command/);
+  assert.match(
+    renderToStaticMarkup(createElement(MessageView, { message, sessionId: "s", entryId: "b" })),
+    /Preview full output/,
+  );
+  const failed = render({
+    exitCode: 137,
+    cancelled: true,
+    excludeFromContext: true,
+    fullOutputPath: undefined,
+    fullOutputError: "disk full",
+  });
+  assert.match(failed, /!!echo/);
+  assert.match(failed, /Cancelled/);
+  assert.match(failed, /Exit code 137/);
+  assert.match(failed, /disk full/);
+  assert.match(failed, /Excluded from model context/);
+});
+
+test("a collapsed read image card explains the recorded model's placeholder, including for deferred images", () => {
+  const result = {
+    role: "toolResult",
+    toolName: "read",
+    toolCallId: "photo",
+    isError: false,
+    content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+    details: { imageUnsupportedByModel: "text-only-$&" },
+  };
+  assert.match(renderToolResult(result), /text-only-\$&amp; received a placeholder/);
+  assert.match(renderToolResult({ ...result, content: [] }), /received a placeholder/);
+  assert.match(
+    renderToolResult({
+      ...result,
+      details: undefined,
+      deferredDetails: { entryId: "entry", originalBytes: 400000, contentType: "details" },
+      readImagePlaceholderModel: "deferred-model",
+    }),
+    /deferred-model received a placeholder/,
+  );
+  assert.doesNotMatch(renderToolResult({ ...result, details: undefined }), /received a placeholder/);
+  assert.doesNotMatch(renderToolResult({ ...result, toolName: "another-tool" }), /received a placeholder/);
+});
 
 test("tool images render from persisted content without depending on the temporary image file", () => {
   const result = {

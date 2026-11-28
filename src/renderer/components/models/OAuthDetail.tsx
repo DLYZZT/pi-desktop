@@ -537,7 +537,7 @@ export function OAuthDetail({
                   ? t("modelRelogin", "Re-login")
                   : t("modelLogin", "Login")}
             </button>
-            {provider.loggedIn && (
+            {(provider.loggedIn || (authType === "api_key" && provider.storedAuthType === "api_key")) && (
               <button
                 onClick={handleLogout}
                 style={{

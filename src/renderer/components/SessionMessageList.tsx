@@ -1,7 +1,7 @@
+import { TranscriptNotices } from "./TranscriptNotices";
 import { memo, type ComponentProps, type ReactNode, type RefObject } from "react";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage } from "@/lib/types";
 import {
-  countToolCallBlocks,
   getDisplayableAssistantBlocks,
   isAssistantFailure,
   isAssistantAborted,
@@ -12,6 +12,7 @@ import type { ToolMessageIndex } from "@/lib/tool-message-index";
 import { withGeneratedImageReply } from "@/lib/generated-image-reply";
 import { MessageView } from "./MessageView";
 import { ProcessDetailsGroup } from "./ProcessDetailsGroup";
+import { readPlaceholderModel } from "./ToolResultImages";
 import { SessionProfiler } from "./SessionProfiler";
 
 function hasFinalAssistantAnswer(message: AgentMessage): boolean {
@@ -32,21 +33,36 @@ function findFinalAssistantIndex(messages: AgentMessage[], userIdx: number, endI
   return -1;
 }
 
-function countToolCalls(messages: AgentMessage[], indices: number[]): number {
+function summarizeProcessTools(
+  messages: AgentMessage[],
+  indices: number[],
+  index: ReturnType<ToolMessageIndex["build"]>,
+) {
   let count = 0;
+  const readWarnings = new Set<string>();
   for (const idx of indices) {
     const msg = messages[idx];
     if (msg?.role !== "assistant") continue;
-    count += countToolCallBlocks(getDisplayableAssistantBlocks(msg as AssistantMessage));
+    for (const block of getDisplayableAssistantBlocks(msg)) {
+      if (block.type !== "toolCall") continue;
+      count++;
+      if (block.toolName !== "read") continue;
+      const result = index.get(msg)?.results.get(block.toolCallId);
+      const model = result && readPlaceholderModel(block.toolName, result);
+      if (model) readWarnings.add(model);
+    }
   }
-  return count;
+  return { toolCallCount: count, readWarnings: [...readWarnings] };
 }
 
 function hasDisplayableProcessMessage(message: AgentMessage): boolean {
   if (message.role === "assistant") {
     return getDisplayableAssistantBlocks(message as AssistantMessage).length > 0;
   }
-  return message.role === "custom";
+  return (
+    message.role === "custom" &&
+    !(message.customType === "pi-desktop-transcript-notice" && message.transcriptNotices?.length)
+  );
 }
 
 function withAssistantBlocks(
@@ -96,6 +112,8 @@ type MessageViewProps = ComponentProps<typeof MessageView>;
 
 type SessionMessageListProps = {
   messages: AgentMessage[];
+  retryInfo?: import("@contract/types").SessionRetryInfo | null;
+  sessionId?: string;
   entryIds: (string | undefined)[];
   agentRunning: boolean;
   isStreaming: boolean;
@@ -125,6 +143,8 @@ type SessionMessageListProps = {
  */
 export const SessionMessageList = memo(function SessionMessageList({
   messages,
+  retryInfo,
+  sessionId,
   entryIds,
   agentRunning,
   isStreaming,
@@ -180,6 +200,17 @@ export const SessionMessageList = memo(function SessionMessageList({
     }
   };
 
+  const failedAttempt = retryInfo
+    ? messages.findLastIndex(
+        (m, i) =>
+          i > lastUserIdx &&
+          m.role === "assistant" &&
+          isAssistantFailure(m) &&
+          (retryInfo.failedMessageTimestamp !== undefined
+            ? m.timestamp === retryInfo.failedMessageTimestamp
+            : m.errorMessage === retryInfo.errorMessage),
+      )
+    : -1;
   const renderMessage = (
     idx: number,
     options: {
@@ -189,7 +220,11 @@ export const SessionMessageList = memo(function SessionMessageList({
       showTimestamp?: boolean;
     } = {},
   ): ReactNode => {
-    const msg = options.messageOverride ?? messages[idx];
+    let msg = options.messageOverride ?? messages[idx];
+    if (idx === failedAttempt && msg.role === "assistant")
+      msg = withAssistantBlocks(msg, msg.content, { omitFailure: true });
+    if (msg.role === "custom" && msg.customType === "pi-desktop-transcript-notice" && msg.transcriptNotices?.length)
+      return null;
     const prevAssistantEntryId =
       msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant" ? entryIds[idx - 1] : undefined;
     const isVisible = msg.role === "user" || msg.role === "assistant";
@@ -209,6 +244,7 @@ export const SessionMessageList = memo(function SessionMessageList({
     const view = (
       <SessionProfiler key={renderKey} id="MessageView">
         <MessageView
+          sessionId={sessionId}
           message={msg}
           toolResults={toolData?.results}
           toolCallDurations={toolData?.durations}
@@ -238,17 +274,24 @@ export const SessionMessageList = memo(function SessionMessageList({
   };
 
   const rendered: ReactNode[] = [];
+  function renderNotices(start: number, end: number) {
+    const notices = messages.slice(start, end).flatMap((message) => message.transcriptNotices ?? []);
+    if (notices.length)
+      rendered.push(<TranscriptNotices key={`notices:${entryIds[start] ?? start}`} notices={notices} />);
+  }
   for (let idx = 0; idx < messages.length;) {
     const msg = messages[idx];
     if (msg.role !== "user") {
       rendered.push(renderMessage(idx));
+      renderNotices(idx, idx + 1);
       idx += 1;
       continue;
     }
 
     const userIdx = idx;
     let endIdx = userIdx + 1;
-    while (endIdx < messages.length && messages[endIdx].role !== "user") endIdx += 1;
+    while (endIdx < messages.length && messages[endIdx].role !== "user" && messages[endIdx].role !== "bashExecution")
+      endIdx += 1;
 
     const finalAssistantIdx = findFinalAssistantIndex(messages, userIdx, endIdx);
 
@@ -256,6 +299,7 @@ export const SessionMessageList = memo(function SessionMessageList({
       for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
         rendered.push(renderMessage(renderIdx));
       }
+      renderNotices(userIdx, endIdx);
       idx = endIdx;
       continue;
     }
@@ -265,6 +309,7 @@ export const SessionMessageList = memo(function SessionMessageList({
       for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
         rendered.push(renderMessage(renderIdx));
       }
+      renderNotices(userIdx, endIdx);
       idx = endIdx;
       continue;
     }
@@ -303,12 +348,10 @@ export const SessionMessageList = memo(function SessionMessageList({
         (finalAnswerMessage ? undefined : visibleRefIndexByMessage.get(finalAssistantIdx));
       const processGroup = (
         <ProcessDetailsGroup
+          {...summarizeProcessTools(messages, [...visibleProcessIndices, finalAssistantIdx], toolMessageIndex)}
           stateKey={processGroupKey}
           expansionStore={processDetailsExpansionStore}
           messageCount={processCount}
-          toolCallCount={
-            countToolCalls(messages, visibleProcessIndices) + countToolCallBlocks(finalParts.processBlocks)
-          }
         >
           {visibleProcessIndices.map((processIdx) =>
             renderMessage(processIdx, { attachRef: false, renderRole: "process" }),
@@ -349,6 +392,7 @@ export const SessionMessageList = memo(function SessionMessageList({
     for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
       rendered.push(renderMessage(renderIdx));
     }
+    renderNotices(userIdx, endIdx);
     idx = endIdx;
   }
   return rendered;

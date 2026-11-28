@@ -109,7 +109,7 @@ export function ApiKeyDetail({
           provider={{
             id: provider.id,
             name: provider.displayName,
-            loggedIn: provider.storedAuthType === "api_key",
+            loggedIn: provider.storedAuthType === "api_key" && provider.configured,
             usesCallbackServer: false,
             storedAuthType: provider.storedAuthType,
             credentialVersion: provider.credentialVersion,
@@ -118,6 +118,9 @@ export function ApiKeyDetail({
           onReloadCredentials={onReloadCredentials}
           modelSelection={modelSelection}
         />
+        {provider.storedAuthType === "api_key" && !provider.configured && (
+          <p role="status">{t("modelStoredKeyUnresolved", "Saved credential could not be resolved")}</p>
+        )}
         <AuxiliaryModels providerId={provider.id} models={provider.auxiliaryModels ?? []} />
         {provider.configured && provider.storedAuthType !== "api_key" && provider.chatModelCount !== 0 && (
           <ManagedModelsControl providerId={provider.id} {...modelSelection} />
@@ -151,7 +154,9 @@ export function ApiKeyDetail({
               ? t("modelOAuthActive", "Account login active")
               : provider.configured
                 ? t("configured", "configured")
-                : t("notConfigured", "not configured")}
+                : provider.storedAuthType === "api_key"
+                  ? t("modelStoredKeyUnresolved", "Saved credential could not be resolved")
+                  : t("notConfigured", "not configured")}
           </span>
         </div>
       </div>
@@ -259,7 +264,7 @@ export function ApiKeyDetail({
         <ManagedModelsControl providerId={provider.id} {...modelSelection} />
       )}
 
-      {provider.configured && (provider.storedAuthType === undefined || provider.storedAuthType === "api_key") && (
+      {(provider.storedAuthType === "api_key" || (provider.configured && provider.storedAuthType === undefined)) && (
         <button
           onClick={handleRemove}
           disabled={removing}

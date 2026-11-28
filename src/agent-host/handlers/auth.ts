@@ -70,6 +70,7 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
 
     allProviders: async () => {
       const modelRuntime = await getSharedModelRuntime();
+      await modelRuntime.refresh({ allowNetwork: false });
       const all = modelRuntime.getAllModels();
       const OAUTH_PROVIDER_IDS = new Set(["github-copilot", "openai-codex"]);
       const seen = new Set<string>();
@@ -88,7 +89,7 @@ export function createAuthHandlers(authLogin: Pick<ReturnType<typeof createAuthL
           id: model.provider,
           displayName: provider.name,
           configured:
-            credential.type === "api_key" ||
+            (credential.type === "api_key" && status.configured) ||
             (credential.type === null && status.source !== "stored" && status.configured),
           source: credential.type === "oauth" ? "stored_oauth" : (status.label ?? status.source),
           storedAuthType: credential.type,

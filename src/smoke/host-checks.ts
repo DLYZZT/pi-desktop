@@ -444,6 +444,15 @@ export async function runSmokeHostChecks(
                   }
                   throw new Error("Cache warming setting did not settle: " + JSON.stringify({ expected, value: select?.value, disabled: select?.disabled, connected: select?.isConnected }));
                 };
+                const noticeDeadline=Date.now()+5000;
+                const toggles=[...document.querySelectorAll('input[name^="notice-"]')];
+                if (toggles.length !== 4) throw new Error("Four independent transcript notice toggles are required");
+                const reasoning= document.querySelector('input[name="notice-reasoningDrops"]');
+                while(reasoning.matches(":disabled") && Date.now()<noticeDeadline) await new Promise(wait=>setTimeout(wait,25));
+                reasoning.click();
+                while((!reasoning.checked || reasoning.matches(":disabled")) && Date.now()<noticeDeadline) await new Promise(wait=>setTimeout(wait,25));
+                if(!reasoning.checked || toggles.some(box=>box!==reasoning && box.checked))
+                  throw new Error("Changing reasoning notices must leave the other three switches off");
                 let cacheSelect = await waitForCacheWarming("off");
                 if (JSON.stringify(Array.from(cacheSelect.options, (option) => option.value)) !== JSON.stringify(["off", "streaming", "idle"])) {
                   throw new Error("Cache warming setting has the wrong modes");

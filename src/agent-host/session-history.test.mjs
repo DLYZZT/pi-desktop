@@ -42,6 +42,55 @@ function toolResult(toolCallId, text) {
   };
 }
 
+test("CLI ! and !! commands open in full and paged history, with independently loadable command and output", () => {
+  const command = "echo " + "x".repeat(140000),
+    output = "中".repeat(140000);
+  const shell = (extra) => ({
+    type: "message",
+    message: {
+      role: "bashExecution",
+      command,
+      output,
+      exitCode: 0,
+      cancelled: false,
+      truncated: false,
+      timestamp: 1,
+      ...extra,
+    },
+  });
+  const entries = chain([
+    user("hello"),
+    assistant([{ type: "text", text: "hello" }]),
+    shell({}),
+    shell({ excludeFromContext: true, truncated: true, fullOutputError: "Disk full", exitCode: 1 }),
+  ]);
+  const original = JSON.stringify(entries);
+  const opts = { entries, historyRevision: "cli" };
+  const full = buildSessionHistoryPage(opts);
+  assert.deepEqual(
+    full.messages.map((m) => m.role),
+    ["user", "assistant", "bashExecution", "bashExecution"],
+  );
+  const window = { maxTurns: 1, maxBytes: 45000 };
+  const page = buildSessionHistoryPage({ ...opts, historyWindow: window });
+  assert.deepEqual(page.entryIds, ["entry-3"]);
+  const [msg] = page.messages;
+  assert.equal(msg.fullOutputError, "Disk full");
+  assert.equal(msg.excludeFromContext, true);
+  assert.equal(msg.exitCode, 1);
+  for (const [i, expected] of [command, output].entries()) {
+    assert.equal(msg.content[i].deferredContent.blockIndex, i);
+    assert.equal(readSessionEntryContent(entries, "entry-3", i).text, expected);
+  }
+  const prior = buildSessionHistoryPage({
+    ...opts,
+    historyWindow: window,
+    cursor: decodeHistoryCursor(page.previousCursor),
+  });
+  assert.deepEqual(prior.entryIds, ["entry-2"]);
+  assert.equal(JSON.stringify(entries), original);
+});
+
 test("history pages preserve complete turns and reconstruct the full display history", () => {
   const entries = chain([
     user("first"),

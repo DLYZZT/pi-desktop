@@ -1511,6 +1511,58 @@ span.linenumber {
   }
 }
 
+.bash-history-card {
+  margin-bottom: 12px;
+  overflow: hidden;
+  border: 1px solid var(--tool-border);
+  border-radius: 8px;
+  background: var(--tool-bg);
+  color: var(--tool-fg);
+}
+.read-image-warning {
+  width: 100%;
+  padding: 4px 8px;
+  border-inline-start: 2px solid var(--warning);
+  background: var(--bg-panel);
+  color: var(--warning);
+  overflow-wrap: anywhere;
+  font-size: calc(12px * var(--chat-font-scale, 1));
+}
+.bash-history-card pre {
+  margin: 0;
+  padding: 8px 12px;
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+.bash-history-command {
+  border-bottom: 1px solid var(--tool-border);
+}
+.bash-history-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 6px 12px;
+  overflow-wrap: anywhere;
+}
+.bash-history-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 12px 8px;
+}
+.bash-history-actions button {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.bash-history-info:empty {
+  display: none;
+}
+
 /* Mobile sidebar: slide in/out as overlay */
 @media (max-width: 640px) {
   .chat-stats-center {

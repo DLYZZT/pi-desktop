@@ -196,3 +196,39 @@ test("Desktop grep keeps full truncation totals when the byte budget is exceeded
   assert.equal(result.details.truncation.totalBytes, Buffer.byteLength(fullOutput));
   assert.ok(result.details.truncation.outputLines < count);
 });
+
+test("real bundled fd anchors paths at the selected root, preserves explicit recursion and ignores", async (t) => {
+  const fd = path.join(path.dirname(bundledRipgrep), process.platform === "win32" ? "fd.exe" : "fd");
+  if (!fs.existsSync(fd)) return t.skip("bundled fd is not prepared");
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "pi-find-161-"));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const root = path.join(base, "Repo [Mixed Case]");
+  for (const f of ["src/a.ts", "pkg/src/b.ts", "ignored/src/c.ts", "extra.ts"]) {
+    fs.mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+    fs.writeFileSync(path.join(root, f), "fixture");
+  }
+  fs.writeFileSync(path.join(root, ".gitignore"), "ignored/\n");
+  const execution = context({ "search.fd": { ...command("search.fd", ""), executable: fd, argvPrefix: [] } });
+  const [, find] = createDesktopSearchToolDefinitions(
+    root,
+    execution,
+    new ToolchainRuntime({ platform: process.platform }),
+  );
+  async function matches(pattern, extra = {}) {
+    const r = await find.execute("f", { pattern, ...extra }, undefined, undefined, { cwd: root });
+    return r.content[0].text.split("\n").sort();
+  }
+  assert.deepEqual(await matches("src/*.ts"), ["src/a.ts"]);
+  assert.deepEqual(await matches("./src/*.ts"), ["src/a.ts"]);
+  assert.deepEqual(await matches("**/src/*.ts"), ["pkg/src/b.ts", "src/a.ts"]);
+  assert.deepEqual(await matches("*.ts"), ["extra.ts", "pkg/src/b.ts", "src/a.ts"]);
+  assert.deepEqual(await matches("src/*.ts", { path: "pkg" }), ["src/b.ts"]);
+  assert.deepEqual(await matches("src/*.ts", { limit: 1 }), ["src/a.ts"]);
+  if (process.platform === "win32") assert.deepEqual(await matches("src\\*.ts"), ["src/a.ts"]);
+  const alias = path.join(base, "alias");
+  fs.symlinkSync(root, alias, process.platform === "win32" ? "junction" : "dir");
+  assert.deepEqual(await matches("src/*.ts", { path: alias }), ["src/a.ts"]);
+  // An absolute pattern written through the alias must match the paths fd reports for that same root.
+  const absolute = path.join(alias, "src", "*.ts").split(path.sep).join("/");
+  assert.deepEqual(await matches(absolute, { path: alias }), ["src/a.ts"]);
+});

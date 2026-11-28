@@ -35,6 +35,7 @@ export function AddProviderPicker({
   const availableApiKey = apiKeyProviders.filter(
     (p) =>
       !p.configured &&
+      p.storedAuthType !== "api_key" &&
       (!q ||
         p.displayName.toLowerCase().includes(q) ||
         p.id.toLowerCase().includes(q) ||

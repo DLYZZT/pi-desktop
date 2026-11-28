@@ -1,4 +1,4 @@
-import type { AgentEvent } from "../../contract/types.ts";
+import type { AgentEvent, SessionRetryInfo } from "../../contract/types.ts";
 import type { AgentMessage } from "../../shared/types.ts";
 import { normalizeToolCalls } from "../../shared/normalize.ts";
 
@@ -31,7 +31,7 @@ export interface SessionTurnState {
   streamState: StreamingState;
   agentRunning: boolean;
   agentPhase: AgentPhase;
-  retryInfo: { attempt: number; maxAttempts: number; errorMessage?: string } | null;
+  retryInfo: SessionRetryInfo | null;
   isCompacting: boolean;
   compactError: string | null;
   compactResult: CompactResultInfo | null;
@@ -43,6 +43,7 @@ export type SessionTurnAction =
   | { type: "settled" }
   | { type: "send-failed" }
   | { type: "running"; running: boolean }
+  | { type: "retry-snapshot"; retryInfo: SessionRetryInfo | null }
   | { type: "stream"; action: StreamAction }
   | { type: "event"; event: AgentEvent }
   | { type: "queue-snapshot"; queuedMessages: QueuedMessages }
@@ -105,11 +106,13 @@ export function reduceSessionTurnState(state: SessionTurnState, action: SessionT
         ...state,
         agentRunning: false,
         agentPhase: null,
-        retryInfo: action.type === "settled" ? null : state.retryInfo,
+        retryInfo: null,
         streamState: streamReducer(state.streamState, { type: "end" }),
       };
     case "running":
       return { ...state, agentRunning: action.running };
+    case "retry-snapshot":
+      return { ...state, retryInfo: action.retryInfo };
     case "stream":
       return { ...state, streamState: streamReducer(state.streamState, action.action) };
     case "queue-snapshot":
@@ -128,6 +131,7 @@ export function reduceSessionTurnState(state: SessionTurnState, action: SessionT
 }
 
 function reduceAgentEvent(state: SessionTurnState, event: AgentEvent): SessionTurnState {
+  if (event.retryInfo !== undefined) state = { ...state, retryInfo: event.retryInfo };
   switch (event.type) {
     case "agent_start":
       return reduceSessionTurnState(state, { type: "start" });
@@ -181,7 +185,7 @@ function reduceAgentEvent(state: SessionTurnState, event: AgentEvent): SessionTu
     case "auto_retry_start":
       return {
         ...state,
-        retryInfo: {
+        retryInfo: event.retryInfo ?? {
           attempt: event.attempt as number,
           maxAttempts: event.maxAttempts as number,
           errorMessage: event.errorMessage as string | undefined,
