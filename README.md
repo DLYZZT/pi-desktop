@@ -16,7 +16,7 @@
 
 [English](./README.en.md) · **简体中文**
 
-[下载 v0.5.2](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.5.2) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
+[下载 v0.6.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.6.0) · [截图](#应用截图) · [功能](#核心能力) · [快速开始](#快速开始) · [架构](#架构设计) · [变更记录](https://github.com/DLYZZT/pi-desktop/releases) · [路线图](#路线图)
 
 </div>
 
@@ -154,9 +154,9 @@
 
 开发分支的模型配置可先运行 `npm run check:models-config` 只读预检；无效字段会使整份自定义配置暂不生效，设置页保留原内容以便修正。OpenRouter 的个性化目录与 Pi CLI 共享缓存，不按 key 或 endpoint 分区；不同凭据交替使用、特别是离线启动时，列表可能来自另一个运行环境，不能将缓存目录视为当前 key 已获授权。
 
-### Pi 1.6.1 源码版升级提示
+### Pi 1.6.1 升级提示
 
-新版源码内置 Pi 1.6.1。新会话使用 Pi 选择的默认模型，遇到已退役的历史型号时，在模型菜单明确重选后继续。搜索 `src/*.ts` 只匹配搜索根直属的 `src`。要同时搜索各个子项目，使用 `**/src/*.ts`。
+新会话使用 Pi 选择的默认模型，遇到已退役的历史型号时，在模型菜单明确重选后继续。搜索 `src/*.ts` 只匹配搜索根直属的 `src`。要同时搜索各个子项目，使用 `**/src/*.ts`。
 
 “设置 → 通用 → 全局聊天提示”分别控制缓存未命中、预热费用、压缩费用和推理丢弃。已信任项目的 `.pi/settings.json` 可以逐项覆盖。若与旧 CLI 共用 `~/.pi/agent/settings.json`，建议先备份并升级 CLI。1.6.1 保存全局 Pi 设置时会迁移旧总开关，仍使用 1.5.2 或 1.6.0 的 CLI 重读后会按旧版默认关闭提示。
 
@@ -213,9 +213,9 @@
 
 ### 使用桌面安装包
 
-最新稳定版为 [v0.5.2](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.5.2)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
+最新稳定版为 [v0.6.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.6.0)，提供 macOS Apple Silicon / Intel、Windows x64 和 Linux x64 安装包。
 
-v0.5.2 内置 Pi Coding Agent 1.5.2。原工作目录失效时，可选择新文件夹，将历史复制到独立会话并保留原会话。本版还改进了流式 Markdown 渲染、文件搜索和工具授权。也可按下方步骤[从源码运行](#本地运行)。
+v0.6.0 内置 Pi Coding Agent 1.6.1。现在可以按回答正文找回会话，切回会话处理待确认的权限请求，并在 Auto 重试时查看换模原因和去向。也可按下方步骤[从源码运行](#本地运行)。
 
 普通用户使用 Agent 本身无需单独安装 Pi CLI、Pi Coding Agent、Node.js 或 npm；安装桌面应用并配置模型提供商后即可使用。Skills、Plugins 或 Agent 脚本需要额外开发工具时，应用会优先复用健康的系统安装，也可以在用户确认后安装应用私有运行时。
 

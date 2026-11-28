@@ -16,7 +16,7 @@ Local-first · No internal server · Cross-platform
 
 **English** · [简体中文](./README.md)
 
-[Download v0.5.2](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.5.2) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
+[Download v0.6.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.6.0) · [Screenshots](#screenshots) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Changelog](https://github.com/DLYZZT/pi-desktop/releases) · [Roadmap](#roadmap)
 
 </div>
 
@@ -154,9 +154,9 @@ Managed background processes support macOS, Linux, and Windows 11 x64. Windows A
 
 On the development branch, run `npm run check:models-config` for a read-only configuration preflight. Invalid fields disable the whole custom configuration; Models settings preserve its content for repair. OpenRouter's personalized catalog shares the Pi CLI cache without credential or endpoint partitioning. With different credentials, especially offline, the list may reflect another runtime; it is not proof of authorization for the current key.
 
-### Upgrading the source build to Pi 1.6.1
+### Upgrading to Pi 1.6.1
 
-The source build bundles Pi 1.6.1. New sessions use Pi's resolved default model. When a saved model has retired, select a replacement before continuing. A `find` pattern such as `src/*.ts` matches the immediate `src` directory under the search root. Use `**/src/*.ts` to include nested projects.
+New sessions use Pi's resolved default model. When a saved model has retired, select a replacement before continuing. A `find` pattern such as `src/*.ts` matches the immediate `src` directory under the search root. Use `**/src/*.ts` to include nested projects.
 
 Settings → General → Global chat notices controls cache misses, warming costs, compaction costs and dropped reasoning independently. Trusted projects can override individual switches in `.pi/settings.json`. Back up shared settings when using an older CLI. Saving global Pi settings migrates the legacy switch in `~/.pi/agent/settings.json`, including when changing cache warming or global plugins. CLI versions 1.5.2 and 1.6.0 return to their default of hiding notices on their next reload.
 
@@ -213,9 +213,9 @@ Generated images appear in final replies and remain viewable when session histor
 
 ### Use a desktop build
 
-The latest stable version is [v0.5.2](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.5.2), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
+The latest stable version is [v0.6.0](https://github.com/DLYZZT/pi-desktop/releases/tag/v0.6.0), with builds for macOS Apple Silicon and Intel, Windows x64, and Linux x64.
 
-Version 0.5.2 bundles Pi Coding Agent 1.5.2. If a session's original working folder is unavailable, you can choose a new folder and continue in a separate session with a copy of the history. This release also improves streaming Markdown, file search, and tool permissions. To build locally, [run from source](#run-locally).
+Version 0.6.0 bundles Pi Coding Agent 1.6.1. You can search past answers to find a session, return to a pending permission request, and see why Auto switched models during a retry. To build locally, [run from source](#run-locally).
 
 Regular users do not need to install the Pi CLI, Pi Coding Agent, Node.js, or npm just to use the Agent. When a Skill, Plugin, or Agent script needs additional developer tools, the application first reuses healthy system installations and can install private runtimes after explicit user confirmation.
 
