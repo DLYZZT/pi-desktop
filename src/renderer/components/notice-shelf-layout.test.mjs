@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const chatWindowSource = readFileSync(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
+const chatWindowSource = readFileSync(new URL("./ChatWindow.tsx", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 const cssSource = readFileSync(new URL("../globals.css", import.meta.url), "utf8");
 
 const noticeShelfStart = chatWindowSource.indexOf("function NoticeShelf(");
